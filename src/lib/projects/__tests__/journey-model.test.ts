@@ -419,3 +419,37 @@ describe("Project Journey - commercial billing follows postings (owner-shaped)",
     expect(src).not.toMatch(/org_id|createServiceRoleClient|useInvoiceVerification/);
   });
 });
+
+describe("Project Journey - stricter g2 derivation and money format", () => {
+  const sevenDown = [posting("c1", "RECONCILED", "INV-1", "DRAFT", true), posting("c3", "RECONCILED", "INV-3", "DRAFT", true), posting("c4", "RECONCILED", "INV-4", "DRAFT", true), posting("c5", "RECONCILED", "INV-5", "AUTHORISED", true)];
+  it("an over-billed BASE stage is Needs attention, never complete", () => {
+    const b = ownerBase({ lines: [{ claim_id: "c1", stage_id: "s-dep", current_claim_cents: R(400) }, { claim_id: "c3", stage_id: "s-del", current_claim_cents: R(560) }, { claim_id: "c4", stage_id: "s-del", current_claim_cents: R(0.5) }, { claim_id: "c5", stage_id: "s-ins", current_claim_cents: R(50) }] });
+    const s = st(journeyOf([b]), "commercial-billing");
+    expect(s.status).toBe("needs_attention");
+    expect(s.detail).toContain("over-billed");
+  });
+  it("a cancelled claim that still has a live posting is Needs attention, never complete", () => {
+    const b = ownerBase({ postings: [...sevenDown, posting("c2", "RECONCILED", "INV-2", "DRAFT", true)] });
+    const s = st(journeyOf([b]), "commercial-billing");
+    expect(s.status).toBe("needs_attention");
+    expect(s.detail).toContain("cancelled claim still has a Cin7 posting");
+  });
+  it("an unrecognised posting state is never treated as fine (not complete)", () => {
+    const b = ownerBase({ postings: [...sevenDown.slice(0, 3), posting("c5", "SOMETHING_NEW", "INV-5", "DRAFT", false)] });
+    expect(st(journeyOf([b]), "commercial-billing").status).not.toBe("completed");
+  });
+  it("an over-billed variation is Needs attention", () => {
+    const v = scope({ project: project({ id: "ov", project_reference: "P-V", original_contract_cents: R(500), billing_scope: "VARIATION", parent_project_id: "ob", variation_id: "x" }), stages: [stage("vs", 1, "V", R(500))], events: [progress("vs", 10000, 10000)], claims: [claim("vc1", 1, "APPROVED", R(600))], postings: [posting("vc1", "RECONCILED", "INV-V", "DRAFT", true)], variationCode: "V001" });
+    expect(st(journeyOf([ownerBase(), v]), "variation-V001").status).toBe("needs_attention");
+  });
+  it("every amount in Journey text uses the shared formatter at full owner scale (R 500 000,00 / R 0,00), never a truncated or hand-built figure", () => {
+    const v = scope({ project: project({ id: "ov", project_reference: "P-V", original_contract_cents: R(500_000), billing_scope: "VARIATION", parent_project_id: "ob", variation_id: "x" }), stages: [stage("vs", 1, "V", R(500_000))], events: [progress("vs", 10000, 10000)], claims: [claim("vc1", 1, "APPROVED", R(500_000))], postings: [posting("vc1", "RECONCILED", "INV-V", "DRAFT", true)], variationCode: "V001" });
+    const b = scope({ project: project({ id: "ob3", project_reference: "P", original_contract_cents: R(10_072_000) }), stages: [stage("s1", 1, "All", R(10_072_000))], variations: [variation("V001", "APPROVED", { amount_cents: R(500_000) })], saleNumber: "SO-1" });
+    const j = journeyOf([b, v]);
+    expect(st(j, "variation-V001").detail).toBe("Title V001: commercial billing complete - R\u00A0500\u00A0000,00 billed, R\u00A00,00 remaining, 1 invoice reconciled.");
+    const draft = journeyOf([scope({ project: project({ id: "ob4", project_reference: "P", original_contract_cents: R(10_072_000) }), stages: [stage("s1", 1, "All", R(10_072_000))], variations: [variation("V001", "DRAFT", { amount_cents: R(500_000) })] })]);
+    expect(st(draft, "variation-V001").detail).toContain("R\u00A0500\u00A0000,00 ex VAT");
+    expect(JSON.stringify(j)).not.toMatch(/R\d/); // no "R500" style hand-built amounts
+  });
+});
+

@@ -459,14 +459,16 @@ function variationStation(code: string, title: string, status: string, amountCen
   if (!scopeOf) return station({ id, label, status: "needs_attention", detail: `Approved (${formatCents(amountCents)} ex VAT) but no billing project exists yet, so it cannot be invoiced.`, link: { tab: "variations", label: `Start ${code} billing` } });
   const v = scopeOf.view;
   const c = v.commercial;
-  const bill = commercialBillingFromView(v, "VARIATION", { approvedAmountCents: amountCents, billingStarted: true });
+  // The billing project's own contract figure is the approved amount being billed (the same source the Overview uses).
+  const approvedCents = c.originalContractCents;
+  const bill = commercialBillingFromView(v, "VARIATION", { approvedAmountCents: approvedCents, billingStarted: true });
   const auth = invoiceAuthorisationFor(v, verification);
   const lines = [`Invoice authorisation: ${auth.unknown ? `${auth.statusLabel}. ${auth.detail}` : auth.detail}`];
   const open = { tab: "variations" as const, label: `Open ${code} billing` };
   // Same state, same status as the Commercial lane: an uncertain claim blocks new billing.
   if (c.uncertainClaimBlocking) return station({ id, label, status: "blocked", detail: `${title}: a claim's Cin7 outcome is uncertain, which blocks new billing.`, needs: ["Needs: the uncertain claim resolved before new billing of its stages."], lines, link: open });
   if (bill.state === "NEEDS_ATTENTION") return station({ id, label, status: "needs_attention", detail: `${title}: ${sentence(bill.reasons)}`, lines, link: open });
-  if (bill.state === "COMPLETE") return station({ id, label, status: "completed", detail: `${title}: commercial billing complete - ${formatCents(amountCents)} billed, ${formatCents(0)} remaining, ${plural(bill.counts.reconciled, "invoice")} reconciled.`, lines, link });
+  if (bill.state === "COMPLETE") return station({ id, label, status: "completed", detail: `${title}: commercial billing complete - ${formatCents(approvedCents)} billed, ${formatCents(0)} remaining, ${plural(bill.counts.reconciled, "invoice")} reconciled.`, lines, link });
   if (bill.state === "NOT_STARTED") return station({ id, label, status: "in_progress", detail: `${title}: billing project open; no claims raised yet.`, lines, link: open });
   return station({ id, label, status: "in_progress", detail: `${title}: ${sentence(bill.reasons)}`, lines, link: open });
 }
