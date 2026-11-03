@@ -38,7 +38,7 @@ describe("the page wires the chooser into the Line decisions row", () => {
   const sections = readFileSync(new URL("../../../app/newquip-grower/[id]/RepConfigSections.tsx", import.meta.url), "utf8");
   it("the Line decisions table renders the chooser through mappingControlFor, before the Product mappings panel", () => {
     const table = src.indexOf("Line decisions (per room");
-    const use = src.indexOf('<LineDecisionsTable draft={draft} ev={ev} edit={edit} roles={roles} editable={editable} mode="estimator"');
+    const use = src.indexOf('<LineDecisionsTable draft={draft} ev={ev} edit={edit} roles={roles} editable={s2Edit} mode="estimator"'); // UX-006i2: only the Estimator edits Stage 2 (s2Edit), quantities stay read-only (Rep-owned)
     const panel = src.indexOf("<PanelTitle>Product mappings</PanelTitle>");
     expect(table).toBeGreaterThan(0);
     expect(use).toBeGreaterThan(table);

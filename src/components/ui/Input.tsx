@@ -33,7 +33,7 @@ export function Input({ id, label, error, helperText, hideLabel, required, class
         required={required}
         aria-invalid={!!error || undefined}
         aria-describedby={errorId ?? helperId}
-        className={`h-9 rounded-md border bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400 ${
+        className={`h-9 min-h-11 rounded-md border bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400 ${
           error ? "border-danger-border" : "border-slate-300"
         } ${className}`}
         {...props}

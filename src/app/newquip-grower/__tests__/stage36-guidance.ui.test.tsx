@@ -61,7 +61,7 @@ const pr = (p: number) => ({ at: "t", by: "x", reason: "Master workbook has no u
 const draft: any = { ...emptyDraft(), quoteType: "day_to_day", config: { ...config, exclusions: { pvc_door: "Not needed" } },
   estimator: { ...emptyDraft().estimator, confirmedMappings: {"feeder":"PNQ082","pvc_door":"NQ2114","bulk_tank":"SYSH-2750-3","controller":"HO05084000","concrete_slat":"NQ1161","feed_saver_mat":"ERT053"}, confirmedPackages: ["cup_drinker","led_light"], charges: {"delivery":979992,"installation":1200000,"concrete_slat_delivery":250000}, unitPrices: {"flex_auger":45000}, priceResolutions: {pvc_door:pr(3000),led_light:pr(881),controller:pr(3000),cup_drinker:pr(548),concrete_slat:pr(203),feed_saver_mat:pr(919)} } };
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); try { window.localStorage.clear(); } catch { /* the "Show all steps" preference must not leak between tests */ } });
 
 
 const g = globalThis as { __QID?: string; __STAGE?: string; __STEP?: string; __DELIVERY?: unknown; __DOCS?: unknown };
@@ -237,6 +237,27 @@ describe("UX-006c Stage 5: status banner", () => {
 });
 
 describe("UX-006c Stage 6: readiness checklist", () => {
+  it("UX-006: the Stage 6 handover controls (billing schedule select, Create Project button) carry 44px classes, for the Manager and the Rep alike", async () => {
+    for (const roles of [["MANAGER"], ["REP"]] as Role[][]) {
+      await open({ stage: "6", roles, row: { ...FINAL, requires_customer_acceptance: false }, delivery: delivery({ requiresAcceptance: false, status: "APPROVED_INTERNALLY" }) }); // the grandfathered path shows the schedule chooser
+      await screen.findByTestId("handover-checklist", {}, { timeout: 8000 });
+      const sel = screen.getByLabelText("Billing schedule") as HTMLSelectElement;
+      expect(sel.className).toContain("min-h-11");
+      if (roles[0] === "MANAGER") expect(screen.getByRole("button", { name: "Create Project from accepted quote" }).className).toContain("min-h-11");
+      cleanup();
+    }
+  }, 60000);
+  it("UX-006i2: Stage 6 says plainly what is next - for the Manager, the Manager's own button; for a Rep, that the Manager creates it; before acceptance, Stage 5", async () => {
+    await open({ stage: "6", roles: ["MANAGER"], row: FINAL, delivery: delivery({ status: "CUSTOMER_ACCEPTED", accepted: true, latestDocumentId: "d0" }) });
+    expect((await screen.findByTestId("stage6-next", {}, { timeout: 8000 })).textContent).toBe("Next: create the Project from the accepted quotation (the button below).");
+    cleanup();
+    await open({ stage: "6", roles: ["REP"], row: FINAL, delivery: delivery({ status: "CUSTOMER_ACCEPTED", accepted: true, latestDocumentId: "d0" }) });
+    expect((await screen.findByTestId("stage6-next", {}, { timeout: 8000 })).textContent).toBe("Next: the Manager creates the Project from the accepted quotation.");
+    cleanup();
+    await open({ stage: "6", roles: ["MANAGER"], row: FINAL, delivery: delivery({ status: "SENT_TO_CUSTOMER", latestDocumentId: "d0" }) });
+    expect((await screen.findByTestId("stage6-next", {}, { timeout: 8000 })).textContent).toMatch(/acceptance \(Stage 5\) is needed before you can create the Project/);
+  }, 60000);
+
   it("a Manager on an accepted quote: all met; the Create button and copy are unchanged", async () => {
     await open({ stage: "6", roles: ["MANAGER"], row: FINAL, delivery: delivery({ status: "CUSTOMER_ACCEPTED", accepted: true, latestDocumentId: "d0" }) });
     const c = await screen.findByTestId("handover-checklist", {}, { timeout: 8000 });

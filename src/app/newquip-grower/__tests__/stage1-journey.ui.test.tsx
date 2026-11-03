@@ -355,10 +355,12 @@ describe("Submit to Estimator (step 5) and the moved Rep panels", () => {
     expect(within(eq).getByRole("table", { name: "Quantities per room" })).toBeTruthy();
     cleanup();
     await open({ view: snapshotView(true), draftOver: readyDraft, stage: "2", roles: ["REP", "ESTIMATOR"], commercials: true });
-    const charges = panel("charges") as HTMLElement;
-    expect(within(charges).getByLabelText(/^Delivery/).matches(":disabled")).toBe(true);
-    expect(within(charges).getAllByRole("checkbox", { hidden: true }).every((c) => c.matches(":disabled"))).toBe(true);
-    expect(within(panel("lines") as HTMLElement).getByTestId("rep-owned-note")).toBeTruthy();
+    // UX-006i2: Stage 2 has NO Rep controls at all (no Charges / Exclusions panels, no editable quantity); the Rep's values are only in the read-only summary.
+    expect(panel("charges")).toBeNull();
+    expect(screen.queryByLabelText(/^Delivery/)).toBeNull();
+    expect(screen.queryByText("Customer-driven exclusions")).toBeNull();
+    expect(within(panel("mapping") as HTMLElement).getByTestId("rep-owned-note")).toBeTruthy();
+    expect(screen.getByTestId("rep-summary")).toBeTruthy();
     expect(document.querySelector('[data-testid^="mapping-chooser-"]')).toBeTruthy(); // Estimator-owned mapping stays in Stage 2
   }, 60000);
 });

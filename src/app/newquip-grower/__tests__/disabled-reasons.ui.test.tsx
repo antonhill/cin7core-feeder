@@ -61,7 +61,7 @@ async function storedQuote() {
   return id;
 }
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
-async function open(stage = "2", roles: Array<"REP" | "ESTIMATOR" | "MANAGER"> = ["REP", "ESTIMATOR"], state?: string, wait = "Customer-driven exclusions") {
+async function open(stage = "2", roles: Array<"REP" | "ESTIMATOR" | "MANAGER"> = ["REP", "ESTIMATOR"], state?: string, wait = "Product mappings") {
   (globalThis as { __STAGE?: string }).__STAGE = stage;
   asRoles(...roles);
   vi.mocked(canSeeCosts).mockResolvedValue(true);
@@ -87,8 +87,9 @@ describe("F-12 Solution Builder disabled controls say why", () => {
   }, 30000);
 
   it("Save draft: a viewer who cannot edit is told so (and the explanation names no one)", async () => {
-    await open("2", ["MANAGER"]);
-    const save = screen.getByRole("button", { name: "Save draft" }) as HTMLButtonElement;
+    // UX-006i2: Stage 2 has no Save bar for a viewer who cannot edit there (a Manager only inspects it), so the explanation is checked where Save lives for everyone: Stage 1.
+    await open("1", ["MANAGER"], undefined, "Equipment selections");
+    const save = (await screen.findByRole("button", { name: "Save draft" }, { timeout: 8000 })) as HTMLButtonElement; // i1: the Stage 1 toolbar shows once the customer details have settled
     expect(save.disabled).toBe(true);
     expect(described(save)).toMatch(/only a Rep or Estimator can edit and save/);
   }, 30000);
@@ -108,11 +109,21 @@ describe("F-12 Solution Builder disabled controls say why", () => {
     expect(described(btn).length).toBeGreaterThan(10);
   }, 30000);
 
-  it("Estimator sign-off and the return buttons: reasons are shown beside them", async () => {
-    await open("2", ["REP"], "ESTIMATOR_REVIEW", "Estimator: I double-checked this quote");
-    const so = screen.getByRole("button", { name: /Estimator: I double-checked/ }) as HTMLButtonElement;
-    expect(so.disabled).toBe(true);
-    expect(described(so)).toMatch(/Only an Estimator can sign off/);
+  it("Estimator sign-off and the return buttons: a non-Estimator is not offered them and is told whose action it is", async () => {
+    // UX-006i2: the sign-off and return controls exist only for the authenticated Estimator ("only valid actions"); a Rep reads who has the work instead of meeting a disabled button.
+    await open("2", ["REP"], "ESTIMATOR_REVIEW", "Sign off or return");
+    expect(screen.queryByRole("button", { name: /Sign off for Manager approval/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Return to rep" })).toBeNull();
+    expect(screen.getByTestId("signoff-not-yours").textContent).toMatch(/Only an Estimator can sign off or return it here/);
+  }, 30000);
+
+  it("Estimator sign-off keeps its READY gate and reason, and the return button says a reason is required", async () => {
+    await open("2", ["ESTIMATOR"], "ESTIMATOR_REVIEW", "Sign off or return");
+    const so = screen.getByRole("button", { name: /Sign off for Manager approval/ }) as HTMLButtonElement;
+    expect(so.disabled ? described(so) : "").toMatch(so.disabled ? /must be READY/ : /^\s*$/); // gate unchanged: disabled only with its reason (this fixture's readiness decides which)
+    const ret = screen.getByRole("button", { name: "Return to rep" }) as HTMLButtonElement;
+    expect(ret.disabled).toBe(true);
+    expect(described(ret)).toMatch(/Enter the reason for returning it/);
   }, 30000);
 
   it("Manager return buttons say a reason is required; Final approval keeps its blocked messages", async () => {

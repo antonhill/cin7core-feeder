@@ -111,5 +111,10 @@ export function waitingOn(q: { state: QuoteState; revision: number; signed_off: 
   return q.revision > 1 ? `Rep: returned (revision ${q.revision}) - make the corrections` : `Rep: preparing (revision ${q.revision})`;
 }
 
+/** The Stage column of the quote list, consistent with `waitingOn`: a quotation the Estimator has signed off is with the Manager, so it reads "Manager approval" rather than "Estimator review". Presentation only. */
+export function stageLabelOf(q: { state: QuoteState; signed_off: boolean }): string {
+  return q.state === "ESTIMATOR_REVIEW" && q.signed_off ? "Manager approval" : QUOTE_STATE_LABEL[q.state];
+}
+
 /** MANAGER_APPROVAL_READY as a derived value (never persisted). */
 export const managerApprovalReady = checkApproval;

@@ -123,7 +123,7 @@ describe("UX-006a workflow actions move the view; the user's own Save / demo loa
   it("a Rep's own Save of an unsaved edit stays where it is, even though it withdraws any sign-off", async () => {
     await openQuote(["REP", "ESTIMATOR"], () => undefined, { siteName: "" });
     const before = viewing();
-    fireEvent.click(screen.getByRole("button", { name: /^Site & measurements/ })); // stage 1 rail
+    fireEvent.click(await screen.findByRole("button", { name: /^Site & measurements/ }, { timeout: 8000 })); // stage 1 rail (it shows once the customer details have settled; waits under load)
     await act(async () => { fireEvent.change(screen.getByLabelText(/^Total pens/), { target: { value: "21" } }); });
     fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(screen.getByText("All changes saved")).toBeTruthy(), { timeout: 8000 });

@@ -59,7 +59,8 @@ describe("UX-006c viewer-relative Stage 2 chip (presentation only)", () => {
   it("an Estimator (not Manager) sees 'Awaiting your review'; a Manager and a viewer with no roles keep 'Awaiting action'", () => {
     expect(chip(inReview, ["rep", "estimator"])).toContain("Awaiting your review");
     expect(chip(inReview, ["rep", "estimator", "manager"])).toContain("Awaiting action");
-    expect(chip(inReview, [])).toContain("Awaiting action");
+    // UX-006i2: a viewer with no quote role (an Administrator observer) is told so instead of seeing an action chip for a task they cannot do.
+    expect(chip(inReview, [])).toContain("Read-only: you have no quote role");
   });
   it("never for a Rep who must act (a draft ready to send, or a returned revision), a signed-off or final quote, or another stage", () => {
     expect(chip({ state: "REP_DRAFT", commercial: "NOT_APPROVED", signedOff: false }, ["rep"])).toContain("Awaiting action");
@@ -130,5 +131,45 @@ describe("navStatusLabel: the Stage 1 chip is viewer-relative (UX-006i1)", () =>
     expect(navStatusLabel(stage1, false, { roles: ["manager"], state: "REP_DRAFT" })).toBe("Complete");
     expect(navStatusLabel(stage1, false, { roles: ["rep"], state: "ESTIMATOR_REVIEW" })).toBe("Complete");
     expect(navStatusLabel(stage1, false)).toBe("Complete");
+  });
+});
+
+// UX-006i2: viewer-relative chips and next-action lines. computeStages is NOT changed (asserted below); only the presentation is.
+import { navPresentation } from "@/newquip/quote/stage-nav-model";
+describe("UX-006i2 viewer-relative stage wording (presentation only; computeStages unchanged)", () => {
+  const draftReady: Partial<StageInput> = { state: "REP_DRAFT", signedOff: false, commercial: "NOT_APPROVED", confirmed: false };
+  const stage2 = (over: Partial<StageInput>) => computeStages({ ...base, ...over })[1];
+  it("an Estimator on a Rep draft with open mapping: consistent 'your mapping is needed' wording, not 'Starts once the quote is READY'", () => {
+    const s = stage2({ ...draftReady, ready: false });
+    expect(s.summary).toBe("Starts once the quote is READY."); // the computed text is untouched
+    const p = navPresentation(s, false, { roles: ["estimator"], state: "REP_DRAFT", estimatorOpen: 3 });
+    expect(p.chip).toBe("Your mapping is needed");
+    expect(p.summary).not.toMatch(/Starts once/);
+    expect(p.next).toMatch(/^Estimator: map the products/);
+    expect(navPresentation(s, false, { roles: ["rep"], state: "REP_DRAFT", estimatorOpen: 3 }).summary).toBe("Starts once the quote is READY."); // a Rep keeps the computed text
+  });
+  it("after the mapping is done the Estimator is told it is with the Rep (they were the actor, not the next owner); the computed text still names the Rep", () => {
+    const s = stage2({ ...draftReady });
+    expect(s.status).toBe("AWAITING_ACTION"); expect(s.next).toMatch(/^Rep: submit/);
+    const p = navPresentation(s, false, { roles: ["estimator"], state: "REP_DRAFT", estimatorOpen: 0 });
+    expect(p.chip).toBe("With the Rep"); expect(p.summary).toBe("Nothing is left for you until the Rep submits."); expect(p.next).toMatch(/^Rep: submit the quotation to the Estimator/);
+    expect(navPresentation(s, false, { roles: ["rep", "estimator"], state: "REP_DRAFT", estimatorOpen: 0 }).next).toMatch(/^Rep: submit/); // the member tier IS the Rep
+  });
+  it("Stage 6: a Rep, an Estimator and a Manager-less viewer see 'Waiting on the Manager' and a next action naming the Manager; an observer sees the read-only chip; the Manager is unchanged", () => {
+    const s6 = computeStages({ ...base, commercial: "CUSTOMER_ACCEPTED" })[5];
+    expect(s6.status).toBe("AWAITING_ACTION"); expect(s6.next).toBe("Create the Project.");
+    for (const roles of [["rep"], ["estimator"], ["rep", "estimator"]]) {
+      const p = navPresentation(s6, false, { roles, state: "MANAGER_APPROVED_FINAL" });
+      expect(p.chip).toBe("Waiting on the Manager"); expect(p.next).toBe("Manager: create the Project.");
+    }
+    const obs = navPresentation(s6, false, { roles: [], state: "MANAGER_APPROVED_FINAL" });
+    expect(obs.chip).toBe("Read-only: you have no quote role"); expect(obs.next).toBe("Manager: create the Project.");
+    const mgr = navPresentation(s6, false, { roles: ["manager"], state: "MANAGER_APPROVED_FINAL" });
+    expect(mgr.chip).toBe("Awaiting action"); expect(mgr.next).toBe("Create the Project.");
+  });
+  it("rendered: the Stage 6 card and the next-action line say Manager for a Rep", () => {
+    const stages = computeStages({ ...base, commercial: "CUSTOMER_ACCEPTED" });
+    const out = renderToStaticMarkup(createElement(StageNav, { stages, current: 6, viewing: 6, onSelect: () => undefined, viewer: { roles: ["rep"], state: "MANAGER_APPROVED_FINAL" } }));
+    expect(out).toContain("Waiting on the Manager"); expect(out).toContain("Next: Manager: create the Project.");
   });
 });

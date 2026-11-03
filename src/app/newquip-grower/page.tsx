@@ -12,7 +12,7 @@ import type { BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
-import { QUOTE_STATE_LABEL, waitingOn, type QuoteState } from "@/newquip/quote/workflow";
+import { stageLabelOf, waitingOn, type QuoteState } from "@/newquip/quote/workflow";
 import { createGrowerQuoteAction, listGrowerQuotesAction } from "./actions";
 import { fmtCents } from "./fields";
 
@@ -71,7 +71,7 @@ export default function NewquipGrowerPage() {
                     <TD><Link className="inline-flex min-h-11 items-center font-medium text-indigo-700 hover:underline" href={`/newquip-grower/${q.id}`}>{q.quote_ref}</Link> <span className="text-xs text-slate-600">rev {q.revision}</span></TD>
                     <TD>{q.customer_name || "—"}</TD>
                     <TD>{q.site_name || "—"}</TD>
-                    <TD><Status tone={STATE_TONE[q.state]}>{QUOTE_STATE_LABEL[q.state]}</Status></TD>
+                    <TD><Status tone={STATE_TONE[q.state]}>{stageLabelOf(q)}</Status></TD>
                     <TD className="text-sm text-slate-800" data-testid="waiting-on">{waitingOn(q)}</TD>
                     <TD align="right" className="tabular-nums whitespace-nowrap">{fmtCents(q.contract_cents)}</TD>
                     <TD>{q.project_id ? <Link className="inline-flex min-h-11 items-center text-indigo-700 hover:underline" href={`/projects/${q.project_id}`}>Open project</Link> : "—"}</TD>

@@ -83,7 +83,7 @@ export function ScopePanel({ quoteId, draft }: { quoteId: string; draft: QuoteDr
                   </div>
                 </div>
               ) : <div className="mt-2"><Button size="sm" variant="secondary" onClick={() => start(i.packageKey)}>Map this package to Cin7 SKUs</Button></div>
-            ) : <p className="mt-1 text-xs text-slate-600">A manager can map this package.</p>)}
+            ) : <p className="mt-1 text-xs text-slate-600">An Estimator or Manager can map this package.</p>)}
           </li>
         ))}
         {view.items.length === 0 && <li className="text-slate-600">No physical products yet.</li>}

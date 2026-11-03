@@ -19,13 +19,14 @@ import type { StageStatus } from "./stages";
 //   resolveEntryStep(wizard, req?) -> an explicit request wins only if permitted; else the entry step
 //   currentStepId(steps, wanted)   -> `wanted` if permitted, else the nearest earlier permitted step (a step that became locked never strands the viewer)
 //   toRailSteps(steps)             -> RailStep[] for the shared StepRail (locked / blockedBy carried over)
-// Stage 2 / Stage 3 add their own derive function returning WizardStep[] of the same shape (owner "Estimator" / "Manager") and reuse the helpers above unchanged.
+// Stage 2 / Stage 3 (stage23-wizard.ts) return WizardStep<their id>[] of the same shape (owner "Estimator" / "Manager") and reuse the helpers above unchanged; a "hidden" step is left off the rail.
 
 export type WizardRole = "Rep" | "Estimator" | "Manager";
 export type WizardStepId = Stage1StepId;
 export type WizardAccess = "edit" | "readonly" | "hidden" | "locked";
-export interface WizardStep {
-  id: WizardStepId; label: string;
+/** The step shape is shared by all stages: `I` is the stage's own step id (Stage 1 by default; Stage 2 and 3 use theirs, see stage23-wizard.ts). */
+export interface WizardStep<I extends string = WizardStepId> {
+  id: I; label: string;
   /** The role whose work this step is. */
   owner: WizardRole;
   /** Derived from data only (never from a visit). */
@@ -38,6 +39,8 @@ export interface WizardStep {
   blockKind?: "server" | "policy";
   /** A short line for the rail (data-derived note or, for a non-editor, who has the work). */
   note?: string;
+  /** Optional (Stage 2): the step counts as done in the rail's totals although its status is not "complete" (e.g. a Final review that has been marked reviewed), with the visible label to show. Carried to the rail unchanged. */
+  counted?: boolean; statusLabel?: string;
 }
 
 export interface WizardInput {
@@ -60,10 +63,10 @@ export interface WizardInput {
   totalAvailable: boolean;
 }
 
-export interface Wizard {
-  steps: WizardStep[];
+export interface Wizard<I extends string = WizardStepId> {
+  steps: WizardStep<I>[];
   /** The step the wizard opens at: the first incomplete step the viewer may act on (or, for a viewer who cannot edit, the summary). */
-  entryStepId: WizardStepId;
+  entryStepId: I;
   /** REP_DRAFT with revision > 1: the Estimator/Manager returned it. The page shows a banner and opens at the first incomplete step. */
   returned: boolean;
   /** The Rep's preparation is done and the quotation is with the next role. */
@@ -149,13 +152,13 @@ export function deriveWizard(i: WizardInput): Wizard {
 }
 
 /** An explicit request (e.g. ?step=) wins only if that step is permitted; otherwise the entry step. */
-export function resolveEntryStep(w: Pick<Wizard, "steps" | "entryStepId">, requested?: WizardStepId | null): WizardStepId {
+export function resolveEntryStep<I extends string = WizardStepId>(w: Pick<Wizard<I>, "steps" | "entryStepId">, requested?: I | null): I {
   const r = requested ? w.steps.find((s) => s.id === requested) : undefined;
   return r && isPermitted(r) ? r.id : w.entryStepId;
 }
 
 /** The step to show: `wanted` if the viewer may open it, else the nearest EARLIER permitted step (a step that became locked after an edit upstream never strands them), else the first permitted. */
-export function currentStepId(steps: readonly WizardStep[], wanted: WizardStepId): WizardStepId {
+export function currentStepId<I extends string = WizardStepId>(steps: readonly WizardStep<I>[], wanted: I): I {
   const at = steps.findIndex((s) => s.id === wanted);
   if (at >= 0 && isPermitted(steps[at])) return wanted;
   for (let k = Math.max(at, 0); k >= 0; k--) if (isPermitted(steps[k])) return steps[k].id;
@@ -163,8 +166,9 @@ export function currentStepId(steps: readonly WizardStep[], wanted: WizardStepId
 }
 
 /** The shared StepRail's steps for a contract result (locked/blockedBy carried over; a locked step is not selectable there). */
-export function toRailSteps(steps: readonly WizardStep[]): Array<{ id: WizardStepId; label: string; status: StepStatus; note?: string; locked?: boolean; blockedBy?: string[] }> {
-  return steps.map((s) => ({ id: s.id, label: s.label, status: s.status, ...(s.note ? { note: s.note } : {}), ...(s.access === "locked" ? { locked: true, blockedBy: s.blockedBy } : {}) }));
+export function toRailSteps<I extends string = WizardStepId>(steps: readonly WizardStep<I>[]): Array<{ id: I; label: string; status: StepStatus; note?: string; counted?: boolean; statusLabel?: string; locked?: boolean; blockedBy?: string[] }> {
+  // A step that is "hidden" for this viewer (e.g. the cost steps for a viewer without cost visibility) is not on the rail at all: absent, not disabled.
+  return steps.filter((s) => s.access !== "hidden").map((s) => ({ id: s.id, label: s.label, status: s.status, ...(s.note ? { note: s.note } : {}), ...(s.counted ? { counted: true } : {}), ...(s.statusLabel ? { statusLabel: s.statusLabel } : {}), ...(s.access === "locked" ? { locked: true, blockedBy: s.blockedBy } : {}) }));
 }
 
 /** A Rep-owned item can be fixed by the viewer only when they may edit and the step is open; otherwise the owner is just named. */
