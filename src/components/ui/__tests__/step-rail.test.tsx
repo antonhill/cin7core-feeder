@@ -73,6 +73,14 @@ describe("StepRail a11y and behaviour", () => {
   });
 });
 
+describe("optional steps", () => {
+  it("an optional step that is not complete reads 'Optional'; a complete one still reads 'Complete'", () => {
+    render(<StepRail id="o" ariaLabel="o" currentId="a" onSelect={() => {}} steps={[{ id: "a", label: "A", status: "incomplete", optional: true }, { id: "b", label: "B", status: "complete", optional: true }]} />);
+    expect(screen.getByTestId("step-status-a").textContent).toBe("Optional");
+    expect(screen.getByTestId("step-status-b").textContent).toBe("Complete");
+  });
+});
+
 describe("StepPanel", () => {
   it("keeps non-current steps MOUNTED but hidden and inert; show-all reveals every step", () => {
     const { rerender } = render(<><StepPanel railId="t" stepId="a" number={1} title="Alpha" current showAll={false}><input aria-label="in-a" /></StepPanel><StepPanel railId="t" stepId="b" number={2} title="Bravo" current={false} showAll={false}><input aria-label="in-b" /></StepPanel></>);

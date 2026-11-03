@@ -2,7 +2,7 @@
 // the step having been visited, and nothing here blocks moving to another step.
 
 export type StepStatus = "complete" | "attention" | "incomplete" | "unavailable";
-export interface RailStep { id: string; label: string; status: StepStatus; /** Optional one-line explanation shown beside the status. */ note?: string; /** Optional id of the RailGroup this step belongs to (only used when the rail is given `groups`). */ group?: string }
+export interface RailStep { id: string; label: string; status: StepStatus; /** Optional one-line explanation shown beside the status. */ note?: string; /** Optional id of the RailGroup this step belongs to (only used when the rail is given `groups`). */ group?: string; /** An optional step: while not complete it reads "Optional" rather than "Not complete". Presentation only. */ optional?: boolean }
 
 export type RailGroupTone = "complete" | "attention" | "incomplete" | "neutral";
 /** A labelled block of steps with its own owner, count and one caller-supplied status line. The counts are computed ONLY over the group's own steps. */
