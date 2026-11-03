@@ -6,13 +6,14 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { OverviewSkeleton } from "./LoadingSkeletons";
+import { JourneyMap } from "./JourneyMap";
 import { Alert } from "@/components/ui/Alert";
 import { Status } from "@/components/ui/Status";
 import type { BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
-import { buildProjectOverview, type ExceptionItem, type Kpi, type OverviewTab, type PhysicalLoad, type PhysicalOverviewRow } from "@/lib/projects/overview-model";
+import { buildJourney, buildProjectOverview, type ExceptionItem, type Kpi, type OverviewTab, type PhysicalLoad, type PhysicalOverviewRow } from "@/lib/projects/overview-model";
 import { formatBps, formatCents } from "@/lib/projects/project-view";
 import { getPhysicalStatusAction } from "../physical-actions";
 import { getProjectOverviewDataAction, type OverviewDataResult } from "../overview-actions";
@@ -143,6 +144,12 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab, contractShow
     }
   }, [res, phys]);
 
+  // The journey reads only what is already loaded: the overview data and the fulfilment read the user may have asked for. It adds no request.
+  const journey = useMemo(() => {
+    if (!res?.ok || !res.data || !overview || overview instanceof Error) return null;
+    try { return buildJourney({ scopes: res.data.scopes, physical: overview.physical }); } catch { return null; }
+  }, [res, overview]);
+
   if (res === null) return <OverviewSkeleton />;
   if (!res.ok || overview === null || overview instanceof Error) {
     return (
@@ -159,6 +166,7 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab, contractShow
 
   return (
     <div className="space-y-8" data-testid="overview">
+      {journey && <JourneyMap journey={journey} onOpenTab={onOpenTab} />}
       <Section id="ov-attention" title="Needs attention" subtitle="Each item opens the workflow that resolves it.">
         {o.exceptions.length === 0 ? (
           <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900" data-testid="no-exceptions">Nothing needs attention right now.</p>
