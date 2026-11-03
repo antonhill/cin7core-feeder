@@ -58,10 +58,10 @@ describe("StepRail a11y and behaviour", () => {
     const toggle = screen.getByTestId("step-rail-toggle");
     expect(toggle.textContent).toContain("Step 2 of 4 · Bravo · 1 complete");
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(document.getElementById("t-list")!.className).toMatch(/(^|\s)hidden(\s|$)/);
+    expect(document.getElementById("t-list")!.className).toContain("max-[700px]:hidden"); // closed hides only below 701px
     fireEvent.click(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(document.getElementById("t-list")!.className).toMatch(/(^|\s)flex(\s|$)/);
+    expect(document.getElementById("t-list")!.className).not.toContain("max-[700px]:hidden");
     fireEvent.click(screen.getByRole("button", { name: /Charlie/ }));
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
   });
@@ -207,5 +207,41 @@ describe("StepRail groups", () => {
     expect(screen.queryByRole("group")).toBeNull();
     expect(screen.getByTestId("step-rail-toggle").textContent).toContain("Step 2 of 4 · Bravo · 1 complete");
     expect(screen.getByTestId("step-rail-toggle").textContent).not.toContain("need attention");
+  });
+});
+
+describe("StepRail responsive class contract (no clipping, hidden never wins above 701px)", () => {
+  const gs: RailStep[] = [
+    { id: "a", label: "A", status: "complete", group: "rep" }, { id: "b", label: "B", status: "incomplete", group: "rep" }, { id: "c", label: "C", status: "incomplete", group: "rep" },
+    { id: "d", label: "D", status: "incomplete", group: "est" }, { id: "e", label: "E", status: "incomplete", group: "est" },
+  ];
+  const groups: RailGroup[] = [{ id: "rep", label: "Rep preparation" }, { id: "est", label: "Estimator review" }];
+  it("the disclosure container and lists use only max-[700px]:hidden; no plain `hidden` and no `hidden`/`min-[701px]:flex` pairing", () => {
+    render(<StepRail id="g" ariaLabel="x" steps={gs} currentId="a" onSelect={vi.fn()} groups={groups} />);
+    const all = [document.getElementById("g-list")!, ...document.querySelectorAll("#g-list ol")];
+    for (const el of all) for (const c of el.className.split(/\s+/)) expect(c).not.toBe("hidden");
+    expect(document.getElementById("g-list")!.className).toContain("max-[700px]:hidden");
+  });
+  it("groups stack below 901px (grid layout starts at 901px) and their lists wrap instead of scrolling or clipping", () => {
+    render(<StepRail id="g" ariaLabel="x" steps={gs} currentId="a" onSelect={vi.fn()} groups={groups} />);
+    const box = document.getElementById("g-list")!.className;
+    expect(box).toContain("min-[901px]:grid");
+    expect(box).not.toMatch(/min-\[701px\]:(grid|flex-row)/);
+    const ol = document.querySelector('[data-testid="step-group-rep"] ol')!.className;
+    expect(ol).toContain("min-[701px]:grid");
+    expect(ol).toContain("auto-fit");
+    expect(ol).not.toContain("overflow-x-auto");
+    for (const li of document.querySelectorAll('[data-testid="step-group-rep"] li')) expect(li.className).toContain("min-w-0");
+  });
+});
+
+describe("plain rail never scrolls or clips", () => {
+  it("is a wrapping grid of equal columns from 701px (auto-fit), with shrinkable cards and no overflow-x scrolling", () => {
+    render(<StepRail id="t" ariaLabel="x" steps={steps} currentId="a" onSelect={vi.fn()} />);
+    const ol = document.getElementById("t-list")!;
+    expect(ol.className).toContain("min-[701px]:grid");
+    expect(ol.className).toContain("auto-fit");
+    expect(ol.className).not.toContain("overflow-x-auto");
+    for (const li of ol.querySelectorAll("li")) expect(li.className).toContain("min-w-0");
   });
 });
