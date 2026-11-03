@@ -7,7 +7,7 @@ const REP = { rep: true, estimator: false, manager: false };
 const EST = { rep: false, estimator: true, manager: false };
 const MGR = { rep: false, estimator: false, manager: true };
 const ok: Stage2Input = {
-  canViewCommercials: true, roles: REP, state: "REP_DRAFT", revision: 1, calcValid: true, lines: [line(), line()],
+  canViewCommercials: true, editable: true, roles: REP, state: "REP_DRAFT", revision: 1, calcValid: true, lines: [line(), line()],
   readiness: { state: "READY", reasons: [], missingMappings: 0 },
   budget: { incomplete: false, estimatedCost: 1000, marginPct: 25, lines: [{ status: "priced" }], charges: [{ label: "Delivery", status: "entered" }] },
   blankExclusionCount: 0, incompleteCostOverrideCount: 0, blankPriceReasonCount: 0, totalAvailable: true, confirmedRecorded: false, signoff: "none", dirty: false,
@@ -154,6 +154,34 @@ describe("Stage 2 steps and groups (UX-006b)", () => {
     const x = d({ ...sub, roles: REP });
     expect(nextCandidates(x, "signoff").map((s) => s.id)).toEqual(["signoff"]);
     expect(nextCandidates(d({ roles: REP }), "lines").map((s) => s.id)).toEqual(["lines", "charges", "submit"]);
+  });
+  it("every combination of cost visibility x cost state with a current sign-off: label, count and group line agree, and non-commercial viewers get no cost wording", () => {
+    const signed = { ...sub, signoff: "current" as const };
+    const cost = (o: Partial<Stage2Input>) => d({ ...signed, roles: EST, ...o });
+    // commercial, review -> counted + 'Reviewed', 2 of 2, Signed off
+    let x = cost({}); expect(x.steps.find((q) => q.id === "cost")).toMatchObject({ status: "review", counted: true, statusLabel: "Reviewed" });
+    expect([x.groups[1].progress, x.groups[1].statusLine]).toEqual(["2 of 2 complete", "Signed off"]);
+    // commercial, attention (partial budget) -> not counted, 1 of 2, honest line
+    x = cost({ budget: { ...ok.budget!, incomplete: true } }); expect(x.steps.find((q) => q.id === "cost")).toMatchObject({ status: "attention" });
+    expect(x.steps.find((q) => q.id === "cost")!.counted).toBeUndefined();
+    expect([x.groups[1].progress, x.groups[1].statusLine, x.groups[1].tone]).toEqual(["1 of 2 complete", "Signed off - cost attention outstanding", "warning"]);
+    x = cost({ incompleteCostOverrideCount: 1 }); expect(x.groups[1].statusLine).toBe("Signed off - cost attention outstanding");
+    // commercial, final -> Complete label, no override
+    x = d({ state: "MANAGER_APPROVED_FINAL", roles: EST }); expect(x.steps.find((q) => q.id === "cost")).toMatchObject({ status: "complete" });
+    expect(x.steps.find((q) => q.id === "cost")!.statusLabel).toBeUndefined();
+    // non-commercial: no cost step, 1 of 1, plain 'Signed off', and no cost wording anywhere even when the budget is partial
+    x = cost({ canViewCommercials: false, budget: { ...ok.budget!, incomplete: true } });
+    expect([x.groups[1].progress, x.groups[1].statusLine]).toEqual(["1 of 1 complete", "Signed off"]);
+    expect(JSON.stringify(x)).not.toMatch(/cost|margin/i);
+  });
+  it("a viewer who cannot edit is not pushed to Rep work; an Estimator-only viewer sees unfinished Rep steps as 'Waiting on the Rep' (no cost wording)", () => {
+    expect(d({ roles: REP, editable: false }).actionable.size).toBe(0);
+    expect(d({ roles: MGR, editable: false }).actionable.has("lines")).toBe(false);
+    const x = d({ roles: EST, blankExclusionCount: 1, canViewCommercials: false });
+    expect(x.steps.find((q) => q.id === "charges")).toMatchObject({ status: "incomplete", note: "Waiting on the Rep" });
+    expect(x.steps.find((q) => q.id === "lines")!.note).toBeUndefined(); // complete steps keep their own (empty) note
+    expect(JSON.stringify(x)).not.toMatch(/cost|margin/i);
+    expect(d({ roles: REP, blankExclusionCount: 1 }).steps.find((q) => q.id === "charges")!.note).toBe("1 excluded item needs a reason"); // the Rep keeps the real note
   });
   it("after a current sign-off the reviewed Cost step counts as done (no Complete label) so the group count and status agree; with unsaved edits it does not", () => {
     const signed = { ...sub, roles: EST, signoff: "current" as const };
