@@ -45,7 +45,7 @@ import { Stage1Review } from "./Stage1Review";
 import { StepRail, StepPanel } from "@/components/ui/StepRail";
 import { useShowAllSteps } from "@/components/ui/use-show-all-steps";
 import { nextIncompleteStepId, parseStepParam } from "@/components/ui/step-rail-model";
-import { customerFactsSettled, deriveStage1Steps, fieldErrors, ownedWork, STEP_FIELD_KEYS, NO_CUSTOMER_FACTS, STAGE1_STEP_IDS, STAGE1_STEP_LABEL, type Stage1CustomerFacts, type Stage1StepId } from "@/newquip/quote/stage1-steps";
+import { ESTIMATOR_LINE_STATUSES, customerFactsSettled, deriveStage1Steps, fieldErrors, ownedWork, STEP_FIELD_KEYS, NO_CUSTOMER_FACTS, STAGE1_STEP_IDS, STAGE1_STEP_LABEL, type Stage1CustomerFacts, type Stage1StepId } from "@/newquip/quote/stage1-steps";
 import { currentStepId, deriveWizard, isPermitted, resolveEntryStep, toRailSteps } from "@/newquip/quote/wizard-contract";
 import { costAckKey, deriveStage2Steps, nextCandidates, type Stage2Input, stage2StepIds, STAGE2_STEP_LABEL, type Stage2StepId } from "@/newquip/quote/stage2-steps";
 import { ConfirmationPanel } from "./ConfirmationPanel";
@@ -181,6 +181,7 @@ export default function QuoteEditorPage() {
   const [confirmSample, setConfirmSample] = useState<"measurements" | "recommended" | null>(null);
   const [sampleNote, setSampleNote] = useState<string | null>(null);
   // Inline validation is shown only for a field the viewer has touched (blurred) or whose step they have left: a fresh blank form does not shout.
+  const [effectInfo, setEffectInfo] = useState<QuoteView["confirmationEffect"] | null>(null); // what the last save did to the customer's confirmation (S1b), when the server reported it
   const [mapRefused, setMapRefused] = useState(false); // the last Save was refused because the Rep changed a product-affecting control
   const [touched, setTouched] = useState<ReadonlySet<string>>(new Set());
   const touch = (...keys: string[]) => setTouched((p) => (keys.every((k) => p.has(k)) ? p : new Set([...p, ...keys])));
@@ -204,6 +205,7 @@ export default function QuoteEditorPage() {
   }
   function adopt(v: QuoteView, workflow = false) {
     followTransition(v, workflow);
+    setEffectInfo(v.confirmationEffect ?? null);
     setView(v);
     setDraft(v.quote.draft);
     setEv(v.evaluation);
@@ -275,7 +277,14 @@ export default function QuoteEditorPage() {
   const approveDescribedBy = [isWorking && `${uid}-approve-busy`, !roles.has("manager") && `${uid}-approve-role`, approveSignoffMissing && `${uid}-approve-signoff`, approveSignoffStale && `${uid}-approve-stale`, dirty && `${uid}-approve-dirty`].filter(Boolean).join(" ") || undefined;
   const returnWhy = isWorking ? "Another action is in progress. Please wait." : !returnReason.trim() ? "Enter the reason for returning it to enable this." : undefined;
   // The same rounding the server uses for the saved total (quote-store totalCents), so the Stage 3 checklist compares like with like; unsaved edits are covered by its own row.
-  const totalCents = budget && !budget.incomplete ? Math.round(budget.totals.subtotalExTax * 100) : null;
+  // UX-006 S1a: the amount the Rep confirms is the SERVER's indicative total (subtotalExTax, the same figure quote-store's indicativeTotalCents uses) even while Estimator-owned lines are still open.
+  const totalCents = budget ? Math.round(budget.totals.subtotalExTax * 100) : null;
+  // REP_CONFIGURATION_READY (readiness-concepts.ts, derived from the server's repReasons): everything only a Rep can supply is complete. Estimator-owned items never make the Rep wait.
+  const repReady = rd.repReasons.length === 0;
+  const awaitingLines = (budget?.lines ?? []).filter((b) => ESTIMATOR_LINE_STATUSES.has(b.status)).length;
+  const awaitingPrices = (budget?.lines ?? []).filter((b) => b.status === "not_in_price_source" || b.status === "supplier_quote_required").length;
+  const awaiting = { choices: awaitingLines - awaitingPrices, prices: awaitingPrices, lines: awaitingLines };
+  const totalIndicative = awaitingLines > 0 || !!budget?.incomplete;
 
   // One-click demonstration quotation: replaces the inputs of THIS editable draft only (not saved, nothing created, approved or sent).
   function loadDemo() {
@@ -343,7 +352,7 @@ export default function QuoteEditorPage() {
   const lineByKey = new Map(ev.calc.lines.map((l) => [l.itemKey, l]));
   const summary = budget ? buildCustomerSummary(budget) : null;
   const stages = computeStages({
-    state: q.state, revision: q.revision, ready: rd.state === "READY", customerSelected: !!draft.customerName.trim(), confirmed: q.customer_confirmed_cents != null,
+    state: q.state, revision: q.revision, ready: repReady, customerSelected: customerFacts.available && customerFacts.loaded ? customerFacts.hasSnapshot : !!draft.customerName.trim(), confirmed: q.customer_confirmed_cents != null,
     signedOff: !!q.estimator_signoff_hash && q.estimator_signoff_hash === q.draft_hash, commercial: final ? ((gate.status as CommercialState | null) ?? null) : "NOT_APPROVED",
     hasDocument: gate.hasDocument, linkState: gate.linkState, requiresAcceptance: q.requires_customer_acceptance === true, projectLinked: !!q.project_id, loading: final && !gateReady,
   });
@@ -394,8 +403,7 @@ export default function QuoteEditorPage() {
     if (!repWaiting || x.id !== 1 || x.status === "RETURNED" || x.status === "LOADING") return x;
     if (productChangePending) return { ...x, statusLabel: "Waiting on the Estimator", summary: "Waiting on the Estimator for 1 product choice. Ask the Estimator to confirm the new product (Stage 2, step 1), or undo the change in step 3.", next: null };
     if (repItems.length > 0) return { ...x, summary: `Still to do: ${repItems.slice(0, 3).map((o) => o.message).join("; ")}${repItems.length > 3 ? ` (+${repItems.length - 3} more - see Review, step 4)` : ""}.`, next: null };
-    if (estItems.length > 0) return { ...x, statusLabel: "Waiting on the Estimator", summary: `Everything you can do is complete. Waiting on the Estimator for ${estItems.length} item${estItems.length === 1 ? "" : "s"} - nothing for you to do yet.`, next: null };
-    if (rd.state === "READY") return { ...x, summary: "Everything you can do is complete.", next: "Rep: submit to the Estimator (Stage 1, step 5)." };
+    if (repReady) return { ...x, ...(estItems.length > 0 ? { statusLabel: "Ready to submit" } : {}), summary: `Everything you can do is complete.${estItems.length > 0 ? ` ${awaitingLines || estItems.length} item${(awaitingLines || estItems.length) === 1 ? "" : "s"} will be resolved by the Estimator after you submit.` : ""}`, next: "Rep: submit to the Estimator (Stage 1, step 5)." };
     return x;
   });
   // The up-front Estimator note stays until the Estimator-owned work is known to be done: hidden only once the quotation has been calculated and nothing is waiting on the Estimator.
@@ -410,7 +418,7 @@ export default function QuoteEditorPage() {
   const exclChip = blankExclusionKeys.length > 0 ? "a reason is needed - needs attention" : exclCount > 0 ? `${exclCount} excluded - complete` : "None excluded";
   const fe = fieldErrors({ siteName: draft.siteName, penningPigSize: cfg.penningPigSize, calcIssues: ev.calc.issues });
   const err = (k: string) => (touched.has(k) ? fe[k] : undefined);
-  const wizard = deriveWizard({ state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", revision: q.revision, stage1Status: stages[0].status, roles: { rep: roles.has("rep"), estimator: roles.has("estimator"), manager: roles.has("manager") }, canViewCommercials: view.viewer.canViewCommercials, stage1, customer: customerFacts, readiness: { state: rd.state }, totalAvailable: totalCents != null && totalCents > 0 });
+  const wizard = deriveWizard({ state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", revision: q.revision, stage1Status: stages[0].status, roles: { rep: roles.has("rep"), estimator: roles.has("estimator"), manager: roles.has("manager") }, canViewCommercials: view.viewer.canViewCommercials, stage1, customer: customerFacts, repReady, estimatorOpen: estItems.length, totalAvailable: totalCents != null && totalCents > 0 });
   // Resolve the entry step ONCE, after the customer facts have settled (read, failed or unavailable), and latch it: no later change of the facts can move the viewer (React's render-phase initialisation, as for `landing`).
   const factsSettled = customerFactsSettled(customerFacts) || factsGiveUp;
   if (stage === 1 && factsSettled && entry === null) setEntry(resolveEntryStep(wizard, reqStep));
@@ -553,11 +561,11 @@ export default function QuoteEditorPage() {
         <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs uppercase tracking-wide text-slate-700">Calculation</span>
-            <Status tone={stage === 1 ? (rd.state === "READY" ? "success" : "neutral") : READY_TONE[rd.state]}>{stage === 1 ? (rd.state === "READY" ? "Complete" : "In progress") : READINESS_LABEL[rd.state]}</Status>
+            <Status tone={stage === 1 ? (repReady ? "success" : "neutral") : READY_TONE[rd.state]}>{stage === 1 ? (repReady ? "Complete" : "In progress") : READINESS_LABEL[rd.state]}</Status>
             {previewFailure ? <Status tone="danger">Recalculation failed - figures are out of date</Status> : dirty && <Status tone="warning">Preview of unsaved edits</Status>}
           </div>
           <dl className="flex flex-wrap items-end gap-x-8 gap-y-1">
-            <div><dt className="text-xs uppercase tracking-wide text-slate-700">Quote total (ex VAT)</dt><dd className={`whitespace-nowrap text-xl font-bold tabular-nums ${previewFailure ? "text-slate-700 line-through decoration-1" : "text-slate-900"}`}>{totalCents == null ? "—" : fmtCents(totalCents)}{staleCue && <span className="ml-2 text-sm font-semibold no-underline" data-testid="summary-stale">{staleCue}</span>}</dd></div>
+            <div><dt className="text-xs uppercase tracking-wide text-slate-700" data-testid="total-caption">{awaitingLines > 0 ? `Indicative total (${awaitingLines} line${awaitingLines === 1 ? "" : "s"} await the Estimator)` : totalIndicative ? "Indicative total (ex VAT)" : "Quote total (ex VAT)"}</dt><dd className={`whitespace-nowrap text-xl font-bold tabular-nums ${previewFailure ? "text-slate-700 line-through decoration-1" : "text-slate-900"}`}>{totalCents == null ? "—" : fmtCents(totalCents)}{staleCue && <span className="ml-2 text-sm font-semibold no-underline" data-testid="summary-stale">{staleCue}</span>}</dd></div>
             {budget && !budget.incomplete && <div><dt className="text-xs uppercase tracking-wide text-slate-700">Total (inc VAT)</dt><dd className="whitespace-nowrap text-lg font-semibold tabular-nums text-slate-900">{fmtZar(budget.totals.totalIncTax)}</dd></div>}
             {budget && view.viewer.canViewCommercials && stage < 4 && <div><dt className="text-xs uppercase tracking-wide text-slate-700">Gross margin</dt><dd className="whitespace-nowrap text-lg font-semibold tabular-nums text-slate-900">{budget.totals.overallMarginPct == null ? "N/A" : `${budget.totals.overallMarginPct.toFixed(1)}%`}</dd></div>}
           </dl>
@@ -579,6 +587,9 @@ export default function QuoteEditorPage() {
               {returnInfo
                 ? <p className="mt-1" data-testid="return-reason">Returned by {returnInfo.by} on {formatSast(returnInfo.at)}: &ldquo;{returnInfo.reason}&rdquo;</p>
                 : <p className="mt-1">The Estimator or Manager sent this quotation back for corrections. Returned by the Estimator/Manager - see Approval history for the reason.</p>}
+              {effectInfo?.confirmationCleared && effectInfo.previousCents != null && effectInfo.newCents != null && (
+                <p className="mt-1 font-medium" data-testid="return-amount-change">The total changed from {fmtCents(effectInfo.previousCents)} to {fmtCents(effectInfo.newCents)}; the customer&apos;s confirmation was withdrawn: reconfirm the new amount with the customer and submit again.{effectInfo.approvalSyncError ? ` The approval request could not be updated: ${effectInfo.approvalSyncError}` : ""}</p>
+              )}
               <p className="mt-1">Fix what the Estimator described, then submit again.</p>
               <div className="mt-2"><ApprovalHistory docType="QUOTE" docId={id} label="Show the full approval history" /></div>
             </div>
@@ -786,7 +797,7 @@ export default function QuoteEditorPage() {
 
         {/* Steps 4 and 5 are outside the form fieldset, so their navigation works for every role. */}
         <StepPanel railId="s1" stepId="review" number={4} title={STAGE1_STEP_LABEL.review} current={stepId === "review"} showAll={showAllSteps} locked={lockedFor("review")} className="mt-6 grid min-w-0 gap-6">
-          <Stage1Review draft={draft} floorAreaM2={ev.calc.derived.floorAreaM2} totalLabel={totalCents == null ? "—" : fmtCents(totalCents)} derived={stage1} steps={wizard.steps} customer={customerFacts} canEdit={q.state === "REP_DRAFT" && roles.has("rep")}
+          <Stage1Review awaiting={awaiting} draft={draft} floorAreaM2={ev.calc.derived.floorAreaM2} totalLabel={totalCents == null ? "—" : fmtCents(totalCents)} derived={stage1} steps={wizard.steps} customer={customerFacts} canEdit={q.state === "REP_DRAFT" && roles.has("rep")}
             quantities={ev.calc.lines.filter((l) => l.basis !== "not_selected" && !l.exclusionReason && l.projectQuantity != null).map((l) => ({ label: l.label.split(" (")[0], qty: l.projectQuantity as number }))} onGoStep={goStep} />
         </StepPanel>
 
@@ -803,8 +814,9 @@ export default function QuoteEditorPage() {
             ) : (
               <div className="mt-2">
                 <p className="text-sm text-slate-700">Final step for the Rep. The Estimator reviews the costing next.</p>
+                {awaitingLines > 0 && <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950" data-testid="indicative-note">This total is indicative while {awaitingLines} line{awaitingLines === 1 ? "" : "s"} await{awaitingLines === 1 ? "s" : ""} the Estimator. If the Estimator&apos;s pricing changes it, the quotation returns to you to reconfirm the amount with the customer.</p>}
                 <div className="mt-3">
-                  <ConfirmationPanel quoteId={id} amountLabel={totalCents == null ? null : fmtCents(totalCents)} canAct={roles.has("rep") && q.state === "REP_DRAFT"} ready={rd.state === "READY"} loading={isWorking} refreshKey={`${q.revision}:${q.state}:${q.updated_at}`} recorded={false}
+                  <ConfirmationPanel quoteId={id} amountLabel={totalCents == null ? null : fmtCents(totalCents)} canAct={roles.has("rep") && q.state === "REP_DRAFT"} ready={repReady} indicativeLines={totalIndicative ? awaiting.lines : 0} loading={isWorking} refreshKey={`${q.revision}:${q.state}:${q.updated_at}`} recorded={false}
                     onConfirm={(c) => act(() => sendGrowerQuoteToEstimatorAction(id, totalCents!, c), "Submitted to the Estimator: the customer's price confirmation is recorded and the Estimator has been notified.", "send", (v) => v.quote.state === "ESTIMATOR_REVIEW", 1)} />
                 </div>
               </div>

@@ -111,9 +111,11 @@ export function ownedWork(w: Stage1WorkFacts): { rep: string[]; estimator: strin
 export function deriveStage1Steps(input: Stage1Input): Stage1Derived {
   const issues: Stage1Issue[] = [];
   // The Cin7 snapshot IS the customer identity: when one is selected the step is named even if the draft copy of the name has not been refreshed yet (never a stale "choose the customer").
-  const named = input.customerName.trim().length > 0 || (input.customer.available && input.customer.hasSnapshot);
+  // UX-006 S1b: where Cin7 customers are available the SNAPSHOT is the customer identity (a typed name is not); the typed name only counts when the feature is unavailable. While the facts are still loading the typed name stands in.
+  const identityFromSnapshot = input.customer.available && input.customer.loaded;
+  const named = identityFromSnapshot ? input.customer.hasSnapshot : input.customerName.trim().length > 0;
   const sited = input.siteName.trim().length > 0;
-  if (!named) issues.push({ message: CUSTOMER_REQUIRED_MESSAGE, stepId: "customer" });
+  if (!named && !identityFromSnapshot) issues.push({ message: CUSTOMER_REQUIRED_MESSAGE, stepId: "customer" });
   if (!sited) issues.push({ message: SITE_REQUIRED_MESSAGE, stepId: "site" });
   const roomIssues = input.calcIssues.filter((i) => ROOM_FIELDS.has(i.field) && i.code !== "unsupported_selection");
   const equipmentIssues = input.calcIssues.filter((i) => EQUIPMENT_FIELDS.has(i.field) && i.code !== "unsupported_selection");
@@ -126,11 +128,10 @@ export function deriveStage1Steps(input: Stage1Input): Stage1Derived {
 
   const c = input.customer;
   let customer: { status: StepStatus; note?: string };
-  if (!named) customer = { status: "incomplete" };
-  else if (c.loadError) customer = { status: "attention", note: "Could not read the Cin7 customer details" };
-  else if (!c.loaded) customer = { status: "incomplete", note: "Reading the Cin7 customer details…" };
-  else if (!c.available) customer = { status: "complete", note: "Cin7 customer lookup is not available yet; the typed name is used" };
-  else if (!c.hasSnapshot) customer = { status: "attention", note: NEEDED_BEFORE_ESTIMATOR };
+  if (c.loadError) customer = { status: named || input.customerName.trim() ? "attention" : "incomplete", note: "Could not read the Cin7 customer details" };
+  else if (!c.loaded) customer = input.customerName.trim() ? { status: "incomplete", note: "Reading the Cin7 customer details…" } : { status: "incomplete" };
+  else if (!c.available) customer = named ? { status: "complete", note: "Cin7 customer lookup is not available yet; the typed name is used" } : { status: "incomplete" };
+  else if (!c.hasSnapshot) customer = { status: "attention", note: "Select the Cin7 customer. Needed before sending to the Estimator" };
   else if (!c.hasContact) customer = { status: "attention", note: "Choose the quotation contact. Needed before sending to the Estimator" };
   else customer = { status: "complete" };
 

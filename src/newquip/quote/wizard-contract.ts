@@ -52,8 +52,11 @@ export interface WizardInput {
   /** deriveStage1Steps(...): the data-derived status of Customer, Site and Equipment, and every open item with its owner. */
   stage1: Stage1Derived;
   customer: Stage1CustomerFacts;
-  readiness: { state: "DRAFT" | "BLOCKED" | "READY" };
-  /** The quote total (ex VAT) is available (> 0). */
+  /** REP_CONFIGURATION_READY (readiness-concepts): every Rep-owned item is complete. Estimator-owned open items (mappings, supplier quotes, prices) are NOT a Rep blocker: they are shown, never gated. */
+  repReady: boolean;
+  /** How many Estimator-owned items are still open (informational only). */
+  estimatorOpen: number;
+  /** The INDICATIVE total (ex VAT, the server's own figure even while Estimator items are open) is available (> 0). */
   totalAvailable: boolean;
 }
 
@@ -103,10 +106,11 @@ export function deriveWizard(i: WizardInput): Wizard {
   const serverBlocks: string[] = [];
   if (c.loaded && c.available && !c.hasSnapshot) serverBlocks.push("Rep: select the Cin7 customer in step 1.");
   if (c.loaded && c.available && c.hasSnapshot && !c.hasContact) serverBlocks.push("Rep: choose the quotation contact in step 1.");
-  if (i.readiness.state !== "READY") {
-    if (estimatorOpen.length > 0) serverBlocks.push(`Estimator: ${estimatorOpen[0].message.replace(/^Estimator:?\s*/, "")}${estimatorOpen.length > 1 ? ` (+${estimatorOpen.length - 1} more)` : ""}. The quotation can be submitted once the Estimator has done this.`);
-    else serverBlocks.push("The quotation must be complete (nothing outstanding) before it can be submitted.");
-  } else if (!i.totalAvailable) serverBlocks.push("The quotation total is not available yet.");
+  // The server's handoff gate is REP_CONFIGURATION_READY plus an amount to confirm: Estimator-owned items never lock the Rep out (S1a).
+  if (!i.repReady) serverBlocks.push("Rep: finish the items still listed in Review (step 4) before you can submit.");
+  else if (!i.totalAvailable) serverBlocks.push(i.estimatorOpen > 0 || estimatorOpen.length > 0
+    ? "No amount can be confirmed yet: nothing is priced and the remaining items are for the Estimator. Enter the delivery / installation charges and any M75 price that are yours to supply, then confirm the amount."
+    : "There is no commercial amount for the customer to confirm.");
   const submitStatus: StepStatus = submitted ? "complete" : "incomplete";
 
   const status: Record<WizardStepId, StepStatus> = { customer: content("customer").status, site: content("site").status, equipment: content("equipment").status, review: reviewStatus, submit: submitStatus };
