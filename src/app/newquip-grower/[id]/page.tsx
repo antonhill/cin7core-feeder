@@ -315,6 +315,8 @@ export default function QuoteEditorPage() {
   const costKey = budget ? [q.id, q.revision, q.draft_hash, q.updated_at, budget.totals.estimatedCost, budget.totals.overallMarginPct].join("|") : null;
   const costAcknowledged = costKey != null && costAck === costKey && !dirty;
   const canAckCost = canCommercials && q.state === "ESTIMATOR_REVIEW" && (roles.has("estimator") || roles.has("manager")) && costKey != null;
+  const onCostUnmarked = canAckCost && step2Id === "cost" && !costAcknowledged;
+  const onCostMarked = canAckCost && step2Id === "cost" && costAcknowledged;
   const stage2 = deriveStage2Steps({
     canViewCommercials: canCommercials, editable, roles: { rep: roles.has("rep"), estimator: roles.has("estimator"), manager: roles.has("manager") }, revision: q.revision, state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", calcValid: ev.calc.valid, lines: ev.calc.lines,
     readiness: { state: rd.state, reasons: rd.reasons, missingMappings: rd.counts.missingMappings },
@@ -409,6 +411,15 @@ export default function QuoteEditorPage() {
           )} />
       )}
 
+      {stage === 2 && canAckCost && (showAllSteps || step2Id === "cost") && (
+        <div className="mt-4 max-w-3xl rounded-lg border border-indigo-200 bg-indigo-50 p-4" data-testid="cost-ack">
+          <p className="text-sm text-slate-800">This records that you have looked at the costing and margin for this version. It is not the Estimator sign-off.</p>
+          {costAcknowledged
+            ? <p className="mt-2 text-sm font-semibold text-slate-900" data-testid="cost-ack-done">You marked the costing reviewed for this version.</p>
+            : <Button type="button" className="mt-3 min-h-11" onClick={() => { setCostAck(costKey); if (!showAllSteps) goStep2("signoff"); }}>Mark reviewed &amp; continue</Button>}
+        </div>
+      )}
+      {stage === 2 && canAckCost && costAcknowledged && <p role="status" className="mt-3 text-sm text-slate-800" data-testid="cost-ack-status">Cost &amp; margin marked reviewed - this is not a sign-off.</p>}
       {stage <= 2 && (
         <>
           <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -784,14 +795,6 @@ export default function QuoteEditorPage() {
           </fieldset>
         )}
 
-        {canAckCost && (showAllSteps || step2Id === "cost") && (
-          <div className="mt-4 max-w-3xl rounded-lg border border-slate-200 bg-white p-4" data-testid="cost-ack">
-            <p className="text-sm text-slate-800">This records that you have looked at the costing and margin for this version. It is not the Estimator sign-off.</p>
-            {costAcknowledged
-              ? <p className="mt-2 text-sm font-semibold text-slate-900" data-testid="cost-ack-done">You marked the costing reviewed for this version.</p>
-              : <Button type="button" className="mt-3 min-h-11" onClick={() => { setCostAck(costKey); if (!showAllSteps) goStep2("signoff"); }}>Mark reviewed &amp; continue</Button>}
-          </div>
-        )}
 
         <StepPanel railId="s2" stepId="signoff" number={step2Ids.indexOf("signoff") + 1} title={STAGE2_STEP_LABEL.signoff} current={step2Id === "signoff"} showAll={showAllSteps} className="mt-6 space-y-6">
           <Panel>
@@ -830,7 +833,7 @@ export default function QuoteEditorPage() {
         {!showAllSteps && (
           <div className="mt-6 flex items-center justify-between gap-3" data-testid="step-buttons">
             {step2Cur > 1 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep2No(step2Cur - 1)}>Back</Button> : <span />}
-            {step2Cur < step2Ids.length ? <Button type="button" className="min-h-11" onClick={() => goStep2No(step2Cur + 1)}>Next</Button> : <span />}
+            {step2Cur < step2Ids.length ? <Button type="button" variant={onCostUnmarked ? "secondary" : "primary"} className="min-h-11" onClick={() => goStep2No(step2Cur + 1)}>{onCostUnmarked ? "Next without marking reviewed" : onCostMarked ? "Next: Sign-off or return" : "Next"}</Button> : <span />}
           </div>
         )}
         </>

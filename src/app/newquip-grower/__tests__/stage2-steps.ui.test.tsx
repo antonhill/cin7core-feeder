@@ -295,6 +295,35 @@ describe("UX-006b Stage 2: Mark reviewed & continue (client-local cost acknowled
     expect(shown("signoff")).toBe(true); // after the acknowledgement the next open step is the sign-off
   }, 60000);
 
+  it("the acknowledgement sits at the TOP (before the cost panels, no hunting); the plain Next on this step reads 'Next without marking reviewed'; after marking, focus moves to the Sign-off heading with a status line, and Next becomes 'Next: Sign-off or return'", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
+    const box = screen.getByTestId("cost-ack");
+    expect(box.compareDocumentPosition(panel("cost")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy(); // the box comes before the cost step
+    const next = screen.getByTestId("step-buttons").querySelector("button:last-child") as HTMLButtonElement;
+    expect(next.textContent).toBe("Next without marking reviewed");
+    expect(screen.queryByTestId("cost-ack-status")).toBeNull();
+    fireEvent.click(ackBtn());
+    expect(document.activeElement?.textContent).toBe("Step 5 · Sign-off or return");
+    expect(screen.getByTestId("cost-ack-status").getAttribute("role")).toBe("status");
+    expect(screen.getByTestId("cost-ack-status").textContent).toBe("Cost & margin marked reviewed - this is not a sign-off.");
+    fireEvent.click(rail().querySelector('[data-step="cost"]')!);
+    expect((screen.getByTestId("step-buttons").querySelector("button:last-child") as HTMLButtonElement).textContent).toBe("Next: Sign-off or return");
+  }, 60000);
+
+  it("the plain Next on Cost & margin is pure navigation: it moves on without marking anything reviewed", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
+    fireEvent.click(screen.getByRole("button", { name: "Next without marking reviewed" }));
+    expect(shown("signoff")).toBe(true);
+    expect(status("cost")).toBe("Review needed");
+    expect(gcount("estimator")).toBe("0 of 2 complete");
+  }, 30000);
+
+  it("a Rep and a non-commercial viewer see the ordinary Next (never the relabelled one) and no status line", async () => {
+    await open({ roles: ["REP"], step: "2", ...SUBMITTED });
+    expect(screen.queryByRole("button", { name: /without marking reviewed/ })).toBeNull();
+    expect(screen.queryByTestId("cost-ack-status")).toBeNull();
+  }, 30000);
+
   it("the acknowledgement is stale after an unsaved edit, and after a save changes the version", async () => {
     await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
     fireEvent.click(ackBtn());
