@@ -199,7 +199,7 @@ describe("posting facts mapped from real posting rows", () => {
     expect(row("CREATED", { requested_at: STALE }).stalePending).toBe(false);
   });
   it("the display label is unchanged by the additive fields", () => {
-    expect(row("CREATED", { last_error_code: "AMOUNT_MISMATCH" }).label).toBe("Draft invoice created");
+    expect(row("CREATED", { last_error_code: "AMOUNT_MISMATCH" }).label).toBe("Draft recorded");
   });
 });
 
