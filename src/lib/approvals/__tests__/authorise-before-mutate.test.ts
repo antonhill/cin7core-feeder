@@ -6,6 +6,7 @@ import { FakeDb } from "@/lib/projects/__tests__/fake-db";
 import { seedGoldenCatalogue } from "@/newquip/grower/__tests__/golden-catalogue";
 import { emptyDraft } from "@/newquip/grower/draft";
 import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
+import { withAcceptedIncompleteCosting } from "@/newquip/grower/__tests__/golden";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { createWorkbookPriceSource } from "@/newquip/grower/workbook-price-source";
 import { NEWQUIP_MASTER_POC_SNAPSHOT } from "@/newquip/grower/snapshot";
@@ -24,7 +25,8 @@ const OWNER_NO_ROLE = ctxOf("u-own", "own@a", true);
 const OTHER_ORG = ctxOf("u-x", "x@other", true, "org-other");
 const EMAILS: Record<string, string> = { "u-rep": "rep@a", "u-est": "est@a", "u-mgr": "mgr@a", "u-adm": "adm@a", "u-own": "own@a" };
 const priceCtx = { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: true };
-const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
+// Authorisation tests, not costing tests: the sign-off/approval costing gate (S1a) is covered in rep-handoff.test.ts, so this fixture records the accepted-incomplete-costing exception like the other workflow fixtures.
+const draft = withAcceptedIncompleteCosting(applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft);
 const total = Math.round(evaluateDraft(draft, priceCtx).budget!.totals.subtotalExTax * 100);
 
 function world() {
