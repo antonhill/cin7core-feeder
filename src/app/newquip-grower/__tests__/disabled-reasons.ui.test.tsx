@@ -132,9 +132,9 @@ describe("F-12 Solution Builder disabled controls say why", () => {
     expect(approve.disabled).toBe(true);
     expect(described(approve)).toMatch(/Waiting for the Estimator/);
     cleanup();
-    await open("3", ["REP"], "ESTIMATOR_REVIEW", "Final approval needs the manager role (org owner/admin).");
+    await open("3", ["REP"], "ESTIMATOR_REVIEW", "Final approval needs the Manager role.");
     const approve2 = screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement;
-    expect(described(approve2)).toMatch(/needs the manager role/);
+    expect(described(approve2)).toMatch(/needs the Manager role/);
   }, 60000);
 
   it("Stage 1 pig-size options use the shared money format (R 1 300,00 / rm), not hard-coded R1,300", async () => {

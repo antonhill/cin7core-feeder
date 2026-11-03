@@ -160,3 +160,16 @@ export function deriveStage1Steps(input: Stage1Input): Stage1Derived {
   const mk = (id: Stage1ContentStepId, s: { status: StepStatus; note?: string }) => ({ id, label: STAGE1_STEP_LABEL[id], status: s.status, ...(s.note ? { note: s.note } : {}) });
   return { steps: [mk("customer", customer), mk("site", site), mk("equipment", equipment)], issues, stage2Reasons, open };
 }
+
+/** Inline messages for the Stage 1 fields, keyed by the calculation's field name (plus `siteName` and `penningPigSize`). Human wording only; the page decides WHEN to show each (after the field was touched or the viewer left the step). */
+export function fieldErrors(i: Pick<Stage1Input, "siteName" | "penningPigSize" | "calcIssues">): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!i.siteName.trim()) out.siteName = SITE_REQUIRED_MESSAGE;
+  for (const c of i.calcIssues) if ((ROOM_FIELDS.has(c.field) || EQUIPMENT_FIELDS.has(c.field)) && c.code !== "unsupported_selection" && !out[c.field]) out[c.field] = friendly(c);
+  if ((i.penningPigSize == null || i.penningPigSize === "") && !out.penningPigSize) out.penningPigSize = "Choose the penning pig size.";
+  return out;
+}
+/** The field keys (see fieldErrors) that live on each Stage 1 content step: leaving the step marks them touched. */
+export const STEP_FIELD_KEYS: Record<Stage1ContentStepId, readonly string[]> = {
+  customer: [], site: ["siteName", "lengthM", "widthM", "rooms", "totalPens", "hospitalPens", "pigsPerRoom"], equipment: ["penningPigSize", "feederVariant", "slattedFloorAreaM2", "penningRunningMetresPerRoom"],
+};

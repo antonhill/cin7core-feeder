@@ -184,9 +184,12 @@ describe("locks unlock only when the earlier steps are complete (and say why)", 
     const issues = screen.getByTestId("stage1-review-issues");
     const tags = within(issues).getAllByTestId("owner-tag").map((t) => t.textContent);
     expect(tags).toContain("Estimator");
-    expect(within(issues).getAllByText(/Estimator mapping needed/).length).toBeGreaterThan(0);
-    expect(within(issues).getAllByText(/Waiting on the Estimator/).length).toBeGreaterThan(0);
-    expect(within(issues).queryByRole("button", { name: /Estimator mapping/ })).toBeNull();
+    // Estimator-owned items are GROUPED (one row, owner named once) with an expandable list, and there is nothing for the Rep to click.
+    expect(within(issues).getAllByTestId("est-mappings-group").length).toBe(1);
+    expect(within(issues).getByTestId("est-mappings-group").textContent).toMatch(/The Estimator must confirm \d+ product mappings?\./);
+    expect(within(issues).getAllByText(/nothing for you to do for them/).length).toBe(1);
+    expect(within(issues).queryByRole("button", { name: /Estimator mapping|Go to step/ })).toBeNull();
+    expect(screen.getByTestId("review-next").textContent).toMatch(/^Everything you can do is complete\. Waiting on the Estimator for \d+ items? - nothing for you to do yet\./);
     expect(within(screen.getByTestId("stage1-review-chips")).getAllByRole("listitem").length).toBe(3);
   }, 30000);
 });
@@ -331,7 +334,7 @@ describe("Submit to Estimator (step 5) and the moved Rep panels", () => {
     await waitFor(() => expect(within(sub).getByTestId("confirmed-by-line")).toBeTruthy(), { timeout: 5000 });
     expect(within(sub).getByTestId("confirmed-by-line").textContent).toContain("Customer price confirmed by Sean <s@x.co>");
     expect((within(sub).getByTestId("alt-confirmer") as HTMLDetailsElement).open).toBe(false);
-    expect(within(sub).getByText("Someone else confirmed the price")).toBeTruthy();
+    expect(within(sub).getByText("Price confirmed by someone other than the quotation contact (optional)")).toBeTruthy();
     expect(within(sub).getByTestId("submit-effects").textContent).toMatch(/records the customer.s price confirmation above, notifies the Estimator and moves the quotation to Estimator review. Any unsaved edits are saved first/);
     expect(within(sub).getByRole("button", { name: "Submit to Estimator" })).toBeTruthy();
     expect(send).not.toHaveBeenCalled();
@@ -446,5 +449,155 @@ describe("show all steps, persistence and roles", () => {
     expect((screen.getByTestId("stage1-layout") as HTMLFieldSetElement).disabled).toBe(true);
     for (const id of ["customer", "site", "equipment", "review", "submit"]) expect(status(id)).not.toBe("Locked");
     expect(screen.queryByRole("button", { name: "Submit to Estimator" })).toBeNull();
+  }, 30000);
+});
+
+// ── Real-browser findings on #185 @61fa036 (level 2), each fixed with a test ──
+const viewing = () => document.querySelector('[data-stage][aria-current="step"]')!.getAttribute("data-stage");
+const noMapDraft = () => ({ config: { ...readyDraft.config }, estimator: { ...readyDraft.estimator, confirmedMappings: {}, priceResolutions: {} } });
+
+describe("P1-1: the landing stage and entry step are role-aware (no ?stage=)", () => {
+  it("a Rep on a READY, unsubmitted Rep draft lands on Stage 1 step 5 (Submit), the card says 'Ready to submit' (never 'Complete') and the next-action line says what the Rep does", async () => {
+    await open({ view: snapshotView(true), draftOver: readyDraft, stage: "" });
+    expect(viewing()).toBe("1");
+    expect(current()).toBe("submit");
+    const card = document.querySelector('[data-stage="1"]')!;
+    expect(card.textContent).toContain("Ready to submit");
+    expect(card.textContent).not.toContain("Complete");
+    expect(screen.getByTestId("next-action").textContent).toContain("Rep: submit to the Estimator (Stage 1, step 5).");
+  }, 30000);
+
+  it("a returned quotation opens on Stage 1 at the first incomplete step", async () => {
+    await open({ view: snapshotView(true), draftOver: { ...readyDraft, siteName: "" }, row: { revision: 2 }, stage: "" });
+    expect(viewing()).toBe("1");
+    expect(current()).toBe("site");
+  }, 30000);
+
+  it("a Rep whose own steps are done but who waits on Estimator mappings lands on Stage 1 and is told nothing is left for them", async () => {
+    await open({ view: snapshotView(true), draftOver: noMapDraft(), stage: "" });
+    expect(viewing()).toBe("1");
+    expect(document.querySelector('[data-stage="1"]')!.textContent).toContain("Waiting on the Estimator");
+    expect(screen.getByTestId("next-action").textContent).toMatch(/nothing for you to do yet/);
+  }, 30000);
+
+  it("an Estimator-only viewer on a Rep draft with Estimator-owned mapping lands on Stage 2; without such work as before (Stage 1)", async () => {
+    await open({ view: snapshotView(true), draftOver: noMapDraft(), roles: ["ESTIMATOR"], commercials: true, stage: "" });
+    await waitFor(() => expect(viewing()).toBe("2"));
+    expect(document.querySelector('[data-stage="1"]')!.textContent).not.toContain("Ready to submit"); // never for others
+  }, 30000);
+});
+
+describe("P1-2: inline validation at the field", () => {
+  it("a fresh blank form does not shout; a touched field shows a human message under it with aria-invalid and aria-describedby; leaving the step shows the rest", async () => {
+    await open({ view: snapshotView(true), draftOver: { siteName: "", config: { ...goodConfig, lengthM: 0 } }, step: "2" });
+    expect(screen.queryAllByTestId("field-error").length).toBe(0);
+    const site = screen.getByLabelText(/^Site \/ project name/) as HTMLInputElement;
+    expect(site.getAttribute("aria-invalid")).toBeNull();
+    fireEvent.blur(site);
+    const err = within(site.closest("label")!).getByTestId("field-error");
+    expect(err.textContent).toBe("Site / project name is required.");
+    expect(site.getAttribute("aria-invalid")).toBe("true");
+    expect(site.getAttribute("aria-describedby")).toBe(err.id);
+    const len = screen.getByLabelText(/^Length/);
+    expect(len.getAttribute("aria-invalid")).toBeNull(); // not touched yet
+    fireEvent.click(screen.getByRole("button", { name: "Back" })); // leaving the step = trying to proceed
+    expect(len.getAttribute("aria-invalid")).toBe("true");
+    expect(document.getElementById(len.getAttribute("aria-describedby")!)!.textContent).toBe("Length must be greater than zero."); // human label, not "lengthM"
+    expect(document.body.textContent).not.toMatch(/lengthM|widthM/);
+    fireEvent.change(len, { target: { value: "49.5" } });
+    await waitFor(() => expect(len.getAttribute("aria-invalid")).toBeNull());
+  }, 30000);
+
+  it("a missing penning pig size shows at the select once touched", async () => {
+    await open({ view: snapshotView(true), draftOver: { config: { ...goodConfig, penningPigSize: null } }, step: "3" });
+    expect(screen.queryAllByTestId("field-error").length).toBe(0);
+    const sel = screen.getByLabelText("Penning pig size");
+    fireEvent.blur(sel);
+    expect(sel.getAttribute("aria-invalid")).toBe("true");
+    expect(document.getElementById(sel.getAttribute("aria-describedby")!)!.textContent).toBe("Choose the penning pig size.");
+  }, 30000);
+});
+
+describe("P1-3: every control on every Stage 1 step has an accessible name", () => {
+  const nameOf = (el: Element): string => {
+    const lab = (el as HTMLInputElement).labels ? [...((el as HTMLInputElement).labels ?? [])].map((l) => l.textContent ?? "").join(" ") : "";
+    const by = (el.getAttribute("aria-labelledby") ?? "").split(" ").map((i) => document.getElementById(i)?.textContent ?? "").join(" ");
+    const own = el.tagName === "BUTTON" || el.tagName === "SUMMARY" ? el.textContent ?? "" : "";
+    return (el.getAttribute("aria-label") ?? "") + lab + by + own + (el.getAttribute("title") ?? "");
+  };
+  it.each([["REP", ["REP", "ESTIMATOR"] as Role[], false], ["observer", [] as Role[], true]])("%s (all steps mounted, show-all)", async (_n, roles, comm) => {
+    vi.stubGlobal("localStorage", { getItem: () => "1", setItem: () => undefined });
+    await open({ view: snapshotView(true), draftOver: readyDraft, roles, commercials: comm });
+    const bad = [...document.querySelectorAll('[data-step-panel] input:not([type="hidden"]), [data-step-panel] select, [data-step-panel] textarea, [data-step-panel] button, [data-step-panel] summary')].filter((el) => nameOf(el).trim() === "").map((el) => `${el.tagName}:${el.getAttribute("placeholder") ?? el.className.slice(0, 30)}`);
+    expect(bad).toEqual([]);
+    expect(screen.getAllByLabelText(/^Quantity override for /).length).toBeGreaterThan(0);
+    expect(screen.getAllByLabelText(/^Exclusion reason for /).length).toBeGreaterThan(0);
+  }, 30000);
+});
+
+describe("P2 fixes", () => {
+  it("(a) the Rep reads 'Quantity needed' on quantities the Rep must enter, never 'Estimator input required'", async () => {
+    await open({ view: snapshotView(true), step: "3" });
+    const t = (panel("equipment") as HTMLElement).textContent ?? "";
+    expect(t).toContain("QUANTITY NEEDED");
+    expect(t).toContain("Quantity needed:");
+    expect(t).not.toMatch(/ESTIMATOR INPUT REQUIRED|Estimator input required/);
+  }, 30000);
+
+  it("(b) the sample note clears on a step change; the save message mentions sign-off only when one was withdrawn", async () => {
+    await open({ view: snapshotView(true), step: "2", draftOver: { config: { ...goodConfig, lengthM: 0 } } });
+    fireEvent.click(screen.getByRole("button", { name: "Load sample measurements" }));
+    expect(screen.getByTestId("sample-note")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.queryByTestId("sample-note")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(screen.getByText("Draft saved.")).toBeTruthy(), { timeout: 8000 });
+    expect(document.body.textContent).not.toMatch(/sign-off made on earlier content/);
+  }, 30000);
+
+  it("(c) the unsaved note says nothing about costs or margins to a viewer who cannot see them", async () => {
+    await open({ view: snapshotView(true), step: "2" });
+    await act(async () => { fireEvent.change(screen.getByLabelText(/^Length/), { target: { value: "50" } }); });
+    expect(screen.getByTestId("unsaved-note").textContent).toMatch(/quantities, prices and totals are a live preview/);
+    expect(screen.getByTestId("unsaved-note").textContent).not.toMatch(/cost|margin/i);
+  }, 30000);
+
+  it("(e) the breadcrumb link and the optional-equipment rows have 44px hit areas", async () => {
+    await open({ view: snapshotView(true), step: "3" });
+    expect(screen.getByRole("link", { name: /Solution Builder quotes/ }).className).toContain("min-h-11");
+    const label = screen.getByTestId("optional-state-controller").closest("label")!;
+    expect(label.className).toContain("min-h-11");
+    expect(label.querySelector("input")!.className).toContain("size-6");
+  }, 30000);
+
+  it("(f) Cancel on the replace-customer warning returns to the current customer view (search closed)", async () => {
+    await open({ view: snapshotView(true), step: "1" });
+    vi.spyOn(ca, "searchQuoteCustomersForQuoteAction").mockResolvedValue({ ok: true, data: [{ name: "Other", tradingName: null, contactName: null, email: null, currency: null }] } as never);
+    fireEvent.click(screen.getByRole("button", { name: "Change customer" }));
+    fireEvent.change(screen.getByLabelText(/Search by name/), { target: { value: "Other" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search Cin7 customers" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Select" }));
+    await screen.findByTestId("replace-warning-effects");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByLabelText(/Search by name/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Change customer" })).toBeTruthy();
+    expect(screen.getByTestId("customer-title").textContent).toBe("Acme Pigs");
+  }, 30000);
+
+  it("(g) the quotation-only contact says it is audited and not written to Cin7", async () => {
+    await open({ view: snapshotView(true), step: "1" });
+    fireEvent.click(screen.getByRole("button", { name: /Quotation-only contact/ }));
+    expect(screen.getByText(/recorded in the audit trail and used on this quotation only; it is not written to Cin7/)).toBeTruthy();
+  }, 30000);
+
+  it("(i) 'price confirmed by someone else' is a collapsed, clearly-labelled optional confirmer (not a delivery contact), and keeps its function", async () => {
+    await open({ view: snapshotView(true), draftOver: readyDraft, step: "5" });
+    const sub = panel("submit") as HTMLElement;
+    const d = (await within(sub).findByTestId("alt-confirmer")) as HTMLDetailsElement;
+    expect(d.open).toBe(false);
+    expect(d.textContent).toContain("Price confirmed by someone other than the quotation contact (optional)");
+    expect(d.textContent).toMatch(/does not change who the quotation is sent to/);
+    expect(d.textContent).toContain("Another Cin7 contact:"); // functionality kept, inside the disclosure only
+    expect(within(sub).getAllByRole("radio", { hidden: true }).every((r) => d.contains(r))).toBe(true);
   }, 30000);
 });

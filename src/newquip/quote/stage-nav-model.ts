@@ -12,5 +12,7 @@ export function navStatusLabel(stage: StageView, previewable: boolean, viewer?: 
     if (has("rep") && !has("estimator") && !has("manager")) return "With the Estimator";
     if (has("estimator") && !has("manager")) return "Awaiting your review";
   }
+  // Stage 1 is COMPLETE once the quote is READY, but a Rep still has to submit it: for a Rep on a Rep draft the chip says so (never "Complete" before the submission). Nobody else sees this wording.
+  if (viewer && stage.id === 1 && stage.status === "COMPLETE" && viewer.state === "REP_DRAFT" && viewer.roles.includes("rep")) return "Ready to submit";
   return stage.statusLabel;
 }

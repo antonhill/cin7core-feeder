@@ -111,7 +111,7 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
           </ul>
           <div className="mt-2 flex gap-2">
             <Button type="button" className="min-h-11" disabled={busy} onClick={confirmPending}>{pending.kind === "replace" ? "Replace customer" : "Clear customer"}</Button>
-            <Button type="button" className="min-h-11" variant="secondary" disabled={busy} onClick={() => setPending(null)}>Cancel</Button>
+            <Button type="button" className="min-h-11" variant="secondary" disabled={busy} onClick={() => { setPending(null); setChanging(false); setHits([]); setQ(""); setSearched(null); }}>Cancel</Button>
           </div>
         </Alert>
       )}
@@ -198,7 +198,7 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
               <input className={inputCls} aria-label="Phone (optional)" placeholder="Phone (optional)" value={entered.phone} onChange={(e) => setEntered({ ...entered, phone: e.target.value })} />
               <Button type="button" className="min-h-11" disabled={busy} onClick={() => void run(async () => { const r = await chooseQuoteContactAction(quoteId, { source: "ENTERED", ...entered }); if (r.ok) { setAdding(false); setEntered({ name: "", email: "", phone: "" }); } return r; })}>Use this contact</Button>
               </div>
-              <p className="text-xs text-slate-600">For a person who is not in Cin7. Validated and audited, used on this quotation only, and never written to Cin7.</p>
+              <p className="text-xs text-slate-600">For a person who is not in Cin7: recorded in the audit trail and used on this quotation only; it is not written to Cin7.</p>
             </fieldset>
           )}
           </>)}

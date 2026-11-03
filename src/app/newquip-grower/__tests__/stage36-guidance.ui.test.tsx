@@ -120,7 +120,7 @@ describe("UX-006c Stage 3: the 'before you decide' checklist", () => {
     await open({ stage: "3", roles: ["REP"], row: { ...review, estimator_signoff_hash: "CURRENT" } });
     await screen.findByTestId("approval-checklist", {}, { timeout: 8000 });
     expect(checks().signoff).toBe("Met");
-    expect(screen.getByText("Final approval needs the manager role (org owner/admin).")).toBeTruthy();
+    expect(screen.getByText("Final approval needs the Manager role.")).toBeTruthy();
     expect((screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement).disabled).toBe(true);
     const text = screen.getByTestId("approval-checklist").textContent ?? "";
     for (const leak of ["margin", "Margin", "cost", "GP"]) expect(text, leak).not.toContain(leak);

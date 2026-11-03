@@ -19,6 +19,9 @@ import { fmtZar, NumField, TextField } from "../fields";
 
 type Edit = (fn: (d: QuoteDraft) => void) => void;
 const KIND_TONE: Record<ValueKind, BadgeTone> = { auto_calculated: "success", default_suggested: "info", estimator_input_required: "warning", estimator_input: "neutral" };
+/** What the REP reads on a row: the quantities are theirs to enter, so "estimator input required" becomes "Quantity needed". Estimator-owned wording stays only where the Estimator owns the work (the Product column). */
+const repKindLabel = (k: ValueKind, notSelected: boolean): string => (notSelected ? "NOT INCLUDED" : k === "estimator_input_required" ? "QUANTITY NEEDED" : k === "estimator_input" ? "QUANTITY ENTERED" : VALUE_KIND_LABEL[k]);
+const repTreatment = (t: string): string => (t === "estimator_input" ? "you enter the quantity" : t.replace(/_/g, " "));
 export const CHARGE_HELP: Record<ChargeKey, string> = {
   delivery: "From the courier invoice — truck size × truck price; distance affects it.",
   installation: "From the teams' service reports — days × daily rate.",
@@ -59,11 +62,11 @@ export function LineDecisionsTable({ draft, ev, edit, roles, editable, mode, qua
                 <td className="py-3 pr-3"><div className="font-medium text-slate-900">{l.label}</div><div className="font-mono text-xs text-slate-600">{l.ruleId}</div>
                   {l.exclusionReason && <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-amber-900"><Status tone="warning">Excluded</Status>{l.exclusionReason}</div>}
                   {optionalOff && <div className="mt-1"><Status tone="neutral">Not selected</Status></div>}</td>
-                <td className="py-3 pr-3"><Status tone={l.overrideState === "manual_override" ? "warning" : KIND_TONE[kind]}>{l.overrideState === "manual_override" ? "OVERRIDE" : VALUE_KIND_LABEL[kind]}</Status>
-                  <div className="mt-1 text-xs text-slate-600">{rule.treatment.replace(/_/g, " ")}</div></td>
+                <td className="py-3 pr-3"><Status tone={l.overrideState === "manual_override" ? "warning" : KIND_TONE[kind]}>{l.overrideState === "manual_override" ? "OVERRIDE" : rep ? repKindLabel(kind, optionalOff) : VALUE_KIND_LABEL[kind]}</Status>
+                  <div className="mt-1 text-xs text-slate-600">{rep ? repTreatment(rule.treatment) : rule.treatment.replace(/_/g, " ")}</div></td>
                 <td className="py-3 pr-3 min-w-[230px]">
                   {rule.estimatorEntry && l.basis !== "not_selected" && (
-                    quantitiesEditable ? <NumField label="" value={cfg.estimatorQuantities?.[k] ?? null} onChange={(v) => edit((d) => { d.config.estimatorQuantities = { ...d.config.estimatorQuantities }; if (v == null) delete d.config.estimatorQuantities[k]; else d.config.estimatorQuantities[k] = v; })}
+                    quantitiesEditable ? <NumField label="" ariaLabel={`Quantity per room for ${l.label}`} value={cfg.estimatorQuantities?.[k] ?? null} onChange={(v) => edit((d) => { d.config.estimatorQuantities = { ...d.config.estimatorQuantities }; if (v == null) delete d.config.estimatorQuantities[k]; else d.config.estimatorQuantities[k] = v; })}
                       hint={l.itemKey === "feeder" ? `Capacity ${CCM_FEEDER_CAPACITY_PIGS} pigs/feeder · ${cfg.pigsPerRoom} pigs/room. You confirm the number.` : l.itemKey === "cup_drinker" ? `Suggested ${l.suggestedQuantityPerRoom ?? "—"} (${cfg.pigsPerRoom} ÷ ${PIGS_PER_DRINKER}, unrounded). You confirm the number.` : l.itemKey === "flex_auger" ? "Number of M75 systems per room (client preference)" : "Enter the quantity"} />
                       : <span className="tabular-nums text-slate-800" data-testid={`qty-readonly-${l.itemKey}`}>{cfg.estimatorQuantities?.[k] ?? <span className="text-amber-800">not entered</span>}</span>
                   )}
@@ -71,10 +74,10 @@ export function LineDecisionsTable({ draft, ev, edit, roles, editable, mode, qua
                   {!rule.estimatorEntry && rule.defaultCompute && (
                     <div className="space-y-1">
                       <div className="text-xs text-slate-600">Default <strong>{l.defaultQuantityPerRoom ?? "—"}</strong>{l.itemKey === "led_light" ? " = ceil(area ÷ 25)" : " = 1 per feeder"}</div>
-                      {quantitiesEditable ? <NumField label="" placeholder="Override (blank = default)" value={cfg.quantityOverrides?.[k] ?? null} onChange={(v) => edit((d) => { d.config.quantityOverrides = { ...d.config.quantityOverrides }; if (v == null) delete d.config.quantityOverrides[k]; else d.config.quantityOverrides[k] = v; })} />
+                      {quantitiesEditable ? <NumField label="" ariaLabel={`Quantity override for ${l.label}`} placeholder="Override (blank = default)" value={cfg.quantityOverrides?.[k] ?? null} onChange={(v) => edit((d) => { d.config.quantityOverrides = { ...d.config.quantityOverrides }; if (v == null) delete d.config.quantityOverrides[k]; else d.config.quantityOverrides[k] = v; })} />
                         : cfg.quantityOverrides?.[k] != null && <span className="text-xs text-slate-800">Override {cfg.quantityOverrides[k]}</span>}
                       {quantitiesEditable && cfg.quantityOverrides?.[k] != null && (
-                        <TextField label="" placeholder="Reason for the override (required)" value={cfg.quantityOverrideReasons?.[k] ?? ""} onChange={(v) => edit((d) => { d.config.quantityOverrideReasons = { ...d.config.quantityOverrideReasons, [k]: v }; })} />
+                        <TextField label="" ariaLabel={`Reason for the override of ${l.label}`} placeholder="Reason for the override (required)" value={cfg.quantityOverrideReasons?.[k] ?? ""} onChange={(v) => edit((d) => { d.config.quantityOverrideReasons = { ...d.config.quantityOverrideReasons, [k]: v }; })} />
                       )}
                     </div>
                   )}
@@ -90,7 +93,7 @@ export function LineDecisionsTable({ draft, ev, edit, roles, editable, mode, qua
                   </div>
                 ) : mapControl === "waiting_for_estimator" && !b?.sku ? <span className="text-amber-800">Awaiting an Estimator to choose the Cin7 product.</span> : b?.sku ?? (b?.pricedBy === "penning_rate" ? "Pig-size / running-metre basis" : b?.pricedBy === "estimator_input" ? "Estimator-priced system" : b?.pricedBy === "estimator_resolution" ? "Estimator-resolved" : "—")}</td>
                 {!rep && <td className="whitespace-nowrap py-3 pr-3 text-right tabular-nums">{b?.revenueExTax != null ? fmtZar(b.revenueExTax) : "—"}</td>}
-                <td className="py-3 text-xs">{b ? (b.status === "priced" ? <span className="text-emerald-800"><span aria-hidden>✓ </span>Priced</span> : b.status === "not_selected" ? "" : <span className="text-amber-800">{b.reason}</span>) : ""}</td>
+                <td className="py-3 text-xs">{b ? (b.status === "priced" ? <span className="text-emerald-800"><span aria-hidden>✓ </span>Priced</span> : b.status === "not_selected" ? "" : <span className="text-amber-800">{rep ? b.reason.replace(/^Estimator input required — /, "Quantity needed: ") : b.reason}</span>) : ""}</td>
               </tr>
             );
           })}
@@ -134,7 +137,7 @@ export function ExclusionsSection({ draft, ev, edit }: { draft: QuoteDraft; ev: 
                 <label className="flex min-h-11 items-center gap-2 text-slate-800"><input type="checkbox" className="size-6" checked={on} onChange={(e) => edit((d) => { d.config.exclusions = { ...d.config.exclusions }; if (e.target.checked) d.config.exclusions[k] = ""; else delete d.config.exclusions[k]; })} /> Exclude {l.label.split(" (")[0]}</label>
                 <span className={`text-xs font-semibold ${on ? "text-amber-900" : "text-slate-600"}`} aria-hidden>{on ? "! Excluded" : "Included"}</span>
               </div>
-              {on && <div className="mt-2"><TextField label="" placeholder="Reason (required)" value={cfg.exclusions?.[k] ?? ""} onChange={(v) => edit((d) => { d.config.exclusions = { ...d.config.exclusions, [k]: v }; })} hint={(cfg.exclusions?.[k] ?? "").trim() ? undefined : "A reason is required before this can be saved."} /></div>}
+              {on && <div className="mt-2"><TextField label="" ariaLabel={`Exclusion reason for ${l.label}`} placeholder="Reason (required)" value={cfg.exclusions?.[k] ?? ""} onChange={(v) => edit((d) => { d.config.exclusions = { ...d.config.exclusions, [k]: v }; })} hint={(cfg.exclusions?.[k] ?? "").trim() ? undefined : "A reason is required before this can be saved."} /></div>}
             </li>
           );
         })}

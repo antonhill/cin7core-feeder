@@ -46,6 +46,11 @@ export function Stage1Review({ draft, floorAreaM2, totalLabel, derived, steps, c
   ];
   const rep = derived.open.filter((o) => o.owner === "Rep");
   const est = derived.open.filter((o) => o.owner === "Estimator");
+  const estMaps = est.filter((o) => o.message.startsWith("Estimator mapping needed:"));
+  const estOther = est.filter((o) => !o.message.startsWith("Estimator mapping needed:"));
+  const nextLine = rep.length > 0 ? `Next: finish ${rep.length} item${rep.length === 1 ? "" : "s"} listed below.`
+    : est.length > 0 ? `Everything you can do is complete. Waiting on the Estimator for ${est.length} item${est.length === 1 ? "" : "s"} - nothing for you to do yet.`
+    : "Everything you can do is complete - submit to the Estimator (step 5).";
   return (
     <Panel className="col-span-full">
       <PanelTitle>Review configuration</PanelTitle>
@@ -72,23 +77,40 @@ export function Stage1Review({ draft, floorAreaM2, totalLabel, derived, steps, c
       )}
       <p className="mt-3 text-sm text-slate-800">Quote total (ex VAT, live preview): <b className="tabular-nums">{totalLabel}</b></p>
       <div className="mt-4" data-testid="stage1-review-issues">
+        <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-900" data-testid="review-next">{nextLine}</p>
         {rep.length === 0 && est.length === 0
-          ? <p className="text-sm font-medium text-emerald-800"><span aria-hidden>✓ </span>No required information is missing.</p>
+          ? <p className="mt-3 text-sm font-medium text-emerald-800"><span aria-hidden>✓ </span>No required information is missing.</p>
           : (
             <>
-              <h3 className="text-sm font-semibold text-slate-900">Missing required information</h3>
+              <h3 className="mt-3 text-sm font-semibold text-slate-900">Missing required information</h3>
               <ul className="mt-2 space-y-2">
-                {[...rep, ...est].map((i) => (
-                  <li key={`${i.owner}:${i.message}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-                    <span className={`rounded-md border px-1.5 py-0.5 text-xs font-semibold ${i.owner === "Rep" ? "border-amber-500 bg-amber-50 text-amber-900" : "border-slate-300 bg-slate-50 text-slate-800"}`} data-testid="owner-tag">{i.owner}</span>
+                {rep.map((i) => (
+                  <li key={`Rep:${i.message}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                    <span className="rounded-md border border-amber-500 bg-amber-50 px-1.5 py-0.5 text-xs font-semibold text-amber-900" data-testid="owner-tag">Rep</span>
                     <span className="text-slate-900">{i.message}</span>
-                    {i.owner === "Rep" && i.stepId && stepOf(i.stepId)?.access === "edit" && canEdit && (
+                    {i.stepId && stepOf(i.stepId)?.access === "edit" && canEdit && (
                       <Button type="button" size="sm" variant="secondary" className="min-h-11" onClick={() => onGoStep(i.stepId!)}>Go to step {STAGE1_STEP_IDS.indexOf(i.stepId) + 1}: {STAGE1_STEP_LABEL[i.stepId]}</Button>
                     )}
-                    {i.owner === "Estimator" && <span className="text-xs text-slate-700">Waiting on the Estimator (Stage 2); you cannot do this.</span>}
+                  </li>
+                ))}
+                {estMaps.length > 0 && (
+                  <li className="text-sm" data-testid="est-mappings-group">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <span className="rounded-md border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-xs font-semibold text-slate-800" data-testid="owner-tag">Estimator</span>
+                      <span className="text-slate-900">The Estimator must confirm {estMaps.length} product mapping{estMaps.length === 1 ? "" : "s"}.</span>
+                    </div>
+                    <details className="mt-1 pl-1 text-xs text-slate-700"><summary className="min-h-6 cursor-pointer">Show the {estMaps.length === 1 ? "item" : "list"}</summary>
+                      <ul className="mt-1 list-disc pl-5">{estMaps.map((i) => <li key={i.message}>{i.message.replace(/^Estimator mapping needed: /, "")}</li>)}</ul></details>
+                  </li>
+                )}
+                {estOther.map((i) => (
+                  <li key={`Est:${i.message}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                    <span className="rounded-md border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-xs font-semibold text-slate-800" data-testid="owner-tag">Estimator</span>
+                    <span className="text-slate-900">{i.message.replace(/^Estimator: /, "")}</span>
                   </li>
                 ))}
               </ul>
+              {est.length > 0 && <p className="mt-2 text-xs text-slate-700" data-testid="est-owner-note">The Estimator resolves these in Stage 2; there is nothing for you to do for them.</p>}
             </>
           )}
         {derived.stage2Reasons.length > 0 && est.length === 0 && <p className="mt-3 text-sm text-slate-700">Also open in the readiness check: {derived.stage2Reasons.join("; ")}</p>}
