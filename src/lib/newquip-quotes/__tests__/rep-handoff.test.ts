@@ -5,6 +5,7 @@ import { evaluateDraft } from "@/newquip/grower/evaluate";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import { readyDraft } from "@/newquip/grower/__tests__/golden";
 import { testPriceSource } from "@/newquip/grower/__tests__/test-snapshot";
+import { withCapturedSupplierCosts } from "@/newquip/quote/__tests__/costing-fixture";
 import { rolesFor } from "@/newquip/quote/roles";
 import { createQuote, estimatorSignOff, loadQuote, managerApprove, returnToRep, saveDraft, sendToEstimator } from "../quote-store";
 
@@ -122,5 +123,45 @@ describe("no commercial approval while mappings, supplier costs or pricing are u
     await returnToRep(db as never, ORG, member, id, "Customer changed delivery");
     expect(await loadQuote(db as never, ORG, id)).toMatchObject({ state: "REP_DRAFT", revision: 2, customer_confirmed_cents: null });
     await saveDraft(db as never, ORG, repOnly as never, id, d); // a Rep may edit again
+  });
+});
+
+describe("costing gate: Estimator-priced-by-design lines are resolved pricing, not missing supplier costs", () => {
+  it("probe: all supplier costs captured, M75 / penning / LED Estimator-priced -> sign-off PASSES with no exception", async () => {
+    const { draft } = withCapturedSupplierCosts(readyDraft(), ctx);
+    expect(draft.estimator.costBasis).toBeUndefined();
+    const id = await stored(draft);
+    await send(id, cents(draft));
+    await estimatorSignOff(db as never, ORG, member, "est@nq", id, ctx);
+    expect((await loadQuote(db as never, ORG, id))!.estimator_signoff_hash).toBeTruthy();
+    // The costing GATE passes at approval too. What remains is the pre-existing baseline freeze rule (untouched): once costing is started, packages with no Cin7 SKU
+    // (the Estimator-priced systems) need a library mapping or the recorded exception.
+    const e = await err(managerApprove(db as never, ORG, admin, "m@nq", id, ctx));
+    expect(e).toMatch(/package\(s\) are not mapped to Cin7 SKUs/);
+    expect(e).not.toMatch(/Costing is incomplete/);
+    const row = db.rows("newquip_quotes")[0] as { draft: QuoteDraft };
+    row.draft.estimator.costBasis = { incompleteAccepted: { reason: "Estimator-priced systems have no Cin7 SKU", by: "est@nq", at: "2026-01-01T00:00:00.000Z" } };
+    (row as Record<string, unknown>).draft_hash = (await import("@/newquip/quote/baseline")).hashOf(row.draft);
+    (row as Record<string, unknown>).estimator_signoff_hash = (row as Record<string, unknown>).draft_hash;
+    await managerApprove(db as never, ORG, admin, "m@nq", id, ctx);
+    expect((await loadQuote(db as never, ORG, id))!.state).toBe("MANAGER_APPROVED_FINAL");
+  });
+  it("one catalogue SKU without a supplier cost -> sign-off FAILS naming it; approval FAILS too", async () => {
+    const full = withCapturedSupplierCosts(readyDraft(), ctx);
+    const { draft } = withCapturedSupplierCosts(readyDraft(), ctx, [full.skus[0]]);
+    const id = await stored(draft);
+    await send(id, cents(draft));
+    expect(await err(estimatorSignOff(db as never, ORG, member, "est@nq", id, ctx))).toMatch(new RegExp(`Costing is incomplete.*1 SKU\\(s\\) have no supplier cost.*${full.skus[0]}`));
+    const row = db.rows("newquip_quotes")[0] as Record<string, unknown>;
+    row.estimator_signoff_hash = row.draft_hash;
+    expect(await err(managerApprove(db as never, ORG, admin, "m@nq", id, ctx))).toMatch(/Costing is incomplete/);
+  });
+  it("an unmapped line FAILS sign-off even with the exception and every cost captured", async () => {
+    const d = readyDraft(); d.estimator.confirmedMappings = {};
+    const { draft } = withCapturedSupplierCosts(d, ctx);
+    draft.estimator.costBasis = { incompleteAccepted: { reason: "accepted", by: "est@nq", at: "2026-01-01T00:00:00.000Z" } };
+    const id = await stored(draft);
+    await send(id, cents(draft));
+    expect(await err(estimatorSignOff(db as never, ORG, member, "est@nq", id, ctx))).toMatch(/BLOCKED/);
   });
 });

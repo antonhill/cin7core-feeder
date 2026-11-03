@@ -65,7 +65,7 @@ const indicativeTotalCents = (ev: QuoteEvaluation): number | null => (ev.budget 
  * ESTIMATOR_COSTING_COMPLETE, evaluated server-side with cost VISIBLE even though the workflow evaluation withholds it. Nothing but the boolean and the reason
  * texts (counts and line labels, never a cost or margin value) leaves this function, so the cost-withheld caller never receives cost.
  */
-async function costingOf(db: Db, orgId: string, draft: QuoteDraft, ctx: EvaluationContext): Promise<CostingStatus> {
+export async function costingOf(db: Db, orgId: string, draft: QuoteDraft, ctx: EvaluationContext): Promise<CostingStatus> {
   const library = await listActiveMappings(db, orgId);
   return estimatorCostingComplete(draft, evaluateDraft(draft, { ...ctx, withholdCost: false }), library ? libraryOf(library) : undefined);
 }
