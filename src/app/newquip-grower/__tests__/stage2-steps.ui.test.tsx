@@ -815,14 +815,17 @@ describe("UX-006i2 review fixes: wording that is true to the current state (revi
 
   it("a Rep reaching Stage 2 has NO 'Next' that dead-ends: only the way back to their own stage; a Manager or observer inspects with a secondary Next that records nothing", async () => {
     await open({ roles: ["REP"], ...SUBMITTED });
-    const bar = screen.getByTestId("step-buttons");
+    const bar = await screen.findByTestId("step-buttons", {}, { timeout: 8000 });
     expect(within(bar).queryByRole("button", { name: /^Next/ })).toBeNull();
     fireEvent.click(within(bar).getByRole("button", { name: "Return to Stage 1" }));
     expect(document.querySelector('[data-testid="stage-nav"] [aria-current="step"]')!.getAttribute("data-stage")).toBe("1");
-    cleanup();
+  }, 60000);
+
+  it("a Manager inspecting Stage 2 gets a SECONDARY Next that records nothing (not the primary action)", async () => {
     await open({ roles: ["MANAGER"], commercials: true, ...SUBMITTED });
-    const next = within(screen.getByTestId("step-buttons")).getByRole("button", { name: /^Next:/ });
-    expect(next.className).not.toMatch(/bg-indigo-600/); // not the primary action
+    const bar = await screen.findByTestId("step-buttons", {}, { timeout: 8000 });
+    const next = within(bar).getByRole("button", { name: /^Next:/ });
+    expect(next.className).not.toMatch(/bg-indigo-600/);
   }, 60000);
 
   it("the manual-price inputs have UNIQUE accessible names (the line is in the name), and the plain-language term help is present", async () => {
