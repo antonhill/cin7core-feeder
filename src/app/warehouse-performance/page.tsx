@@ -252,6 +252,8 @@ function ReviewTab({ onSaved }: { onSaved: () => void }) {
         setIncomplete(res.data?.incomplete ?? []);
         return;
       }
+      // Clear the refusal banner explicitly on success (do not rely on the transition-scoped reset above flushing first).
+      setFinaliseError(null);
       setIncomplete([]);
       load();
       onSaved();
