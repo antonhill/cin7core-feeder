@@ -864,7 +864,8 @@ describe("regression: customer search state and the second 'Load recommended con
   it("the toolbar does not overflow at 390px (static class contract: every toolbar child may wrap or shrink)", async () => {
     const { readFileSync } = await import("node:fs");
     const src = readFileSync(`${__dirname}/../[id]/page.tsx`, "utf8");
-    expect(src).toContain('<div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">'); // the toolbar wraps
+    // (intent preserved: the toolbar wraps; it now lives in StepRail's moreActions/actions row so a phone can tuck the secondary items into the collapsed list)
+    expect(readFileSync(`${__dirname}/../../../components/ui/StepRail.tsx`, "utf8")).toContain('<div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">'); // the toolbar wraps
     expect(src).toContain('flex flex-wrap items-center gap-3 ${cls}'); // the save row wraps
     const sections = readFileSync(`${__dirname}/../[id]/RepConfigSections.tsx`, "utf8");
     expect(sections).toContain("min-w-0 max-w-full"); // the collapsible chip and table wrapper cannot widen the page
@@ -1029,4 +1030,71 @@ describe("template page (Rep-visible) and the cost-basis wording", () => {
     vi.mocked(canSeeCosts).mockResolvedValue(true);
     expect(renderToStaticMarkup(await Page())).toMatch(/landed cost/i);
   }, 30000);
+});
+
+// ── D-11: a returned quotation whose approval was withdrawn (price edit changed the total) says what happened ──
+describe("D-11: returned banner for the three cases", () => {
+  const history = (events: unknown[]) => vi.spyOn(aa, "getDocumentApprovalAction").mockResolvedValue({ ok: true, data: { available: true, latest: null, history: events } } as never);
+  it("(1) a RETURN with a reason: the existing banner with the reason and 'Fix what the Estimator described'", async () => {
+    history([{ id: "e", action: "RETURN", to_status: "RETURNED", reason: "Check the haulier quote", actor_email: "est@nq", actor_name: null, created_at: "2026-11-02T09:30:00Z" }]);
+    await open({ view: snapshotView(true), draftOver: readyDraft, row: { revision: 2 } });
+    expect((await screen.findByTestId("return-reason")).textContent).toContain("Check the haulier quote");
+    expect(screen.getByTestId("returned-banner").textContent).toContain("Fix what the Estimator described, then submit again.");
+    expect(screen.queryByTestId("return-withdrawn")).toBeNull();
+  }, 30000);
+
+  it("(2) withdrawn WITHOUT a reason (fresh load): says the total changed, shows the current indicative total, points to step 5, and never says 'Fix what the Estimator described'", async () => {
+    history([{ id: "e", action: "WITHDRAW", to_status: "WITHDRAWN", reason: null, actor_email: "sys@nq", actor_name: null, created_at: "2026-11-02T09:30:00Z" }]);
+    await open({ view: snapshotView(true), draftOver: readyDraft, row: { revision: 2, customer_confirmed_cents: null } });
+    const t = (await screen.findByTestId("return-withdrawn")).textContent ?? "";
+    expect(t).toMatch(/^The total changed after the Estimator's review, so the customer's confirmation was withdrawn\. Reconfirm the current amount \(R\s?[\d\s]+,\d\d\) with the customer, then submit again \(step 5\)\.$/);
+    expect(screen.getByTestId("returned-banner").textContent).not.toContain("Fix what the Estimator described");
+    expect(screen.getByTestId("returned-banner").textContent).not.toContain("see Approval history for the reason");
+  }, 30000);
+
+  it("(3) the session-local sentence 'from R x to R y' still wins when the save reported the effect; and an unreadable history keeps the fixed text", async () => {
+    history([]);
+    await open({ view: snapshotView(true), draftOver: { siteName: "" }, row: { revision: 2, customer_confirmed_cents: null } });
+    await screen.findByTestId("return-withdrawn");
+    const real = actions.saveGrowerDraftAction;
+    vi.spyOn(actions, "saveGrowerDraftAction").mockImplementation((async (qid: string, d: never) => { const r: any = await real(qid, d); return { ...r, data: { ...r.data, confirmationEffect: { confirmationCleared: true, signoffCleared: false, returnedToRep: true, previousCents: 1000000, newCents: 1250000 } } }; }) as never);
+    fireEvent.change(screen.getByLabelText(/^Site \/ project name/), { target: { value: "Farm 2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    expect((await screen.findByTestId("return-amount-change")).textContent).toContain("The total changed from");
+    expect(screen.queryByTestId("return-withdrawn")).toBeNull();
+    cleanup();
+    vi.spyOn(aa, "getDocumentApprovalAction").mockResolvedValue({ ok: false, error: "x" } as never);
+    await open({ view: snapshotView(true), draftOver: readyDraft, row: { revision: 2, customer_confirmed_cents: null } });
+    expect(screen.getByTestId("returned-banner").textContent).toContain("see Approval history for the reason");
+    expect(screen.queryByTestId("return-withdrawn")).toBeNull();
+  }, 60000);
+});
+
+// ── Owner directive: first field above the fold on a phone (<640px compaction; class contracts, measured in a real browser) ──
+describe("phone compaction keeps the navigation contract", () => {
+  it("the rail header is 'Step n of N · name' with the list collapsed; Show all steps and Next incomplete sit inside the collapsed region on a phone; Save stays visible; the saving rule has a phone twin", async () => {
+    await open({ view: snapshotView(true), step: "2" });
+    expect(screen.getByTestId("step-rail-toggle").textContent).toBe("Step 2 of 5 · Site & measurements▼");
+    const more = screen.getByTestId("step-rail-more");
+    expect(more.className).toContain("max-[700px]:hidden");
+    expect(within(more).getByLabelText("Show all steps")).toBeTruthy();
+    expect(more.textContent).toContain("Next incomplete step");
+    expect(screen.getByTestId("step-rail").querySelector("ol")!.getAttribute("id")).toBe("s1-list"); // still an ordered list
+    expect(document.querySelector('[data-step="site"]')!.getAttribute("aria-current")).toBe("step");
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeTruthy(); // not inside the collapsed region
+    expect(more.contains(screen.getByRole("button", { name: "Save draft" }))).toBe(false);
+    expect(screen.getByTestId("saving-rules").className).toContain("max-sm:hidden");
+    expect(screen.getByTestId("saving-rules-mobile").className).toContain("sm:hidden");
+    fireEvent.click(screen.getByTestId("step-rail-toggle"));
+    expect(screen.getByTestId("step-rail-more").className).not.toContain("max-[700px]:hidden");
+  }, 30000);
+
+  it("phone-only utility classes: no desktop class changed (the h1 stays in the DOM for screen readers; the stage words and the extra intros hide only below 640px)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const page = readFileSync(`${__dirname}/../[id]/page.tsx`, "utf8");
+    expect(page).toContain("max-sm:sr-only"); // h1 + Calculation label stay for assistive tech
+    expect(page).toContain("max-sm:[&_section.rounded-lg]:p-3!");
+    expect(page).toContain("max-sm:flex-nowrap"); // the summary bar is one row on a phone
+    expect(readFileSync(`${__dirname}/../[id]/StageNav.tsx`, "utf8")).toContain('<span className="max-sm:sr-only">');
+  });
 });

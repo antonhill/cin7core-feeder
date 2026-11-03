@@ -103,6 +103,7 @@ const ids = () => [...rail().querySelectorAll("ol > li button")].map((b) => b.ge
 const status = (id: string) => screen.getByTestId(`step-status-${id}`).textContent;
 const panel = (id: string) => document.querySelector(`[data-step-panel="${id}"]`);
 const shown = (id: string) => !!panel(id) && !panel(id)!.hasAttribute("hidden");
+const doneCount = () => [...rail().querySelectorAll('[data-testid^="step-status-"]')].filter((e) => ["Complete", "Reviewed"].includes(e.textContent ?? "")).length; // i1: the dense phone header no longer carries "N complete"; the cards do
 const toggle = () => (screen.getByTestId("step-rail-toggle").textContent ?? "").replace(/[▲▼]$/, "");
 const current = () => rail().querySelector('[aria-current="step"]')!.getAttribute("data-step");
 const started = (q: ReturnType<typeof serialQueue>) => q.log.filter((l) => l.startsWith("start ")).length;
@@ -279,7 +280,7 @@ describe("UX-006i2 Stage 2: Rep, Manager and observer inspect it read-only", () 
     fireEvent.click(within(screen.getByTestId("step-buttons")).getByRole("button", { name: "Next: Sign-off or return" }));
     expect(shown("signoff")).toBe(true);
     expect(status("final")).not.toBe("Reviewed"); // nothing recorded
-    expect(toggle()).toMatch(/· 1 complete/); // only the mapping step (data) - the click recorded nothing
+    expect(doneCount()).toBe(1); // only the mapping step (data) - the click recorded nothing
     await act(async () => { await sleep(150); });
     expect(started(q)).toBe(before);
     expect(screen.getByTestId("signoff-not-yours")).toBeTruthy();
@@ -334,12 +335,12 @@ describe("UX-006i2 Stage 2: Final review - Mark reviewed & continue (client-loca
     expect(within(screen.getByTestId("final-review-checklist")).getAllByRole("listitem").length).toBeGreaterThanOrEqual(3);
     expect(screen.getByTestId("cost-ack").textContent).toContain("It is not the Estimator sign-off.");
     expect(status("final")).not.toBe("Reviewed");
-    expect(toggle()).toMatch(/· 1 complete/); // mapping (data) only
+    expect(doneCount()).toBe(1); // mapping (data) only
     const signBefore = (within(panel("signoff") as HTMLElement).getByRole("button", { name: /Sign off for Manager approval/, hidden: true }) as HTMLButtonElement).disabled;
     const live = screen.getByTestId("cost-ack-live"); // the live region exists EMPTY first so the announcement is reliable
     expect(live.getAttribute("aria-live")).toBe("polite"); expect(live.textContent).toBe("");
     fireEvent.click(ackBtn());
-    expect(toggle()).toMatch(/· 3 complete/); // 1 -> 3: marking records ONE review, which counts on both steps it covers (Costs and Final review)
+    expect(doneCount()).toBe(3); // 1 -> 3: marking records ONE review, which counts on both steps it covers (Costs and Final review)
     expect(current()).toBe("signoff");
     expect(document.activeElement?.textContent).toBe("Step 4 · Sign-off or return");
     expect(screen.getByTestId("cost-ack-live").textContent).toBe("Final review marked as reviewed for this session. This is not a sign-off.");
@@ -638,7 +639,8 @@ describe("UX-006i2 Stage 2: navigation (Back only to permitted steps; no navigat
     await open({ roles: ["ESTIMATOR"], commercials: true, ...SUBMITTED });
     expect(rail().querySelectorAll("ol").length).toBe(1);
     expect(rail().querySelectorAll('[aria-current="step"]').length).toBe(1);
-    expect(toggle()).toMatch(/^Step 2 of 4 · Costs, margins & pricing exceptions · 1 complete/);
+    expect(toggle()).toBe("Step 2 of 4 · Costs, margins & pricing exceptions");
+    expect(doneCount()).toBe(1);
     fireEvent.click(within(rail()).getByRole("button", { name: /Sign-off or return/ }));
     expect(rail().querySelector('[aria-current="step"]')!.textContent).toContain("Sign-off or return");
     expect(document.activeElement?.textContent).toBe("Step 4 · Sign-off or return");
@@ -1015,9 +1017,12 @@ describe("UX-006 acceptance directive: the Estimator's current work is immediate
     expect(sum.querySelector("details > summary")!.textContent).toMatch(/Submitted by the Rep.*Customer.*Site.*Submitted total.*Customer price confirmation.*Details/);
     expect(screen.queryByTestId("next-action")).toBeNull(); // the owner line says it once
     expect(rail().querySelectorAll("li button .truncate").length).toBeGreaterThan(0); // notes are one line (full text in the tooltip)
-    const toolbar = within(rail()).getByLabelText("Show all steps").closest("div")!;
-    expect(within(toolbar).getByRole("button", { name: "Save draft" })).toBeTruthy();
-    expect(within(toolbar).getByTestId("save-state")).toBeTruthy();
+    // i1's rail toolbar: "Show all steps" / "Next incomplete" (moreActions) and Save (actions) share ONE row inside the rail's nav, the last two before the step cards end.
+    const showAll = within(rail()).getByLabelText("Show all steps");
+    const save = within(rail()).getByRole("button", { name: "Save draft" });
+    expect(showAll.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(save.closest("div")!.parentElement).toBe(showAll.closest("[data-testid=step-rail-more]")!.parentElement);
+    expect(within(rail()).getByTestId("save-state")).toBeTruthy();
   }, 60000);
 
   it("the first control of each step comes first in the step: mapping action before the blocker list; Cin7 cost capture before the totals on Costs; the Preview utility is at the END of the page", async () => {

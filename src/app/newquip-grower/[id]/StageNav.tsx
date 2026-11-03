@@ -25,7 +25,7 @@ export function StageNav({ stages, current, viewing, onSelect, previewable = [],
       <nav aria-label="Quotation stages" onKeyDown={(e) => { if (e.key === "Escape" && open) { e.stopPropagation(); close(); } }}>
         <button ref={toggle} type="button" aria-expanded={open} aria-controls="stage-nav-list" onClick={() => setOpen((o) => !o)} data-testid="stage-nav-toggle"
           className={`flex min-h-11 w-full items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-left text-sm font-semibold text-slate-900 ${compact ? "border-0! rounded-b-none" : "min-[701px]:hidden"}`}>
-          <span>Stage {viewing} of {stages.length} · {view?.label ?? ""}{compact && view ? <span className="font-normal text-slate-700"> · {navPresentation(view, previewable.includes(view.id), viewer).chip}</span> : null}</span><span className="text-xs font-normal text-slate-700">{compact ? (open ? "Hide all stages " : "Show all stages ") : ""}<span aria-hidden>{open ? "▲" : "▼"}</span></span>
+          <span>Stage {viewing} of {stages.length} · {view?.label ?? ""}{compact && view ? <span className="font-normal text-slate-700"> · {navPresentation(view, previewable.includes(view.id), viewer).chip}</span> : null}</span><span className="text-xs font-normal text-slate-700"><span className="max-sm:sr-only">{compact ? (open ? "Hide all stages " : "Show all stages ") : ""}</span><span aria-hidden>{open ? "▲" : "▼"}</span></span>
         </button>
         <ol id="stage-nav-list" className={`${open ? "grid" : "hidden"} mt-2 grid-cols-1 gap-2 ${compact ? "" : "min-[701px]:mt-0 min-[701px]:grid"} sm:grid-cols-2 lg:grid-cols-6`}>
           {stages.map((s) => {
