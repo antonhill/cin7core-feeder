@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { STEP_STATUS_LABEL, completeCount, groupCounts, stepHeadingId, type RailGroup, type RailGroupTone, type RailStep, type StepStatus } from "./step-rail-model";
 
 // The step rail: an ordered list with one button per step (a number, or a check once the step is complete from DATA), its label and its status as TEXT. Presentation only.
-// Wide screens show one row (it scrolls sideways on a tablet); at 700px and below it collapses to a disclosure "Step n of N · name · k complete" that lists the steps.
+// From 701px the cards sit in a grid of equal columns that wraps to more rows instead of scrolling or clipping; at 700px and below it collapses to a disclosure "Step n of N · name · k complete" that lists the steps.
 // Cards in a row are EQUAL height (the row grows to the tallest card; no text is ever clamped): icon top-left at a fixed size, the title at the same top offset, the note
 // under it and the status pinned to the bottom of the card. With `groups` each group is a labelled block with its own count and status line.
 
@@ -16,8 +16,9 @@ const GROUP_TONE: Record<RailGroupTone, string> = { complete: "bg-emerald-50 tex
 const GROUP_MARK: Record<RailGroupTone, string> = { complete: "✓", attention: "!", incomplete: "•", neutral: "•" };
 
 function Card({ step, number, current, onPick, tall }: { step: RailStep; number: number; current: boolean; onPick: () => void; tall: boolean }) {
+  // Cards may shrink (min-w-0) so nothing clips: the rail is a wrapping grid of equal columns from 701px (equal height within a row); `tall` = a card inside a group, a flex item from 901px.
   return (
-    <li className="flex min-[701px]:min-w-44 min-[701px]:flex-1">
+    <li className={`flex ${tall ? "min-w-0 min-[901px]:flex-1" : "min-w-0"}`}>
       <button type="button" onClick={onPick} aria-current={current ? "step" : undefined} data-step={step.id}
         className={`flex min-h-11 w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors ${tall ? "min-[701px]:min-h-28" : ""} ${current ? "border-indigo-600 bg-indigo-50 ring-2 ring-indigo-600" : "border-slate-200 bg-white hover:bg-slate-50"}`}>
         <span aria-hidden className={`flex size-7 shrink-0 items-center justify-center rounded-full border text-sm font-bold ${BADGE_TONE[step.status]}`}>{step.status === "complete" ? "✓" : number}</span>
@@ -46,10 +47,11 @@ export function StepRail({ id, steps, currentId, onSelect, ariaLabel, actions, g
     ? `Step ${at + 1} of ${steps.length} · ${cur?.label ?? ""} · ${counts.map((c) => `${c.label} ${c.done} of ${c.total} complete`).join(" · ")}${attention > 0 ? ` · ${attention} need attention` : ""}`
     : `Step ${at + 1} of ${steps.length} · ${cur?.label ?? ""} · ${done} complete${attention > 0 ? ` · ${attention} need attention` : ""}`;
   const pick = (stepId: string) => () => { onSelect(stepId); setOpen(false); };
-  const listCls = "flex-col gap-2 min-[701px]:flex-row min-[701px]:overflow-x-auto min-[701px]:pb-1";
+  // Inside a group: one column below 701px, a wrapping grid of equal-height rows at 701-900px (groups stack full width), one equal-height row of shrinkable cards from 901px.
+  const groupListCls = "flex flex-col gap-2 min-[701px]:grid min-[701px]:grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] min-[901px]:flex min-[901px]:flex-row";
   const numberOf = (s: RailStep) => steps.indexOf(s) + 1;
   const ungrouped = groups ? steps.filter((s) => !groups.some((g) => g.id === s.group)) : [];
-  // From 701px the groups are columns of ONE grid with two shared rows (header, cards) via subgrid, so headers align and every card is the same height across groups.
+  // From 901px the groups are columns of ONE grid with two shared rows (header, cards) via subgrid, so headers align and every card is the same height across groups; from 701 to 900px the groups stack full width. `hidden` applies only below 701px (max-[700px]), so it can never beat a layout class above it.
   return (
     <nav aria-label={ariaLabel} className="mt-4" data-testid="step-rail">
       <button type="button" aria-expanded={open} aria-controls={`${id}-list`} onClick={() => setOpen((o) => !o)} data-testid="step-rail-toggle"
@@ -57,31 +59,31 @@ export function StepRail({ id, steps, currentId, onSelect, ariaLabel, actions, g
         <span>{summary}</span><span aria-hidden>{open ? "▲" : "▼"}</span>
       </button>
       {!groups ? (
-        <ol id={`${id}-list`} className={`${open ? "flex" : "hidden"} mt-2 min-[701px]:mt-0 min-[701px]:flex ${listCls}`}>
+        <ol id={`${id}-list`} className={`${open ? "" : "max-[700px]:hidden"} mt-2 flex flex-col gap-2 min-[701px]:mt-0 min-[701px]:grid min-[701px]:grid-cols-[repeat(auto-fit,minmax(11rem,1fr))]`}>
           {steps.map((s, i) => <Card key={s.id} step={s} number={i + 1} current={s.id === currentId} onPick={pick(s.id)} tall={false} />)}
         </ol>
       ) : (
         <div id={`${id}-list`} style={{ gridTemplateColumns: [...groups.map((g) => `minmax(0,${Math.max(steps.filter((s) => s.group === g.id).length, 1)}fr)`), ...(ungrouped.length ? [`minmax(0,${ungrouped.length}fr)`] : [])].join(" ") }}
-          className={`${open ? "flex" : "hidden"} mt-2 flex-col gap-3 min-[701px]:mt-0 min-[701px]:grid min-[701px]:grid-rows-[auto_1fr] min-[701px]:gap-x-3 min-[701px]:gap-y-2`}>
+          className={`${open ? "" : "max-[700px]:hidden"} mt-2 flex flex-col gap-3 min-[701px]:mt-0 min-[901px]:grid min-[901px]:grid-rows-[auto_1fr] min-[901px]:gap-x-3 min-[901px]:gap-y-2`}>
           {groups.map((g, gi) => {
             const own = steps.filter((s) => s.group === g.id);
             const c = counts![gi];
             const tone = g.tone ?? "neutral";
             return (
-              <div key={g.id} role="group" aria-labelledby={`${id}-${g.id}-label`} data-testid={`step-group-${g.id}`} className="flex min-w-0 flex-col gap-2 min-[701px]:row-span-2 min-[701px]:grid min-[701px]:grid-rows-subgrid">
+              <div key={g.id} role="group" aria-labelledby={`${id}-${g.id}-label`} data-testid={`step-group-${g.id}`} className="flex min-w-0 flex-col gap-2 min-[901px]:row-span-2 min-[901px]:grid min-[901px]:grid-rows-subgrid">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span id={`${id}-${g.id}-label`} className="text-xs font-bold uppercase tracking-wide text-slate-800">{g.label}</span>
                   {g.owner && <span className="rounded-md border border-slate-300 bg-white px-1.5 py-0.5 text-xs font-semibold text-slate-700" data-testid={`step-group-owner-${g.id}`}>{g.owner}</span>}
                   <span className="text-xs font-semibold text-slate-700" data-testid={`step-group-count-${g.id}`}>{c.done} of {c.total} complete</span>
                   {g.statusText && <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-semibold ${GROUP_TONE[tone]}`} data-tone={tone} data-testid={`step-group-status-${g.id}`}><span aria-hidden>{GROUP_MARK[tone]}</span>{g.statusText}</span>}
                 </div>
-                <ol aria-labelledby={`${id}-${g.id}-label`} className={`flex ${listCls}`}>
+                <ol aria-labelledby={`${id}-${g.id}-label`} className={groupListCls}>
                   {own.map((s) => <Card key={s.id} step={s} number={numberOf(s)} current={s.id === currentId} onPick={pick(s.id)} tall />)}
                 </ol>
               </div>
             );
           })}
-          {ungrouped.length > 0 && <ol className={`flex min-[701px]:row-span-2 ${listCls}`}>{ungrouped.map((s) => <Card key={s.id} step={s} number={numberOf(s)} current={s.id === currentId} onPick={pick(s.id)} tall />)}</ol>}
+          {ungrouped.length > 0 && <ol className={`${groupListCls} min-[901px]:row-span-2`}>{ungrouped.map((s) => <Card key={s.id} step={s} number={numberOf(s)} current={s.id === currentId} onPick={pick(s.id)} tall />)}</ol>}
         </div>
       )}
       {/* No live region: the current step is announced by aria-current and by the focus move to its heading. */}
