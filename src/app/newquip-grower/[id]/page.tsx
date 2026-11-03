@@ -310,8 +310,8 @@ export default function QuoteEditorPage() {
   });
   const goStep2No = (n: number) => {
     const next = Math.min(Math.max(n, 1), step2Ids.length);
-    setStep2No(next);
-    try { const u = new URL(window.location.href); u.searchParams.set("step", String(next)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ }
+    setStep2No(next); // the address bar gets stage and step together, so a reload lands on the same step
+    try { const u = new URL(window.location.href); u.searchParams.set("stage", "2"); u.searchParams.set("step", String(next)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ }
   };
   const goStep2 = (id: string) => goStep2No(step2Ids.indexOf(id as Stage2StepId) + 1);
   const next2Open = nextIncompleteStepId(stage2, step2Id);
