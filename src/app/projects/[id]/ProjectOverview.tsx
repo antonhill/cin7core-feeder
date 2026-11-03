@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { buildProjectOverview, type ExceptionItem, type Kpi, type OverviewTab, type PhysicalLoad, type PhysicalOverviewRow } from "@/lib/projects/overview-model";
+import { commercialBillingText } from "@/lib/projects/commercial-billing-state";
 import { formatBps, formatCents } from "@/lib/projects/project-view";
 import { getPhysicalStatusAction } from "../physical-actions";
 import { getProjectOverviewDataAction, type OverviewDataResult } from "../overview-actions";
@@ -261,14 +262,15 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab, contractShow
                       <TR key={cl.claimNumber}>
                         <TD>{cl.claimNumber}</TD><TD align="right">{formatCents(cl.exVatCents)}</TD><TD>{cl.invoiceNumber ?? "—"}</TD>
                         <TD><Status tone={CIN7_TONE[cl.cin7Kind] ?? "neutral"}>{cl.cin7Label}</Status></TD>
-                        <TD>{cl.reconciled ? "Reconciled with Cin7" : cl.cin7Kind === "NOT_POSTED" ? "—" : "Not reconciled yet"}</TD>
+                        <TD>{cl.reconciled ? "Reconciled with Cin7" : cl.cin7Kind === "NOT_POSTED" ? "—" : cl.mismatch ? "Amount mismatch recorded" : "Not reconciled yet"}</TD>
                       </TR>
                     ))}
                   </TBody>
                 </Table>
-                <p className="mt-2 text-xs text-slate-600">{r.summary.invoiceCount} Cin7 invoice{r.summary.invoiceCount === 1 ? "" : "s"} ({formatCents(r.summary.invoicedExVatCents)} ex VAT), {r.summary.reconciledCount} reconciled{r.summary.notPostedCount ? `, ${r.summary.notPostedCount} approved claim${r.summary.notPostedCount === 1 ? "" : "s"} not yet invoiced` : ""}{r.summary.uncertainCount ? `, ${r.summary.uncertainCount} with an uncertain outcome` : ""}{r.summary.retryableCount ? `, ${r.summary.retryableCount} not created in Cin7 (can be retried)` : ""}.</p>
+                <p className="mt-2 text-xs text-slate-600">{r.summary.invoiceCount} Cin7 invoice{r.summary.invoiceCount === 1 ? "" : "s"} ({formatCents(r.summary.invoicedExVatCents)} ex VAT), {r.summary.reconciledCount} reconciled{r.summary.notPostedCount ? `, ${r.summary.notPostedCount} approved claim${r.summary.notPostedCount === 1 ? "" : "s"} not yet invoiced` : ""}{r.summary.mismatchCount ? `, ${r.summary.mismatchCount} with a recorded amount mismatch` : ""}{r.summary.uncertainCount ? `, ${r.summary.uncertainCount} with an uncertain outcome` : ""}{r.summary.retryableCount ? `, ${r.summary.retryableCount} not created in Cin7 (can be retried)` : ""}.</p>
               </div>
             )}
+            <p className="mt-2 text-sm font-medium text-slate-800" data-testid={`billing-${r.projectId}`}>{commercialBillingText(r.billing)}{r.billing.reasons.length > 0 ? <span className="font-normal text-slate-600"> ({r.billing.reasons.join("; ")})</span> : null}</p>
           </Panel>
         ))}
         <p className="text-sm font-medium text-slate-800" data-testid="invoiced-total">Invoiced in Cin7 across all Sales: {formatCents(o.reconciliation.invoicedExVatCents)} ex VAT</p>

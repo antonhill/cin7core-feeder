@@ -246,7 +246,7 @@ export async function loadConsolidatedCommercial(db: Db, orgId: string, projectI
     inputs.push({
       scope: s.scope, label: s.scope === "BASE" ? "Original contract" : `${s.variationCode} variation`, projectId: s.projectId,
       contractCents: s.contractCents, claimableCents: s.claimableCents, billingStarted: true,
-      claims: (view?.claims ?? []).map((cl) => ({ claimNumber: cl.claim_number, status: cl.status, subtotalCents: cl.subtotal_cents, totalCents: cl.total_cents, invoiceNumber: numberByClaim.get(cl.id) ?? null })),
+      claims: (view?.claims ?? []).map((cl) => ({ claimNumber: cl.claim_number, status: cl.status, subtotalCents: cl.subtotal_cents, totalCents: cl.total_cents, invoiceNumber: numberByClaim.get(cl.id) ?? null, postingState: cl.cin7Status.postingState, reconciled: cl.cin7Status.reconciled, mismatch: cl.cin7Status.mismatch, stalePending: cl.cin7Status.stalePending })),
       invoices: live.map((p) => ({ invoiceNumber: p.cin7_invoice_number, amountExVatCents: p.amount_ex_vat_cents, totalCents: p.total_cents, state: p.posting_state })),
     });
   }
@@ -292,8 +292,12 @@ export interface ReconciliationSummary {
   uncertain: number;
   /** Postings still within the normal in-flight window (PENDING, not stale): a post is running; nothing to act on yet. */
   inProgress: number;
+  /** Postings Cin7 confirmed created nothing (FAILED_CONFIRMED_NO_WRITE): no invoice exists and posting can be retried. */
+  retryable?: number;
+  /** Ex-VAT total of every posting that accounts for committed value (all but a confirmed no-write failure): committed value above this has no posting at all. */
+  postingExVatCents?: number;
 }
-export interface PostingStateRow { posting_state: string; last_error_code?: string | null; requested_at?: string | null }
+export interface PostingStateRow { posting_state: string; last_error_code?: string | null; requested_at?: string | null; amount_ex_vat_cents?: number | null }
 
 /** Pure: counts one project's postings. FAILED_CONFIRMED_NO_WRITE counts for nothing (no invoice exists). A PENDING without a readable time is treated as uncertain, never as in progress. */
 export function summariseReconciliation(rows: readonly PostingStateRow[], now: number = Date.now()): ReconciliationSummary {
@@ -303,7 +307,8 @@ export function summariseReconciliation(rows: readonly PostingStateRow[], now: n
   const pending = of("PENDING");
   const fresh = pending.filter((r) => !!r.requested_at && Number.isFinite(Date.parse(r.requested_at)) && !isStalePending(r.requested_at, now)).length;
   const reconciled = of("RECONCILED").length;
-  return { invoices: reconciled + created.length, reconciled, awaiting: created.length - mismatched, mismatched, uncertain: of("FAILED_UNCERTAIN").length + pending.length - fresh, inProgress: fresh };
+  return { invoices: reconciled + created.length, reconciled, awaiting: created.length - mismatched, mismatched, uncertain: of("FAILED_UNCERTAIN").length + pending.length - fresh, inProgress: fresh,
+    retryable: of("FAILED_CONFIRMED_NO_WRITE").length, postingExVatCents: rows.filter((r) => r.posting_state !== "FAILED_CONFIRMED_NO_WRITE").reduce((n, r) => n + (r.amount_ex_vat_cents ?? 0), 0) };
 }
 
 /**
@@ -313,7 +318,7 @@ export function summariseReconciliation(rows: readonly PostingStateRow[], now: n
  */
 export async function loadReconciliationByProject(db: Db, orgId: string, projectIds: readonly string[]): Promise<Record<string, ReconciliationSummary>> {
   if (projectIds.length === 0) return {};
-  const r = await db.from("project_claim_cin7_postings").select("project_id, posting_state, last_error_code, requested_at").eq("org_id", orgId).in("project_id", [...projectIds]);
+  const r = await db.from("project_claim_cin7_postings").select("project_id, posting_state, last_error_code, requested_at, amount_ex_vat_cents").eq("org_id", orgId).in("project_id", [...projectIds]);
   if (r.error) fail(`load invoice reconciliation: ${r.error.message}`);
   const rows: Record<string, PostingStateRow[]> = Object.fromEntries(projectIds.map((id) => [id, []]));
   for (const row of (r.data ?? []) as Array<PostingStateRow & { project_id: string }>) rows[row.project_id]?.push(row);

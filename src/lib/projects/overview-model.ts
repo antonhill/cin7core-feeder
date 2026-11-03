@@ -12,6 +12,7 @@
 //  * Stock is Cin7's account-wide stock, never presented as reserved for the project.
 import type { MarginFigures } from "./margin-figures";
 import type { PhysicalException, PhysicalRow } from "./physical-status";
+import { commercialBillingFromView, type CommercialBillingResult } from "./commercial-billing-state";
 import { formatCents, type ProjectView, type StageView } from "./project-view";
 
 export type OverviewTab = "stages" | "components" | "claims" | "variations" | "deliveries" | "physical" | "procurement" | "profitability";
@@ -109,11 +110,15 @@ export interface PhysicalOverview {
 export interface ReconClaim {
   claimNumber: string; claimStatus: string; exVatCents: number;
   cin7Kind: string; cin7Label: string; invoiceNumber: string | null; reconciled: boolean;
+  /** CREATED invoice with a recorded AMOUNT_MISMATCH (named, never shown as plain "not reconciled yet"). */
+  mismatch: boolean;
 }
 export interface ReconScope {
   projectId: string; scope: "BASE" | "VARIATION"; label: string; saleNumber: string | null; saleLinked: boolean;
   claims: ReconClaim[];
-  summary: { invoiceCount: number; reconciledCount: number; notPostedCount: number; uncertainCount: number; retryableCount: number; invoicedExVatCents: number };
+  summary: { invoiceCount: number; reconciledCount: number; notPostedCount: number; uncertainCount: number; retryableCount: number; invoicedExVatCents: number; mismatchCount: number };
+  /** Commercial billing state of this scope, from the shared derivation (postings + stage ledger, never the claim status). */
+  billing: CommercialBillingResult;
 }
 export interface ExceptionItem {
   id: string;
@@ -161,7 +166,7 @@ function reconScope(s: OverviewScopeInput): ReconScope {
   const relevant = s.view.claims.filter((c) => c.reserves || c.status === "FAILED_CONFIRMED_NO_WRITE");
   const claims: ReconClaim[] = relevant.map((c) => ({
     claimNumber: claimLabel(c), claimStatus: c.status, exVatCents: c.subtotal_cents,
-    cin7Kind: c.cin7Status.kind, cin7Label: c.cin7Status.kind === "FAILED" ? "Not created in Cin7 - can be retried" : c.cin7Status.label, invoiceNumber: c.cin7Status.invoiceNumber, reconciled: c.cin7Status.reconciled,
+    cin7Kind: c.cin7Status.kind, cin7Label: c.cin7Status.kind === "FAILED" ? "Not created in Cin7 - can be retried" : c.cin7Status.label, invoiceNumber: c.cin7Status.invoiceNumber, reconciled: c.cin7Status.reconciled, mismatch: c.cin7Status.mismatch,
   }));
   const live = claims.filter((c) => LIVE_INVOICE.has(c.cin7Kind));
   return {
@@ -173,7 +178,9 @@ function reconScope(s: OverviewScopeInput): ReconScope {
       uncertainCount: claims.filter((c) => c.cin7Kind === "UNCERTAIN").length,
       retryableCount: claims.filter((c) => c.cin7Kind === "FAILED").length,
       invoicedExVatCents: live.reduce((n, c) => n + c.exVatCents, 0),
+      mismatchCount: claims.filter((c) => c.mismatch).length,
     },
+    billing: commercialBillingFromView(s.view, s.scope, s.scope === "VARIATION" ? { approvedAmountCents: s.view.project.original_contract_cents, billingStarted: true } : undefined),
   };
 }
 

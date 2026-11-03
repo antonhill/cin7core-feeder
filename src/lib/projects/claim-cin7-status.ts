@@ -2,6 +2,8 @@
 // flow); the older project_cin7_links table is never written by it. A claim with no posting row is "Not posted"; nothing else is. This is a
 // display classifier only - it never decides whether a posting may be (re)tried.
 
+import { isStalePending } from "./posting-staleness";
+
 export interface ClaimPostingRow {
   claim_id: string;
   posting_state: string;
@@ -9,6 +11,9 @@ export interface ClaimPostingRow {
   cin7_status: string | null;
   reconciled_at: string | null;
   last_error_message?: string | null;
+  /** AMOUNT_MISMATCH is kept on a CREATED row when reconciliation found the invoice differs from the approved claim. */
+  last_error_code?: string | null;
+  requested_at?: string | null;
 }
 
 export type ClaimCin7Kind = "NOT_POSTED" | "POSTING" | "DRAFT_CREATED" | "AUTHORISED" | "CREATED_OTHER" | "FAILED" | "UNCERTAIN";
@@ -19,9 +24,32 @@ export interface ClaimCin7Status {
   invoiceNumber: string | null;
   reconciled: boolean;
   detail: string | null;
+  /** The raw posting_state (null = no posting row). Additive facts for the commercial billing derivation; they never change the label above. */
+  postingState: string | null;
+  /** CREATED invoice whose last reconciliation recorded AMOUNT_MISMATCH. */
+  mismatch: boolean;
+  /** A PENDING posting older than the stale window (or with no readable request time): its outcome is unknown. */
+  stalePending: boolean;
+  reconciledAt: string | null;
 }
 
-export function claimCin7Status(p: ClaimPostingRow | null | undefined): ClaimCin7Status {
+/** The additive posting facts for a row (never inferred from the claim's own status, which stays APPROVED after posting). */
+function postingFacts(p: ClaimPostingRow | null | undefined, now: number): Pick<ClaimCin7Status, "postingState" | "mismatch" | "stalePending" | "reconciledAt"> {
+  if (!p) return { postingState: null, mismatch: false, stalePending: false, reconciledAt: null };
+  const readable = !!p.requested_at && Number.isFinite(Date.parse(p.requested_at));
+  return {
+    postingState: p.posting_state,
+    mismatch: p.posting_state === "CREATED" && p.last_error_code === "AMOUNT_MISMATCH",
+    stalePending: p.posting_state === "PENDING" && (!readable || isStalePending(p.requested_at as string, now)),
+    reconciledAt: p.reconciled_at ?? null,
+  };
+}
+
+export function claimCin7Status(p: ClaimPostingRow | null | undefined, now: number = Date.now()): ClaimCin7Status {
+  return { ...displayStatus(p), ...postingFacts(p, now) };
+}
+
+function displayStatus(p: ClaimPostingRow | null | undefined): Omit<ClaimCin7Status, "postingState" | "mismatch" | "stalePending" | "reconciledAt"> {
   if (!p) return { kind: "NOT_POSTED", label: "Not posted to Cin7", tone: "neutral", invoiceNumber: null, reconciled: false, detail: null };
   const invoiceNumber = p.cin7_invoice_number;
   const reconciled = p.posting_state === "RECONCILED" && !!p.reconciled_at;

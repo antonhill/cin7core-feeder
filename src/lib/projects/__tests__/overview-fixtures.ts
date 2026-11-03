@@ -24,8 +24,8 @@ export function claim(id: string, seq: number, status: string, subtotalCents: nu
   const tax = Math.round(subtotalCents * 0.15);
   return { id, claim_seq: seq, claim_number: `C${String(seq).padStart(2, "0")}`, claim_date: "2026-11-01", status, subtotal_cents: subtotalCents, tax_cents: tax, total_cents: subtotalCents + tax };
 }
-export const posting = (claimId: string, state: string, invoice: string | null, cin7: string | null, reconciled: boolean, err: string | null = null): ClaimPostingRow => ({
-  claim_id: claimId, posting_state: state, cin7_invoice_number: invoice, cin7_status: cin7, reconciled_at: reconciled ? "2026-11-01T12:00:00Z" : null, last_error_message: err,
+export const posting = (claimId: string, state: string, invoice: string | null, cin7: string | null, reconciled: boolean, err: string | null = null, errCode: string | null = null): ClaimPostingRow => ({
+  claim_id: claimId, posting_state: state, cin7_invoice_number: invoice, cin7_status: cin7, reconciled_at: reconciled ? "2026-11-01T12:00:00Z" : null, last_error_message: err, last_error_code: errCode,
 });
 
 export interface ScopeSpec {
