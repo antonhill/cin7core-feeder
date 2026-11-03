@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { formatSast } from "@/lib/approvals/time";
+import { friendlyCin7Error } from "../cin7-error-text";
 import {
   acceptIncompleteCostsAction, clearManualCostEstimateAction, captureLatestCostsAction, confirmUnitBasisAction, getQuoteCostEstimateAction, recalculateCostsAction, recordFxRateAction,
   selectSupplierAction, setManualCostEstimateAction, type QuoteCostView,
@@ -155,7 +156,7 @@ export function CostPanelBody(p: CostPanelBodyProps) {
       {p.loading && !v && !error && <p className="mt-2 text-sm text-slate-600">Loading the cost estimate…</p>}
       {error && (
         <div className="mt-2 space-y-2">
-          <Alert tone="danger">{error}</Alert>
+          <Alert tone="danger">{friendlyCin7Error(error)}</Alert>
           <Button size="sm" variant="secondary" disabled={busy} onClick={p.onRetry}>Try again</Button>
         </div>
       )}

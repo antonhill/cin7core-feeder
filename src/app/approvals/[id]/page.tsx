@@ -107,7 +107,7 @@ export default function ApprovalDetailPage() {
       {r.status === "PENDING" && !showDecisionPanel(d) && <div className="mt-3"><Alert tone="info">{r.assigned_to_email ? `This approval is waiting for ${r.assigned_to_email}.` : `This approval is waiting for ${d.stage ? `any ${d.stage.role.toLowerCase().replace("_", " ")}` : "a manager"}.`} You cannot decide it from this account, so there is nothing for you to do here.</Alert></div>}
 
       <Panel className="mt-4">
-        <div className="flex flex-wrap items-center gap-2"><PanelTitle>Revision {r.revision}</PanelTitle><Status tone={TONE[r.status]}>{STATUS_LABEL[r.status]}</Status>{r.admin_override && <Status tone="warning">administrator override</Status>}{late && <Status tone="danger">overdue</Status>}</div>
+        <div className="flex flex-wrap items-center gap-2"><PanelTitle>Approval request {r.revision}</PanelTitle><Status tone={TONE[r.status]}>{STATUS_LABEL[r.status]}</Status>{r.admin_override && <Status tone="warning">administrator override</Status>}{late && <Status tone="danger">overdue</Status>}</div>
         <dl className="mt-3 grid gap-x-8 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
           {([
             ["Customer", r.customer_name ?? "-"], ["Project", r.project_ref ?? "-"], ["Amount (ex VAT)", rand(r.amount_cents)],

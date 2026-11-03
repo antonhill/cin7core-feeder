@@ -96,7 +96,7 @@ export function ownedWork(w: Stage1WorkFacts): { rep: string[]; estimator: strin
   for (const b of w.budgetLines ?? []) {
     if (b.status === "no_quantity") rep.push(`${b.label}: enter the quantity`);
     else if (b.status === "estimator_price_required") rep.push(`${b.label}: ${b.reason.replace(/\.$/, "")}`);
-    else if (ESTIMATOR_LINE_STATUSES.has(b.status)) estimator.push(`Estimator mapping needed: ${b.label}`);
+    else if (ESTIMATOR_LINE_STATUSES.has(b.status)) estimator.push(`Estimator product choice needed: ${b.label}`);
   }
   const noReason = live.filter((l) => l.overrideState === "manual_override" && !l.overrideReason);
   for (const l of noReason) rep.push(`${l.label}: give the reason for the quantity override`);
@@ -108,7 +108,8 @@ export function ownedWork(w: Stage1WorkFacts): { rep: string[]; estimator: strin
 
 export function deriveStage1Steps(input: Stage1Input): Stage1Derived {
   const issues: Stage1Issue[] = [];
-  const named = input.customerName.trim().length > 0;
+  // The Cin7 snapshot IS the customer identity: when one is selected the step is named even if the draft copy of the name has not been refreshed yet (never a stale "choose the customer").
+  const named = input.customerName.trim().length > 0 || (input.customer.available && input.customer.hasSnapshot);
   const sited = input.siteName.trim().length > 0;
   if (!named) issues.push({ message: CUSTOMER_REQUIRED_MESSAGE, stepId: "customer" });
   if (!sited) issues.push({ message: SITE_REQUIRED_MESSAGE, stepId: "site" });

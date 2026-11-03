@@ -107,8 +107,8 @@ export function deriveWizard(i: WizardInput): Wizard {
   if (c.loaded && c.available && !c.hasSnapshot) serverBlocks.push("Rep: select the Cin7 customer in step 1.");
   if (c.loaded && c.available && c.hasSnapshot && !c.hasContact) serverBlocks.push("Rep: choose the quotation contact in step 1.");
   if (i.readiness.state !== "READY") {
-    if (estimatorOpen.length > 0) serverBlocks.push(`Estimator: ${estimatorOpen[0].message.replace(/^Estimator:?\s*/, "")}${estimatorOpen.length > 1 ? ` (+${estimatorOpen.length - 1} more)` : ""}. The quotation must be READY before it can be submitted.`);
-    else serverBlocks.push("The quotation must be READY (nothing outstanding) before it can be submitted.");
+    if (estimatorOpen.length > 0) serverBlocks.push(`Estimator: ${estimatorOpen[0].message.replace(/^Estimator:?\s*/, "")}${estimatorOpen.length > 1 ? ` (+${estimatorOpen.length - 1} more)` : ""}. The quotation can be submitted once the Estimator has done this.`);
+    else serverBlocks.push("The quotation must be complete (nothing outstanding) before it can be submitted.");
   } else if (!i.totalAvailable) serverBlocks.push("The quotation total is not available yet.");
   const submitStatus: StepStatus = submitted ? "complete" : "incomplete";
 
@@ -130,7 +130,8 @@ export function deriveWizard(i: WizardInput): Wizard {
     for (let j = 0; j < idx; j++) {
       const prev = STAGE1_STEP_IDS[j];
       if (status[prev] === "complete") continue;
-      const why = prev === "customer" ? (c.loadError ? "the customer details could not be read; reload the page" : "choose the Cin7 customer and the quotation contact") : prev === "site" ? "enter the site name and room measurements" : prev === "equipment" ? "finish the equipment selections and quantities" : "review the configuration";
+      // Reasons are derived from the CURRENT facts: only what is still missing is named.
+      const why = prev === "customer" ? (c.loadError ? "the customer details could not be read; reload the page" : c.loaded && c.available && c.hasSnapshot && !c.hasContact ? "choose the quotation contact" : c.loaded && c.available && !c.hasSnapshot ? "choose the Cin7 customer" : "choose the Cin7 customer and the quotation contact") : prev === "site" ? "enter the site name and room measurements" : prev === "equipment" ? "finish the equipment selections and quantities" : "review the configuration";
       // The step right after the open one says what to do; later steps only point back at it (shorter, less repetition).
       const text = j === idx - 1 ? `Rep: ${why} in step ${j + 1} (${STAGE1_STEP_LABEL[prev]}) first.` : `Rep: complete step ${j + 1} (${STAGE1_STEP_LABEL[prev]}) first.`;
       return { ...base, access: "locked", blockedBy: [text], blockKind: "policy" };

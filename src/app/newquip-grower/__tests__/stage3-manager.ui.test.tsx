@@ -244,3 +244,52 @@ describe("UX-006i2 Stage 3: non-managers read the same facts read-only; nobody g
     expect(after.every((n) => /^(getQuote|getGrowerQuote|getMapping|getQuoteScope|getQuoteCost|getQuoteCustomer|getQuoteDelivery|previewGrowerDraft)/.test(n)), after.join(",")).toBe(true);
   }, 60000);
 });
+
+import { EstimatorResult } from "../[id]/Stage23Panels";
+import { BuildStamp } from "@/components/BuildStamp";
+describe("UX-006i2 review fixes: the Manager workspace", () => {
+  it("after approval it says what is next and who: 'Approved. Next: Rep issues and sends the customer quotation (Stage 4).'", async () => {
+    await open({ stage: "3", roles: ["MANAGER"], commercials: true, state: "MANAGER_APPROVED_FINAL", row: { ...SIGNED.row } });
+    expect(screen.getByTestId("stage3-status-line").textContent).toBe("Approved. Next: Rep issues and sends the customer quotation (Stage 4).");
+    expect(screen.getByTestId("next-owner").textContent).toBe("Rep");
+  }, 60000);
+
+  it("a cost viewer sees the three largest lines (so an implausible line is noticeable); a Rep does not; nothing blocks", async () => {
+    await open({ stage: "3", roles: ["MANAGER"], commercials: true, ...SIGNED });
+    const lines = within(screen.getByTestId("largest-lines")).getAllByRole("listitem");
+    expect(lines.length).toBe(3);
+    const amount = (li: HTMLElement) => Number(li.querySelector("b")!.textContent!.replace(/[^\d,]/g, "").replace(",", "."));
+    expect(amount(lines[0])).toBeGreaterThanOrEqual(amount(lines[1])); expect(amount(lines[1])).toBeGreaterThanOrEqual(amount(lines[2]));
+    expect(approve().disabled).toBe(false);
+    cleanup();
+    await open({ stage: "3", roles: ["REP"], commercials: false, ...SIGNED });
+    expect(screen.queryByTestId("largest-lines")).toBeNull();
+  }, 90000);
+
+  it("a Rep reading the Estimator result sees which lines were manually priced, but NOT the unit prices or the Estimator's free-text reasons", async () => {
+    await open({ stage: "3", roles: ["REP"], commercials: false, ...SIGNED });
+    const ex = screen.getByTestId("result-exceptions");
+    expect(ex.textContent).toMatch(/manually priced by the Estimator/);
+    expect(ex.textContent).not.toMatch(/Master workbook|manual quotation price|R\s?\d/);
+    cleanup();
+    await open({ stage: "3", roles: ["MANAGER"], commercials: true, ...SIGNED });
+    expect(screen.getByTestId("result-exceptions").textContent).toMatch(/manual quotation price R\s?\d/);
+  }, 90000);
+
+  it("EstimatorResult flags an incomplete or unknown margin visibly (never a block), only when told it is unknown", () => {
+    const props = { signedOffBy: "e@nq", signedOffAt: null, signoffCurrent: true, totalCents: 100, confirmedCents: 100, costing: { estimatedCost: 50, marginPct: null }, priceExceptions: [], costOverrides: [], showPriceDetail: true, largestLines: null };
+    const { unmount } = render(createElement(EstimatorResult, { ...props, marginUnknown: true }));
+    expect(screen.getByTestId("margin-flag").textContent).toMatch(/margin cannot be relied on/);
+    expect(document.body.textContent).toContain("Margin: incomplete or unknown");
+    unmount();
+    render(createElement(EstimatorResult, { ...props, marginUnknown: false }));
+    expect(screen.queryByTestId("margin-flag")).toBeNull();
+  });
+
+  it("the build stamp is a labelled muted footer and renders nothing when the build carries no commit", () => {
+    vi.stubEnv("NEXT_PUBLIC_BUILD_SHA", ""); vi.stubEnv("NODE_ENV", "production");
+    const a = render(createElement(BuildStamp)); expect(a.container.textContent).toBe(""); a.unmount();
+    vi.stubEnv("NEXT_PUBLIC_BUILD_SHA", "abc1234");
+    const b = render(createElement(BuildStamp)); expect(b.container.textContent).toBe("Page build: abc1234"); expect(b.container.innerHTML).not.toMatch(/build local/);
+  });
+});

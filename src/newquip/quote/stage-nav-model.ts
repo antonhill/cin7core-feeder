@@ -16,3 +16,26 @@ export function navStatusLabel(stage: StageView, previewable: boolean, viewer?: 
   if (viewer && stage.id === 1 && stage.status === "COMPLETE" && viewer.state === "REP_DRAFT" && viewer.roles.includes("rep")) return "Ready to submit";
   return stage.statusLabel;
 }
+
+export interface NavViewer { roles: readonly string[]; state: string; /** Open items only an Estimator can resolve (mapping / manual prices): lets an Estimator-only viewer see why Stage 2 is theirs on a Rep draft. */ estimatorOpen?: number }
+export interface NavPresentation { chip: string; summary: string; next: string | null }
+
+/**
+ * VIEWER-RELATIVE wording of a stage chip and its next-action line. computeStages is not viewer-relative and is NOT changed: it names the role that has to act, which reads wrongly to someone who is not
+ * that role (an Estimator told "Rep: submit...", a Rep or an observer told "Create the Project" on a task they cannot do). Only presentation changes; every gate stays on the server.
+ */
+export function navPresentation(stage: StageView, previewable: boolean, viewer?: NavViewer): NavPresentation {
+  const base: NavPresentation = { chip: navStatusLabel(stage, previewable, viewer), summary: stage.summary, next: stage.next };
+  if (!viewer) return base;
+  const has = (r: string) => viewer.roles.includes(r);
+  const noRole = !has("rep") && !has("estimator") && !has("manager");
+  // Stage 2 for an Estimator who is not also the Rep, on a Rep draft: the Rep cannot submit until the Estimator's own items are done (or has not finished); say whose turn it is, consistently.
+  if (stage.id === 2 && viewer.state === "REP_DRAFT" && has("estimator") && !has("rep") && !has("manager") && stage.status !== "RETURNED") {
+    if ((viewer.estimatorOpen ?? 0) > 0) return { chip: "Your mapping is needed", summary: "Mapping and manual prices are outstanding.", next: "Estimator: map the products and enter the manual prices listed in Stage 2, step 1." };
+    if (stage.status === "AWAITING_ACTION") return { chip: "With the Rep", summary: "Nothing is left for you until the Rep submits.", next: "Rep: submit the quotation to the Estimator (Stage 1, step 5)." };
+  }
+  // Stage 6: creating the Project is the Manager's action. Anyone else sees whose turn it is.
+  if (stage.id === 6 && stage.status === "AWAITING_ACTION" && !has("manager")) return { chip: noRole ? "Read-only: you have no quote role" : "Waiting on the Manager", summary: "Eligible: the Manager creates the Project from the accepted baseline.", next: "Manager: create the Project." };
+  if (stage.status === "AWAITING_ACTION" && noRole) return { ...base, chip: "Read-only: you have no quote role" };
+  return base;
+}

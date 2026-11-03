@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { nextIncompleteStepId } from "@/components/ui/step-rail-model";
 import { currentStepId, isPermitted, resolveEntryStep, toRailSteps } from "../wizard-contract";
 import {
-  deriveFinalReviewChecklist, deriveStage2Wizard, deriveStage3Wizard, estimatorItemText, finalReviewBlockText, NOT_SUBMITTED_REASON, STAGE2_WIZARD_IDS,
+  deriveFinalReviewChecklist, deriveStage2Wizard, deriveStage3Wizard, estimatorItemText, estimatorWork, finalReviewBlockText, NOT_SUBMITTED_REASON, STAGE2_WIZARD_IDS,
   type Stage2WizardId, type Stage2WizardInput, type Stage3WizardInput,
 } from "../stage23-wizard";
 
@@ -264,7 +264,8 @@ describe("deriveStage3Wizard: role x state matrix", () => {
   it("approved: read-only and complete; nothing is next", () => {
     const w = s3({ state: "MANAGER_APPROVED_FINAL" });
     expect(w.steps.every((x) => x.access === "readonly" && x.status === "complete")).toBe(true);
-    expect(w.nextOwner).toBeNull();
+    expect(w.nextOwner).toBe("Rep");
+    expect(w.statusLine).toBe("Approved. Next: Rep issues and sends the customer quotation (Stage 4).");
   });
 });
 
@@ -275,5 +276,27 @@ describe("UX-006i2 static: the new derivation and presentation import no server 
     const src = readFileSync(join(roots[r], f), "utf8");
     expect(src).not.toMatch(/from "[^"]*(actions|-store|supabase|server-only)[^"]*"/);
     if (f.endsWith(".ts")) expect(src).not.toMatch(/from "react"|"use client"|"use server"/);
+  });
+});
+
+describe("UX-006i2 review fixes (pure)", () => {
+  it("estimatorWork derives the CURRENT open items by KIND and lists each line once: confirmed mappings leave only the manual prices; a blank-reason count is its own item", () => {
+    const before = estimatorWork([{ label: "Feeder", status: "unmapped" }, { label: "Feeder", status: "unmapped" }, { label: "Slats", status: "package_unconfirmed" }, { label: "Door", status: "not_in_price_source" }, { label: "Light", status: "priced" }], 0);
+    expect(before.map).toEqual(["Choose or confirm the product for Feeder", "Choose or confirm the product for Slats"]);
+    expect(before.price).toEqual(["Enter a manual quotation price for Door"]);
+    const after = estimatorWork([{ label: "Feeder", status: "priced" }, { label: "Door", status: "supplier_quote_required" }], 2);
+    expect(after.map).toEqual([]);
+    expect(after.all).toEqual(["Enter a manual quotation price for Door", "2 manual prices need a reason"]);
+    expect(estimatorWork(null, 1).all).toEqual(["1 manual price needs a reason"]);
+    expect(estimatorWork([{ label: "M75", status: "estimator_price_required" }], 0).all).toEqual([]); // a Rep-owned input is not the Estimator's
+  });
+  it("the costs step reads 'To review in Final review' until marked, then a counted 'Reviewed' (session only); the checklist no longer overclaims", () => {
+    expect(step(s2(), "costs").statusLabel).toBe("To review in Final review");
+    expect(step(s2(), "costs").counted).toBeUndefined();
+    expect(step(s2({ costAcknowledged: true }), "costs")).toMatchObject({ counted: true, statusLabel: "Reviewed" });
+    expect(step(s2({ costAcknowledged: true, dirty: true }), "costs").counted).toBeUndefined();
+    const item = deriveFinalReviewChecklist({ mappingOpen: [], readiness: { state: "READY", reasons: [] }, cost: costReview, confirmedCents: 1, totalCents: 1, dirty: false, calcValid: true }).find((x) => x.id === "costing")!;
+    expect(item.label).toBe("Costing figures are available");
+    expect(item.detail).toMatch(/margin and the Cin7 cost capture.*may still show incomplete/);
   });
 });
