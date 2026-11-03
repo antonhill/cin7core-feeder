@@ -56,7 +56,7 @@ export function RepSubmittedSummary({ draft, submitted, revision, floorAreaM2, t
           <span><span className="text-slate-700">Site </span><span className="break-words font-medium text-slate-900">{draft.siteName.trim() || "—"}</span></span>
           <span><span className="text-slate-700">{submitted ? "Submitted total (ex VAT) " : "Quote total (ex VAT) "}</span><span className="font-medium tabular-nums text-slate-900" data-testid="rep-summary-total">{totalCents == null ? "—" : fmtCents(totalCents)}</span></span>
           <span className="max-sm:hidden"><span className="text-slate-700">Customer price confirmation </span><span className="font-medium text-slate-900" data-testid="rep-summary-confirmation">{conf ?? <span className="text-slate-700">Not recorded yet</span>}</span></span>
-          <span className="text-xs text-slate-700">Read-only · revision {revision} · <span className="font-semibold text-indigo-700">Details</span></span>
+          <span className="text-xs text-slate-700"><span className="max-sm:hidden">Read-only · revision {revision} · </span><span className="font-semibold text-indigo-700">Details</span></span>
         </summary>
         <p className="mt-1 text-sm text-slate-800 sm:hidden">Customer price confirmation: {conf ?? "not recorded yet"}</p>
         <div className="mt-2 grid gap-4 md:grid-cols-2 xl:grid-cols-3">

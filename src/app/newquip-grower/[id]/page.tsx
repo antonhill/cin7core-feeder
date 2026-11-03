@@ -625,7 +625,7 @@ export default function QuoteEditorPage() {
       <div className="top-0 z-10 mt-3 rounded-lg border border-slate-200 bg-white px-4 py-2 shadow-sm md:sticky" data-testid="quote-summary-bar" aria-busy={recalculating}>
         <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs uppercase tracking-wide text-slate-700">Calculation</span>
+            <span className="text-xs uppercase tracking-wide text-slate-700 max-sm:hidden">Calculation</span>
             <Status tone={commercial && !commercial.complete && rd.state === "READY" ? "warning" : stage === 1 ? (repReady ? "success" : "neutral") : READY_TONE[rd.state]}>{commercial && !commercial.complete && rd.state === "READY" ? "Indicative: not commercially ready" : stage === 1 ? (repReady ? "Complete" : "In progress") : READINESS_LABEL[rd.state]}</Status>
             {previewFailure ? <Status tone="danger">Recalculation failed - figures are out of date</Status> : dirty && <Status tone="warning">Preview of unsaved edits</Status>}
             {commercial && !commercial.complete && stage !== 2 && <span data-testid="commercial-chip"><Status tone="warning">{commercial.headline}</Status></span>}
@@ -680,7 +680,8 @@ export default function QuoteEditorPage() {
             <span className="font-semibold text-slate-900">Stage 2 is the Estimator&apos;s review.</span>
             <span role="status" aria-live="polite" className="text-slate-800" data-testid="stage2-status-line">{wizard2.statusLine}</span>
             <OwnerTag role={wizard2.nextOwner} />
-            {commercial && !commercial.complete && <span data-testid="commercial-chip" className="max-w-full [&>span]:whitespace-normal"><Status tone="warning">{commercial.headline}</Status></span>}
+            {commercial && !commercial.complete && <span data-testid="commercial-chip" className="max-w-full max-sm:hidden [&>span]:whitespace-normal"><Status tone="warning">{commercial.headline}</Status></span>}
+            {commercial && !commercial.complete && <span className="sm:hidden" data-testid="commercial-chip-short"><Status tone="warning">Not commercially ready ({commercial.items.length} item{commercial.items.length === 1 ? "" : "s"})</Status></span>}
           </div>
           {amountChange.changed && q.state === "ESTIMATOR_REVIEW" && <div className="mt-2"><Alert tone="warning"><span data-testid="total-changed">{amountChange.text}</span></Alert></div>}
           {repSummary}
@@ -1036,7 +1037,7 @@ export default function QuoteEditorPage() {
         {canCommercials && (
           <StepPanel railId="s2" stepId="final" number={visible2.indexOf("final") + 1} title={STAGE2_WIZARD_LABEL.final} current={step2Id === "final"} showAll={showAllSteps} locked={lockedFor2("final")} className="mt-6 space-y-6">
             <Panel>
-              <PanelTitle>Final review</PanelTitle>
+              <h3 className="sr-only">Final review</h3>
               <div className="mt-3" data-testid="cost-ack">
                 {costNeedsMark && (
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-2">

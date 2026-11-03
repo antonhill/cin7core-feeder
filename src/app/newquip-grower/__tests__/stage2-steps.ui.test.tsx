@@ -1006,3 +1006,43 @@ describe("UX-006 corrections phase 2: server facts wired (costing, Estimator-pri
     expect(screen.getByTestId("stage3-status-line").textContent).toMatch(/Next responsible role: Rep: reconfirm the amount/);
   }, 60000);
 });
+
+describe("UX-006 acceptance directive: the Estimator's current work is immediately reachable (layout contract)", () => {
+  it("ONE compact bar: the Rep summary is a one-line disclosure, the nav's next-action row is not repeated, the rail is dense with one-line notes, and Save sits in the same toolbar as Show all / Next incomplete", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, ...SUBMITTED });
+    const sum = screen.getByTestId("rep-summary");
+    expect(sum.querySelectorAll(":scope > details").length).toBe(1);
+    expect(sum.querySelector("details > summary")!.textContent).toMatch(/Submitted by the Rep.*Customer.*Site.*Submitted total.*Customer price confirmation.*Details/);
+    expect(screen.queryByTestId("next-action")).toBeNull(); // the owner line says it once
+    expect(rail().querySelectorAll("li button .truncate").length).toBeGreaterThan(0); // notes are one line (full text in the tooltip)
+    const toolbar = within(rail()).getByLabelText("Show all steps").closest("div")!;
+    expect(within(toolbar).getByRole("button", { name: "Save draft" })).toBeTruthy();
+    expect(within(toolbar).getByTestId("save-state")).toBeTruthy();
+  }, 60000);
+
+  it("the first control of each step comes first in the step: mapping action before the blocker list; Cin7 cost capture before the totals on Costs; the Preview utility is at the END of the page", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "1", draftOver: UNMAPPED });
+    const first = screen.getByTestId("step1-first-action");
+    const banner = screen.getByTestId("rep-waiting-banner");
+    expect(panel("mapping")!.contains(banner)).toBe(true); // the blocker list belongs to the step it is the primary task of
+    expect(first.compareDocumentPosition(banner) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    cleanup();
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "2", ...SUBMITTED });
+    const cap = screen.getByTestId("disc-cost-capture");
+    const totals = within(panel("costs") as HTMLElement).getByText("Totals");
+    expect(cap.compareDocumentPosition(totals) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(cap.hasAttribute("open")).toBe(true); // costing incomplete: the primary task is open
+    vi.stubEnv("VERCEL_ENV", "preview");
+    cleanup();
+    await open({ roles: ["ESTIMATOR"], commercials: true, ...SUBMITTED });
+    const tools = screen.queryByTestId("preview-tools");
+    if (tools) expect(panel("signoff")!.compareDocumentPosition(tools) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  }, 90000);
+
+  it("Final review: 'Mark reviewed & continue' is the first thing in the panel (before the checklist), with its explanation beside it", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "3", ...SUBMITTED });
+    const btn = screen.getByRole("button", { name: /Mark reviewed/ });
+    expect(btn.compareDocumentPosition(screen.getByTestId("final-review-checklist")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(btn.parentElement!.textContent).toContain("It is not the Estimator sign-off.");
+  }, 60000);
+});
