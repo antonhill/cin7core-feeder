@@ -162,7 +162,7 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab, contractShow
       if (ref) verifiedByClaimId[cl.id] = ref;
       if (invoiceVerification.errorFor(cl.id) !== null) failedClaimIds.push(cl.id);
     }
-    try { return buildJourney({ scopes: res.data.scopes, physical: overview.physical, verification: { verifiedByClaimId, failedClaimIds } }); } catch { return null; }
+    try { return buildJourney({ scopes: res.data.scopes, physical: overview.physical, verification: { verifiedByClaimId, failedClaimIds } }); } catch (e) { console.error("The project journey could not be built.", e); return new Error("The project journey could not be built."); }
   }, [res, overview, invoiceVerification]);
 
   if (res === null) return <OverviewSkeleton />;
@@ -200,7 +200,8 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab, contractShow
         )}
       </Section>
 
-      {journey && <JourneyMap journey={journey} onOpenTab={onOpenTab} />}
+      {journey instanceof Error && <p role="status" className="text-xs text-slate-700" data-testid="journey-unavailable">Project journey unavailable: it could not be built from this data. The rest of the overview is unaffected.</p>}
+      {journey && !(journey instanceof Error) && <JourneyMap journey={journey} onOpenTab={onOpenTab} />}
 
       <Section id="ov-summary" title="Executive summary" subtitle={contractShownAbove ? "Original contract, approved variations and revised contract are in the project summary above. Billing here covers the original project and its variations. All amounts are ex VAT." : "All commercial amounts are ex VAT."}>
         <KpiGroups kpis={o.kpis} contractShownAbove={contractShownAbove} />

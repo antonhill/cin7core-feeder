@@ -182,12 +182,13 @@ describe("JourneyMap - presentation and accessibility", () => {
     expect(screen.getByTestId("journey-summary-variations").textContent).toMatch(/needs? attention/);
   });
 
-  it("a variation with no billing project shows as needs attention with 'Start V001 billing'", () => {
+  it("a variation with no billing project shows as 'Billing not set up' (not inflating attention) with 'Start V001 billing'", () => {
     const i = demoInput();
     i.scopes = i.scopes.filter((s) => s.scope === "BASE");
     renderJourney(i);
     const v = screen.getByTestId("journey-variation-V001");
-    expect(v.getAttribute("data-status")).toBe("needs_attention");
+    expect(v.getAttribute("data-status")).toBe("not_started");
+    expect(v.textContent).toContain("Billing not set up");
     fireEvent.click(within(v).getByRole("button", { name: "Start V001 billing: V001 commercial billing" }));
     expect(onOpen).toHaveBeenCalledWith("variations");
   });
@@ -231,3 +232,28 @@ describe("JourneyMap - boundary", () => {
     }
   });
 });
+
+describe("JourneyMap - honest headline and failure", () => {
+  it("the headline stays honest while invoice authorisation is unverified, and the lane summary says 'not verified' (not 'not read yet')", async () => {
+    const i = demoInput();
+    render(<JourneyMap journey={journeyFor(i)} onOpenTab={vi.fn()} />);
+    expect(screen.getByTestId("journey-total").textContent).toMatch(/not verified or not read yet/);
+    expect(screen.getByTestId("journey-summary-commercial").textContent).toContain("not verified");
+    expect(screen.getByTestId("journey-summary-commercial").textContent).not.toContain("not read yet");
+    expect(screen.getByTestId("journey-summary-physical").textContent).toContain("not read yet");
+  });
+  it("if the journey cannot be built a small status notice replaces it (and the error is logged), rest of the overview unaffected", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const i = demoInput();
+    (i.scopes[0].view as unknown as { openingCommitments: unknown }).openingCommitments = null; // read only by the journey: makes buildJourney throw
+    overviewAction.mockResolvedValue(dataOf(i) as never);
+    render(<ProjectOverview projectId="p-base" refreshKey="k" onOpenTab={vi.fn()} />);
+    const note = await screen.findByTestId("journey-unavailable");
+    expect(note.getAttribute("role")).toBe("status");
+    expect(screen.getByTestId("overview")).toBeTruthy();
+    expect(screen.queryByTestId("journey")).toBeNull();
+    expect(err).toHaveBeenCalled();
+    err.mockRestore();
+  });
+});
+

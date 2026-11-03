@@ -110,7 +110,7 @@ describe("Project Journey - Commercial lane", () => {
     expect(ready).toMatchObject({ status: "in_progress", needs: [] });
     expect(st(journeyOf([base({ claims: approved, postings: [posting("c1", "FAILED_UNCERTAIN", null, null, false)] })]), "commercial-posting").status).toBe("needs_attention");
     expect(st(journeyOf([base({ claims: approved, postings: [posting("c1", "FAILED_CONFIRMED_NO_WRITE", null, null, false)] })]), "commercial-posting").status).toBe("needs_attention");
-    expect(st(journeyOf([base({ claims: approved, postings: [posting("c1", "PENDING", null, null, false)] })]), "commercial-posting").status).toBe("in_progress");
+    expect(st(journeyOf([base({ claims: approved, postings: [{ ...posting("c1", "PENDING", null, null, false), requested_at: new Date().toISOString() }] })]), "commercial-posting").status).toBe("in_progress");
     const created = st(journeyOf([base({ claims: approved, postings: [posting("c1", "CREATED", "INV-1", "DRAFT", false)] })]), "commercial-posting");
     expect(created).toMatchObject({ status: "in_progress" });
     expect(created.detail).toContain("1 awaiting reconciliation");
@@ -138,7 +138,7 @@ describe("Project Journey - review fixes", () => {
     const j = journeyOf([base({ ...fullyBilled(), variations: [variation("V001", "APPROVED")] })]);
     expect(st(j, "commercial-billing").status).toBe("completed");
     expect(st(j, "commercial-stages").status).toBe("completed");
-    expect(st(j, "variation-V001").status).toBe("needs_attention");
+    expect(st(j, "variation-V001").status).toBe("not_started"); // approved, billing not set up: not inflated into "needs attention"
   });
   it("posting copy separates retryable from uncertain, in both lanes, and never says 'failed'", () => {
     const retry = journeyOf([base({ claims: [claim("c1", 1, "APPROVED", R(500))], postings: [posting("c1", "FAILED_CONFIRMED_NO_WRITE", null, null, false)] })]);
@@ -231,13 +231,13 @@ describe("Project Journey - Variations lane", () => {
     const j = journeyOf([base({ variations: vs })]);
     expect(j.lanes[2].stations.map((s) => s.id)).toEqual(["variation-V001", "variation-V002", "variation-V003"]);
     expect(st(j, "variation-V001").status).toBe("not_started");
-    expect(st(j, "variation-V002")).toMatchObject({ status: "needs_attention", link: { tab: "variations", label: "Start V002 billing" } });
+    expect(st(j, "variation-V002")).toMatchObject({ status: "not_started", statusLabel: "Billing not set up", link: { tab: "variations", label: "Start V002 billing" } });
     expect(st(j, "variation-V002").detail).toMatch(/no billing project/);
     expect(st(j, "variation-V003")).toMatchObject({ status: "not_started", statusLabel: "Rejected" });
   });
   it("a billing project open with no claims is in progress; fully reconciled is completed; uncertain/unbalanced is attention", () => {
     const vs = [variation("V001", "APPROVED")];
-    expect(st(journeyOf([base({ variations: vs }), varScope("V001")]), "variation-V001")).toMatchObject({ status: "in_progress", detail: "Title V001: billing project open; no claims raised yet." });
+    expect(st(journeyOf([base({ variations: vs }), varScope("V001")]), "variation-V001")).toMatchObject({ status: "in_progress", detail: "V001 Title V001: billing project open; no claims raised yet." });
     const done = varScope("V001", { events: [progress("vs-V001", 10000, 10000)], claims: [claim("vc1", 1, "APPROVED", R(1000))], postings: [posting("vc1", "RECONCILED", "INV-V", "AUTHORISED", true)] });
     expect(st(journeyOf([base({ variations: vs }), done]), "variation-V001").status).toBe("completed");
     const uncertain = varScope("V001", { claims: [claim("vc1", 1, "FAILED_UNCERTAIN", R(500))] });
@@ -257,7 +257,7 @@ describe("Project Journey - Variations lane", () => {
     // two variations: only the matching code's scope is read
     const two = journeyOf([base({ variations: [variation("V001", "APPROVED"), variation("V002", "APPROVED")] }), noisyVar]);
     expect(st(two, "variation-V001").status).toBe("blocked");
-    expect(st(two, "variation-V002").status).toBe("needs_attention");
+    expect(st(two, "variation-V002").status).toBe("not_started");
     expect(st(two, "variation-V002").detail).toMatch(/no billing project/);
   });
 });
@@ -409,7 +409,7 @@ describe("Project Journey - commercial billing follows postings (owner-shaped)",
     expect(st(journeyOf([ownerBase(), unbilledVar]), "commercial-billing").status).toBe("completed");
     const two = journeyOf([scope({ ...{ project: project({ id: "ob2", project_reference: "P", original_contract_cents: R(1000) }), stages: [stage("s1", 1, "All", R(1000))] }, variations: [variation("V001", "APPROVED", { amount_cents: R(500) }), variation("V002", "APPROVED", { amount_cents: R(500) })] }), ownerVariation()]);
     expect(st(two, "variation-V001").status).toBe("completed");
-    expect(st(two, "variation-V002")).toMatchObject({ status: "needs_attention" });
+    expect(st(two, "variation-V002")).toMatchObject({ status: "not_started" });
     expect(st(two, "variation-V002").detail).toMatch(/no billing project/);
   });
   it("is pure over loaded data: no hook, context, action, store, database or org identifier in the model's imports or code", () => {
@@ -446,9 +446,61 @@ describe("Project Journey - stricter g2 derivation and money format", () => {
     const v = scope({ project: project({ id: "ov", project_reference: "P-V", original_contract_cents: R(500_000), billing_scope: "VARIATION", parent_project_id: "ob", variation_id: "x" }), stages: [stage("vs", 1, "V", R(500_000))], events: [progress("vs", 10000, 10000)], claims: [claim("vc1", 1, "APPROVED", R(500_000))], postings: [posting("vc1", "RECONCILED", "INV-V", "DRAFT", true)], variationCode: "V001" });
     const b = scope({ project: project({ id: "ob3", project_reference: "P", original_contract_cents: R(10_072_000) }), stages: [stage("s1", 1, "All", R(10_072_000))], variations: [variation("V001", "APPROVED", { amount_cents: R(500_000) })], saleNumber: "SO-1" });
     const j = journeyOf([b, v]);
-    expect(st(j, "variation-V001").detail).toBe("Title V001: commercial billing complete - R\u00A0500\u00A0000,00 billed, R\u00A00,00 remaining, 1 invoice reconciled.");
+    expect(st(j, "variation-V001").detail).toBe("V001 Title V001: commercial billing complete - R\u00A0500\u00A0000,00 billed, R\u00A00,00 remaining, 1 invoice reconciled.");
     const draft = journeyOf([scope({ project: project({ id: "ob4", project_reference: "P", original_contract_cents: R(10_072_000) }), stages: [stage("s1", 1, "All", R(10_072_000))], variations: [variation("V001", "DRAFT", { amount_cents: R(500_000) })] })]);
     expect(st(draft, "variation-V001").detail).toContain("R\u00A0500\u00A0000,00 ex VAT");
     expect(JSON.stringify(j)).not.toMatch(/R\d/); // no "R500" style hand-built amounts
+  });
+});
+
+describe("Project Journey - review round 3", () => {
+  const four = [posting("c1", "RECONCILED", "INV-1", "DRAFT", true), posting("c3", "RECONCILED", "INV-3", "DRAFT", true), posting("c4", "RECONCILED", "INV-4", "DRAFT", true)];
+  it("a STALE pending posting is uncertain in BOTH Post to Cin7 and Commercial billing (never 'being posted'); a fresh one is being posted", () => {
+    const stale = ownerBase({ postings: [...four, { ...posting("c5", "PENDING", null, null, false), requested_at: "2020-01-01T00:00:00Z" }] });
+    const j = journeyOf([stale]);
+    expect(st(j, "commercial-posting").status).toBe("needs_attention");
+    expect(st(j, "commercial-posting").detail).toContain("uncertain outcome");
+    expect(st(j, "commercial-posting").detail).not.toContain("being posted");
+    expect(st(j, "commercial-billing").status).toBe("needs_attention");
+    const fresh = ownerBase({ postings: [...four, { ...posting("c5", "PENDING", null, null, false), requested_at: new Date().toISOString() }] });
+    expect(st(journeyOf([fresh]), "commercial-posting").detail).toContain("being posted");
+  });
+  it("Post to Cin7 is never Completed while a cancelled claim still has a live posting", () => {
+    const b = ownerBase({ postings: [...four, posting("c5", "RECONCILED", "INV-5", "AUTHORISED", true), posting("c2", "RECONCILED", "INV-2", "DRAFT", true)] });
+    const j = journeyOf([b]);
+    expect(st(j, "commercial-posting").status).toBe("needs_attention");
+    expect(st(j, "commercial-posting").detail).toContain("cancelled claim");
+    expect(st(j, "commercial-billing").status).toBe("needs_attention");
+  });
+  it("partial verification states only what was verified: real status of the others, N not verified, Could not verify N; never 'still Draft'", () => {
+    const ps = [posting("c1", "RECONCILED", "INV-1", "DRAFT", true), posting("c3", "RECONCILED", "INV-3", "DRAFT", true), posting("c4", "RECONCILED", "INV-4", "DRAFT", true), posting("c5", "RECONCILED", "INV-5", "AUTHORISED", true)];
+    const verification = { verifiedByClaimId: { c1: ref("c1", "INV-1", "AUTHORISED"), c3: ref("c3", "INV-3", "VOIDED") } as Record<string, VerifiedRef | undefined>, failedClaimIds: ["c4"] };
+    const a = st(buildJourney({ scopes: [ownerBase({ postings: ps })], physical: NOT_READ, verification }), "commercial-authorisation");
+    expect(a.status).toBe("in_progress");
+    expect(a.detail).toContain("1 of 4 authorised");
+    expect(a.detail).toContain("1 voided in Cin7");
+    expect(a.detail).toContain("2 not verified");
+    expect(a.detail).toContain("Could not verify 1");
+    expect(a.detail).not.toMatch(/still Draft/);
+  });
+  it("a variation whose billing project contract differs from the approved amount is Needs attention, never Completed", () => {
+    const j = journeyOf([scope({ project: project({ id: "ob5", project_reference: "P", original_contract_cents: R(1000) }), stages: [stage("s1", 1, "All", R(1000))], variations: [variation("V001", "APPROVED", { amount_cents: R(400) })] }), varScope("V001", { events: [progress("vs-V001", 10000, 10000)], claims: [claim("vc1", 1, "APPROVED", R(1000))], postings: [posting("vc1", "RECONCILED", "INV", "DRAFT", true)] })]);
+    const s = st(j, "variation-V001");
+    expect(s.status).toBe("needs_attention");
+    expect(s.detail).toContain("differs from the approved amount");
+  });
+  it("an over-billed stage is Needs attention in Stage progress too (agrees with Commercial billing)", () => {
+    const b = ownerBase({ lines: [{ claim_id: "c1", stage_id: "s-dep", current_claim_cents: R(400) }, { claim_id: "c3", stage_id: "s-del", current_claim_cents: R(560) }, { claim_id: "c4", stage_id: "s-del", current_claim_cents: R(0.5) }, { claim_id: "c5", stage_id: "s-ins", current_claim_cents: R(50) }] });
+    const j = journeyOf([b]);
+    expect(st(j, "commercial-stages").status).toBe("needs_attention");
+    expect(st(j, "commercial-billing").status).toBe("needs_attention");
+  });
+  it("an unrecognised variation status says 'Status not recognised', not 'Not read yet'", () => {
+    const s = st(journeyOf([base({ variations: [variation("V001", "WEIRD")] })]), "variation-V001");
+    expect(s).toMatchObject({ unknown: true, statusLabel: "Status not recognised" });
+  });
+  it("variation text starts with the code and the title", () => {
+    const j = journeyOf([base({ variations: [variation("V001", "DRAFT", { title: "Ventilation" })] })]);
+    expect(st(j, "variation-V001").detail.startsWith("V001 Ventilation:")).toBe(true);
   });
 });

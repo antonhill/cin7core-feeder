@@ -31,11 +31,17 @@ function StationRow({ s, onOpenTab }: { s: JourneyStation; onOpenTab: (tab: Over
   );
 }
 
+/** Unknown stations grouped by what they actually say: "Not verified" is not "not read yet". Permanent unknowns (evidence-only rows) are left out. */
+function unknownParts(l: JourneyLane): string[] {
+  const labels = l.stations.filter((s) => s.unknown && !s.permanentUnknown).map((s) => (s.statusLabel ?? JOURNEY_UNKNOWN_LABEL).toLowerCase());
+  return [...new Set(labels)].map((x) => `${labels.filter((y) => y === x).length} ${x}`);
+}
+
 function summaryText(l: JourneyLane): string {
   const parts = [
     l.summary.attention > 0 ? `${l.summary.attention} need${l.summary.attention === 1 ? "s" : ""} attention` : "",
     l.summary.inProgress > 0 ? `${l.summary.inProgress} in progress` : "",
-    l.summary.unknown > 0 ? `${l.summary.unknown} not read yet` : "",
+    ...unknownParts(l),
   ].filter(Boolean);
   return parts.length ? parts.join(" · ") : l.stations.length === 0 ? "Nothing to show" : "Nothing needs attention";
 }
@@ -68,13 +74,14 @@ export function JourneyMap({ journey, onOpenTab }: { journey: Journey; onOpenTab
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const toggle = (k: string) => setOpen((o) => ({ ...o, [k]: !o[k] }));
   const needing = [...journey.setup.filter((s) => !s.unknown && (s.status === "needs_attention" || s.status === "blocked")), ...journey.lanes.flatMap((l) => l.stations.filter((s) => !s.unknown && (s.status === "needs_attention" || s.status === "blocked")))].length;
+  const unknownN = journey.lanes.reduce((n, l) => n + l.stations.filter((s) => s.unknown && !s.permanentUnknown).length, 0) + journey.setup.filter((s) => s.unknown).length;
   const setupOpen = !!open.setup;
   return (
     <section aria-labelledby="ov-journey" className="space-y-3" data-testid="journey">
       <div>
         <h2 id="ov-journey" className="text-sm font-semibold text-slate-800">Project journey</h2>
         <p className="text-xs text-slate-600">Where each workflow stands. These run in parallel; none has to be finished before another, and nothing here blocks you from working.</p>
-        <p className="mt-1 text-xs font-medium text-slate-800" data-testid="journey-total">{needing === 0 ? "No station needs attention." : `${needing} station${needing === 1 ? "" : "s"} need${needing === 1 ? "s" : ""} attention or ${needing === 1 ? "is" : "are"} blocked.`}</p>
+        <p className="mt-1 text-xs font-medium text-slate-800" data-testid="journey-total">{needing === 0 ? `No station needs attention.${unknownN > 0 ? ` ${unknownN} not verified or not read yet.` : ""}` : `${needing} station${needing === 1 ? "" : "s"} need${needing === 1 ? "s" : ""} attention or ${needing === 1 ? "is" : "are"} blocked.`}</p>
       </div>
       <div className="min-[701px]:hidden">
         <button type="button" aria-expanded={setupOpen} aria-controls="journey-setup-group" onClick={() => toggle("setup")}

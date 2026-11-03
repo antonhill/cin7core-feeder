@@ -414,9 +414,10 @@ function claimFacts(v: ProjectView) {
     draft: claims.filter((c) => c.status === "DRAFT").length,
     submitted: claims.filter((c) => c.status === "READY_FOR_APPROVAL").length,
     postable: claims.filter((c) => c.status === "APPROVED" && c.cin7Status.kind === "NOT_POSTED").length,
-    posting: claims.filter((c) => c.cin7Status.kind === "POSTING").length,
+    // A PENDING posting older than the stale window has an unknown outcome: it counts as uncertain here exactly as commercialBillingState counts it (never "being posted").
+    posting: claims.filter((c) => c.cin7Status.kind === "POSTING" && !c.cin7Status.stalePending).length,
     notCreated: claims.filter((c) => c.cin7Status.kind === "FAILED").length,
-    uncertain: claims.filter((c) => c.cin7Status.kind === "UNCERTAIN").length,
+    uncertain: claims.filter((c) => c.cin7Status.kind === "UNCERTAIN" || (c.cin7Status.kind === "POSTING" && c.cin7Status.stalePending)).length,
     invoiced: claims.filter((c) => INVOICED_KINDS.includes(c.cin7Status.kind)).length,
   };
 }
@@ -440,7 +441,15 @@ function invoiceAuthorisationFor(v: ProjectView, verification: JourneyInput["ver
   const at = verified[0]?.verifiedAt ?? rows.find((r) => r.verifiedAt)?.verifiedAt ?? null;
   if (problems > 0) return { status: "needs_attention", unknown: false, detail: `${plural(problems, "invoice")} could not be matched in Cin7 by the last verification. Open Claims to review.`, total };
   if (authorised === total) return { status: "completed", unknown: false, statusLabel: "Authorised (verified)", detail: `Authorised in Cin7 - verified ${formatSast(at)}. ${plural(total, "invoice")}.`, total };
-  if (verified.length > 0) return { status: "in_progress", unknown: false, detail: `${authorised} of ${total} authorised (verified ${formatSast(at)}); the rest are still Draft in Cin7.`, total };
+  if (verified.length > 0) {
+    // Only what the verification actually said: the other verified invoices with their REAL status, and the rest as "not verified" (never assumed Draft).
+    const other = verified.filter((r) => !isAuthorised(r.verifiedStatus)).map((r) => (r.verifiedStatus ?? "no status").toLowerCase());
+    const otherText = [...new Set(other)].map((st) => `${other.filter((x) => x === st).length} ${st}`).join(", ");
+    const unverified = rows.filter((r) => r.state !== "VERIFIED").length;
+    const failedN = invoiced.filter((c) => failedIds.has(c.id)).length;
+    const parts = [otherText ? `${otherText} in Cin7` : "", unverified > 0 ? `${unverified} not verified` : "", failedN > 0 ? `Could not verify ${failedN}` : ""].filter(Boolean);
+    return { status: "in_progress", unknown: false, detail: `${authorised} of ${total} authorised (verified ${formatSast(at)})${parts.length ? `; ${parts.join("; ")}` : ""}.`, total };
+  }
   // Nothing verified for this scope: the recorded snapshot is evidence of the past and is shown as such, never as success.
   const recorded = rows.map((r) => r.recorded?.status ?? "no status");
   const counts = [...new Set(recorded)].map((st) => [recorded.filter((x) => x === st).length, st.toLowerCase()] as const).sort((x, y) => y[0] - x[0] || x[1].localeCompare(y[1])).map(([n, st]) => `${n} ${st}`).join(", ");
@@ -452,11 +461,14 @@ function invoiceAuthorisationFor(v: ProjectView, verification: JourneyInput["ver
 function variationStation(code: string, title: string, status: string, amountCents: number, scopeOf: OverviewScopeInput | undefined, verification: JourneyInput["verification"]): JourneyStation {
   const id = `variation-${code}`;
   const label = `${code} commercial billing`;
+  const who = `${code} ${title}`;
   const link = { tab: "variations" as const, label: "Open Variations" };
-  if (status === "DRAFT") return station({ id, label, status: "not_started", detail: `${title}: draft, ${formatCents(amountCents)} ex VAT, not yet approved. No billing is possible until it is approved.`, link });
+  if (status === "DRAFT") return station({ id, label, status: "not_started", detail: `${who}: draft, ${formatCents(amountCents)} ex VAT, not yet approved. No billing is possible until it is approved.`, link });
   if (status === "REJECTED") return station({ id, label, status: "not_started", statusLabel: "Rejected", detail: "Rejected: closed. It adds nothing to the contract and has no billing.", link });
-  if (status !== "APPROVED") return unknownStation(id, label, `Unrecognised variation status ${status}.`, link);
-  if (!scopeOf) return station({ id, label, status: "needs_attention", detail: `Approved (${formatCents(amountCents)} ex VAT) but no billing project exists yet, so it cannot be invoiced.`, link: { tab: "variations", label: `Start ${code} billing` } });
+  if (status !== "APPROVED") return { ...unknownStation(id, label, `${who}: the variation status "${status}" is not one the Toolbox recognises.`, link), statusLabel: "Status not recognised" };
+  // Approved but no billing project: the value is approved and cannot be invoiced yet, which is a state to ACT on, but it is not a fault. It reads "Not started - billing not set up"
+  // and does not inflate the "needs attention" headline (decision recorded in the PR: not-started, not attention).
+  if (!scopeOf) return station({ id, label, status: "not_started", statusLabel: "Billing not set up", detail: `${who}: approved (${formatCents(amountCents)} ex VAT) but no billing project exists yet, so it cannot be invoiced.`, link: { tab: "variations", label: `Start ${code} billing` } });
   const v = scopeOf.view;
   const c = v.commercial;
   // The billing project's own contract figure is the approved amount being billed (the same source the Overview uses).
@@ -466,11 +478,13 @@ function variationStation(code: string, title: string, status: string, amountCen
   const lines = [`Invoice authorisation: ${auth.unknown ? `${auth.statusLabel}. ${auth.detail}` : auth.detail}`];
   const open = { tab: "variations" as const, label: `Open ${code} billing` };
   // Same state, same status as the Commercial lane: an uncertain claim blocks new billing.
-  if (c.uncertainClaimBlocking) return station({ id, label, status: "blocked", detail: `${title}: a claim's Cin7 outcome is uncertain, which blocks new billing.`, needs: ["Needs: the uncertain claim resolved before new billing of its stages."], lines, link: open });
-  if (bill.state === "NEEDS_ATTENTION") return station({ id, label, status: "needs_attention", detail: `${title}: ${sentence(bill.reasons)}`, lines, link: open });
-  if (bill.state === "COMPLETE") return station({ id, label, status: "completed", detail: `${title}: commercial billing complete - ${formatCents(approvedCents)} billed, ${formatCents(0)} remaining, ${plural(bill.counts.reconciled, "invoice")} reconciled.`, lines, link });
-  if (bill.state === "NOT_STARTED") return station({ id, label, status: "in_progress", detail: `${title}: billing project open; no claims raised yet.`, lines, link: open });
-  return station({ id, label, status: "in_progress", detail: `${title}: ${sentence(bill.reasons)}`, lines, link: open });
+  if (c.uncertainClaimBlocking) return station({ id, label, status: "blocked", detail: `${who}: a claim's Cin7 outcome is uncertain, which blocks new billing.`, needs: ["Needs: the uncertain claim resolved before new billing of its stages."], lines, link: open });
+  // The billing project's contract must equal the approval it bills; otherwise "complete" would be measured against a different amount.
+  if (c.originalContractCents !== amountCents) return station({ id, label, status: "needs_attention", detail: `${who}: the billing project contract (${formatCents(c.originalContractCents)}) differs from the approved amount (${formatCents(amountCents)}).`, lines, link: open });
+  if (bill.state === "NEEDS_ATTENTION") return station({ id, label, status: "needs_attention", detail: `${who}: ${sentence(bill.reasons)}`, lines, link: open });
+  if (bill.state === "COMPLETE") return station({ id, label, status: "completed", detail: `${who}: commercial billing complete - ${formatCents(approvedCents)} billed, ${formatCents(0)} remaining, ${plural(bill.counts.reconciled, "invoice")} reconciled.`, lines, link });
+  if (bill.state === "NOT_STARTED") return station({ id, label, status: "in_progress", detail: `${who}: billing project open; no claims raised yet.`, lines, link: open });
+  return station({ id, label, status: "in_progress", detail: `${who}: ${sentence(bill.reasons)}`, lines, link: open });
 }
 
 export function buildJourney(input: JourneyInput): Journey {
@@ -525,7 +539,10 @@ export function buildJourney(input: JourneyInput): Journey {
     // BASE-only test: the project's remainingCents includes approved variations, so it must not decide a base station.
     const allCommitted = v.stages.length > 0 && v.stages.every((s) => s.committedCents >= s.valueCents);
     const below = v.stages.filter((s) => s.belowCommitted).length;
-    commercial.push(below > 0
+    const over = v.stages.filter((s) => s.committedCents > s.valueCents).length;
+    commercial.push(over > 0
+      ? station({ id: "commercial-stages", label: "Stage progress", status: "needs_attention", detail: `${plural(over, "stage")} billed above ${over === 1 ? "its" : "their"} value.`, link: { tab: "stages", label: "Open Stages" } })
+      : below > 0
       ? station({ id: "commercial-stages", label: "Stage progress", status: "needs_attention", detail: `${plural(below, "stage")} approved below what is already committed.`, link: { tab: "stages", label: "Open Stages" } })
       : allCommitted ? station({ id: "commercial-stages", label: "Stage progress", status: "completed", detail: "Every stage is fully billed or committed.", link: { tab: "stages", label: "Open Stages" } })
       : anyApproved ? station({ id: "commercial-stages", label: "Stage progress", status: "in_progress", detail: `Approved completion ${formatBps(c.approvedCompletionBps)} of the contract.`, link: { tab: "stages", label: "Open Stages" } })
@@ -544,10 +561,11 @@ export function buildJourney(input: JourneyInput): Journey {
     const post = (status: JourneyStatus, detail: string, needs = needsSale, soft = false) => station({ id: "commercial-posting", label: "Post to Cin7", status, soft: soft || undefined, detail, needs, link: claimsTab });
     if (f.notCreated + f.uncertain > 0) commercial.push(post("needs_attention", postingProblem(f.notCreated, f.uncertain)));
     else if (bill.counts.mismatched > 0) commercial.push(post("needs_attention", `${plural(bill.counts.mismatched, "invoice")} posted with a recorded amount mismatch.`));
+    else if (bill.counts.cancelledWithPosting > 0) commercial.push(post("needs_attention", `${plural(bill.counts.cancelledWithPosting, "cancelled claim")} still ${bill.counts.cancelledWithPosting === 1 ? "has" : "have"} a Cin7 posting that is not resolved.`));
     else if (f.posting > 0) commercial.push(post("in_progress", `${plural(f.posting, "invoice")} being posted.`));
     else if (f.postable > 0 && !linked) commercial.push(post("blocked", `${plural(f.postable, "approved claim")} cannot be posted.`, needsSale, true));
     else if (f.postable > 0) commercial.push(post("in_progress", `${plural(f.postable, "approved claim")} ready to post.`, []));
-    else if (bill.counts.live > 0 && bill.counts.reconciled === bill.counts.live) commercial.push(post("completed", `${plural(bill.counts.reconciled, "claim")} posted and reconciled; none waiting.`));
+    else if (bill.state === "COMPLETE" || (bill.counts.live > 0 && bill.counts.reconciled === bill.counts.live && bill.counts.cancelledWithPosting === 0)) commercial.push(post("completed", `${plural(bill.counts.reconciled, "claim")} posted and reconciled; none waiting.`));
     else if (f.invoiced > 0) commercial.push(post("in_progress", `${plural(f.invoiced, "claim")} posted; ${bill.counts.awaitingReconciliation} awaiting reconciliation.`));
     else commercial.push(post("not_started", "No approved claims to post."));
 
