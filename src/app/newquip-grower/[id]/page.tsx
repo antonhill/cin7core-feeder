@@ -44,7 +44,6 @@ import { BuildStamp } from "@/components/BuildStamp";
 import { ScheduleChooser } from "./ScheduleChooser";
 import { CostPanel } from "./CostPanel";
 import { CustomerPanel } from "./CustomerPanel";
-import { Stage2Groups } from "./Stage2Groups";
 import { Stage1Review } from "./Stage1Review";
 import { StepRail, StepPanel } from "@/components/ui/StepRail";
 import { useShowAllSteps } from "@/components/ui/use-show-all-steps";
@@ -116,7 +115,7 @@ export default function QuoteEditorPage() {
   // Stage 1 steps: navigation and guidance only (completion is derived from data, never from a visit). The customer facts are lifted from the CustomerPanel that already loads them.
   const [stepNo, setStepNo] = useState<number>(() => (parseStage(search.get("stage")) === 2 ? 1 : parseStepParam(search.get("step"), STAGE1_STEP_IDS.length)));
   // Stage 2 has its own step number but SHARES the "Show all steps" preference (one setting for the builder, one storage key).
-  const [step2No, setStep2No] = useState<number>(() => (parseStage(search.get("stage")) === 2 ? parseStepParam(search.get("step"), 4) : 1));
+  const [step2No, setStep2No] = useState<number>(() => (parseStage(search.get("stage")) === 2 ? parseStepParam(search.get("step"), 5) : 1));
   const [showAllSteps, setShowAllSteps] = useShowAllSteps("nq-builder-show-all");
   const [customerFacts, setCustomerFacts] = useState<Stage1CustomerFacts>(NO_CUSTOMER_FACTS);
   const onCustomerFacts = (f: Stage1CustomerFacts) => setCustomerFacts((p) => (p.loaded === f.loaded && p.available === f.available && p.hasSnapshot === f.hasSnapshot && p.hasContact === f.hasContact && p.contactName === f.contactName && p.loadError === f.loadError ? p : f));
@@ -309,6 +308,8 @@ export default function QuoteEditorPage() {
     totalAvailable: totalCents != null, confirmedRecorded: q.customer_confirmed_cents != null,
     dirty, signoff: !q.estimator_signoff_hash ? "none" : q.estimator_signoff_hash === q.draft_hash ? "current" : "stale",
   });
+  const groupTone = { success: "complete", warning: "attention", danger: "attention", info: "incomplete", neutral: "neutral" } as const;
+  const stage2Groups = stage2.groups.map((g) => ({ id: g.id, label: g.label, owner: g.id === "rep" ? "Rep" : "Estimator", statusText: `Workflow: ${g.statusLine}`, tone: groupTone[g.tone] }));
   const goStep2No = (n: number) => {
     const next = Math.min(Math.max(n, 1), step2Ids.length);
     setStep2No(next); // the address bar gets stage and step together, so a reload lands on the same step
@@ -379,9 +380,8 @@ export default function QuoteEditorPage() {
           )} />
       )}
 
-      {stage === 2 && <Stage2Groups groups={stage2.groups} youAre={new Set<string>([...(roles.has("rep") || roles.has("manager") ? ["rep"] : []), ...(roles.has("estimator") || roles.has("manager") ? ["estimator"] : [])])} />}
       {stage === 2 && (
-        <StepRail id="s2" ariaLabel="Costing and review steps" steps={stage2.steps} currentId={step2Id} onSelect={goStep2}
+        <StepRail id="s2" ariaLabel="Costing and review steps" steps={stage2.steps} currentId={step2Id} onSelect={goStep2} groups={stage2Groups}
           actions={(
             <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
               <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-800"><input type="checkbox" className="size-6" checked={showAllSteps} onChange={(e) => setShowAllSteps(e.target.checked)} /> Show all steps</label>
@@ -777,7 +777,7 @@ export default function QuoteEditorPage() {
               {q.state === "ESTIMATOR_REVIEW" && (
                 <>
                   {q.estimator_signoff_hash && q.estimator_signoff_hash === q.draft_hash
-                    ? <Status tone="success">Estimator sign-off complete - {q.estimator_signoff_by_email ?? "estimator"}{q.estimator_signoff_at ? `, ${formatSast(q.estimator_signoff_at)}` : ""}</Status>
+                    ? <span className="flex min-w-0 flex-wrap items-center gap-2"><Status tone="success">Estimator sign-off complete</Status><span className="min-w-0 break-words text-sm text-slate-700">{q.estimator_signoff_by_email ?? "estimator"}{q.estimator_signoff_at ? `, ${formatSast(q.estimator_signoff_at)}` : ""}</span></span>
                     : <Button loading={isWorking} aria-describedby={signoffWhy ? "signoff-why" : undefined} disabled={!roles.has("estimator") || rd.state !== "READY"} onClick={() => act(() => signOffGrowerQuoteAction(id), "Estimator sign-off recorded for this exact content.", "signoff", (v) => !!v.quote.estimator_signoff_hash && v.quote.estimator_signoff_hash === v.quote.draft_hash)}>Estimator: I double-checked this quote</Button>}
                   {roles.has("estimator") && (<>
                   <TextField label="Return to rep — reason" value={returnReason} onChange={setReturnReason} />

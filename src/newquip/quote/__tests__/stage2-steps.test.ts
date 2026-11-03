@@ -55,9 +55,9 @@ describe("Stage 2 steps and groups (UX-006b)", () => {
   it("cost: a complete estimate on a draft is only Review (Cin7 cost capture is unknown here); Complete once frozen; partial, no margin or an incomplete override need attention", () => {
     expect(by({}).cost).toBe("review");
     expect(by({ state: "MANAGER_APPROVED_FINAL" }).cost).toBe("complete");
-    expect(by({ budget: { ...ok.budget!, incomplete: true } }).cost).toBe("attention");
-    expect(by({ budget: { ...ok.budget!, marginPct: null } }).cost).toBe("attention");
-    expect(note({ incompleteCostOverrideCount: 1 }, "cost")).toBe("1 cost override is incomplete");
+    expect(by({ roles: MGR, budget: { ...ok.budget!, incomplete: true } }).cost).toBe("attention");
+    expect(by({ roles: MGR, budget: { ...ok.budget!, marginPct: null } }).cost).toBe("attention");
+    expect(note({ roles: MGR, incompleteCostOverrideCount: 1 }, "cost")).toBe("1 cost override is incomplete");
     expect(note({ budget: null }, "cost")).toBe("Cost figures are not available yet");
   });
 
@@ -80,6 +80,15 @@ describe("Stage 2 steps and groups (UX-006b)", () => {
   it("REP_DRAFT, READY but a charge is open: still 'Preparation incomplete' (workflow never claims ready when the data says otherwise)", () => {
     expect(grp({ blankExclusionCount: 1 }, "rep").statusLine).toBe("Preparation incomplete");
   });
+  it("another role's step never says 'Needs attention' to the viewer: a Rep sees the Estimator's sign-off as Not complete, an Estimator sees the Rep's steps likewise; a Manager sees both as they are", () => {
+    const blocked = { ...sub, readiness: { state: "BLOCKED" as const, reasons: ["x"], missingMappings: 1 }, blankExclusionCount: 1 };
+    expect(by({ ...blocked, roles: REP }).signoff).toBe("incomplete");
+    expect(by({ ...blocked, roles: REP }).lines).toBe("attention"); // their own
+    expect(by({ ...blocked, roles: EST }).charges).toBe("incomplete");
+    expect(by({ ...blocked, roles: EST }).signoff).toBe("attention");
+    expect(by({ ...blocked, roles: MGR })).toMatchObject({ charges: "attention", signoff: "attention" });
+    expect(grp({ ...blocked, roles: REP }, "estimator").attention).toBe(0);
+  });
   it("REP_DRAFT, no total: submit needs attention", () => { expect(by({ totalAvailable: false }).submit).toBe("attention"); });
   it("submitted (ESTIMATOR_REVIEW, unsigned): Rep group 'Submitted - awaiting the Estimator' and ALL the Rep's steps are complete; the Estimator is the next responsible role", () => {
     const o = { ...sub, roles: REP, confirmedRecorded: true };
@@ -94,7 +103,7 @@ describe("Stage 2 steps and groups (UX-006b)", () => {
     expect(grp({ ...sub, roles: MGR }, "estimator").statusLine).toBe("Awaiting Estimator review");
   });
   it("submitted, NOT READY (content changed): sign-off needs attention", () => {
-    expect(by({ ...sub, readiness: { state: "BLOCKED", reasons: ["x"], missingMappings: 1 } }).signoff).toBe("attention");
+    expect(by({ ...sub, roles: EST, readiness: { state: "BLOCKED", reasons: ["x"], missingMappings: 1 } }).signoff).toBe("attention");
   });
   it("returned to the Rep (REP_DRAFT, revision 2): Rep group 'Returned', Estimator group 'Returned to the Rep', sign-off waiting; submit offers the reconfirmation", () => {
     const o = { revision: 2 };
@@ -111,13 +120,13 @@ describe("Stage 2 steps and groups (UX-006b)", () => {
     expect(grp(o, "rep").statusLine).toBe("Signed off");
   });
   it("signed off but the page has unsaved edits: attention (saving would make it stale)", () => {
-    const o = { ...sub, signoff: "current" as const, dirty: true };
+    const o = { ...sub, roles: EST, signoff: "current" as const, dirty: true };
     expect(by(o).signoff).toBe("attention");
     expect(note(o, "signoff")).toBe("Unsaved edits: saving makes the sign-off stale");
     expect(grp(o, "estimator").tone).toBe("warning");
   });
   it("stale sign-off: Estimator group asks for another review; attention", () => {
-    const o = { ...sub, signoff: "stale" as const };
+    const o = { ...sub, roles: EST, signoff: "stale" as const };
     expect(by(o).signoff).toBe("attention");
     expect(grp(o, "estimator").statusLine).toBe("Sign-off out of date: review again");
   });

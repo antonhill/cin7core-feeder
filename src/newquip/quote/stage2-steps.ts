@@ -140,7 +140,10 @@ export function deriveStage2Steps(i: Stage2Input): Stage2Derived {
   else signoff = { status: "incomplete", note: youEstimate ? "Awaiting your review" : "Awaiting Estimator review" };
 
   const all: Record<Stage2StepId, Result> = { lines, charges, submit, cost, signoff };
-  const steps: Stage2Step[] = stage2StepIds(i.canViewCommercials).map((id) => ({ id, label: STAGE2_STEP_LABEL[id], status: all[id].status, group: STAGE2_STEP_GROUP[id], ...(all[id].note ? { note: all[id].note } : {}) }));
+  // A step in the OTHER role's group is shown for reference only: "Needs attention" is reserved for the viewer's own work (a Manager has oversight of both), so it reads Not complete.
+  const owns = (g: Stage2GroupId) => i.roles.manager || (g === "rep" ? i.roles.rep : i.roles.estimator);
+  const shown = (id: Stage2StepId): StepStatus => (all[id].status === "attention" && !owns(STAGE2_STEP_GROUP[id]) ? "incomplete" : all[id].status);
+  const steps: Stage2Step[] = stage2StepIds(i.canViewCommercials).map((id) => ({ id, label: STAGE2_STEP_LABEL[id], status: shown(id), group: STAGE2_STEP_GROUP[id], ...(all[id].note ? { note: all[id].note } : {}) }));
 
   // ── group status lines (workflow facts only) ──
   const repPrepDone = lines.status === "complete" && charges.status === "complete" && i.readiness.state === "READY";
@@ -168,7 +171,6 @@ export function deriveStage2Steps(i: Stage2Input): Stage2Derived {
   const groups = [mkGroup("rep", rep), mkGroup("estimator", est)];
 
   // ── what is this viewer's to do ──
-  const owns = (g: Stage2GroupId) => i.roles.manager || (g === "rep" ? i.roles.rep : i.roles.estimator);
   const actionable = new Set<Stage2StepId>();
   for (const s of steps) if (owns(s.group) && !all[s.id].waiting && !final) actionable.add(s.id);
   return { steps, groups, actionable };
