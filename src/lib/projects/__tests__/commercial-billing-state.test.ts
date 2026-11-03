@@ -128,7 +128,6 @@ describe("review hardening", () => {
     expect(state({ scope: "BASE", claims: [reconciled(), reconciled(), reconciled()], stages: partialBase, scheduleBalanced: true })).toBe("IN_PROGRESS");
   });
   it("a stale PENDING on the view path (now injected) needs attention; the same row fresh is in progress", () => {
-    const b = project({ id: "base", project_reference: "PRJ-B", original_contract_cents: R(1000) });
     const row = { claim_id: "c1", posting_state: "PENDING", cin7_invoice_number: null, cin7_status: null, reconciled_at: null, requested_at: FRESH };
     const fact = (now: number) => billingClaimFact({ status: "APPROVED", cin7Status: claimCin7Status(row, now) });
     expect(state(base({ claims: [fact(NOW)] }))).toBe("IN_PROGRESS");
