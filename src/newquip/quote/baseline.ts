@@ -8,8 +8,9 @@ import type { PriceSourceDescriptor, QuoteType } from "../grower/pricing-source"
 import type { GrowerConfigurationInput } from "../grower/types";
 import { buildMarginSheet, type MarginSheet } from "./margin";
 import { buildPhysicalScope } from "./physical-scope";
-import { applyMappingLibrary, effectiveScope, type LibraryMapping, type ScopeItem } from "@/lib/projects/product-scope";
-import { buildCostEstimate, type CostEstimate } from "@/lib/projects/latest-cost";
+import { applyMappingLibrary, type LibraryMapping, type ScopeItem } from "@/lib/projects/product-scope";
+import type { CostEstimate } from "@/lib/projects/latest-cost";
+import { baselineMappingGate, incompleteEstimateMessage, validateExceptionReason, BASELINE_EXCEPTION_KIND, BASELINE_EXCEPTION_TITLE, type BaselineException } from "./baseline-exception";
 
 // THE ACCEPTED BASELINE — the immutable commercial snapshot a manager's final approval creates, and the only thing a Project is
 // built from. It records everything needed to explain the contract later WITHOUT re-running any rule or re-reading any price:
@@ -78,6 +79,11 @@ export interface AcceptedBaseline {
   internalMargin?: MarginSheet;
   /** INTERNAL. The physical-SKU cost estimate (Cin7 latest cost / audited manual estimates) frozen at approval. Absent when no costs were captured. Never changes afterwards. */
   physicalCostEstimate?: CostEstimate & { costBasis?: { unitBasis?: unknown; incompleteAccepted?: { reason: string; by: string; at: string } } };
+  /**
+   * Manager-recorded exceptions accepted at approval (additive; absent on baselines sealed before it existed). Today one kind: Estimator-priced systems without a Cin7 SKU mapping.
+   * Sealed with the baseline, so it can never be hidden or edited afterwards.
+   */
+  exceptions?: BaselineException[];
   /** Total contract value, ex VAT, integer cents. */
   contractCents: number;
 }
@@ -112,6 +118,11 @@ export interface BaselineInput {
   marginEvaluation?: QuoteEvaluation;
   /** ACTIVE reusable package mappings at approval time. Applied to unmapped scope items and frozen (with their versions) into the sealed baseline. */
   mappingLibrary?: ReadonlyMap<string, LibraryMapping>;
+  /**
+   * A Manager's accepted-incomplete exception for Estimator-priced systems without a Cin7 SKU. `draftHash` is the stored hash of the exact content being frozen; the caller has
+   * already bound it to the version the Manager saw. It waives ONLY the unmapped Estimator-priced items; anything else still stops the freeze.
+   */
+  baselineException?: { reason: string; draftHash: string };
 }
 
 type Budget = NonNullable<QuoteEvaluation["budget"]>;
@@ -138,15 +149,22 @@ export function buildAcceptedBaseline(i: BaselineInput): { baseline: AcceptedBas
   const lines = commercialLinesOf(b);
 
   const physicalScope = i.mappingLibrary && i.mappingLibrary.size ? applyMappingLibrary(buildPhysicalScope(lines), i.mappingLibrary, i.approvals.managerApprovedAt) : buildPhysicalScope(lines);
-  const captured = draft.estimator.physicalCosts;
-  const eff = captured && Object.keys(captured).length ? effectiveScope(physicalScope) : null;
-  const builtEstimate = eff ? buildCostEstimate(eff.lines.map((l) => ({ sku: l.sku, description: l.description, quantity: l.quantity })), captured!, eff.blockers.length ? eff.blockers : []) : undefined;
+  const gate = baselineMappingGate({ lines, scope: physicalScope, physicalCosts: draft.estimator.physicalCosts, costExceptionAccepted: !!draft.estimator.costBasis?.incompleteAccepted });
+  const builtEstimate = gate.estimate;
   // Once costing has been started an INCOMPLETE snapshot cannot be frozen, unless an authorised user recorded an explicit, reasoned exception (frozen with it).
-  const accepted = draft.estimator.costBasis?.incompleteAccepted;
-  if (builtEstimate?.incomplete && !accepted) {
-    const parts = [builtEstimate.missingSkus.length ? `${builtEstimate.missingSkus.length} SKU(s) have no supplier cost selected (${builtEstimate.missingSkus.slice(0, 5).join(", ")}${builtEstimate.missingSkus.length > 5 ? ", ..." : ""})` : "", builtEstimate.unresolvedPackages.length ? `${builtEstimate.unresolvedPackages.length} package(s) are not mapped to Cin7 SKUs` : ""].filter(Boolean);
-    throw new Error(`The cost estimate is incomplete: ${parts.join(" and ")}. Resolve each (select a supplier, enter an audited manual estimate, map the package) or record an authorised exception before approving.`);
-  }
+  // A Manager's baseline exception covers ONLY the Estimator-priced systems without a Cin7 SKU; any other unresolved package or missing supplier cost still refuses.
+  let exceptions: BaselineException[] | undefined;
+  if (gate.blocked) {
+    const bx = i.baselineException;
+    if (!bx) throw new Error(incompleteEstimateMessage(gate.missingSkus, builtEstimate!.unresolvedPackages));
+    const bad = validateExceptionReason(bx.reason);
+    if (bad) throw new Error(bad);
+    if (!gate.required) throw new Error(incompleteEstimateMessage(gate.missingSkus, gate.items.length ? gate.remainingPackages : builtEstimate!.unresolvedPackages));
+    exceptions = [{
+      kind: BASELINE_EXCEPTION_KIND, title: BASELINE_EXCEPTION_TITLE, unresolved: gate.items, reason: bx.reason.trim(),
+      approvedBy: i.approvals.managerApprovedBy, approvedAt: i.approvals.managerApprovedAt, version: { quoteRef: i.quoteRef, revision: i.revision, draftHash: bx.draftHash },
+    }];
+  } else if (i.baselineException) throw new Error("No baseline exception applies to this quotation: nothing Estimator-priced is blocking the freeze.");
   const physicalCostEstimate = builtEstimate ? { ...builtEstimate, ...(draft.estimator.costBasis ? { costBasis: structuredClone(draft.estimator.costBasis) } : {}) } : undefined;
   const baseline: AcceptedBaseline = {
     schemaVersion: 1,
@@ -181,6 +199,7 @@ export function buildAcceptedBaseline(i: BaselineInput): { baseline: AcceptedBas
     physicalScope,
     internalMargin: buildMarginSheet(marginBudget, draft.estimator.costOverrides ?? {}),
     ...(physicalCostEstimate ? { physicalCostEstimate } : {}),
+    ...(exceptions ? { exceptions } : {}),
     contractCents: subtotalCents,
   };
   return { baseline: deepFreeze(baseline), hash: hashOf(baseline) };
