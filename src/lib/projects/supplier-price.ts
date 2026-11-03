@@ -24,7 +24,16 @@ export interface RawSupplierPrice {
   /** Only when Cin7 states it: the unit the price is quoted in, and how many STOCK units one such unit contains. */
   purchaseUnit?: string | null; stockUnit?: string | null; conversionFactor?: number | null;
   preferred?: boolean | null;
+  /**
+   * Names of the unit-related fields (unit / UOM / pack / carton / conversion / multiple) that Cin7 returned with a value on THIS Suppliers[] record.
+   * `undefined` = the record was captured before this was tracked, or by something that did not look: unknown, so never treated as "none".
+   * `[]` = a fresh read that positively found none, i.e. the record states no unit of its own and Cin7's single product UOM governs the price.
+   */
+  statedUnitFields?: string[];
 }
+
+/** How the unit of a usable price was established (kept on the option as the audit trail). */
+export type UnitBasisSource = "STATED_SAME_UNIT" | "STATED_FACTOR" | "CIN7_SINGLE_STOCK_UOM" | "CONFIRMED_BY_USER";
 
 export interface FxRate { currency: string; /** Decimal string, ZAR per 1 unit of `currency`, up to 6 decimals. */ rate: string; source: string; /** When the rate was effective (ISO). */ asOf: string }
 export interface UnitBasis { basis: "STOCK_UNIT"; confirmedBy: string; confirmedAt: string; reason: string }
@@ -42,6 +51,8 @@ export interface SupplierOption {
   lastSupplied: string | null; lastSuppliedValid: boolean;
   purchaseUnit: string | null; /** Stock units per purchase unit actually used (1 when the price is per stock unit). */ conversionFactor: number | null;
   preferred: boolean | null;
+  /** How the unit was established; null when the price is unusable for a unit reason. Absent on options stored before this existed. */
+  unitBasisSource?: UnitBasisSource | null;
   fx: { rate: string; source: string; asOf: string } | null;
   zarUnitCents: number | null;
   status: "USABLE" | "UNUSABLE"; problems: OptionProblem[];
@@ -104,15 +115,23 @@ export function normaliseOption(raw: RawSupplierPrice, env: NormaliseEnv): Suppl
   }
 
   // unit
+  // Cin7 Core keeps ONE unit of measure per product (Product.UOM) and a Suppliers[] record has no unit or conversion field of its own: the Latest Price is per
+  // that stock unit. So a record that states no unit-related field, on a product whose stock unit is known, is per stock unit - this is a property of the
+  // record's own contents (the `[]` below must come from a fresh read), not an assumption about the supplier. Anything that DOES state a unit, a pack or a
+  // conversion we cannot interpret stays blocked, as does a record whose stock unit or content is unknown.
   let factor: number | null = null;
+  let unitSource: UnitBasisSource | null = null;
   const pu = (raw.purchaseUnit ?? "").trim(); const su = (raw.stockUnit ?? "").trim();
+  const stated = raw.statedUnitFields;
   if (raw.conversionFactor !== undefined && raw.conversionFactor !== null) {
     if (!Number.isFinite(raw.conversionFactor) || raw.conversionFactor <= 0) block("BAD_CONVERSION_FACTOR", "The purchase-unit conversion factor is not a positive number.");
-    else factor = raw.conversionFactor;
+    else { factor = raw.conversionFactor; unitSource = "STATED_FACTOR"; }
   } else if (pu && su && pu.toLowerCase() !== su.toLowerCase()) block("BAD_CONVERSION_FACTOR", `The price is quoted per "${pu}" but the stock unit is "${su}" and the number of ${su} in one ${pu} is not known.`);
-  else if (pu && su) factor = 1; // same unit stated on both sides
-  else if (env.unitBasis && env.unitBasis.basis === "STOCK_UNIT") factor = 1; // explicitly confirmed by an authorised user for this estimate
-  else block("UOM_UNCONFIRMED", "Cin7 does not state which unit this price is for, and nobody has confirmed it is per stock unit.");
+  else if (pu && su) { factor = 1; unitSource = "STATED_SAME_UNIT"; } // same unit stated on both sides
+  else if (stated && stated.length > 0) block("UOM_UNCONFIRMED", `Cin7 returned unit-related information on this price (${stated.join(", ")}) that this tool cannot interpret, so it is not assumed to be per stock unit.`);
+  else if (stated && stated.length === 0 && su) { factor = 1; unitSource = "CIN7_SINGLE_STOCK_UOM"; } // no unit of its own: Cin7's one product UOM governs
+  else if (env.unitBasis && env.unitBasis.basis === "STOCK_UNIT") { factor = 1; unitSource = "CONFIRMED_BY_USER"; } // explicitly confirmed by an authorised user for this estimate
+  else block("UOM_UNCONFIRMED", stated && stated.length === 0 ? "Cin7 did not return the product's stock unit, so the unit of this price cannot be established, and nobody has confirmed it is per stock unit." : "Cin7 does not state which unit this price is for, and nobody has confirmed it is per stock unit.");
 
   const dateOk = raw.lastSupplied === null || raw.lastSupplied === "" ? true : parseOk(raw.lastSupplied);
   if (!dateOk) problems.push({ code: "BAD_DATE", message: `The last-supplied date "${raw.lastSupplied}" cannot be read. It is informational only and does not affect the cost.`, blocking: false });
@@ -124,7 +143,7 @@ export function normaliseOption(raw: RawSupplierPrice, env: NormaliseEnv): Suppl
   }
   return {
     raw: { ...raw }, supplierId: raw.supplierId, supplierName: raw.supplierName, priceMicro, currency: currency || null, lastSupplied: raw.lastSupplied, lastSuppliedValid: dateOk,
-    purchaseUnit: pu || null, conversionFactor: factor, preferred: raw.preferred ?? null, fx, zarUnitCents: zar,
+    purchaseUnit: pu || null, conversionFactor: factor, preferred: raw.preferred ?? null, unitBasisSource: zar === null ? null : unitSource, fx, zarUnitCents: zar,
     status: zar === null ? "UNUSABLE" : "USABLE", problems,
   };
 }
@@ -181,5 +200,13 @@ export function rawFromCin7(s: Record<string, unknown>, supplierCurrency: (name:
   return {
     supplierId: id, supplierName: name, cost: typeof s.Cost === "number" ? s.Cost : null, currency: own ?? supplierCurrency(name),
     lastSupplied: typeof s.LastSupplied === "string" && s.LastSupplied ? s.LastSupplied : null,
+    statedUnitFields: statedUnitFields(s),
   };
+}
+
+/** Keys that name a unit, pack or conversion. Deliberately broad: a false hit only keeps a price blocked (safe); a miss could let a pack price through as per-unit. */
+const UNIT_KEY = /unit|uom|pack|carton|case|box|pallet|conver|multipl|factor|quantity.?in|qty.?in/i;
+/** The unit-related fields a Cin7 Suppliers[] record actually carries with a value. Empty = the record states no unit of its own. */
+export function statedUnitFields(s: Record<string, unknown>): string[] {
+  return Object.keys(s).filter((k) => UNIT_KEY.test(k) && s[k] !== null && s[k] !== undefined && s[k] !== "").sort();
 }
