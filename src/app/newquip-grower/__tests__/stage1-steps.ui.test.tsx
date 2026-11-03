@@ -44,6 +44,7 @@ beforeEach(() => {
   vi.mocked(canSeeCosts).mockResolvedValue(false);
   asRoles("REP");
   g.__STAGE = undefined; g.__STEP = undefined;
+  try { window.localStorage.clear(); } catch { /* storage unavailable in this runtime */ }
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -227,6 +228,7 @@ describe("UX-006a Stage 1 step rail", () => {
   }, 30000);
 
   it("show-all ordering is xl-only: no un-prefixed order-* class, so below xl each heading stays right before its own panel", async () => {
+    vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => undefined }); // isolate from a "1" saved by an earlier test where real storage exists
     await open({}, snapshotView(true), ["REP"], "1");
     fireEvent.click(screen.getByLabelText("Show all steps"));
     const orders = [...document.querySelectorAll('[data-step-panel="room"], [data-step-panel="equipment"]')].flatMap((e) => [...e.querySelectorAll("h2, section")]).flatMap((e) => e.className.split(/\s+/).filter((c) => /(^|:)order-/.test(c)));
