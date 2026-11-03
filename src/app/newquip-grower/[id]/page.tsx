@@ -136,8 +136,8 @@ export default function QuoteEditorPage() {
   const [step4No, setStep4No] = useState<number>(() => (parseStage(search.get("stage")) === 4 ? parseStepParam(search.get("step"), STAGE4_STEP_IDS.length) : 1));
   // "Mark reviewed & continue" on Cost & margin: a CLIENT-LOCAL acknowledgement, never stored and never a sign-off. It holds a key built from the version it was given on; any change makes it stale.
   const [costAck, setCostAck] = useState<string | null>(null);
-  const [ackMsg, setAckMsg] = useState(""); // the polite announcement; cleared after a few seconds and when the step changes
-  useEffect(() => { if (!ackMsg) return; const t = setTimeout(() => setAckMsg(""), 6000); return () => clearTimeout(t); }, [ackMsg]);
+  const [ackFor, setAckFor] = useState<string | null>(null); // which acknowledgement may be announced; cleared after a few seconds and when the step changes
+  useEffect(() => { if (!ackFor) return; const t = setTimeout(() => setAckFor(null), 6000); return () => clearTimeout(t); }, [ackFor]);
   const [showAllSteps, setShowAllSteps] = useShowAllSteps("nq-builder-show-all");
   const [customerFacts, setCustomerFacts] = useState<Stage1CustomerFacts>(NO_CUSTOMER_FACTS);
   const onCustomerFacts = (f: Stage1CustomerFacts) => setCustomerFacts((p) => (p.loaded === f.loaded && p.available === f.available && p.hasSnapshot === f.hasSnapshot && p.hasContact === f.hasContact && p.contactName === f.contactName && p.loadError === f.loadError ? p : f));
@@ -347,22 +347,29 @@ export default function QuoteEditorPage() {
   // Any unsaved edit clears the acknowledgement (reverting does not restore it: safe), and so does a save or any change to the costing. The cost and margin in the key are belt-and-braces
   // beside the revision, content hash and update time. It is offered only while the Cost step is genuinely in the "Review needed" state (not while the costing needs attention).
   const costReviewable = deriveStage2Steps({ ...s2Base, costAcknowledged: false }).steps.find((x) => x.id === "cost")?.status === "review";
-  const canAckCost = canCommercials && q.state === "ESTIMATOR_REVIEW" && (roles.has("estimator") || roles.has("manager")) && costKey != null && costReviewable;
+  const isEstimatorOrManager = roles.has("estimator") || roles.has("manager");
+  const isObserver = canCommercials && !isEstimatorOrManager; // can see the costing (e.g. an Administrator) but holds no quote role: nothing for them to mark
+  const canAckCost = canCommercials && q.state === "ESTIMATOR_REVIEW" && isEstimatorOrManager && costKey != null && costReviewable;
   const costAcknowledged = canAckCost && costAck === costKey && !dirty;
-  const onCostUnmarked = canAckCost && step2Id === "cost" && !costAcknowledged && !dirty;
-  const onCostMarked = canAckCost && step2Id === "cost" && costAcknowledged;
+  const costNeedsMark = canAckCost && !dirty && !costAcknowledged; // the one action is offered only when it can actually take effect
+  const onCostUnmarked = costNeedsMark && step2Id === "cost";
+  const onCostMarked = costAcknowledged && step2Id === "cost";
   const ACK_EXPLAIN = "This records that you have looked at the costing and margin for this version. It is not the Estimator sign-off.";
   const markReviewed = () => {
     setCostAck(costKey);
     if (showAllSteps) setTimeout(() => document.getElementById("cost-ack-done")?.focus(), 0); else goStep2("signoff"); // step mode: the Sign-off heading takes focus; show-all: the "marked reviewed" text does
-    setAckMsg("Cost & margin marked reviewed. This is not a sign-off.");
+    setAckFor(costKey);
   };
+  // The announcement is derived from the resulting state, never from the click: it is spoken only while the acknowledgement actually holds.
+  const ackMsg = costAcknowledged && ackFor === costKey ? "Cost & margin marked reviewed. This is not a sign-off." : "";
   const stage2 = deriveStage2Steps({ ...s2Base, costAcknowledged });
   // On Cost & margin there is no ineffective "Next": when the review cannot be recorded (not in Estimator review, costing needing attention, cost unavailable) the bar says why and offers Back only.
   const costStepNow = stage2.steps.find((x) => x.id === "cost");
   const costDone = q.state === "MANAGER_APPROVED_FINAL" || costStepNow?.status === "complete" || costStepNow?.counted === true;
-  const costBlocked = canCommercials && step2Id === "cost" && !onCostUnmarked && !onCostMarked && !costDone;
-  const costBlockedText = q.state !== "ESTIMATOR_REVIEW" ? "Marking the costing reviewed is available once the quote is in Estimator review."
+  const costBlockedNow = canCommercials && !costNeedsMark && !costAcknowledged && !costDone; // nothing can be recorded: say why instead of offering an ineffective action
+  const costBlocked = costBlockedNow && step2Id === "cost";
+  const costBlockedText = isObserver ? "You can view the costing and margin but only the Estimator or a Manager can mark it reviewed."
+    : q.state !== "ESTIMATOR_REVIEW" ? "Marking the costing reviewed is available once the quote is in Estimator review."
     : costStepNow?.status === "attention" ? `Resolve the costing items above before marking reviewed. ${costStepNow.note ?? ""}`.trim()
     : dirty ? "Save or discard your unsaved edits before marking the costing reviewed."
     : `The costing cannot be marked reviewed yet. ${costStepNow?.note ?? ""}`.trim();
@@ -370,7 +377,7 @@ export default function QuoteEditorPage() {
   const stage2Groups = stage2.groups.map((g) => ({ id: g.id, label: g.label, owner: g.id === "rep" ? "Rep" : "Estimator", statusText: `Workflow: ${g.statusLine}`, tone: groupTone[g.tone] }));
   const signoffOutstandingForYou = q.state === "ESTIMATOR_REVIEW" && (roles.has("estimator") || roles.has("manager")) && stage2.steps.find((x) => x.id === "signoff")?.status !== "complete";
   const goStep2No = (n: number) => {
-    setAckMsg("");
+    setAckFor(null);
     const next = Math.min(Math.max(n, 1), step2Ids.length);
     setStep2No(next); // the address bar gets stage and step together, so a reload lands on the same step
     try { const u = new URL(window.location.href); u.searchParams.set("stage", "2"); u.searchParams.set("step", String(next)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ }
@@ -851,13 +858,16 @@ export default function QuoteEditorPage() {
         )}
 
 
-        {showAllSteps && canAckCost && (
+        {showAllSteps && canCommercials && (costNeedsMark || costAcknowledged) && (
           <div className="mt-4 max-w-3xl rounded-lg border border-indigo-200 bg-indigo-50 p-4" data-testid="cost-ack">
-            <p className="text-sm text-slate-800">{ACK_EXPLAIN}</p>
+            <p id="cost-ack-explain-all" className="text-sm text-slate-800">{ACK_EXPLAIN}</p>
             {costAcknowledged
               ? <p id="cost-ack-done" tabIndex={-1} className="mt-2 text-sm font-semibold text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-indigo-600" data-testid="cost-ack-done">You marked the costing reviewed for this version.</p>
-              : <Button type="button" className="mt-3 min-h-11" onClick={markReviewed}>Mark reviewed &amp; continue</Button>}
+              : <Button type="button" aria-describedby="cost-ack-explain-all" className="mt-3 min-h-11" onClick={markReviewed}>Mark reviewed &amp; continue</Button>}
           </div>
+        )}
+        {showAllSteps && costBlockedNow && (
+          <p role="status" className="mt-4 max-w-3xl rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900" data-testid="cost-ack-blocked">{costBlockedText}</p>
         )}
 
         <StepPanel railId="s2" stepId="signoff" number={step2Ids.indexOf("signoff") + 1} title={STAGE2_STEP_LABEL.signoff} current={step2Id === "signoff"} showAll={showAllSteps} className="mt-6 space-y-6">
@@ -900,11 +910,14 @@ export default function QuoteEditorPage() {
             {onCostUnmarked ? (
               // The ONLY way forward from Cost & margin while the review is outstanding: it records the review (client-local), then moves on. The rail and Back still navigate and record nothing.
               <div className="flex max-w-xl flex-col items-end gap-2" data-testid="cost-ack">
-                <p className="text-right text-sm text-slate-800">{ACK_EXPLAIN}</p>
-                <Button type="button" id="cost-ack-btn" className="min-h-11" onClick={markReviewed}>Mark reviewed &amp; continue</Button>
+                <p id="cost-ack-explain" className="text-right text-sm text-slate-800">{ACK_EXPLAIN}</p>
+                <Button type="button" id="cost-ack-btn" aria-describedby="cost-ack-explain" className="min-h-11" onClick={markReviewed}>Mark reviewed &amp; continue</Button>
               </div>
             ) : costBlocked ? (
-              <p className="max-w-xl text-right text-sm text-amber-900" data-testid="cost-ack-blocked">{costBlockedText}</p>
+              <div className="flex max-w-xl flex-col items-end gap-2">
+                <p role="status" className="text-right text-sm text-amber-900" data-testid="cost-ack-blocked">{costBlockedText}</p>
+                {isObserver && step2Cur < step2Ids.length && <Button type="button" className="min-h-11" onClick={() => goStep2No(step2Cur + 1)}>Next: Sign-off or return</Button>}
+              </div>
             ) : step2Cur < step2Ids.length ? (
               <div className="flex flex-col items-end gap-2">
                 {onCostMarked && <p id="cost-ack-done" tabIndex={-1} className="mt-2 text-sm font-semibold text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-indigo-600" data-testid="cost-ack-done">You marked the costing reviewed for this version.</p>}
