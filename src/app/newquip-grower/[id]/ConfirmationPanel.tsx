@@ -14,7 +14,7 @@ import type { ConfirmationInput } from "@/lib/newquip-quotes/confirmation-contac
 // defaults to the quotation contact chosen in step 1 (shown read-only; "someone else confirmed" stays available, collapsed); the delivery contact is shown separately and is never changed here. The server resolves the contact from the saved
 // snapshot, so nothing typed here can impersonate a Cin7 contact.
 
-const inputCls = "h-9 rounded-md border border-slate-300 bg-white px-2 text-sm";
+const inputCls = "h-11 rounded-md border border-slate-300 bg-white px-2 text-sm";
 
 export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading, refreshKey, recorded, onConfirm }: {
   quoteId: string; amountLabel: string | null; canAct: boolean; ready: boolean; loading: boolean; refreshKey: string; recorded: boolean; onConfirm: (c: ConfirmationInput) => void;
@@ -86,7 +86,7 @@ export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading
       </div>
       {s && (
         <details className="rounded-md border border-slate-200 p-2 text-sm" data-testid="alt-confirmer" open={choice !== "default" ? true : undefined}>
-          <summary className="min-h-6 cursor-pointer font-medium text-slate-700">Price confirmed by someone other than the quotation contact (optional)</summary>
+          <summary className="inline-flex min-h-11 cursor-pointer items-center font-medium text-slate-700">Price confirmed by someone other than the quotation contact (optional)</summary>
           <p className="mt-2 text-xs text-slate-600">Use this only if a different person at the customer confirmed the price. It records who confirmed; it does not change who the quotation is sent to (the contact from step 1).</p>
           <fieldset className="mt-2 space-y-2" disabled={!canAct || loading}>
             <legend className="sr-only">Who confirmed the price</legend>

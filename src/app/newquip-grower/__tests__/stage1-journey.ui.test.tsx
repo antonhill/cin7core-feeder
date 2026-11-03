@@ -66,21 +66,21 @@ const customerView = (over: Record<string, unknown> = {}): any => ({ available: 
 const contactRow = (name: string, email: string) => ({ name: { state: "present", value: name }, email: { state: "present", value: email } });
 const snapshotView = (contact: boolean, over: Record<string, unknown> = {}): any => customerView({ snapshot: { cin7CustomerId: "c-123", name: { state: "present", value: "Acme Pigs (Pty) Ltd" }, tradingName: { state: "present", value: "Acme Pigs" }, billingAddress: null, vatNumber: { state: "missing" }, currency: { state: "missing" }, paymentTerm: { state: "missing" }, contacts: [contactRow("Sean", "s@x.co"), contactRow("Thandi", "t@x.co")], chosenContact: contact ? { name: "Sean", email: "s@x.co", source: "CIN7_CONTACT", phone: null } : null }, snapshotId: "s1", seq: 7, issues: [], selectedContactIndex: contact ? 0 : null, ...over });
 
-interface Opts { draftOver?: Record<string, unknown>; view?: any; roles?: Role[]; commercials?: boolean; step?: string; stage?: string; row?: Record<string, unknown>; customerDelay?: Promise<void>; waitSettled?: boolean }
+interface Opts { draftOver?: Record<string, unknown>; view?: any; roles?: Role[]; commercials?: boolean; step?: string; stage?: string; row?: Record<string, unknown>; customerDelay?: Promise<void>; waitSettled?: boolean; deliveryOk?: boolean }
 async function open(o: Opts = {}) {
   asRoles(...(o.roles ?? ["REP", "ESTIMATOR"]));
   vi.mocked(canSeeCosts).mockResolvedValue(o.commercials ?? false);
   const spy = vi.spyOn(ca, "getQuoteCustomerAction");
   if (o.customerDelay) spy.mockImplementation((async () => { await o.customerDelay; return { ok: true, data: o.view ?? customerView() }; }) as never);
   else spy.mockResolvedValue({ ok: true, data: o.view ?? customerView() } as never);
-  vi.spyOn(da, "getQuoteDeliveryAction").mockResolvedValue({ ok: false, error: "n/a" } as never);
+  vi.spyOn(da, "getQuoteDeliveryAction").mockResolvedValue((o.deliveryOk ? { ok: true, data: { available: false } } : { ok: false, error: "n/a" }) as never);
   const { id } = await createQuote(db as never, ORG, "rep@nq");
   await saveDraft(db as never, ORG, member, id, { ...base, customerName: "Acme Pigs", siteName: "Farm 1", config: goodConfig, ...o.draftOver } as any);
   for (const row of db.rows("newquip_quotes") as Array<Record<string, unknown>>) if (row.id === id && o.row) Object.assign(row, o.row);
   g.__QID = id; g.__STEP = o.step; g.__STAGE = o.stage;
   const { default: Page } = await import("../[id]/page");
   render(createElement(Page));
-  await waitFor(() => expect(screen.getByTestId("step-rail")).toBeTruthy(), { timeout: 5000 });
+  await waitFor(() => expect(screen.getByTestId(o.stage === "6" ? "stage-nav" : "step-rail")).toBeTruthy(), { timeout: 5000 });
   if (o.waitSettled !== false && !o.customerDelay) await waitFor(() => expect(screen.queryByTestId("stage1-shell")).toBeNull(), { timeout: 5000 });
   return id;
 }
@@ -870,4 +870,63 @@ describe("regression: customer search state and the second 'Load recommended con
     const sections = readFileSync(`${__dirname}/../[id]/RepConfigSections.tsx`, "utf8");
     expect(sections).toContain("min-w-0 max-w-full"); // the collapsible chip and table wrapper cannot widen the page
   });
+});
+
+// ── Corrections round, phase 1 ──
+const LEAK = /landed|mark-?up|\b20%|\bROE\b|Freight/i;
+const BASELINE = { contractCents: 1000000, internalMargin: null, template: { name: "Grower", version: "1", rulesetVersion: "1" }, quote: { revision: 1 }, pricing: { source: { label: "test" }, basis: "Landed cost (Cost × ROE × Freight) + 20% markup", quoteType: "project" }, overrides: [], exclusions: [], priceResolutions: [] };
+
+describe("D-4: a Rep never reads the cost basis or markup", () => {
+  it("no 'landed', 'markup', '20%', 'ROE' or 'Freight' anywhere on the Rep's Stage 1 (all steps shown) or Stage 2", async () => {
+    vi.stubGlobal("localStorage", { getItem: () => "1", setItem: () => undefined });
+    await open({ view: snapshotView(true), draftOver: { ...readyDraft, quoteType: "project" }, roles: ["REP"] });
+    expect((document.body.textContent ?? "").match(new RegExp(".{40}(" + LEAK.source + ").{40}", "i"))?.[0] ?? "").toBe("");
+    const opts = [...document.querySelectorAll('select option')].map((o) => o.textContent);
+    expect(opts).toContain("Project pricing");
+    expect(opts).toContain("Standard price list basis");
+    cleanup();
+    await open({ view: snapshotView(true), draftOver: { ...readyDraft, quoteType: "project" }, roles: ["REP"], stage: "2" });
+    expect(document.body.textContent).not.toMatch(LEAK);
+  }, 60000);
+
+  it("the accepted-baseline summary (Stage 6) shows a Rep the quotation type only; a cost-visible Manager keeps the detailed basis", async () => {
+    const final = { state: "MANAGER_APPROVED_FINAL", requires_customer_acceptance: false, customer_confirmed_cents: 1, accepted_baseline: BASELINE };
+    await open({ view: snapshotView(true), draftOver: { ...readyDraft, quoteType: "project" }, roles: ["REP"], stage: "6", row: final, deliveryOk: true });
+    await screen.findByText("Accepted commercial baseline (frozen)");
+    expect(document.body.textContent).not.toMatch(LEAK);
+    expect(document.body.textContent).toContain("Pricing basisProject pricing");
+    cleanup();
+    await open({ view: snapshotView(true), draftOver: { ...readyDraft, quoteType: "project" }, roles: ["MANAGER"], commercials: true, stage: "6", row: final, deliveryOk: true });
+    await screen.findByText("Accepted commercial baseline (frozen)");
+    expect(document.body.textContent).toMatch(/Landed cost \(Cost × ROE × Freight\) \+ 20% markup/);
+  }, 60000);
+
+  it("the neutral labels name the type without any basis", async () => {
+    const { QUOTE_TYPE_NEUTRAL } = await import("@/newquip/grower/pricing-source");
+    expect(Object.values(QUOTE_TYPE_NEUTRAL).join(" ")).not.toMatch(LEAK);
+  });
+});
+
+describe("touch targets on the primary journey are class-contracted at 44px", () => {
+  it("Stage 1 form controls, the shell nav, the quote list and the small disclosure links", async () => {
+    const { readFileSync } = await import("node:fs");
+    const rd = (f: string) => readFileSync(`${__dirname}/../${f}`, "utf8");
+    const page = rd("[id]/page.tsx");
+    expect(page).toContain("[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 [&_select]:min-h-11 [&_textarea]:min-h-11"); // additive, Stage 1 form only
+    expect(page).toContain('data-testid="provenance"');
+    expect(page).toMatch(/provenance[\s\S]{0,200}min-h-11/);
+    expect(rd("../NewquipShell.tsx")).not.toContain("md:min-h-9");
+    expect(rd("page.tsx")).not.toContain("h-9 items-center");
+    expect(rd("[id]/Stage1Review.tsx")).toContain("inline-flex min-h-11 cursor-pointer items-center");
+    expect(rd("[id]/CustomerPanel.tsx")).toContain('inline-flex min-h-11 cursor-pointer items-center font-medium text-slate-700">Details');
+    expect(rd("fields.tsx")).toContain("h-9"); // the shared inputs are NOT changed for the Project / claims / billing screens
+  });
+  it("the step rail is dense on Stage 1 (compact cards), and the stage indicator is one box", async () => {
+    await open({ view: snapshotView(true), step: "2" });
+    const card = document.querySelector('[data-step="site"]')!;
+    expect(card.className).toContain("p-2");
+    const nav = screen.getByTestId("stage-nav");
+    expect(nav.className).toContain("rounded-lg border");
+    expect(nav.querySelector('[data-testid="next-action"]')!.className).toContain("max-sm:hidden");
+  }, 30000);
 });

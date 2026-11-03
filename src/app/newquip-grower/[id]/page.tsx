@@ -20,7 +20,7 @@ import { READINESS_LABEL, type ReadinessCategory, type ReadinessState } from "@/
 import { expectedSkuFor } from "@/newquip/grower/quote-bridge";
 import { packageFor, manualSelectionSkusFor } from "@/newquip/grower/commercial";
 import { ROOMS_HELP, VENTILATION_SCOPE_STATUS } from "@/newquip/grower/open-items";
-import { QUOTE_TYPE_LABEL, type QuoteType } from "@/newquip/grower/pricing-source";
+import { QUOTE_TYPE_LABEL, QUOTE_TYPE_NEUTRAL, neutralPriceText, type QuoteType } from "@/newquip/grower/pricing-source";
 import { DEMO_DEFAULTS_SOURCE, RECOMMENDED_CONFIG_FILLS, SAMPLE_MEASUREMENTS_FILLS, applyDemoDefaults, applyMeasurementsSample, applyRecommendedConfiguration, hasEntries, hasEquipmentEntries, hasMeasurementEntries } from "@/newquip/grower/demo-defaults";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import type { QuoteEvaluation } from "@/newquip/grower/evaluate";
@@ -449,7 +449,7 @@ export default function QuoteEditorPage() {
   const nextOpen = nextIncompleteStepId(railSteps1, stepId, (x) => stepAccess(x.id as Stage1StepId).access === "edit");
   const nextStep1 = STAGE1_STEP_IDS[stepNo] ?? null; // the step after this one (null on the last)
   const nextStep1Locked = nextStep1 ? stepAccess(nextStep1) : null;
-  const stepPanelCls = "col-span-full grid min-w-0 items-start gap-6 [&>*]:min-w-0";
+  const stepPanelCls = "col-span-full grid min-w-0 items-start gap-3 [&>*]:min-w-0";
   const gated1 = stage === 1 && !factsSettled; // the small loading shell shows meanwhile; the panels stay mounted (hidden) so the customer facts can load
 
   // ── Stage 2: the Estimator's wizard. Statuses come from data already loaded here (the readiness result, the budget, the draft's own validation and the quotation's own records); stage23-wizard.ts decides
@@ -572,12 +572,13 @@ export default function QuoteEditorPage() {
         <dt className="font-semibold text-slate-900">Total</dt><dd className="whitespace-nowrap text-right font-semibold tabular-nums">{fmtZar(budget.totals.totalIncTax)}</dd>
         {view.viewer.canViewCommercials && <><dt className="text-slate-600">{marginIncomplete ? "Estimated cost · indicative margin (price-list basis)" : "Estimated cost · GP (managers)"}</dt><dd className="text-right tabular-nums">{fmtZar(budget.totals.estimatedCost)} · {budget.totals.overallMarginPct == null ? "N/A" : `${budget.totals.overallMarginPct.toFixed(1)}%`}{marginNote && <span className="block text-xs font-normal text-amber-800" data-testid="totals-margin-note">{marginNote}</span>}</dd></>}
       </dl>
-      <p className="mt-2 text-xs text-slate-600">{budget.pricingBasis}. {budget.state === "complete" ? "Every required line is priced." : "Incomplete: the total is partial until every blocker is resolved."}</p>
+      <p className="mt-2 text-xs text-slate-600">{view.viewer.canViewCommercials ? budget.pricingBasis : QUOTE_TYPE_NEUTRAL[draft.quoteType]}. {budget.state === "complete" ? "Every required line is priced." : "Incomplete: the total is partial until every blocker is resolved."}</p>
     </Panel>
   );
   // The physical scope (read-only evidence). A viewer who may not see commercials has no Cost & margin step, so their scope sits under the line decisions and their totals under the charges.
   const scopePanel = <ScopePanel quoteId={id} draft={dirty ? (previewedFor ?? q.draft) : draft} />;
 
+  const nr = (t: string) => (view.viewer.canViewCommercials ? t : neutralPriceText(t)); // a viewer without cost visibility reads price text without the cost basis
   const saveRow = (cls: string) => (
     <div className={`flex flex-wrap items-center gap-3 ${cls}`}>
             <Button className="min-h-11" onClick={save} loading={acts.isPending("save")} aria-describedby={saveWhy ? "save-why" : undefined} disabled={isWorking || !editable || !dirty || incompleteOverrides || blankExclusionKeys.length > 0}>Save draft</Button>
@@ -588,9 +589,11 @@ export default function QuoteEditorPage() {
 
   return (
     <main className={pageContainerClass("data")}>
-      <ModuleHeader variant="workspace" module={SOLUTION_BUILDER_MODULE}>
-        <Link href="/newquip-grower" className="inline-flex min-h-11 items-center text-indigo-700 hover:underline">← Solution Builder quotes</Link> · {q.quote_ref} <span className="text-slate-600">rev {q.revision}</span>
-      </ModuleHeader>
+      {/* One compact line instead of the large page header: the title stays (the page's h1), then the way back and the quotation reference. */}
+      <div className="-mt-2 flex flex-wrap items-center gap-x-3 border-b border-slate-200" data-testid="quote-header">
+        <h1 className="text-base font-semibold tracking-tight text-slate-900">{SOLUTION_BUILDER_MODULE.label}</h1>
+        <Link href="/newquip-grower" className="inline-flex min-h-11 items-center text-indigo-700 hover:underline">← Solution Builder quotes</Link><span className="text-sm text-slate-700">· {q.quote_ref} <span className="text-slate-600">rev {q.revision}</span></span>
+      </div>
 
       {/* The price and margin summary stays in view while the form scrolls. It always shows the same figures as the Totals below (the live preview of unsaved edits). */}
       <div className="top-0 z-10 mt-3 rounded-lg border border-slate-200 bg-white px-4 py-2 shadow-sm md:sticky" data-testid="quote-summary-bar" aria-busy={recalculating}>
@@ -612,9 +615,6 @@ export default function QuoteEditorPage() {
       {error && <div className="mt-4"><Alert tone="danger">{error}</Alert></div>}
       <ActionFeedback state={acts.stateOf("page")} floating />
       {final && <div className="mt-4"><Alert tone="info">This quote is the manager-approved final. Its accepted baseline is frozen; any change after acceptance must be a Variation on the Project.</Alert></div>}
-      <details className="mt-2 text-xs text-slate-600" data-testid="provenance"><summary className="inline-flex min-h-11 cursor-pointer items-center font-medium text-slate-700">Price source &amp; provenance</summary>
-        <p className="mt-1">Grower House Template v1 · {QUOTE_TYPE_LABEL[draft.quoteType]} pricing · {budget?.priceSource.label ?? "NewQuip Master workbook – POC controlled snapshot"}</p>
-        {budget && <p className="mt-1">{budget.priceSource.notice} Provenance: {budget.priceSource.provenance}</p>}</details>
 
       <StageNav compact={stage <= 2} stages={stagesView} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state, estimatorOpen: mappingOpen.length, signedOff: s2Base.signoff === "current" }} />
 
@@ -631,14 +631,7 @@ export default function QuoteEditorPage() {
               <div className="mt-2"><ApprovalHistory docType="QUOTE" docId={id} label="Show the full approval history" /></div>
             </div>
           )}
-          {q.state === "REP_DRAFT" && (
-            <div className="mt-2 text-sm text-slate-700" data-testid="estimator-note">
-              {estimatorWorkOpen && <>Some products must be mapped and priced by an Estimator before this quotation can be submitted - you can finish your part first; we will show exactly what is waiting on them.{" "}
-                <details className="inline"><summary className="inline min-h-6 cursor-pointer font-medium text-indigo-700 underline">Why?</summary><span className="ml-1">Which Cin7 product each item is, and any manual price, are chosen by an Estimator, not by the Rep. Review (step 4) lists what is waiting on them and how many.</span></details>{" "}</>}
-              The customer must also confirm the quotation total with you before you submit (you record this at the last step).
-            </div>
-          )}
-          <StepRail id="s1" ariaLabel="Configuration steps" steps={railSteps1} currentId={stepId} onSelect={goStep}
+          <StepRail dense id="s1" ariaLabel="Configuration steps" steps={railSteps1} currentId={stepId} onSelect={goStep}
             actions={(
               <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
                 <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-800"><input type="checkbox" className="size-6" checked={showAllSteps} onChange={(e) => setShowAllSteps(e.target.checked)} /> Show all steps</label>
@@ -726,16 +719,22 @@ export default function QuoteEditorPage() {
       {/* ───────────── 1 · CONFIGURATION (the Rep's five-step wizard) ───────────── */}
       {stage === 1 && (
         <div hidden={gated1} inert={gated1}>
-        <fieldset disabled={!stage1Edit} className="mt-4 min-w-0 border-0 p-0" data-testid="stage1-layout">
+        <fieldset disabled={!stage1Edit} className="mt-2 min-w-0 border-0 p-0 [&_section.rounded-lg]:p-4! [&_input:not([type=checkbox]):not([type=radio])]:min-h-11 [&_select]:min-h-11 [&_textarea]:min-h-11" data-testid="stage1-layout">
           {/* Hidden steps stay mounted (hidden + inert), so the requests made on mount are the same whichever step is shown. A LOCKED step stays mounted too; show-all lists it as heading + reason. */}
           <StepPanel railId="s1" stepId="customer" number={1} title={STAGE1_STEP_LABEL.customer} current={stepId === "customer"} showAll={showAllSteps} locked={lockedFor("customer")} className={stepPanelCls}>
             <Panel>
-              <PanelTitle>Customer &amp; quotation contact</PanelTitle>
-              <p className="mt-1 text-sm text-slate-700">Search Cin7 for the customer, then choose who the quotation goes to. Choosing is saved at once.</p>
+              <p className="text-sm text-slate-700">Search Cin7 for the customer, then choose who the quotation goes to. Choosing is saved at once.</p>
               {customerFacts.loaded && !customerFacts.available && (
                 <div className="mt-4 grid gap-4 md:grid-cols-3"><TextField label="Customer" value={draft.customerName} onChange={(v) => edit((d) => { d.customerName = v; })} hint="Typed name, used only because Cin7 customer lookup is not available yet." /></div>
               )}
               <CustomerPanel quoteId={id} editable={stage1Edit} onPicked={onCustomerChanged} onFacts={onCustomerFacts} />
+          {q.state === "REP_DRAFT" && (
+            <div className="mt-3 text-xs text-slate-700" data-testid="estimator-note">
+              {estimatorWorkOpen && <>Some products must be mapped and priced by an Estimator before this quotation can be submitted - you can finish your part first; we will show exactly what is waiting on them.{" "}
+                <details className="inline"><summary className="inline-flex min-h-11 cursor-pointer items-center font-medium text-indigo-700 underline">Why?</summary><span className="ml-1">Which Cin7 product each item is, and any manual price, are chosen by an Estimator, not by the Rep. Review (step 4) lists what is waiting on them and how many.</span></details>{" "}</>}
+              The customer must also confirm the quotation total with you before you submit (you record this at the last step).
+            </div>
+          )}
             </Panel>
           </StepPanel>
 
@@ -745,8 +744,8 @@ export default function QuoteEditorPage() {
               <div className="mt-4 grid gap-4">
                 <TextField label="Site / project name" error={err("siteName")} onBlur={() => touch("siteName")} value={draft.siteName} onChange={(v) => edit((d) => { d.siteName = v; })} />
                 <Select label="Pricing basis" value={draft.quoteType} onChange={(e) => edit((d) => { d.quoteType = e.target.value as QuoteType; })}>
-                  <option value="project">Project — landed cost + 20%</option>
-                  <option value="day_to_day">Day-to-day — workbook Retail ex VAT</option>
+                  <option value="project">{QUOTE_TYPE_NEUTRAL.project}</option>
+                  <option value="day_to_day">{QUOTE_TYPE_NEUTRAL.day_to_day}</option>
                 </Select>
               </div>
             </Panel>
@@ -774,11 +773,16 @@ export default function QuoteEditorPage() {
           </StepPanel>
 
           <StepPanel railId="s1" stepId="equipment" number={3} title={STAGE1_STEP_LABEL.equipment} current={stepId === "equipment"} showAll={showAllSteps} locked={lockedFor("equipment")} className={stepPanelCls}>
-            <div className="col-span-full flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-slate-700">Choose the system and options, then enter the quantities and charges. Items only an Estimator can map are shown, not editable.</p>
-              {stage1Edit && <Button variant="secondary" size="sm" className="min-h-11" onClick={() => askSample("recommended")}>Load recommended configuration</Button>}
+            <div className="col-span-full flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+              <p className="text-sm text-slate-700">Choose the system and options, then enter the quantities and charges.</p>
+              {stage1Edit && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <details className="text-xs text-slate-600"><summary className="inline-flex min-h-11 cursor-pointer items-center font-medium text-indigo-700 underline">What does this fill?</summary>
+                    <p className="max-w-xl">“Load recommended configuration” fills {RECOMMENDED_CONFIG_FILLS}. Nothing is saved until you press Save draft.</p></details>
+                  <Button variant="secondary" size="sm" className="min-h-11" onClick={() => askSample("recommended")}>Load recommended configuration</Button>
+                </div>
+              )}
             </div>
-            {stage1Edit && <p className="col-span-full -mt-4 text-xs text-slate-600">“Load recommended configuration” fills {RECOMMENDED_CONFIG_FILLS}. Nothing is saved until you press Save draft.</p>}
             {confirmSample === "recommended" && <div className="col-span-full"><SampleConfirm what="the equipment selections, quantities and overrides" onYes={() => runSample("recommended")} onNo={() => setConfirmSample(null)} /></div>}
             <div className="col-span-full grid min-w-0 items-start gap-6 xl:grid-cols-2">
             <Panel>
@@ -907,7 +911,7 @@ export default function QuoteEditorPage() {
               {rd.reasons.length > 0 && (
                 <details className="mt-1" open={mappingOpen.length === 0}>
                   <summary className="inline-flex min-h-11 cursor-pointer items-center text-sm font-semibold text-indigo-700">Why it is not READY</summary>
-                  <ul className="list-disc space-y-0.5 pl-5 text-sm text-red-700">{rd.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
+                  <ul className="list-disc space-y-0.5 pl-5 text-sm text-red-700">{rd.reasons.map((r) => <li key={r}>{nr(r)}</li>)}</ul>
                 </details>
               )}
               <details className="mt-3">
@@ -920,7 +924,7 @@ export default function QuoteEditorPage() {
                         <Status tone={rd.counts[c] > 0 ? CAT_TONE[c] : "neutral"}>{rd.counts[c]}</Status>
                       </summary>
                       {rd.items[c].length === 0 ? <p className="mt-2 text-xs text-slate-600">None.</p> : (
-                        <ul className="mt-2 space-y-1 text-xs text-slate-700">{rd.items[c].map((i, n) => <li key={n}><span className="font-medium">{i.label}</span> — {i.detail}</li>)}</ul>
+                        <ul className="mt-2 space-y-1 text-xs text-slate-700">{rd.items[c].map((i, n) => <li key={n}><span className="font-medium">{i.label}</span> — {nr(i.detail)}</li>)}</ul>
                       )}
                     </details>
                   ))}
@@ -987,7 +991,7 @@ export default function QuoteEditorPage() {
                     const r = draft.estimator.priceResolutions[k];
                     return (
                       <div key={b.itemKey} className="grid items-end gap-3 md:grid-cols-[minmax(14rem,1.4fr)_minmax(8rem,1fr)_minmax(0,36rem)]">
-                        <div><div className="text-sm font-medium text-slate-900">{b.label}</div><div className="text-xs text-amber-700">{b.reason}</div></div>
+                        <div><div className="text-sm font-medium text-slate-900">{b.label}</div><div className="text-xs text-amber-700">{nr(b.reason)}</div></div>
                         <NumField label="Unit price" ariaLabel={`Unit price for ${b.label}`} unit="R ex VAT" value={r?.unitPriceExVat ?? null} onChange={(v) => edit((d) => { d.estimator.priceResolutions = { ...d.estimator.priceResolutions, [k]: { unitPriceExVat: v ?? 0, reason: d.estimator.priceResolutions[k]?.reason ?? "" } }; })} />
                         <TextField label="Reason" ariaLabel={`Reason for the manual price of ${b.label}`} value={r?.reason ?? ""} onChange={(v) => edit((d) => { d.estimator.priceResolutions = { ...d.estimator.priceResolutions, [k]: { unitPriceExVat: d.estimator.priceResolutions[k]?.unitPriceExVat ?? 0, reason: v } }; })} hint={r && !r.reason.trim() ? "A reason is required before this price is used." : undefined} />
                         {r?.by && <span className="text-xs text-slate-600 md:col-span-3">Entered by {r.by}{r.at ? ` at ${formatSast(r.at)}` : ""}</span>}
@@ -1266,7 +1270,7 @@ export default function QuoteEditorPage() {
                   ["Rule set", q.accepted_baseline.template.rulesetVersion],
                   ["Quote revision", String(q.accepted_baseline.quote.revision)],
                   ["Price source", q.accepted_baseline.pricing.source.label],
-                  ["Pricing basis", q.accepted_baseline.pricing.basis],
+                  ["Pricing basis", view.viewer.canViewCommercials ? q.accepted_baseline.pricing.basis : QUOTE_TYPE_NEUTRAL[draft.quoteType]],
                   ["Overrides · exclusions · price resolutions", `${q.accepted_baseline.overrides.length} · ${q.accepted_baseline.exclusions.length} · ${q.accepted_baseline.priceResolutions.length}`],
                   ["Seal (sha256)", `${(q.baseline_hash ?? "").slice(0, 16)}…`],
                 ].map(([k, v]) => <div key={k}><dt className="text-xs text-slate-600">{k}</dt><dd className="mt-0.5 break-words font-medium text-slate-900">{v}</dd></div>)}
@@ -1306,6 +1310,9 @@ export default function QuoteEditorPage() {
           <p className="text-xs"><BuildStamp /></p>
         </div>
       )}
+      <details className="mt-6 text-xs text-slate-600" data-testid="provenance"><summary className="inline-flex min-h-11 cursor-pointer items-center font-medium text-slate-700">Price source &amp; provenance</summary>
+        <p className="mt-1">Grower House Template v1 · {view.viewer.canViewCommercials ? QUOTE_TYPE_LABEL[draft.quoteType] : QUOTE_TYPE_NEUTRAL[draft.quoteType]} · {budget?.priceSource.label ?? "NewQuip Master workbook – POC controlled snapshot"}</p>
+        {budget && <p className="mt-1">{budget.priceSource.notice} Provenance: {budget.priceSource.provenance}</p>}</details>
     </main>
   );
 }

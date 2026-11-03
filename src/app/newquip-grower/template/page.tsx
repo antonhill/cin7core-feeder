@@ -9,6 +9,7 @@ import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
 import { GROWER_RULESET_VERSION } from "@/newquip/grower/final-feedback";
 import { growerTemplateSections, TEMPLATE_HEADER, TREATMENT_LABEL } from "@/newquip/grower/template";
 import { POC_ITEM_REGISTER } from "@/newquip/grower/open-items";
+import { authoriseActor } from "../actor";
 
 // Grower House Template v1 — READ-ONLY detail. Derived from the live rule table, so it cannot drift from what the engine does.
 // This is deliberately not the Rules & Templates editor: there is nothing to change here.
@@ -19,6 +20,9 @@ export default async function GrowerTemplatePage() {
   } catch {
     redirect("/");
   }
+  // Only a viewer who may see cost reads the pricing formula; a Rep reads the neutral quotation-type description (the register is otherwise unchanged).
+  const canSeeCost = await authoriseActor().then((a) => a.canSeeCost).catch(() => false);
+  const register = POC_ITEM_REGISTER.map((i) => (i.n === 1 && !canSeeCost ? { ...i, treatment: "Project quotations use project pricing; day-to-day quotations use the standard price list basis." } : i));
   const sections = growerTemplateSections();
   return (
     <main className={pageContainerClass("wide")}>
@@ -67,7 +71,7 @@ export default async function GrowerTemplatePage() {
       <Panel className="mt-6">
         <PanelTitle>How Sean&apos;s answers landed</PanelTitle>
         <ul className="mt-3 grid gap-2 text-sm text-slate-700 md:grid-cols-2">
-          {POC_ITEM_REGISTER.map((i) => (
+          {register.map((i) => (
             <li key={i.n} className="rounded-md border border-slate-200 p-3">
               <div className="flex items-center gap-2"><span className="font-medium text-slate-900">{i.topic}</span>
                 <Status tone={i.disposition === "resolved" ? "success" : i.disposition === "manual_by_design" ? "neutral" : "warning"}>{i.disposition === "resolved" ? "Resolved" : i.disposition === "manual_by_design" ? "Manual by design" : "Post-POC"}</Status></div>
