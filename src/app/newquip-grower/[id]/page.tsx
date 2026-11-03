@@ -536,7 +536,7 @@ export default function QuoteEditorPage() {
           </div>
           {wizard2.steps.find((x) => x.id === "mapping")!.access === "edit" && q.state === "REP_DRAFT" && mappingOpen.length > 0 && (
             <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" role="status" data-testid="rep-waiting-banner">
-              <p className="font-semibold">The Rep is waiting on your mapping</p>
+              <p className="font-semibold">Needed from you before the Rep can submit</p>
               <ul className="mt-1 list-disc space-y-0.5 pl-5">{mappingOpen.map((m) => <li key={m}>{m}</li>)}</ul>
               <p className="mt-1">The Rep cannot submit until these are resolved. The remaining steps open once the Rep has submitted.</p>
             </div>
@@ -549,7 +549,7 @@ export default function QuoteEditorPage() {
                 <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-800"><input type="checkbox" className="size-6" checked={showAllSteps} onChange={(e) => setShowAllSteps(e.target.checked)} /> Show all steps</label>
                 {next2Open
                   ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep2(next2Open)}>Next incomplete step</Button>
-                  : <span className="text-sm text-slate-700" data-testid="all-steps-complete">{signedNow ? "Signed off. Next: Manager approval (Stage 3)." : q.state === "ESTIMATOR_REVIEW" && isEstimator ? "Next: sign off or return the quotation." : "Nothing is left for you in this stage."}</span>}
+                  : <span className="text-sm text-slate-700" data-testid="all-steps-complete">{signedNow ? "Signed off. Next: Manager approval (Stage 3)." : q.state === "ESTIMATOR_REVIEW" && isEstimator ? "Next: sign off or return the quotation." : q.state === "REP_DRAFT" && isEstimator ? (mappingOpen.length > 0 ? "Next: choose the products listed above, then save." : "Nothing is left for you until the Rep submits.") : "Nothing is left for you in this stage."}</span>}
               </div>
             )} />
         </>
@@ -911,7 +911,7 @@ export default function QuoteEditorPage() {
             {q.state !== "REP_DRAFT" && q.customer_confirmed_cents != null && !final && totalCents != null && totalCents !== q.customer_confirmed_cents && <Alert tone="warning">The quote total ({fmtCents(totalCents)}) no longer equals the confirmed amount ({fmtCents(q.customer_confirmed_cents)}). Return it to the Rep to reconfirm with the customer before it can be approved.</Alert>}
             {editWarning && <div className="mt-3"><Alert tone="warning"><span data-testid="edit-clears-signoff-signoff">{editWarning}</span></Alert></div>}
             <div className="mt-5 space-y-4 border-t border-slate-100 pt-5">
-              {q.state === "REP_DRAFT" && <p className="text-sm text-slate-800" data-testid="signoff-waiting">{wizard2.statusLine}</p>}
+              {q.state === "REP_DRAFT" && <p className="text-sm text-slate-800" data-testid="signoff-waiting">Not submitted yet: the Estimator signs off or returns it after the Rep has submitted.</p>}
               {final && <Status tone="success">Signed off and approved</Status>}
               {q.state === "ESTIMATOR_REVIEW" && (q.estimator_signoff_hash && q.estimator_signoff_hash === q.draft_hash ? (
                 <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-3" role="status" data-testid="signoff-success">

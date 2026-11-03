@@ -188,7 +188,9 @@ describe("UX-006i2 Stage 2: an Estimator on a Rep draft (the Rep is waiting on t
     await open({ roles: ["ESTIMATOR"], commercials: true, draftOver: UNMAPPED });
     expect(current()).toBe("mapping");
     const banner = screen.getByTestId("rep-waiting-banner");
-    expect(banner.textContent).toContain("The Rep is waiting on your mapping");
+    expect(banner.textContent).toContain("Needed from you before the Rep can submit");
+    expect(document.body.textContent!.split("The Rep is waiting on your mapping").length - 1).toBe(1); // said once (the status line), not repeated in the banner
+    expect(screen.getByTestId("all-steps-complete").textContent).toBe("Next: choose the products listed above, then save.");
     expect(banner.querySelectorAll("li").length).toBeGreaterThan(0);
     expect(banner.textContent).toMatch(/Choose the product for/);
     expect(screen.getByTestId("stage2-status-line").textContent).toBe("The Rep is waiting on your mapping.");
