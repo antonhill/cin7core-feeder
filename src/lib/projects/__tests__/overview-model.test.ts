@@ -147,7 +147,7 @@ describe("C4 reconciliation - Cin7 invoices, not Xero", () => {
     const base = o.reconciliation.scopes[0];
     expect(base).toMatchObject({ saleNumber: "SO-27", saleLinked: true });
     expect(base.summary).toMatchObject({ invoiceCount: 4, reconciledCount: 3, notPostedCount: 0, uncertainCount: 0, retryableCount: 0, invoicedExVatCents: R(10_072_000) });
-    expect(base.claims.find((c) => c.claimNumber === "C05")).toMatchObject({ invoiceNumber: "INV-5", cin7Label: "Draft invoice created", reconciled: false });
+    expect(base.claims.find((c) => c.claimNumber === "C05")).toMatchObject({ invoiceNumber: "INV-5", cin7Label: "Draft recorded", reconciled: false });
     expect(o.reconciliation.scopes[1]).toMatchObject({ saleNumber: "SO-28", label: "V001 variation" });
     expect(o.reconciliation.scopes[1].summary.invoicedExVatCents).toBe(R(500_000));
   });

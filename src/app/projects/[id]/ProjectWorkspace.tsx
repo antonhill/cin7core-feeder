@@ -18,13 +18,16 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { claimActionPlan } from "@/lib/projects/claim-actions";
 import { percentToBps } from "@/lib/projects/claim-engine";
 import { previewKey, previewState } from "@/lib/projects/preview-staleness";
-import { claimNextStep } from "@/lib/projects/claim-next-step";
+import { ClaimStepper, NothingClaimableHint } from "./ClaimStepper";
+import { viewPostingsSignature } from "@/lib/projects/invoice-authorisation";
 import { formatBps, formatCents, type ProjectView, type StageView } from "@/lib/projects/project-view";
 import { VariationsPanel } from "./VariationsPanel";
 import { OpeningCommitmentsPanel } from "./OpeningCommitmentsPanel";
 import { DeliveryAllocationPanel } from "./DeliveryAllocationPanel";
 import { ApprovalHistory } from "@/components/ApprovalHistory";
 import { Cin7PostingPanel } from "./Cin7PostingPanel";
+import { ClaimInvoiceStatus, ClaimNextStepText } from "./ClaimInvoiceStatus";
+import { InvoiceVerificationProvider } from "./invoice-verification-context";
 import { ProjectDetailsPanel } from "./ProjectDetailsPanel";
 import { CommercialSummary } from "./CommercialSummary";
 import { Cin7SaleCreationPanel } from "./Cin7SaleCreationPanel";
@@ -165,6 +168,8 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
   const [amounts, setAmounts] = useState<Record<string, string>>({});
   const [previewedAmounts, setPreviewedAmounts] = useState<Record<string, string>>({});
   const [previewShownKey, setPreviewShownKey] = useState<string | null>(null);
+  // The id the create action returned for the draft this form last saved (drives the stepper only); cleared when a stage is ticked again.
+  const [savedClaimId, setSavedClaimId] = useState<string | null>(null);
   const [isLoading, startLoading] = useTransition();
   const [isWorkingT, startWorking] = useTransition();
   const acts = useKeyedActions();
@@ -295,6 +300,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
   const Shell = embedded ? "div" : "main";
   return (
     <ProjectFeedbackProvider value={acts.stateOf}>
+    <InvoiceVerificationProvider scope={id} signature={viewPostingsSignature(view.claims)} claimIds={view.claims.map((c) => c.id)} claimSigs={Object.fromEntries(view.claims.map((c) => [c.id, viewPostingsSignature([c])]))}>
     <Shell className={embedded ? "mt-2" : pageContainerClass("data")}>
       {!embedded && (
         <ModuleHeader variant="workspace" module={PROJECTS_MODULE}>
@@ -311,11 +317,11 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
       <ActionFeedback state={acts.stateOf("page")} floating />
       {c.uncertainClaimBlocking && (
         <div className="mt-6">
-          <Alert tone="warning">A claim has an uncertain Cin7 outcome. Its value stays reserved and billing of its stages is blocked until it is reconciled.</Alert>
+          <Alert tone="warning">A claim has an uncertain Cin7 outcome. Its value stays reserved and billing of its stages is blocked until it is reconciled.</Alert>{tab !== "claims" && <button type="button" className="mt-1 inline-flex min-h-11 items-center text-sm font-medium text-indigo-700 underline" onClick={() => goTab("claims")}>Open the Commercial / Claims tab</button>}
         </div>
       )}
       {!c.scheduleBalanced && (
-        <div className="mt-6"><Alert tone="danger">Stage values do not reconcile to the contract value — claiming is blocked.</Alert></div>
+        <div className="mt-6"><Alert tone="danger">Stage values do not reconcile to the contract value — claiming is blocked.</Alert>{tab !== "stages" && <button type="button" className="mt-1 inline-flex min-h-11 items-center text-sm font-medium text-indigo-700 underline" onClick={() => goTab("stages")}>Open the Stages tab</button>}</div>
       )}
 
       <nav ref={tabsRef} className="mt-5 inline-flex max-w-full gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1" aria-label="Project sections">
@@ -545,7 +551,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
             </div>
             {view.claims.length === 0 && <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-600">No claims yet.</p>}
             {view.claims.length > 0 && <div className="hidden grid-cols-[minmax(8rem,1fr)_16.5rem_11rem_minmax(14rem,1.3fr)] gap-x-4 px-4 pb-1 text-xs font-semibold uppercase tracking-wider text-slate-600 lg:grid" aria-hidden>
-              <span>Claim</span><span className="text-right">Amount</span><span>Approval</span><span>Cin7 invoice (as last recorded)</span>
+              <span>Claim</span><span className="text-right">Amount</span><span>Approval</span><span>Cin7 invoice</span>
             </div>}
             <div className="space-y-2">
               {claimRows.map(({ cl, plan, needsYou }) => {
@@ -569,13 +575,11 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                         {cl.reserves && <p className="mt-1 text-xs font-medium text-indigo-800">{cl.status === "FAILED_UNCERTAIN" ? "Stays reserved (outcome uncertain)" : "Reserves value"}</p>}
                       </div>
                       <div>
-                        <span className="sr-only">Cin7 invoice: </span><span aria-hidden className="mb-0.5 block text-xs font-semibold uppercase tracking-wider text-slate-600 lg:hidden">Cin7 invoice (as last recorded)</span>
-                        <Status tone={cl.cin7Status.tone}>{cl.cin7Status.label}</Status>
-                        {cl.cin7Status.invoiceNumber && <span className="ml-1.5 font-mono text-xs text-slate-700">{cl.cin7Status.invoiceNumber}</span>}
-                        {cl.cin7Status.invoiceNumber && cl.cin7Status.reconciled && <p className="mt-1 text-xs font-medium text-slate-700"><span aria-hidden>✓</span> Reconciled with Cin7</p>}
+                        <span className="sr-only">Cin7 invoice: </span><span aria-hidden className="mb-0.5 block text-xs font-semibold uppercase tracking-wider text-slate-600 lg:hidden">Cin7 invoice</span>
+                        <ClaimInvoiceStatus claimId={cl.id} cin7Status={cl.cin7Status} />
                       </div>
                     </div>
-                    <p className="mt-2 border-t border-slate-100 pt-2 text-sm text-slate-700"><span className="font-medium text-slate-900">Next: </span>{claimNextStep({ status: cl.status, cin7Kind: cl.cin7Status.kind, stageRole: cl.approval?.stageRole, canApproveHere: plan.approveHere, canAct: perm !== "loading" })}</p>
+                    <p className="mt-2 border-t border-slate-100 pt-2 text-sm text-slate-700"><span className="font-medium text-slate-900">Next: </span><ClaimNextStepText claimId={cl.id} cin7Status={cl.cin7Status} status={cl.status} stageRole={cl.approval?.stageRole} canApproveHere={plan.approveHere} canAct={perm !== "loading"} /></p>
                     {cl.cin7Status.detail && !["DRAFT_CREATED", "AUTHORISED"].includes(cl.cin7Status.kind) && <p className="mt-2 text-xs text-slate-600">{cl.cin7Status.detail}</p>}
                     <div className="mt-2">
                       {/* Every disabled claim button below is disabled for ONE reason that can be seen from here: another action is running. (Approval by another role has its own text, plan.waitingText.) */}
@@ -619,6 +623,8 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
               </div>
               <span className="whitespace-nowrap rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">Not sent to Cin7</span>
             </div>
+            <ClaimStepper chosenCount={chosen.length} preview={preview ? pvState : "NONE"} savedClaimStatus={chosen.length === 0 && !preview && savedClaimId ? (view.claims.find((x) => x.id === savedClaimId)?.status ?? null) : null} canSubmit={(() => { const sc = view.claims.find((x) => x.id === savedClaimId); return sc ? claimActionPlan(sc, perm === "admin" ? "admin" : perm === "member" ? "member" : "none").submit : true; })()} />
+            <NothingClaimableHint stages={view.stages} scheduleBalanced={c.scheduleBalanced} uncertainClaimBlocking={c.uncertainClaimBlocking} isAdmin={perm === "admin"} bannersShown onOpenTab={(t) => { goTab(t); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
             <fieldset className="mt-4 rounded-lg border border-slate-200 p-3">
               <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-600">Billing stages to include</legend>
               <div className="space-y-1">
@@ -626,7 +632,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                   const ok = s.claimableCents > 0;
                   return (
                     <label key={s.id} className={`flex items-center gap-3 text-sm ${ok ? "text-slate-800" : "text-slate-600"}`}>
-                      <input type="checkbox" disabled={!ok} checked={chosen.includes(s.id)} onChange={(e) => { setChosen((cur) => (e.target.checked ? [...cur, s.id] : cur.filter((x) => x !== s.id))); if (!e.target.checked) setAmounts((m) => { const n = { ...m }; delete n[s.id]; return n; }); setPreview(null); setPreviewError(null); }} />
+                      <input type="checkbox" disabled={!ok} checked={chosen.includes(s.id)} onChange={(e) => { setSavedClaimId(null); setChosen((cur) => (e.target.checked ? [...cur, s.id] : cur.filter((x) => x !== s.id))); if (!e.target.checked) setAmounts((m) => { const n = { ...m }; delete n[s.id]; return n; }); setPreview(null); setPreviewError(null); }} />
                       <span className="flex-1">{s.name}</span>
                       {ok && chosen.includes(s.id) && (
                         <input aria-label={`Amount to claim for ${s.name} (rands, blank = all)`} placeholder="all" inputMode="decimal" className="h-7 w-28 rounded border border-slate-300 px-2 text-right tabular-nums text-slate-900"
@@ -641,7 +647,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
             </fieldset>
             <div className="mt-4 flex flex-wrap gap-2">
               <Button variant="secondary" size="sm" onClick={doPreview} loading={isWorking} disabled={chosen.length === 0 || (!!preview && pvState === "CURRENT")} aria-describedby={chosen.length === 0 || isWorking || (preview && pvState === "CURRENT") ? `${uid}-preview-reason` : undefined}>{!preview ? "Preview claim" : pvState === "STALE" ? "Refresh preview" : "Preview is up to date"}</Button>
-              <Button size="sm" onClick={async () => { const claimsBefore = view.claims.length; const saved = await run(() => createClaimDraftAction(id, previewedIds, previewedAmounts), "Draft claim saved locally.", "claim:new", { confirm: (v) => v.claims.length > claimsBefore }); if (saved) { setChosen([]); setAmounts({}); setPreview(null); setPreviewedIds([]); setPreviewedAmounts({}); } }} loading={acts.isPending("claim:new")} disabled={!preview || isWorking || pvState === "STALE"} aria-describedby={!preview || pvState === "STALE" || isWorking ? `${uid}-save-draft-reason` : undefined}>Save as draft claim</Button>
+              <Button size="sm" onClick={async () => { const claimsBefore = view.claims.length; let newId: string | null = null; const saved = await run(() => createClaimDraftAction(id, previewedIds, previewedAmounts).then((r) => { if (r.ok && r.data) newId = r.data.claimId; return r; }), "Draft claim saved locally.", "claim:new", { confirm: (v) => v.claims.length > claimsBefore }); if (saved) { setSavedClaimId(newId); setChosen([]); setAmounts({}); setPreview(null); setPreviewedIds([]); setPreviewedAmounts({}); } }} loading={acts.isPending("claim:new")} disabled={!preview || isWorking || pvState === "STALE"} aria-describedby={!preview || pvState === "STALE" || isWorking ? `${uid}-save-draft-reason` : undefined}>Save as draft claim</Button>
             </div>
             {/* Why each of the two buttons above is (or is not) available - always visible, and wired to the buttons with aria-describedby. */}
             {(chosen.length === 0 || isWorking || (preview && pvState === "CURRENT")) && <DisabledReason id={`${uid}-preview-reason`} className="mt-2">{chosen.length === 0 ? "Preview claim is disabled until you tick at least one billing stage above." : isWorking ? "Preview claim is disabled while another action is in progress." : "The preview is up to date. Change the stages or amounts to preview again."}</DisabledReason>}
@@ -695,6 +701,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
         </div>
       )}
     </Shell>
+    </InvoiceVerificationProvider>
     </ProjectFeedbackProvider>
   );
 }
@@ -723,12 +730,17 @@ function ProgressForm({
   // Validation shown BESIDE the field that needs fixing (and keeping everything typed so far).
   const [fieldErr, setFieldErr] = useState<{ approved?: string; comment?: string }>({});
   const [open, setOpen] = useState(false);
+  // The saved values the form was opened with: "changed" is measured against these, so someone else updating the stage never makes an untouched form look dirty.
+  const [opened, setOpened] = useState({ reported: currentReported, approved: currentApproved });
+  // Unsaved-work guard: dirty = the open form holds a typed comment or a percentage the user changed. A successful save closes the form and releases it.
+  useUnsavedGuard(open && (comment.trim() !== "" || reported !== opened.reported || approved !== opened.approved));
 
   // Inputs restart from the latest saved values every time the form is opened (after a save, or if someone else changed the stage).
   function toggle() {
     if (!open) {
       setReported(currentReported);
       setApproved(currentApproved);
+      setOpened({ reported: currentReported, approved: currentApproved });
     }
     setOpen(!open);
   }
