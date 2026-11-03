@@ -46,8 +46,8 @@ export function Stage1Review({ draft, floorAreaM2, totalLabel, derived, steps, c
   ];
   const rep = derived.open.filter((o) => o.owner === "Rep");
   const est = derived.open.filter((o) => o.owner === "Estimator");
-  const estMaps = est.filter((o) => o.message.startsWith("Estimator mapping needed:"));
-  const estOther = est.filter((o) => !o.message.startsWith("Estimator mapping needed:"));
+  const estMaps = est.filter((o) => o.message.startsWith("Estimator product choice needed:"));
+  const estOther = est.filter((o) => !o.message.startsWith("Estimator product choice needed:"));
   const nextLine = rep.length > 0 ? `Next: finish ${rep.length} item${rep.length === 1 ? "" : "s"} listed below.`
     : est.length > 0 ? `Everything you can do is complete. Waiting on the Estimator for ${est.length} item${est.length === 1 ? "" : "s"} - nothing for you to do yet.`
     : "Everything you can do is complete - submit to the Estimator (step 5).";
@@ -97,10 +97,10 @@ export function Stage1Review({ draft, floorAreaM2, totalLabel, derived, steps, c
                   <li className="text-sm" data-testid="est-mappings-group">
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                       <span className="rounded-md border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-xs font-semibold text-slate-800" data-testid="owner-tag">Estimator</span>
-                      <span className="text-slate-900">The Estimator must confirm {estMaps.length} product mapping{estMaps.length === 1 ? "" : "s"}.</span>
+                      <span className="text-slate-900">The Estimator must confirm {estMaps.length} product choice{estMaps.length === 1 ? "" : "s"}.</span>
                     </div>
                     <details className="mt-1 pl-1 text-xs text-slate-700"><summary className="min-h-6 cursor-pointer">Show the {estMaps.length === 1 ? "item" : "list"}</summary>
-                      <ul className="mt-1 list-disc pl-5">{estMaps.map((i) => <li key={i.message}>{i.message.replace(/^Estimator mapping needed: /, "")}</li>)}</ul></details>
+                      <ul className="mt-1 list-disc pl-5">{estMaps.map((i) => <li key={i.message}>{i.message.replace(/^Estimator product choice needed: /, "")}</li>)}</ul></details>
                   </li>
                 )}
                 {estOther.map((i) => (

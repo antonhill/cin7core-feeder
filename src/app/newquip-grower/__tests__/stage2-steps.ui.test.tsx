@@ -695,6 +695,9 @@ describe("UX-006i2 Stage 2: the view follows real workflow transitions and nothi
     await open({ stage: "1", roles: ["REP"], step: "5" });
     const id = g.__QID!;
     vi.spyOn(actions, "sendGrowerQuoteToEstimatorAction").mockImplementation((async () => { patchRow(id, () => ({ state: "ESTIMATOR_REVIEW", customer_confirmed_cents: 1000000000, customer_confirmed_by: "Sean", handoff_by_email: "rep@nq" })); return reread(id); }) as never);
+    const sendBtn = await waitFor(() => within(panel("submit") as HTMLElement).getByRole("button", { name: "Submit to Estimator" }) as HTMLButtonElement, { timeout: 8000 });
+    expect(sendBtn.disabled).toBe(true); // one explicit confirmation is needed first (i1)
+    fireEvent.click(within(panel("submit") as HTMLElement).getByLabelText(/I confirm that Sean has confirmed the quotation total of/));
     const send = await waitFor(() => { const b = within(panel("submit") as HTMLElement).getByRole("button", { name: "Submit to Estimator" }) as HTMLButtonElement; expect(b.disabled).toBe(false); return b; }, { timeout: 8000 });
     fireEvent.click(send);
     await waitFor(() => expect(screen.getByTestId("rep-complete").textContent).toContain("Rep preparation complete - next: Estimator"), { timeout: 8000 });

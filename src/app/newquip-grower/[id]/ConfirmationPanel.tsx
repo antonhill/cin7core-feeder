@@ -1,7 +1,7 @@
 "use client";
 
 import { DisabledReason } from "@/components/ApprovalDisabledReason";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Status } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
@@ -23,6 +23,9 @@ export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading
   const [err, setErr] = useState<string | null>(null);
   const [choice, setChoice] = useState<"default" | "alt" | number>("default");
   const [alt, setAlt] = useState({ name: "", email: "", reason: "" });
+  // Explicit client-side confirmation: the Rep ticks that the named person confirmed THIS total. It is bound to the total and the person, so changing either clears it. The action itself is unchanged.
+  const [ackFor, setAckFor] = useState<string | null>(null);
+  const ackId = useId();
 
   useEffect(() => {
     let live = true;
@@ -38,11 +41,11 @@ export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading
   if (recorded) {
     return (
       <div className="rounded-md border border-slate-200 p-3 text-sm" data-testid="confirmation-recorded">
-        <div className="flex items-center gap-2 font-medium text-slate-800">Pre-approval price confirmation {rc ? <Status tone="success">Recorded</Status> : <Status tone="warning">Contact not on record</Status>}</div>
+        <div className="flex items-center gap-2 font-medium text-slate-800">Customer price confirmation {rc ? <Status tone="success">Recorded</Status> : <Status tone="warning">Contact not on record</Status>}</div>
         {rc ? (
           <p className="mt-1 text-slate-700">{rc.name}{rc.email ? ` <${rc.email}>` : ""} · {rc.origin}{rc.reason ? ` · reason: ${rc.reason}` : ""} · confirmed by {rc.selectedBy} on {formatSast(rc.selectedAt)}</p>
         ) : <p className="mt-1 text-slate-600">No structured contact record (confirmed before contact selection existed).</p>}
-        <p className="mt-1 text-xs text-slate-600">This is the pre-approval price confirmation. The customer&apos;s formal acceptance of the issued quotation is recorded separately after Manager approval.</p>
+        <p className="mt-1 text-xs text-slate-600">This is the customer price confirmation. The customer&apos;s formal acceptance of the issued quotation is recorded separately after Manager approval.</p>
       </div>
     );
   }
@@ -59,13 +62,15 @@ export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading
     const c = cin7Contacts.find((x) => x.i === choice);
     if (c) { picked = { name: c.name!, email: c.email, origin: "Cin7 contact" }; input = { source: "CIN7_CONTACT", contactIndex: c.i }; }
   }
+  const ackKey = `${amountLabel ?? ""}|${picked?.name ?? ""}|${picked?.email ?? ""}`;
   const blocked = !v.available ? null : !s ? "Select the Cin7 customer and quotation contact in step 1 (Customer & contact) first." : null;
   const sendWhy = loading ? "Sending is in progress. Please wait."
     : !canAct ? "Only a Rep can record the price confirmation and send the quote to the Estimator."
-    : !ready ? "The quote must be READY before the amount can be confirmed (see the readiness items)."
+    : !ready ? "The quotation must be complete (nothing outstanding) before the price can be confirmed."
     : !amountLabel ? "The quote total is not available yet, so there is no amount to confirm."
     : v.available && !s ? "Select the Cin7 customer and quotation contact in step 1 (Customer & contact) first."
     : !input ? "Choose who confirmed the price (for someone not listed enter a name and a reason)."
+    : ackFor !== ackKey ? "Tick the confirmation above to enable Submit to Estimator."
     : undefined;
   const radio = "flex cursor-pointer items-start gap-2 rounded-md border p-2 text-sm";
 
@@ -113,8 +118,14 @@ export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading
       <div className="border-t border-slate-100 pt-3 text-sm">
         <p>Quote total confirmed (ex VAT): <b>{amountLabel ?? "not available yet"}</b></p>
         <p className="mt-1 text-xs text-slate-700" data-testid="submit-effects">Submitting records the customer&apos;s price confirmation above, notifies the Estimator and moves the quotation to Estimator review. Any unsaved edits are saved first. This is not an approval and not the customer&apos;s formal acceptance, which comes after Manager approval.</p>
+        {picked && amountLabel && (
+          <label htmlFor={ackId} className="mt-3 flex min-h-11 cursor-pointer items-start gap-2 rounded-md border border-slate-300 p-2 text-sm text-slate-900" data-testid="confirm-ack">
+            <input id={ackId} type="checkbox" className="mt-0.5 size-6 shrink-0" checked={ackFor === ackKey} disabled={!canAct || loading || !ready} onChange={(e) => setAckFor(e.target.checked ? ackKey : null)} />
+            <span>I confirm that <b>{picked.name}</b> has confirmed the quotation total of <b>{amountLabel}</b> ex VAT.</span>
+          </label>
+        )}
         <div className="mt-3">
-          <Button className="min-h-11" loading={loading} aria-describedby={sendWhy ? "send-estimator-why" : undefined} disabled={!canAct || !ready || !amountLabel || !input || (v.available && !s)} onClick={() => input && onConfirm(input)}>Submit to Estimator</Button>
+          <Button className="min-h-11" loading={loading} aria-describedby={sendWhy ? "send-estimator-why" : undefined} disabled={!canAct || !ready || !amountLabel || !input || (v.available && !s) || ackFor !== ackKey} onClick={() => input && onConfirm(input)}>Submit to Estimator</Button>
         </div>
         {!recorded && <div className="mt-1"><DisabledReason id="send-estimator-why">{sendWhy}</DisabledReason></div>}
       </div>

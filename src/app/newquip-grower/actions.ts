@@ -113,11 +113,11 @@ export async function getGrowerViewerAction(): Promise<GrowerActionResult<{ role
   }
 }
 
-export async function listGrowerQuotesAction(): Promise<GrowerActionResult<Array<Pick<QuoteRecord, "id" | "quote_ref" | "revision" | "customer_name" | "site_name" | "state" | "contract_cents" | "project_id" | "created_at">>>> {
+export async function listGrowerQuotesAction(): Promise<GrowerActionResult<Array<Pick<QuoteRecord, "id" | "quote_ref" | "revision" | "customer_name" | "site_name" | "state" | "contract_cents" | "project_id" | "created_at"> & { signed_off: boolean }>>> {
   try {
     const a = await authorise();
     const rows = await listQuotes(createServiceRoleClient(), a.orgId);
-    return { ok: true, data: rows.map((q) => ({ id: q.id, quote_ref: q.quote_ref, revision: q.revision, customer_name: q.customer_name, site_name: q.site_name, state: q.state, contract_cents: q.contract_cents, project_id: q.project_id, created_at: q.created_at })) };
+    return { ok: true, data: rows.map((q) => ({ id: q.id, quote_ref: q.quote_ref, revision: q.revision, customer_name: q.customer_name, site_name: q.site_name, state: q.state, contract_cents: q.contract_cents, project_id: q.project_id, created_at: q.created_at, signed_off: !!q.estimator_signoff_hash && q.estimator_signoff_hash === q.draft_hash })) };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }

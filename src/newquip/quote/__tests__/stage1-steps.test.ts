@@ -24,7 +24,8 @@ describe("deriveStage1Steps (UX-006a): completion comes from data only", () => {
     expect(status(ok).customer).toBe("complete");
   });
   it("no name at all is Not complete; customer details still loading is never complete", () => {
-    expect(status({ ...ok, customerName: "  " }).customer).toBe("incomplete");
+    expect(status({ ...ok, customerName: "  ", customer: { ...full, hasSnapshot: false, hasContact: false, contactName: null } }).customer).toBe("incomplete");
+    expect(status({ ...ok, customerName: "  " }).customer).toBe("complete"); // a selected Cin7 snapshot IS the identity (no stale "choose the customer")
     expect(status({ ...ok, customer: NO_CUSTOMER_FACTS }).customer).toBe("incomplete");
   });
   it("before the customer snapshot feature exists the typed name is used (matches the Stage 2 handoff, which does not block then)", () => {
@@ -56,7 +57,7 @@ describe("deriveStage1Steps (UX-006a): completion comes from data only", () => {
     expect(d.stage2Reasons).toEqual(["Feeder: quantity required"]);
   });
   it("missing customer and site produce issues pointing at their own steps", () => {
-    const d = deriveStage1Steps({ ...ok, customerName: "", siteName: "" });
+    const d = deriveStage1Steps({ ...ok, customerName: "", siteName: "", customer: { ...full, hasSnapshot: false, hasContact: false, contactName: null } });
     expect(d.issues.map((i) => i.stepId)).toEqual(["customer", "site"]);
   });
   it("blank room fields are Not complete (not Needs attention) and use human labels; a real invalid value is Needs attention", () => {
@@ -89,7 +90,7 @@ describe("ownedWork / open items (UX-006i1): who has to resolve what", () => {
     });
     const o = ownedWork(w);
     expect(o.rep).toEqual(["Feeder: enter the quantity", "M75 system: M75 is entered by hand", "LED light: give the reason for the quantity override", "2 excluded items need a reason", "Delivery: enter the amount"]);
-    expect(o.estimator).toEqual(["Estimator mapping needed: Cup drinker", "Estimator mapping needed: Door", "Estimator: 1 manual price needs a reason"]);
+    expect(o.estimator).toEqual(["Estimator product choice needed: Cup drinker", "Estimator product choice needed: Door", "Estimator: 1 manual price needs a reason"]);
   });
   it("Rep-owned work puts Equipment in Needs attention; Estimator-owned work never does (it is named, not blocking the Rep's steps)", () => {
     const rep = deriveStage1Steps({ ...ok, work: work({ budgetLines: [{ label: "Feeder", status: "no_quantity", reason: "r" }] }) });
@@ -97,7 +98,7 @@ describe("ownedWork / open items (UX-006i1): who has to resolve what", () => {
     expect(rep.open).toEqual([{ message: "Feeder: enter the quantity", owner: "Rep", stepId: "equipment" }]);
     const est = deriveStage1Steps({ ...ok, work: work({ budgetLines: [{ label: "Cup drinker", status: "unmapped", reason: "r" }] }) });
     expect(est.steps.find((x) => x.id === "equipment")?.status).toBe("complete");
-    expect(est.open).toEqual([{ message: "Estimator mapping needed: Cup drinker", owner: "Estimator" }]);
+    expect(est.open).toEqual([{ message: "Estimator product choice needed: Cup drinker", owner: "Estimator" }]);
   });
   it("customerFactsSettled: loaded, failed or unavailable settle; the initial facts do not", () => {
     expect(customerFactsSettled(NO_CUSTOMER_FACTS)).toBe(false);

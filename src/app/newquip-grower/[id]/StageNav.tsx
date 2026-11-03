@@ -11,7 +11,8 @@ import { navPresentation, type NavViewer } from "@/newquip/quote/stage-nav-model
 const TONE: Record<StageStatus, BadgeTone> = { LOADING: "neutral", COMPLETE: "success", IN_PROGRESS: "info", AWAITING_ACTION: "warning", RETURNED: "danger", NOT_STARTED: "neutral", NOT_AVAILABLE: "neutral", NOT_REQUIRED: "neutral" };
 
 // At 700px and below the six cards collapse to a disclosure "Stage n of 6 · name" that lists all six with their status (every stage stays reachable).
-export function StageNav({ stages, current, viewing, onSelect, previewable = [], viewer }: { stages: StageView[]; current: StageId; viewing: StageId; onSelect: (id: StageId) => void; /** Unavailable stages the page can show read-only (labelled "Preview only"). */ previewable?: readonly StageId[]; /** The viewer's roles and the quote state, for viewer-relative wording of the status chip only. */ viewer?: NavViewer }) {
+export function StageNav({ stages, current, viewing, onSelect, previewable = [], viewer, compact = false }: {
+  /** Inside a step-based stage the six cards collapse to the one-line indicator at every width (expandable); the list stays in the DOM. */ compact?: boolean; stages: StageView[]; current: StageId; viewing: StageId; onSelect: (id: StageId) => void; /** Unavailable stages the page can show read-only (labelled "Preview only"). */ previewable?: readonly StageId[]; /** The viewer's roles and the quote state, for viewer-relative wording of the status chip only. */ viewer?: NavViewer }) {
   const [open, setOpen] = useState(false);
   const toggle = useRef<HTMLButtonElement>(null);
   // Closing the list hides the focused button (display:none), which would drop focus to <body>: move it to the toggle instead (only when the list was open).
@@ -22,10 +23,10 @@ export function StageNav({ stages, current, viewing, onSelect, previewable = [],
     <div className="mt-6 space-y-3" data-testid="stage-nav">
       <nav aria-label="Quotation stages" onKeyDown={(e) => { if (e.key === "Escape" && open) { e.stopPropagation(); close(); } }}>
         <button ref={toggle} type="button" aria-expanded={open} aria-controls="stage-nav-list" onClick={() => setOpen((o) => !o)} data-testid="stage-nav-toggle"
-          className="flex min-h-11 w-full items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-left text-sm font-semibold text-slate-900 min-[701px]:hidden">
-          <span>Stage {viewing} of {stages.length} · {view?.label ?? ""}</span><span aria-hidden>{open ? "▲" : "▼"}</span>
+          className={`flex min-h-11 w-full items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-left text-sm font-semibold text-slate-900 ${compact ? "" : "min-[701px]:hidden"}`}>
+          <span>Stage {viewing} of {stages.length} · {view?.label ?? ""}{compact && view ? <span className="font-normal text-slate-700"> · {navPresentation(view, previewable.includes(view.id), viewer).chip}</span> : null}</span><span className="text-xs font-normal text-slate-700">{compact ? (open ? "Hide all stages " : "Show all stages ") : ""}<span aria-hidden>{open ? "▲" : "▼"}</span></span>
         </button>
-        <ol id="stage-nav-list" className={`${open ? "grid" : "hidden"} mt-2 grid-cols-1 gap-2 min-[701px]:mt-0 min-[701px]:grid sm:grid-cols-2 lg:grid-cols-6`}>
+        <ol id="stage-nav-list" className={`${open ? "grid" : "hidden"} mt-2 grid-cols-1 gap-2 ${compact ? "" : "min-[701px]:mt-0 min-[701px]:grid"} sm:grid-cols-2 lg:grid-cols-6`}>
           {stages.map((s) => {
             const on = s.id === viewing;
             return (

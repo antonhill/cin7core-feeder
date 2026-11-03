@@ -23,9 +23,9 @@ const KIND_TONE: Record<ValueKind, BadgeTone> = { auto_calculated: "success", de
 const repKindLabel = (k: ValueKind, notSelected: boolean): string => (notSelected ? "NOT INCLUDED" : k === "estimator_input_required" ? "QUANTITY NEEDED" : k === "estimator_input" ? "QUANTITY ENTERED" : VALUE_KIND_LABEL[k]);
 const repTreatment = (t: string): string => (t === "estimator_input" ? "you enter the quantity" : t.replace(/_/g, " "));
 export const CHARGE_HELP: Record<ChargeKey, string> = {
-  delivery: "From the courier invoice — truck size × truck price; distance affects it.",
-  installation: "From the teams' service reports — days × daily rate.",
-  concrete_slat_delivery: "Truck price ÷ slat weight, by distance.",
+  delivery: "Usually supplied by the courier or haulier quote: the truck price for the distance.",
+  installation: "Usually from the installation team's service report: days × daily rate.",
+  concrete_slat_delivery: "Usually from the haulier's quote for the slat trucks: truck price ÷ slat weight, by distance.",
 };
 
 /**
@@ -85,7 +85,7 @@ export function LineDecisionsTable({ draft, ev, edit, roles, editable, mode, qua
                 </td>
                 <td className="py-3 pr-3 text-right tabular-nums">{l.projectQuantity ?? "—"}</td>
                 <td className="py-3 pr-3 text-xs text-slate-700">{rep ? (
-                  b?.sku ? b.sku : estimatorOwned ? <span className="text-amber-800" data-testid={`owner-row-${l.itemKey}`}>Estimator mapping needed: {l.label}</span> : b?.pricedBy === "penning_rate" ? "Pig-size / running-metre basis" : b?.pricedBy === "estimator_input" ? "Priced from your system price" : b?.pricedBy === "estimator_resolution" ? "Estimator-resolved" : "—"
+                  b?.sku ? b.sku : estimatorOwned ? <span className="text-amber-800" data-testid={`owner-row-${l.itemKey}`}>Estimator product choice needed: {l.label}</span> : b?.pricedBy === "penning_rate" ? "Pig-size / running-metre basis" : b?.pricedBy === "estimator_input" ? "Priced from your system price" : b?.pricedBy === "estimator_resolution" ? "Estimator-resolved" : "—"
                 ) : mapControl === "chooser" ? (
                   <div className="min-w-[280px]" data-testid={`mapping-chooser-${l.itemKey}`}>
                     <ProductMappingPicker label={l.label} value={draft.estimator.confirmedMappings[l.itemKey]}
@@ -109,9 +109,9 @@ export function ChargesSection({ draft, edit }: { draft: QuoteDraft; edit: Edit 
     <>
       <div className="mt-4 grid gap-4 md:grid-cols-2">
         {(["delivery", "installation", "concrete_slat_delivery"] as ChargeKey[]).map((c) => (
-          <NumField key={c} label={CHARGE_LABEL[c]} unit="R" hint={CHARGE_HELP[c]} value={draft.estimator.charges[c] ?? null} onChange={(v) => edit((d) => { d.estimator.charges = { ...d.estimator.charges, [c]: v }; })} />
+          <NumField key={c} label={CHARGE_LABEL[c]} ariaLabel={`${CHARGE_LABEL[c]} charge (R ex VAT)`} unit="R" hint={CHARGE_HELP[c]} value={draft.estimator.charges[c] ?? null} onChange={(v) => edit((d) => { d.estimator.charges = { ...d.estimator.charges, [c]: v }; })} />
         ))}
-        <NumField label="M75 system price" unit="R per system" hint="Entered by hand by design. NQ3132 is N/A — supplier quote required; it is not priced separately." value={draft.estimator.unitPrices.flex_auger ?? null} onChange={(v) => edit((d) => { d.estimator.unitPrices = { ...d.estimator.unitPrices, flex_auger: v }; })} />
+        <NumField label="M75 system price (per system)" ariaLabel="M75 system price per system (R ex VAT)" unit="R per system" hint="You enter this price (it is not looked up), usually from the supplier quote. NQ3132 is not priced separately." value={draft.estimator.unitPrices.flex_auger ?? null} onChange={(v) => edit((d) => { d.estimator.unitPrices = { ...d.estimator.unitPrices, flex_auger: v }; })} />
       </div>
       <label className="mt-4 flex max-w-3xl flex-col gap-1 text-sm">
         <span className="font-medium text-slate-700">Assumptions (frozen with the quote)</span>
