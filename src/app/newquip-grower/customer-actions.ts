@@ -7,7 +7,7 @@ import { authoriseActor, auditActor, errText, ownerEmailOf, type Actor, type Db 
 import { createServiceRoleClient } from "@/supabase/server";
 import { canEditDraft } from "@/newquip/quote/workflow";
 import { confirmedContactStillValid } from "@/lib/newquip-quotes/confirmation-status";
-import { legacyCtx, resyncQuoteApprovals, stagedAvailable } from "@/lib/approvals/approval-store";
+import { resyncApprovalsLogged } from "@/lib/newquip-quotes/confirmation-reconcile";
 import { applyCustomerChange, invalidateConfirmation, loadQuote } from "@/lib/newquip-quotes/quote-store";
 import { readCin7Customer, searchSyncedCustomers, type CustomerHit } from "@/lib/newquip-customers/cin7-customer-read";
 import { appendClearMarker, appendSnapshot, customerFeaturesAvailable, latestSnapshot, isClearedRow, snapshotHistory } from "@/lib/newquip-quotes/customer-store";
@@ -15,7 +15,7 @@ import { buildCustomerSnapshot, currencyStatus, describeContact, diffSnapshots, 
 
 export interface CustomerActionResult<T> { ok: boolean; error?: string; data?: T }
 
-export interface ConfirmationEffect { confirmationCleared: boolean; signoffCleared: boolean; returnedToRep: boolean }
+export interface ConfirmationEffect { confirmationCleared: boolean; signoffCleared: boolean; returnedToRep: boolean; /** Set when the approval request could not be updated (the quotation itself is correct). */ approvalSyncError?: string }
 
 export interface QuoteCustomerView {
   available: boolean;
@@ -50,10 +50,10 @@ async function editableQuote(a: Actor, db: Db, quoteId: string) {
   return q;
 }
 
-/** An open staged approval request is stale once the quotation went back to the Rep or lost its sign-off: re-sync it (best effort, like a draft save). */
-async function resyncApprovals(db: Db, a: Actor, quoteId: string, effect: ConfirmationEffect) {
-  if (!(effect.returnedToRep || effect.signoffCleared) || !(await stagedAvailable(db))) return;
-  await resyncQuoteApprovals(db, legacyCtx(a.orgId, a.userId, a.email, a.tier === "admin", a.demo ? { name: a.demo.actorName, demo: a.demo } : undefined), quoteId, { quiet: true }).catch(() => undefined);
+/** Re-syncs the open approval request (audited, never silent); a failure is returned on the effect so the UI can say so. */
+async function resyncApprovals(db: Db, a: Actor, quoteId: string, effect: ConfirmationEffect): Promise<ConfirmationEffect> {
+  const err = await resyncApprovalsLogged(db, { orgId: a.orgId, userId: a.userId, email: a.email, isAdmin: a.tier === "admin", demo: a.demo }, quoteId, effect);
+  return err ? { ...effect, approvalSyncError: err } : effect;
 }
 
 async function viewOf(db: Db, a: Actor, quoteId: string, effect?: ConfirmationEffect): Promise<QuoteCustomerView> {
@@ -115,8 +115,7 @@ export async function selectQuoteCustomerAction(quoteId: string, customerName: s
     await auditActor(db, a, cur
       ? { action: "newquip.quote_customer_changed", summary: "Replaced the Cin7 customer on a NewQuip quotation (read-only; no Cin7 write)", detail: { quoteId, fromCin7CustomerId: cur.cin7_customer_id, toCin7CustomerId: stored.cin7_customer_id, seq: stored.seq, ...effect } }
       : { action: "newquip.quote_customer_selected", summary: "Selected the Cin7 customer for a NewQuip quotation (read-only; no Cin7 write)", detail: { quoteId, cin7CustomerId: stored.cin7_customer_id, seq: stored.seq, ...effect } });
-    await resyncApprovals(db, a, quoteId, effect);
-    return { ok: true, data: await viewOf(db, a, quoteId, effect) };
+    return { ok: true, data: await viewOf(db, a, quoteId, await resyncApprovals(db, a, quoteId, effect)) };
   } catch (e) { return { ok: false, error: errText(e) }; }
 }
 
@@ -133,8 +132,7 @@ export async function clearQuoteCustomerAction(quoteId: string, confirm: boolean
     const marker = await appendClearMarker(db, a.orgId, quoteId, { email: a.email, ownerEmail: ownerEmailOf(a) }, `Customer cleared (was ${from})`);
     const effect = await applyCustomerChange(db, a.orgId, quoteId, "", true);
     await auditActor(db, a, { action: "newquip.quote_customer_cleared", summary: "Cleared the customer on a NewQuip quotation (local only; Cin7 unchanged)", detail: { quoteId, fromCin7CustomerId: cur.cin7_customer_id, seq: marker.seq, ...effect } });
-    await resyncApprovals(db, a, quoteId, effect);
-    return { ok: true, data: await viewOf(db, a, quoteId, effect) };
+    return { ok: true, data: await viewOf(db, a, quoteId, await resyncApprovals(db, a, quoteId, effect)) };
   } catch (e) { return { ok: false, error: errText(e) }; }
 }
 
@@ -153,14 +151,19 @@ export async function chooseQuoteContactAction(quoteId: string, choice: ContactC
     // so a failure can never leave a confirmation standing for a contact it was not given by. It needs the Rep's explicit confirmation (the UI states the effect first).
     const withdraws = q.customer_confirmed_cents != null && !confirmedContactStillValid(next);
     if (withdraws && !confirmWithdrawal) throw new Error(`Changing the quotation contact withdraws the customer's price confirmation${q.state === "ESTIMATOR_REVIEW" ? " and returns the quotation to you as a new revision" : ""}; the new contact must confirm the amount again. Confirm to continue.`);
-    const effect: ConfirmationEffect = withdraws ? await invalidateConfirmation(db, a.orgId, quoteId) : { confirmationCleared: false, signoffCleared: false, returnedToRep: false };
+    let effect: ConfirmationEffect = withdraws ? await invalidateConfirmation(db, a.orgId, quoteId, { cents: q.customer_confirmed_cents, revision: q.revision }) : { confirmationCleared: false, signoffCleared: false, returnedToRep: false };
     const how = next.chosenContact?.source === "ENTERED" ? "entered by the Rep" : next.chosenContact?.emailCorrection ? `Cin7 contact, email corrected for this quotation: ${next.chosenContact.emailCorrection.reason}` : "Cin7 contact";
     await appendSnapshot(db, a.orgId, quoteId, { ...next, ...(effect.confirmationCleared ? { confirmationContact: null } : {}) }, { email: a.email, ownerEmail: ownerEmailOf(a) },
       `Quotation contact ${prev ? "changed" : "set"}: ${prev ? `${describeContact(prev)} → ` : ""}${describeContact(next.chosenContact)} (${how})${effect.confirmationCleared ? "; the customer's price confirmation was withdrawn" : ""}`);
+    if (withdraws) {
+      // Fail safe: the new contact must never stand next to a confirmation given for the old one. A handoff that slipped in between the clear and the append is withdrawn again.
+      const post = await loadQuote(db, a.orgId, quoteId);
+      if (post && post.customer_confirmed_cents != null) { const again = await invalidateConfirmation(db, a.orgId, quoteId); effect = { confirmationCleared: true, signoffCleared: effect.signoffCleared || again.signoffCleared, returnedToRep: effect.returnedToRep || again.returnedToRep }; }
+    }
     await auditActor(db, a, { action: "newquip.quote_contact_chosen", summary: "Set the quotation contact and delivery email (local only; Cin7 unchanged)", detail: { quoteId, source: next.chosenContact?.source, email: next.chosenContact?.email, previousContact: prev ? { name: prev.name, email: prev.email } : null, ...effect, ...(next.chosenContact?.emailCorrection ? { cin7Email: next.chosenContact.emailCorrection.cin7Email, correctionReason: next.chosenContact.emailCorrection.reason } : {}) } });
     if (effect.confirmationCleared) {
       await auditActor(db, a, { action: "newquip.quote_confirmation_invalidated", summary: "Withdrew the customer's pre-approval price confirmation: the confirmed contact changed (local only)", detail: { quoteId, reason: "CONTACT_CHANGED", previousConfirmationContact: cur.snapshot.confirmationContact ? { name: cur.snapshot.confirmationContact.name, email: cur.snapshot.confirmationContact.email, amountCents: cur.snapshot.confirmationContact.amountCents } : null, ...effect } });
-      await resyncApprovals(db, a, quoteId, effect);
+      effect = await resyncApprovals(db, a, quoteId, effect);
     }
     return { ok: true, data: await viewOf(db, a, quoteId, effect) };
   } catch (e) { return { ok: false, error: errText(e) }; }
@@ -188,12 +191,12 @@ export async function refreshQuoteCustomerAction(quoteId: string, apply: boolean
     let applied = false; let effect: ConfirmationEffect | undefined;
     if (apply && changes.length > 0) {
       // As for a contact change: the confirmation is withdrawn BEFORE the refreshed snapshot (which no longer holds the confirmed contact) is stored.
-      effect = withdraws ? await invalidateConfirmation(db, a.orgId, quoteId) : undefined;
+      effect = withdraws ? await invalidateConfirmation(db, a.orgId, quoteId, { cents: q.customer_confirmed_cents, revision: q.revision }) : undefined;
       await appendSnapshot(db, a.orgId, quoteId, effect?.confirmationCleared ? { ...candidate, confirmationContact: null } : candidate, { email: a.email, ownerEmail: ownerEmailOf(a) }, `Refreshed from Cin7${effect?.confirmationCleared ? "; the customer's price confirmation was withdrawn" : ""}`);
       await auditActor(db, a, { action: "newquip.quote_customer_refreshed", summary: "Refreshed the customer snapshot from Cin7 (read-only; no Cin7 write)", detail: { quoteId, changes: changes.map((c) => c.field), ...(effect ?? {}) } });
       if (effect?.confirmationCleared) {
         await auditActor(db, a, { action: "newquip.quote_confirmation_invalidated", summary: "Withdrew the customer's pre-approval price confirmation: the confirmed contact changed on refresh (local only)", detail: { quoteId, reason: "CONTACT_CHANGED", ...effect } });
-        await resyncApprovals(db, a, quoteId, effect);
+        effect = await resyncApprovals(db, a, quoteId, effect);
       }
       applied = true;
     }

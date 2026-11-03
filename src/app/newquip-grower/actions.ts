@@ -21,7 +21,8 @@ import { evaluationContext } from "@/lib/newquip-quotes/context";
 import { confirmationLabel, resolveConfirmationContact, type ConfirmationInput } from "@/lib/newquip-quotes/confirmation-contact";
 import { appendSnapshot, customerFeaturesAvailable, latestSnapshot } from "@/lib/newquip-quotes/customer-store";
 import { fieldValue } from "@/lib/newquip-quotes/customer-snapshot";
-import { assertConfirmationCurrent } from "@/lib/newquip-quotes/confirmation-guard";
+import { reconcileConfirmationAmount, resyncApprovalsLogged } from "@/lib/newquip-quotes/confirmation-reconcile";
+import { assertConfirmationCurrent, assertNameMatchesSnapshot } from "@/lib/newquip-quotes/confirmation-guard";
 import { keepServerOwnedCostBasis, keepServerOwnedCosts, redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
 import { approvalsAvailable, decideDocument, legacyCtx, resyncQuoteApprovals, stagedAvailable, submitForApproval, withdrawPendingFor } from "@/lib/approvals/approval-store";
 import type { ScheduleChoice } from "@/newquip/quote/billing-schedule";
@@ -79,6 +80,8 @@ function ctxOf(a: Actor, isManager: boolean = a.tier === "admin") {
   return legacyCtx(a.orgId, a.userId, a.email, isManager, a.demo ? { name: a.demo.actorName, demo: a.demo } : undefined);
 }
 
+const whoOf = (a: Actor) => ({ orgId: a.orgId, userId: a.userId, email: a.email, isAdmin: a.tier === "admin", demo: a.demo });
+
 /** The audit record of any action: the REAL owner is the actor, the effective user and the DEMO marker are in the detail. */
 async function audit(db: ReturnType<typeof createServiceRoleClient>, a: Actor, i: { action: string; summary: string; detail: Record<string, unknown> }) {
   await logActivity(db, a.demo
@@ -90,8 +93,12 @@ function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : "Unknown error";
 }
 
+type ConfirmationEffectView = import("@/lib/newquip-quotes/confirmation-reconcile").InvalidationEffect & { previousCents?: number; newCents?: number };
+
 /** A quote as the browser sees it: the record plus the viewer's roles. No cost ever travels in `evaluation` for non-admins. */
 export interface QuoteView {
+  /** Set only on a save that withdrew the customer's confirmation because the commercial total changed (previousCents -> newCents), or whose approval re-sync failed. */
+  confirmationEffect?: ConfirmationEffectView;
   quote: QuoteRecord;
   evaluation: QuoteEvaluation;
   viewer: { roles: QuoteRole[]; canViewCommercials: boolean };
@@ -201,9 +208,21 @@ export async function saveGrowerDraftAction(quoteId: string, draft: QuoteDraft):
     const snapName = (await customerFeaturesAvailable(db)) ? fieldValue((await latestSnapshot(db, a.orgId, quoteId))?.snapshot.name ?? { state: "missing" }) : null;
     const saved = await saveDraft(db, a.orgId, a.roles, quoteId, await sanitiseSubmittedDraft(a, db, draft, prior?.draft), snapName);
     // Changed content invalidates the estimator's sign-off (saveDraft clears it) and any open approval of the older content: the quote goes back to estimator review.
-    if (saved.draftHash !== prior?.draft_hash && (await stagedAvailable(db))) await resyncQuoteApprovals(db, ctxOf(a), quoteId, { quiet: true }).catch(() => undefined);
+    // Race repair: if the customer was (re)selected while this save was in flight, the snapshot name wins - write it again from the stored draft.
+    if (snapName !== null || (await customerFeaturesAvailable(db))) {
+      const nowName = fieldValue((await latestSnapshot(db, a.orgId, quoteId))?.snapshot.name ?? { state: "missing" });
+      if (nowName && nowName !== snapName) { const cur = await loadQuote(db, a.orgId, quoteId); if (cur) await saveDraft(db, a.orgId, a.roles, quoteId, cur.draft, nowName); }
+    }
+    // A change of the commercial total withdraws the customer's confirmation (one helper for every draft writer); otherwise changed content only re-syncs the approval request.
+    const amount = await reconcileConfirmationAmount(db, whoOf(a), quoteId, evaluationContext(true));
+    // saveDraft already withdrew an existing sign-off for the changed content, so it counts as cleared in the reported effect
+    let confirmationEffect: ConfirmationEffectView | undefined = amount ? { ...amount, signoffCleared: amount.signoffCleared || saved.signoffCleared } : undefined;
+    if (!amount && saved.draftHash !== prior?.draft_hash && (await stagedAvailable(db))) {
+      const err = await resyncApprovalsLogged(db, whoOf(a), quoteId, { returnedToRep: false, signoffCleared: true });
+      if (err) confirmationEffect = { confirmationCleared: false, signoffCleared: saved.signoffCleared, returnedToRep: false, approvalSyncError: err };
+    }
     const q = await loadQuote(db, a.orgId, quoteId);
-    return q ? { ok: true, data: view(q, a) } : { ok: false, error: "Quote not found." };
+    return q ? { ok: true, data: { ...view(q, a), ...(confirmationEffect ? { confirmationEffect } : {}) } } : { ok: false, error: "Quote not found." };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
@@ -241,6 +260,7 @@ export async function sendGrowerQuoteToEstimatorAction(quoteId: string, confirme
     const snap = available ? await latestSnapshot(db, a.orgId, quoteId) : null;
     if (available && !snap) throw new Error("Select the Cin7 customer and quotation contact in Step 1 (Customer & site) before the amount can be confirmed.");
     if (!available && contact.source !== "ALTERNATIVE") throw new Error("Customer contacts are not available yet; record the contact as an alternative contact with a reason.");
+    if (snap) { const cur = await loadQuote(db, a.orgId, quoteId); if (cur) assertNameMatchesSnapshot(cur.draft.customerName, cur.customer_name, snap.snapshot); }
     const resolved = resolveConfirmationContact(snap?.snapshot ?? null, contact, { by: a.email, at: new Date().toISOString(), amountCents: confirmedAmountCents });
     // The state change is a compare-and-set, so a double submit records one handoff; the contact record is appended only after it succeeded (no duplicate rows).
     await sendToEstimator(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true), { confirmedAmountCents, confirmedBy: confirmationLabel(resolved) });

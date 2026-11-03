@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeDb } from "@/lib/projects/__tests__/fake-db";
 import { seedGoldenCatalogue } from "@/newquip/grower/__tests__/golden-catalogue";
 import { installStaged } from "@/lib/approvals/__tests__/staged-emulator";
@@ -64,6 +64,12 @@ const as = async (slot: string) => { const r = await demo.selectDemoIdentityActi
 const send = (c: Parameters<typeof grower.sendGrowerQuoteToEstimatorAction>[2]) => grower.sendGrowerQuoteToEstimatorAction("q1", total, c);
 
 beforeEach(() => {
+  // The staged emulator has no legacy `approval_decide` (used to WITHDRAW a pending request): twin just that call so a real withdrawal succeeds in this harness.
+  const rpc = (db as any).rpc; // eslint-disable-line @typescript-eslint/no-explicit-any
+  (db as any).rpc = async (fn: string, a: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+    if (fn === "approval_decide" && a.p_action === "WITHDRAW") { for (const r of db.rows("approval_requests")) if (r.id === a.p_request) r.status = "WITHDRAWN"; return { data: null, error: null }; }
+    return rpc(fn, a);
+  };
   Object.assign(quote(), { customer_name: "Spark" }); (quote().draft as Record<string, unknown>).customerName = "Spark";
   vi.mocked(readCin7Customer).mockReset().mockImplementation(async (_d, _o, n) => (n === "Wynplaas" ? RAW2 : RAW) as never);
   // Step 1 done: Spark selected (snapshot #1) and AJ Mbulo chosen as the quotation (delivery) contact (snapshot #2)
@@ -75,6 +81,7 @@ beforeEach(() => {
 import { confirmationStatus } from "@/lib/newquip-quotes/confirmation-status";
 import { invalidateConfirmation } from "@/lib/newquip-quotes/quote-store";
 import { assertConfirmationCurrent } from "@/lib/newquip-quotes/confirmation-guard";
+import * as approvalStore from "@/lib/approvals/approval-store";
 
 const ctx = { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: true };
 
@@ -220,5 +227,86 @@ describe("confirmationStatus (pure)", () => {
     expect(confirmationStatus(q(100), 100, snap({ confirmationContact: { ...alt, cin7CustomerId: "cin7-other" } }))).toBe("contact_changed");
     expect(confirmationStatus(q(100), 100, snap({ confirmationContact: { source: "CIN7_CONTACT", name: "Anton Hill", email: "ANTON@sparkconsulting.co.za", cin7CustomerId: "cin7-s" } }))).toBe("valid");
     expect(confirmationStatus(q(100), 100, snap({ confirmationContact: { source: "CIN7_CONTACT", name: "Gone", email: "g@x.co", cin7CustomerId: "cin7-s" } }))).toBe("contact_changed");
+  });
+});
+
+describe("amount change withdraws the confirmation (one helper for every draft writer)", () => {
+  const confirmed = async () => { await as("rep"); expect((await send({ source: "QUOTATION_CONTACT" })).error).toBeUndefined(); };
+  const edited = (f: (d: any) => void) => { const d = structuredClone(quote().draft) as any; f(d); return d as typeof draft; }; // eslint-disable-line @typescript-eslint/no-explicit-any
+  const signOff = () => Object.assign(quote(), { estimator_signoff_hash: quote().draft_hash, estimator_signoff_by_email: EMAIL[U.est], estimator_signoff_at: "t" });
+
+  it("a Rep-owned edit that changes the total withdraws confirmation + sign-off, returns the quote to the Rep, audits it and reports previous/new amounts", async () => {
+    await confirmed(); signOff(); const rev = quote().revision;
+    const r = await grower.saveGrowerDraftAction("q1", edited((d) => { d.config.rooms += 1; }));
+    expect(r.error).toBeUndefined();
+    expect(r.data!.confirmationEffect).toMatchObject({ confirmationCleared: true, signoffCleared: true, returnedToRep: true, previousCents: total });
+    expect(r.data!.confirmationEffect!.newCents).not.toBe(total);
+    expect(quote()).toMatchObject({ state: "REP_DRAFT", revision: rev + 1, customer_confirmed_cents: null, customer_confirmed_by: null, estimator_signoff_hash: null });
+    expect(acts().find((x) => x.action === "newquip.quote_confirmation_invalidated")!.detail).toMatchObject({ reason: "AMOUNT_CHANGED", previousCents: total });
+  });
+  it("an Estimator price edit (delivery charge) withdraws it too", async () => {
+    await confirmed(); await as("estimator");
+    const r = await grower.saveGrowerDraftAction("q1", edited((d) => { d.estimator.charges.delivery += 100_000; }));
+    expect(r.data!.confirmationEffect).toMatchObject({ confirmationCleared: true, returnedToRep: true });
+    expect(quote()).toMatchObject({ state: "REP_DRAFT", customer_confirmed_cents: null });
+  });
+  it("an edit that does not change the commercial total (assumptions / cost override) does NOT withdraw anything and keeps the confirmation", async () => {
+    await confirmed(); signOff(); await as("estimator");
+    const r = await grower.saveGrowerDraftAction("q1", edited((d) => { d.estimator.assumptions = "Site access by gravel road"; d.estimator.costOverrides = { flex_auger: { lineCostCents: 1_000, reason: "supplier quote", by: "e", at: "t" } }; }));
+    expect(r.error).toBeUndefined(); expect(r.data!.confirmationEffect).toBeUndefined();
+    expect(quote()).toMatchObject({ state: "ESTIMATOR_REVIEW", customer_confirmed_cents: total });
+    expect(acts().some((x) => x.action === "newquip.quote_confirmation_invalidated")).toBe(false);
+  });
+  it("invalidateConfirmation compare-and-set: a handoff/amount that differs from what the caller read clears NOTHING", async () => {
+    await confirmed();
+    await expect(invalidateConfirmation(db as never, NQ, "q1", { cents: total + 1, revision: quote().revision })).rejects.toThrow(/changed while withdrawing/);
+    await expect(invalidateConfirmation(db as never, NQ, "q1", { cents: total, revision: quote().revision + 5 })).rejects.toThrow(/changed while withdrawing/);
+    expect(quote()).toMatchObject({ state: "ESTIMATOR_REVIEW", customer_confirmed_cents: total });
+  });
+});
+
+describe("customer name must equal the snapshot name at handoff and approval", () => {
+  it("handoff is refused when draft.customerName differs from the Cin7 snapshot (save-vs-select race)", async () => {
+    await as("rep"); (quote().draft as Record<string, unknown>).customerName = "Raced Name";
+    const r = await send({ source: "QUOTATION_CONTACT" });
+    expect(r.error).toMatch(/does not match the Cin7 customer \(Spark\)/); expect(quote().state).toBe("REP_DRAFT");
+  });
+  it("approval is refused on a name mismatch", async () => {
+    await as("rep"); expect((await send({ source: "QUOTATION_CONTACT" })).error).toBeUndefined();
+    Object.assign(quote(), { customer_name: "Raced Name" });
+    await as("manager");
+    expect((await grower.approveGrowerQuoteAction("q1")).error).toMatch(/does not match the Cin7 customer/);
+  });
+});
+
+describe("approval re-sync failures are not silent", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+  const boom = () => vi.spyOn(approvalStore, "resyncQuoteApprovals").mockRejectedValue(new Error("engine down"));
+  it("choose / refresh / select / clear surface 'approval request could not be updated' in the effect and audit it", async () => {
+    await as("rep"); expect((await send({ source: "QUOTATION_CONTACT" })).error).toBeUndefined();
+    const spy = boom();
+    const r = await customer.chooseQuoteContactAction("q1", { source: "CIN7_CONTACT", contactIndex: 1 }, true);
+    expect(r.error).toBeUndefined(); expect(r.data!.effect!.approvalSyncError).toMatch(/could not be updated.*engine down/);
+    expect(quote()).toMatchObject({ state: "REP_DRAFT", customer_confirmed_cents: null }); // the quotation itself is correct
+    expect(acts().some((x) => x.action === "newquip.approval_resync_failed")).toBe(true);
+    // select (replace, in review again) and clear
+    spy.mockRestore(); // a working engine for the next handoff, a failing one again for select / clear
+    await customer.chooseQuoteContactAction("q1", { source: "CIN7_CONTACT", contactIndex: 0 });
+    expect((await send({ source: "QUOTATION_CONTACT" })).error).toBeUndefined();
+    const spy2 = boom();
+    const s = await customer.selectQuoteCustomerAction("q1", "Wynplaas", true);
+    expect(s.data!.effect!.approvalSyncError).toMatch(/engine down/); expect(spy2).toHaveBeenCalled();
+    spy2.mockClear(); Object.assign(quote(), { state: "ESTIMATOR_REVIEW", customer_confirmed_cents: total });
+    const c = await customer.clearQuoteCustomerAction("q1", true);
+    expect(c.data!.effect!.approvalSyncError).toMatch(/engine down/); expect(spy2).toHaveBeenCalled();
+    spy2.mockRestore();
+  });
+  it("refresh that withdraws the confirmation re-syncs approvals and reports a failure", async () => {
+    await as("rep"); expect((await send({ source: "QUOTATION_CONTACT" })).error).toBeUndefined();
+    vi.mocked(readCin7Customer).mockImplementation(async () => ({ ...RAW, Contacts: [{ Name: "Anton Hill", Email: "anton@sparkconsulting.co.za" }] }) as never);
+    const spy = boom();
+    const r = await customer.refreshQuoteCustomerAction("q1", true);
+    expect(r.data!.view.effect!.approvalSyncError).toMatch(/engine down/); expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
   });
 });

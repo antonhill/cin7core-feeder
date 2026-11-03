@@ -149,18 +149,25 @@ export async function applyCustomerChange(
  * nulls; snapshot history, approval events and step logs are untouched - and, from estimator review, returns the quotation to the Rep as a new revision so the customer
  * must confirm again before it is handed off. A no-op (all false) when no confirmation is recorded. Callers audit it; `effect` is what the UI needs to describe it.
  */
-export async function invalidateConfirmation(db: Db, orgId: string, quoteId: string): Promise<{ returnedToRep: boolean; signoffCleared: boolean; confirmationCleared: boolean }> {
+export async function invalidateConfirmation(
+  db: Db, orgId: string, quoteId: string,
+  /** What the caller observed (the confirmed amount and revision it decided on). If the quotation no longer matches, e.g. a handoff committed meanwhile, NOTHING is cleared. */
+  expected?: { cents: number | null; revision: number },
+): Promise<{ returnedToRep: boolean; signoffCleared: boolean; confirmationCleared: boolean }> {
   const q = await mustLoad(db, orgId, quoteId);
+  if (expected && (q.customer_confirmed_cents !== expected.cents || q.revision !== expected.revision)) fail("The quotation changed while withdrawing the confirmation; refresh and try again.");
   if (q.state === "MANAGER_APPROVED_FINAL") fail("An approved quotation's confirmation is immutable.");
   const confirmationCleared = q.customer_confirmed_cents != null || q.customer_confirmed_by != null;
   if (!confirmationCleared) return { returnedToRep: false, signoffCleared: false, confirmationCleared: false };
   const inReview = q.state === "ESTIMATOR_REVIEW";
   const signoffCleared = q.estimator_signoff_hash != null;
-  const r = await db.from("newquip_quotes").update({
+  // compare-and-set on state, revision AND the confirmed amount as read: a handoff or edit committed since the load clears nothing
+  const upd = db.from("newquip_quotes").update({
     customer_confirmed_cents: null, customer_confirmed_by: null, customer_confirmed_at: null, handoff_by_email: null,
     estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null,
     ...(inReview ? { state: "REP_DRAFT", revision: q.revision + 1 } : {}),
-  }).eq("org_id", orgId).eq("id", quoteId).eq("state", q.state).select("id");
+  }).eq("org_id", orgId).eq("id", quoteId).eq("state", q.state).eq("revision", q.revision);
+  const r = await (q.customer_confirmed_cents != null ? upd.eq("customer_confirmed_cents", q.customer_confirmed_cents) : upd.is("customer_confirmed_cents", null)).select("id");
   if (r.error) fail(r.error.message);
   if (!r.data || r.data.length === 0) fail("The quotation changed while withdrawing the confirmation; refresh and try again.");
   return { returnedToRep: inReview, signoffCleared, confirmationCleared };
