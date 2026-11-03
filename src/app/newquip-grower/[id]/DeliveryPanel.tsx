@@ -12,6 +12,7 @@ import { getQuoteDeliveryAction, retryQuoteSendAction, sendQuoteToCustomerAction
 import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/billing-schedule";
 import { DisabledReason } from "@/components/ApprovalDisabledReason";
 import { ScheduleChooser } from "./ScheduleChooser";
+import { StepPanel } from "@/components/ui/StepRail";
 
 // The customer-facing half of an APPROVED quotation: issue the PDF, review it, send it (Rep), then record the customer's response. Manager approval authorises issue;
 // it is NOT customer acceptance. "Accepted by the email provider" means the provider took the message - it is not proof that the customer received it. Nothing here
@@ -20,10 +21,17 @@ const inputCls = "h-9 rounded-md border border-slate-300 bg-white px-2 text-sm";
 const SEND_LABEL: Record<string, string> = { ACCEPTED: "Accepted by the email provider (not proof of inbox delivery)", FAILED: "Failed", SUPPRESSED: "Not sent: recipient not permitted from this environment", QUEUED: "Queued / outcome unconfirmed" };
 const newKey = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `k-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
+/** UX-006c: when given, the two halves of the quotation section are the steps of the Stage 4 rail. Both stay MOUNTED; the other is only `hidden`+`inert` (no action or gate changes). */
+export interface DeliverySteps { current: "issue" | "send"; showAll: boolean }
+function Sec({ steps, id, number, title, children }: { steps?: DeliverySteps; id: "issue" | "send"; number: number; title: string; children: React.ReactNode }) {
+  if (!steps) return <>{children}</>;
+  return <StepPanel railId="s4" stepId={id} number={number} title={title} current={steps.current === id} showAll={steps.showAll} headingClassName="mt-5">{children}</StepPanel>;
+}
+
 export interface DeliveryGate { requires: boolean; accepted: boolean; status: string | null; hasDocument: boolean; linkState?: "NONE" | "ACTIVE" | "EXPIRED" | "REVOKED" }
 
 /** `section`: Stage 4 (Customer Quotation) shows the PDF and the send; Stage 5 (Customer Acceptance) shows the customer's response. The same data and server actions serve both. */
-export function DeliveryPanel({ quoteId, contractCents, onGate, section }: { quoteId: string; contractCents: number; onGate: (g: DeliveryGate) => void; section: "quotation" }) {
+export function DeliveryPanel({ quoteId, contractCents, onGate, section, steps }: { quoteId: string; contractCents: number; onGate: (g: DeliveryGate) => void; section: "quotation"; steps?: DeliverySteps }) {
   const [docs, setDocs] = useState<QuoteDocumentsView | null>(null);
   const [d, setD] = useState<DeliveryView | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -66,6 +74,7 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section }: { quo
       {note && <Alert tone="success">{note}</Alert>}
 
       {section === "quotation" && (<>
+      <Sec steps={steps} id="issue" number={1} title="Issue PDF">
       <h3 className="mt-4 text-sm font-semibold text-slate-800">Quotation PDF</h3>
       {docs.blockers.length > 0 && <Alert tone="warning"><ul className="list-disc pl-4">{docs.blockers.map((b) => <li key={b}>{b}</li>)}</ul><Link className="underline" href="/newquip-grower/company-profile">Company details</Link></Alert>}
       {docs.documents.length > 0 && (
@@ -88,6 +97,9 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section }: { quo
         </div>
       )}
 
+      </Sec>
+
+      <Sec steps={steps} id="send" number={2} title="Send to customer">
       <h3 className="mt-5 text-sm font-semibold text-slate-800">Send to the customer</h3>
       {d.policy.restricted && <Alert tone="info">Preview environment: only {d.policy.allowlist.join(", ")} will be emailed. Any other address is recorded as not sent, never redirected. Subjects are marked [PREVIEW].</Alert>}
       {!d.policy.emailConfigured && <Alert tone="warning">Email is not configured in this environment.</Alert>}
@@ -126,6 +138,7 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section }: { quo
           ))}
         </ul>
       )}
+      </Sec>
 
       </>)}
 

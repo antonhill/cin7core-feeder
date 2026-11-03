@@ -60,13 +60,14 @@ async function storedQuote() {
   await saveDraft(db as never, ORG, member, id, draft);
   return id;
 }
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 async function open(stage = "2") {
   (globalThis as { __STAGE?: string }).__STAGE = stage;
   asRoles("REP", "ESTIMATOR");
   vi.mocked(canSeeCosts).mockResolvedValue(true);
   const id = await storedQuote();
   (globalThis as { __QID?: string }).__QID = id;
+  vi.stubGlobal("localStorage", { getItem: (k: string) => (k === "nq-builder-show-all" ? "1" : null), setItem: () => undefined }); // these checks look across the whole stage: "Show all steps" (UX-006b)
   const { default: Page } = await import("../[id]/page");
   render(createElement(Page));
   await waitFor(() => expect(screen.getByText("Customer-driven exclusions")).toBeTruthy(), { timeout: 5000 });
