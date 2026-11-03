@@ -165,3 +165,30 @@ describe("nested (embedded variation) provider publishes up to the base provider
     expect(r.container.textContent).toContain("Authorised in Cin7 - verified");
   });
 });
+
+describe("scope (project id): state never leaks across projects", () => {
+  it("a verification stored under one project is not shown, stale or errored under another, even with an equal signature", () => {
+    const r = render(<InvoiceVerificationProvider scope="p1" signature="A"><Probe /></InvoiceVerificationProvider>);
+    act(() => api.set(result, "A"));
+    act(() => api.fail("boom", "A"));
+    expect(api.verification).toBe(result);
+    r.rerender(<InvoiceVerificationProvider scope="p2" signature="A"><Probe /></InvoiceVerificationProvider>);
+    expect(api.verification).toBeNull();
+    expect(api.verifiedFor("c1")).toBeNull();
+    expect(api.error).toBeNull();
+    expect(api.stale).toBe(false);
+  });
+  it("a retained nested entry from another project scope is ignored", () => {
+    const rc = claimCin7Status({ claim_id: "cv", posting_state: "RECONCILED", cin7_invoice_number: "INV-V", cin7_status: "DRAFT", completed_at: "2026-11-01T07:50:00Z", reconciled_at: "2026-11-01T08:00:00Z" });
+    const sig = viewPostingsSignature([{ id: "cv", cin7Status: rc }]);
+    const kidBox: { api?: InvoiceVerificationApi } = {};
+    function K() { const a = useInvoiceVerification(); useEffect(() => { kidBox.api = a; }); return null; }
+    const t = (scope: string, kid: boolean) => <InvoiceVerificationProvider scope={scope} signature="B"><Probe />{kid && <InvoiceVerificationProvider scope="v" signature="V" claimIds={["cv"]} claimSigs={{ cv: sig }}><K /></InvoiceVerificationProvider>}</InvoiceVerificationProvider>;
+    const r = render(t("p1", true));
+    act(() => kidBox.api!.set({ ...result, invoices: [{ ...result.invoices[0], claimId: "cv" }] }, "V"));
+    r.rerender(t("p1", false));
+    expect(api.verifiedFor("cv", sig)).not.toBeNull();
+    r.rerender(t("p2", false));
+    expect(api.verifiedFor("cv", sig)).toBeNull();
+  });
+});

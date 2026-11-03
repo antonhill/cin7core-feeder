@@ -293,9 +293,9 @@ export interface ReconciliationSummary {
   /** Postings still within the normal in-flight window (PENDING, not stale): a post is running; nothing to act on yet. */
   inProgress: number;
   /** Postings Cin7 confirmed created nothing (FAILED_CONFIRMED_NO_WRITE): no invoice exists and posting can be retried. */
-  retryable?: number;
+  retryable: number;
   /** Ex-VAT total of every posting that accounts for committed value (all but a confirmed no-write failure): committed value above this has no posting at all. */
-  postingExVatCents?: number;
+  postingExVatCents: number;
 }
 export interface PostingStateRow { posting_state: string; last_error_code?: string | null; requested_at?: string | null; amount_ex_vat_cents?: number | null }
 

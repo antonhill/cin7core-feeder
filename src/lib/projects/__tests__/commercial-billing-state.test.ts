@@ -41,8 +41,8 @@ describe("BASE scope", () => {
   it("partially billed (a stage not fully committed) -> IN_PROGRESS", () => {
     expect(state(base({ stages: [full[0], full[1], { valueCents: R(100), committedCents: R(60) }] }))).toBe("IN_PROGRESS");
   });
-  it("every stage must be billed: total committed equal to total value is not enough when one stage is short and another over", () => {
-    expect(state(base({ stages: [{ valueCents: R(400), committedCents: R(300) }, { valueCents: R(500), committedCents: R(600) }, full[2]] }))).toBe("IN_PROGRESS");
+  it("one stage short and another over-billed (totals equal) is never COMPLETE: the over-billed stage needs attention", () => {
+    expect(state(base({ stages: [{ valueCents: R(400), committedCents: R(300) }, { valueCents: R(500), committedCents: R(600) }, full[2]] }))).toBe("NEEDS_ATTENTION");
   });
   it("approved but not posted -> NEEDS_ATTENTION", () => {
     const r = commercialBillingState(base({ claims: [reconciled(), reconciled(), reconciled(), unposted] }));
@@ -105,6 +105,33 @@ describe("BASE scope", () => {
     expect(commercialBillingText({ state: "COMPLETE" })).toBe("Commercial billing: Complete");
     expect(commercialBillingText({ state: "IN_PROGRESS" })).toBe("Commercial billing: In progress");
     expect(commercialBillingText({ state: "NEEDS_ATTENTION" })).toBe("Commercial billing: Needs attention");
+  });
+});
+
+describe("review hardening", () => {
+  it("P2-1: a BASE stage billed above its value is NEEDS_ATTENTION (stage over-billed), never COMPLETE", () => {
+    const r = commercialBillingState(base({ stages: [{ valueCents: R(400), committedCents: R(450) }, full[1], full[2]] }));
+    expect(r.state).toBe("NEEDS_ATTENTION");
+    expect(r.reasons.join(" ")).toMatch(/over-billed/);
+  });
+  it("P3-1: a cancelled claim that still has a live or unresolved posting is evaluated, not ignored", () => {
+    for (const st of ["PENDING", "CREATED", "RECONCILED", "FAILED_UNCERTAIN"]) {
+      const r = commercialBillingState(base({ claims: [reconciled(), reconciled(), reconciled(), reconciled(), { status: "CANCELLED_BEFORE_WRITE", posting: { posting_state: st, reconciled_at: "2026-11-01T00:00:00Z" } }] }));
+      expect(r.state, st).toBe("NEEDS_ATTENTION");
+      expect(r.counts.cancelledWithPosting).toBe(1);
+    }
+    // ... while a cancelled claim with no posting, or a confirmed no-write one, is still ignored
+    expect(state(base({ claims: [reconciled(), { status: "CANCELLED_BEFORE_WRITE", posting: { posting_state: "FAILED_CONFIRMED_NO_WRITE" } }, cancelled] }))).toBe("COMPLETE");
+  });
+  it("adapter-level isolation: variation claims presented to a BASE call cannot complete an unbilled BASE", () => {
+    const partialBase = [{ valueCents: R(400), committedCents: R(100) }, full[1], full[2]];
+    expect(state({ scope: "BASE", claims: [reconciled(), reconciled(), reconciled()], stages: partialBase, scheduleBalanced: true })).toBe("IN_PROGRESS");
+  });
+  it("a stale PENDING on the view path (now injected) needs attention; the same row fresh is in progress", () => {
+    const row = { claim_id: "c1", posting_state: "PENDING", cin7_invoice_number: null, cin7_status: null, reconciled_at: null, requested_at: FRESH };
+    const fact = (now: number) => billingClaimFact({ status: "APPROVED", cin7Status: claimCin7Status(row, now) });
+    expect(state(base({ claims: [fact(NOW)] }))).toBe("IN_PROGRESS");
+    expect(state(base({ claims: [fact(NOW + 3_600_000)] }))).toBe("NEEDS_ATTENTION");
   });
 });
 
@@ -256,6 +283,20 @@ describe("variation reconciliation line derivation (from the posting summary + c
     expect(f([{ posting_state: "PENDING", requested_at: FRESH, amount_ex_vat_cents: approved }])).toBe("IN_PROGRESS");
     expect(f([{ posting_state: "CREATED", amount_ex_vat_cents: approved }])).toBe("IN_PROGRESS");
     expect(f([{ posting_state: "FAILED_CONFIRMED_NO_WRITE" }])).toBe("NEEDS_ATTENTION");
+  });
+  it("P2-2: posted amount above or below the billed amount needs attention, with distinct reasons", () => {
+    const below = commercialBillingFromSummary(sum([{ posting_state: "RECONCILED", amount_ex_vat_cents: R(10) }]), ctx);
+    const above = commercialBillingFromSummary(sum([{ posting_state: "RECONCILED", amount_ex_vat_cents: R(60) }]), ctx);
+    expect([below.state, above.state]).toEqual(["NEEDS_ATTENTION", "NEEDS_ATTENTION"]);
+    expect(below.reasons[0]).toMatch(/below the billed amount/);
+    expect(above.reasons[0]).toMatch(/above the billed amount/);
+  });
+  it("P2-2: an unknown posted amount (null) is 'not verified' and never COMPLETE", () => {
+    const base_ = sum([{ posting_state: "RECONCILED", amount_ex_vat_cents: approved }]);
+    const r = commercialBillingFromSummary({ ...base_, postingExVatCents: null }, ctx);
+    expect(r.state).toBe("IN_PROGRESS");
+    expect(r.reasons.join(" ")).toMatch(/could not be verified/);
+    expect(commercialBillingFromSummary(base_, ctx).state).toBe("COMPLETE");
   });
   it("no postings, nothing committed -> NOT_STARTED; partially committed -> IN_PROGRESS", () => {
     expect(commercialBillingFromSummary(sum([]), { ...ctx, committedCents: 0 }).state).toBe("NOT_STARTED");

@@ -185,7 +185,8 @@ function reconScope(s: OverviewScopeInput): ReconScope {
       invoicedExVatCents: live.reduce((n, c) => n + c.exVatCents, 0),
       mismatchCount: claims.filter((c) => c.mismatch).length,
     },
-    billing: commercialBillingFromView(s.view, s.scope, s.scope === "VARIATION" ? { approvedAmountCents: s.view.project.original_contract_cents, billingStarted: true } : undefined),
+    // The approved variation amount is the billing project's contract (view.commercial.originalContractCents) - the SAME value the Variations panel reads as ScopeSummary.contractCents.
+    billing: commercialBillingFromView(s.view, s.scope, s.scope === "VARIATION" ? { approvedAmountCents: s.view.commercial.originalContractCents, billingStarted: true } : undefined),
   };
 }
 

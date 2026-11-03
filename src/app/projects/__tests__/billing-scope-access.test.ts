@@ -4,7 +4,8 @@ import { FakeDb } from "@/lib/projects/__tests__/fake-db";
 import { goldenFixtureBaseline } from "@/lib/projects/baseline";
 import { createProjectFromBaseline } from "@/lib/projects/project-store";
 import { raiseVariation, approveVariation } from "@/lib/projects/variation-store";
-import { createVariationBillingProject } from "@/lib/projects/variation-billing-store";
+import { createVariationBillingProject, loadConsolidatedProject } from "@/lib/projects/variation-billing-store";
+import { loadProjectView } from "@/lib/projects/project-store";
 import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import * as actions from "../actions";
@@ -169,6 +170,13 @@ describe("Cin7 reconciliation on the variation billing state (read only, org-sco
     post(ORG, parent, "RECONCILED"); post("other-org", scope, "RECONCILED");
     const { r, vid } = await vidOf();
     expect(r.data!.reconciliationByVariation[vid].invoices).toBe(0);
+  });
+  it("ONE approved-variation amount: the Variations panel's scope contract equals the billing project's view contract the Overview uses, and the variation amount", async () => {
+    const c = await loadConsolidatedProject(db as never, ORG, parent);
+    const s = c!.scopes.find((x) => x.scope === "VARIATION")!;
+    const v = await loadProjectView(db as never, ORG, scope);
+    expect(v!.commercial.originalContractCents).toBe(s.contractCents);
+    expect(c!.base.variations.find((x) => x.code === s.variationCode)!.amount_cents).toBe(s.contractCents);
   });
   it("a failing read does NOT fail the billing state or the Sale number: it is flagged and logged, and no status is invented", async () => {
     post(ORG, scope, "RECONCILED");
