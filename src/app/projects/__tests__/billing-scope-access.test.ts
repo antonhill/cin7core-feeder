@@ -152,18 +152,18 @@ describe("Cin7 reconciliation on the variation billing state (read only, org-sco
   it("counts the variation's own invoices by recorded state, separating created, reconciled and uncertain; a failed-no-write posting is not an invoice", async () => {
     for (const st of ["RECONCILED", "RECONCILED", "CREATED", "PENDING", "FAILED_UNCERTAIN", "FAILED_CONFIRMED_NO_WRITE"]) post(ORG, scope, st);
     const { r, vid } = await vidOf();
-    expect(r.data!.reconciliationByVariation).toEqual({ [vid]: { invoices: 3, reconciled: 2, awaiting: 1, mismatched: 0, uncertain: 1, inProgress: 1 } });
+    expect(r.data!.reconciliationByVariation).toEqual({ [vid]: { invoices: 3, reconciled: 2, awaiting: 1, mismatched: 0, uncertain: 1, inProgress: 1, retryable: 1, postingExVatCents: 0 } });
     expect(r.data!.reconciliationLookupFailed).toBe(false);
   });
   it("a PENDING inside the in-flight window is 'in progress'; an old PENDING is uncertain; a CREATED with a recorded AMOUNT_MISMATCH is shown as a mismatch, not 'awaiting'", async () => {
     post(ORG, scope, "PENDING"); post(ORG, scope, "PENDING", { requested_at: new Date(Date.now() - 3_600_000).toISOString() }); post(ORG, scope, "PENDING", { requested_at: null });
     post(ORG, scope, "CREATED", { last_error_code: "AMOUNT_MISMATCH" }); post(ORG, scope, "CREATED");
     const { r, vid } = await vidOf();
-    expect(r.data!.reconciliationByVariation[vid]).toEqual({ invoices: 2, reconciled: 0, awaiting: 1, mismatched: 1, uncertain: 2, inProgress: 1 });
+    expect(r.data!.reconciliationByVariation[vid]).toEqual({ invoices: 2, reconciled: 0, awaiting: 1, mismatched: 1, uncertain: 2, inProgress: 1, retryable: 0, postingExVatCents: 0 });
   });
   it("reports zero counts (not an absent key) when the billing project has no postings", async () => {
     const { r, vid } = await vidOf();
-    expect(r.data!.reconciliationByVariation).toEqual({ [vid]: { invoices: 0, reconciled: 0, awaiting: 0, mismatched: 0, uncertain: 0, inProgress: 0 } });
+    expect(r.data!.reconciliationByVariation).toEqual({ [vid]: { invoices: 0, reconciled: 0, awaiting: 0, mismatched: 0, uncertain: 0, inProgress: 0, retryable: 0, postingExVatCents: 0 } });
   });
   it("BASE/VARIATION isolation: the original project's postings never count toward the variation, and another organisation's never appear", async () => {
     post(ORG, parent, "RECONCILED"); post("other-org", scope, "RECONCILED");
