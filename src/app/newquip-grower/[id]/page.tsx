@@ -113,7 +113,7 @@ export default function QuoteEditorPage() {
   const [gateTry, setGateTry] = useState(0);
   const [picked, setPicked] = useState<StageId | null>(() => parseStage(search.get("stage")));
   // Stage 1 steps: navigation and guidance only (completion is derived from data, never from a visit). The customer facts are lifted from the CustomerPanel that already loads them.
-  const [stepNo, setStepNo] = useState<number>(() => parseStepParam(search.get("step"), STAGE1_STEP_IDS.length));
+  const [stepNo, setStepNo] = useState<number>(() => (parseStage(search.get("stage")) === 2 ? 1 : parseStepParam(search.get("step"), STAGE1_STEP_IDS.length)));
   // Stage 2 has its own step number but SHARES the "Show all steps" preference (one setting for the builder, one storage key).
   const [step2No, setStep2No] = useState<number>(() => (parseStage(search.get("stage")) === 2 ? parseStepParam(search.get("step"), 4) : 1));
   const [showAllSteps, setShowAllSteps] = useShowAllSteps("nq-builder-show-all");
@@ -165,6 +165,15 @@ export default function QuoteEditorPage() {
     const t = setTimeout(() => loop.request(draft), 300);
     return () => clearTimeout(t);
   }, [draft, dirty, loop]);
+
+  // A ?step= beyond this viewer's steps (a Rep has three) is shown as step 1 (everything reads the clamped step) and dropped from the address bar once the viewer is known.
+  const viewerCommercials = view?.viewer.canViewCommercials;
+  useEffect(() => {
+    if (viewerCommercials === undefined) return;
+    const count = stage2StepIds(viewerCommercials).length;
+    if (step2No >= 1 && step2No <= count) return;
+    try { const u = new URL(window.location.href); if (u.searchParams.get("stage") === "2" && u.searchParams.has("step")) { u.search = new URLSearchParams([...u.searchParams].filter(([k]) => k !== "step")).toString(); window.history.replaceState(null, "", u.toString()); } } catch { /* the address bar is a convenience */ }
+  }, [viewerCommercials, step2No]);
 
   if (!view || !draft || !ev) {
     return (
@@ -269,7 +278,7 @@ export default function QuoteEditorPage() {
   );
   const here = currentStage(stages);
   const stage: StageId = picked ?? here;
-  const goStage = (n: StageId) => { setPicked(n); try { const u = new URL(window.location.href); const at = n === 1 ? stepNo : n === 2 ? step2No : 1; const sp = new URLSearchParams([...u.searchParams].filter(([k]) => k !== "step" && k !== "stage")); sp.set("stage", String(n)); if (at > 1) sp.set("step", String(at)); u.search = sp.toString(); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } };
+  const goStage = (n: StageId) => { setPicked(n); try { const u = new URL(window.location.href); const at = n === 1 ? stepNo : n === 2 ? step2Cur : 1; const sp = new URLSearchParams([...u.searchParams].filter(([k]) => k !== "step" && k !== "stage")); sp.set("stage", String(n)); if (at > 1) sp.set("step", String(at)); u.search = sp.toString(); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } };
 
   const stage1 = deriveStage1Steps({ customerName: draft.customerName, siteName: draft.siteName, penningPigSize: cfg.penningPigSize, calcIssues: ev.calc.issues, readinessReasons: rd.reasons, customer: customerFacts, roomValues: { lengthM: cfg.lengthM, widthM: cfg.widthM, rooms: cfg.rooms, totalPens: cfg.totalPens, pigsPerRoom: cfg.pigsPerRoom } });
   const stepId = STAGE1_STEP_IDS[stepNo - 1];
@@ -297,7 +306,7 @@ export default function QuoteEditorPage() {
     blankExclusionCount: blankExclusionKeys.length, incompleteCostOverrideCount: Object.keys(previewCostOverrides(draft.estimator.costOverrides).errors).length,
     blankPriceReasonCount: Object.values(draft.estimator.priceResolutions).filter((r) => r && !r.reason.trim()).length,
     totalAvailable: totalCents != null, confirmedRecorded: q.customer_confirmed_cents != null,
-    signoff: !q.estimator_signoff_hash ? "none" : q.estimator_signoff_hash === q.draft_hash ? "current" : "stale",
+    dirty, signoff: !q.estimator_signoff_hash ? "none" : q.estimator_signoff_hash === q.draft_hash ? "current" : "stale",
   });
   const goStep2No = (n: number) => {
     const next = Math.min(Math.max(n, 1), step2Ids.length);
@@ -780,8 +789,8 @@ export default function QuoteEditorPage() {
 
         {!showAllSteps && (
           <div className="mt-6 flex items-center justify-between gap-3" data-testid="step-buttons">
-            {step2No > 1 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep2No(step2No - 1)}>Back</Button> : <span />}
-            {step2No < step2Ids.length ? <Button type="button" className="min-h-11" onClick={() => goStep2No(step2No + 1)}>Next</Button> : <span />}
+            {step2Cur > 1 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep2No(step2Cur - 1)}>Back</Button> : <span />}
+            {step2Cur < step2Ids.length ? <Button type="button" className="min-h-11" onClick={() => goStep2No(step2Cur + 1)}>Next</Button> : <span />}
           </div>
         )}
         </>

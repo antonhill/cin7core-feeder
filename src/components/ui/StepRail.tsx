@@ -6,9 +6,9 @@ import { STEP_STATUS_LABEL, completeCount, stepHeadingId, type RailStep, type St
 // The step rail: an ordered list with one button per step (a number, or a check once the step is complete from DATA), its label and its status as TEXT. Presentation only.
 // Wide screens show one row (it scrolls sideways on a tablet); at 700px and below it collapses to a disclosure "Step n of N · name · k complete" that lists the steps.
 
-const TEXT_TONE: Record<StepStatus, string> = { complete: "text-emerald-800", attention: "text-amber-900", incomplete: "text-slate-700", unavailable: "text-slate-600" };
+const TEXT_TONE: Record<StepStatus, string> = { complete: "text-emerald-800", attention: "text-amber-900", incomplete: "text-slate-700", review: "text-slate-800", unavailable: "text-slate-600" };
 const BADGE_TONE: Record<StepStatus, string> = {
-  complete: "border-emerald-700 bg-emerald-700 text-white", attention: "border-amber-600 bg-amber-50 text-amber-900", incomplete: "border-slate-400 bg-white text-slate-700", unavailable: "border-slate-300 bg-slate-50 text-slate-600",
+  complete: "border-emerald-700 bg-emerald-700 text-white", attention: "border-amber-600 bg-amber-50 text-amber-900", incomplete: "border-slate-400 bg-white text-slate-700", review: "border-indigo-500 bg-indigo-50 text-indigo-900", unavailable: "border-slate-300 bg-slate-50 text-slate-600",
 };
 
 export function StepRail({ id, steps, currentId, onSelect, ariaLabel, actions }: {
@@ -18,7 +18,8 @@ export function StepRail({ id, steps, currentId, onSelect, ariaLabel, actions }:
   const at = Math.max(0, steps.findIndex((s) => s.id === currentId));
   const cur = steps[at];
   const done = completeCount(steps);
-  const summary = `Step ${at + 1} of ${steps.length} · ${cur?.label ?? ""} · ${done} complete`;
+  const attn = steps.filter((s) => s.status === "attention").length;
+  const summary = `Step ${at + 1} of ${steps.length} · ${cur?.label ?? ""} · ${done} complete${attn > 0 ? ` · ${attn} need attention` : ""}`;
   return (
     <nav aria-label={ariaLabel} className="mt-4" data-testid="step-rail">
       <button type="button" aria-expanded={open} aria-controls={`${id}-list`} onClick={() => setOpen((o) => !o)} data-testid="step-rail-toggle"

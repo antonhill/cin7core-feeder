@@ -1,10 +1,10 @@
 // Pure model for the StepRail (no React, no server actions, no stores). A step is NAVIGATION and GUIDANCE only: its status is derived from data by the caller and never from
 // the step having been visited, and nothing here blocks moving to another step.
 
-export type StepStatus = "complete" | "attention" | "incomplete" | "unavailable";
+export type StepStatus = "complete" | "attention" | "incomplete" | "unavailable" | "review";
 export interface RailStep { id: string; label: string; status: StepStatus; /** Optional one-line explanation shown beside the status. */ note?: string }
 
-export const STEP_STATUS_LABEL: Record<StepStatus, string> = { complete: "Complete", attention: "Needs attention", incomplete: "Not complete", unavailable: "Not available" };
+export const STEP_STATUS_LABEL: Record<StepStatus, string> = { complete: "Complete", attention: "Needs attention", incomplete: "Not complete", unavailable: "Not available", review: "Review" };
 
 export const completeCount = (steps: readonly RailStep[]): number => steps.filter((s) => s.status === "complete").length;
 
