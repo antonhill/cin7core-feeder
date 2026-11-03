@@ -53,7 +53,7 @@ export function ScheduleChooser({ contractCents, onChange }: { contractCents: nu
 
   return (
     <div className="mb-4 space-y-3">
-      <Select label="Billing schedule" value={key} onChange={(e) => {
+      <Select label="Billing schedule" className="min-h-11" value={key} onChange={(e) => {
         const k = e.target.value; setKey(k); setEdited(false);
         const t = templates.find((x) => `TPL:${x.id}` === k);
         if (t) setCustom(t.rows); else if (k === "CUSTOM") setCustom(STD_CUSTOM);
