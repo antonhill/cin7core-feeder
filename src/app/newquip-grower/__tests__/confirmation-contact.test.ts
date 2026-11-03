@@ -162,18 +162,22 @@ describe("pre-approval price confirmation contact", () => {
     expect(quote()).toMatchObject({ state: "REP_DRAFT", estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null, customer_confirmed_cents: null });
   });
 
-  it("changing the commercial amount requires reconfirmation: the Estimator learns it at sign-off, so the Manager never sees a total the customer did not confirm", async () => {
+  it("changing the commercial amount WITHDRAWS the confirmation at the save (back to the Rep, new revision); the old record is not presented as current, and a stale confirmation still cannot be approved", async () => {
     await as("rep"); await send({ source: "QUOTATION_CONTACT" });
     await as("estimator");
     const d = structuredClone(quote().draft) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
     d.estimator.charges.delivery += 100_000;
-    expect((await grower.saveGrowerDraftAction("q1", d as never)).error).toBeUndefined();
-    expect((await grower.signOffGrowerQuoteAction("q1")).error).toBe("The amount changed since the customer confirmed it. Return it to the Rep to reconfirm.");
-    expect(quote()).toMatchObject({ state: "ESTIMATOR_REVIEW", estimator_signoff_hash: null });
-    // the Rep must reconfirm: the Manager returns it -> new revision with no confirmation -> confirm again at the new amount
-    expect((await grower.returnGrowerQuoteToRepAction("q1", "amount changed")).error).toBeUndefined();
+    const saved = await grower.saveGrowerDraftAction("q1", d as never);
+    expect(saved.error).toBeUndefined();
+    expect(saved.data!.confirmationEffect).toMatchObject({ confirmationCleared: true, returnedToRep: true, previousCents: total });
     expect(quote()).toMatchObject({ state: "REP_DRAFT", customer_confirmed_cents: null, revision: 2 });
-    expect((await customer.getQuoteCustomerAction("q1")).data!.confirmationContact).toBeNull(); // the old record is not presented as current
+    expect((await customer.getQuoteCustomerAction("q1")).data!.confirmationContact).toBeNull();
+    // defence in depth: if a stale confirmation were somehow still on an in-review quote, the Manager still cannot approve it
+    Object.assign(quote(), { state: "ESTIMATOR_REVIEW", customer_confirmed_cents: total });
+    await as("estimator"); expect((await grower.signOffGrowerQuoteAction("q1")).error).toBeUndefined();
+    await as("manager");
+    expect((await grower.approveGrowerQuoteAction("q1")).error).toMatch(/total changed since the customer confirmed/);
+    expect(quote().state).toBe("ESTIMATOR_REVIEW");
   });
 
   it("role and organisation isolation: only a Rep records it; another organisation's snapshot is never used", async () => {
