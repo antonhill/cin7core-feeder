@@ -256,4 +256,3 @@ describe("JourneyMap - honest headline and failure", () => {
     err.mockRestore();
   });
 });
-
