@@ -212,7 +212,7 @@ describe("UX-006i2 Stage 3: non-managers read the same facts read-only; nobody g
     it(`${who}: Approve is disabled with the existing 'needs the manager role' text; no return buttons or reason field; the workspace is still readable`, async () => {
       await open({ stage: "3", roles: [...roles] as Role[], commercials, ...SIGNED });
       expect(approve().disabled).toBe(true);
-      expect(screen.getByText("Final approval needs the manager role (org owner/admin).")).toBeTruthy();
+      expect(screen.getByText("Final approval needs the Manager role.")).toBeTruthy();
       expect(screen.queryByRole("button", { name: /Return to/ })).toBeNull();
       expect(screen.queryByLabelText(/Return to rep — reason/)).toBeNull();
       expect(ws().querySelectorAll("input, select, textarea").length).toBe(0);
