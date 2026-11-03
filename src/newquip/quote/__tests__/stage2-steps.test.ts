@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { nextIncompleteStepId } from "@/components/ui/step-rail-model";
-import { deriveStage2Steps, nextCandidates, stage2StepIds, type Stage2Input } from "../stage2-steps";
+import { costAckKey, deriveStage2Steps, nextCandidates, stage2StepIds, type Stage2Input } from "../stage2-steps";
 
 const line = (over: Record<string, unknown> = {}) => ({ basis: "system_calculated", exclusionReason: null, inputRequired: null, overrideState: "none", overrideReason: null, ...over });
 const REP = { rep: true, estimator: false, manager: false };
@@ -217,4 +217,18 @@ describe("Stage 2 steps and groups (UX-006b)", () => {
     expect(grp({ ...signed, dirty: true }, "estimator").progress).toBe("0 of 2 complete");
     expect(d({ ...sub, roles: EST }).steps.find((x) => x.id === "cost")!.counted).toBeUndefined(); // not before sign-off
   });
+});
+
+describe("costAckKey: every component invalidates an acknowledgement on its own", () => {
+  const base = { quoteId: "q1", revision: 1, draftHash: "h1", updatedAt: "2026-11-03T08:00:00Z", estimatedCost: 1000, marginPct: 25 };
+  it("the same facts give the same key (stable across renders)", () => { expect(costAckKey(base)).toBe(costAckKey({ ...base })); });
+  it.each([
+    ["updated_at only", { updatedAt: "2026-11-03T08:00:01Z" }],
+    ["draft_hash only", { draftHash: "h2" }],
+    ["revision only", { revision: 2 }],
+    ["estimated cost only", { estimatedCost: 1001 }],
+    ["margin only", { marginPct: 24.9 }],
+    ["margin becoming unknown", { marginPct: null }],
+    ["a different quote", { quoteId: "q2" }],
+  ])("%s changes the key", (_n, patch) => { expect(costAckKey({ ...base, ...patch })).not.toBe(costAckKey(base)); });
 });
