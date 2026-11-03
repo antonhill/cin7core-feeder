@@ -86,8 +86,8 @@ type Role = "REP" | "ESTIMATOR" | "MANAGER";
 const g = globalThis as { __QID?: string; __STAGE?: string; __STEP?: string };
 
 /** Opens Stage 2 as `roles`. `commercials` is the viewer's cost visibility (an Estimator/Manager in practice). */
-async function open(o: { roles?: Role[]; commercials?: boolean; state?: string; row?: Record<string, unknown>; step?: string; draftOver?: Record<string, unknown> } = {}) {
-  g.__STAGE = "2"; g.__STEP = o.step;
+async function open(o: { stage?: string; roles?: Role[]; commercials?: boolean; state?: string; row?: Record<string, unknown>; step?: string; draftOver?: Record<string, unknown> } = {}) {
+  g.__STAGE = o.stage ?? "2"; g.__STEP = o.step;
   asRoles(...(o.roles ?? ["REP"]));
   vi.mocked(canSeeCosts).mockResolvedValue(o.commercials ?? false);
   const { id } = await createQuote(db as never, ORG, "rep@nq");
@@ -96,7 +96,7 @@ async function open(o: { roles?: Role[]; commercials?: boolean; state?: string; 
   g.__QID = id;
   const { default: Page } = await import("../[id]/page");
   render(createElement(Page));
-  await waitFor(() => expect(screen.getByTestId("step-rail")).toBeTruthy(), { timeout: 8000 });
+  await waitFor(() => expect(screen.getByTestId(o.stage && o.stage !== "2" ? "stage-nav" : "step-rail")).toBeTruthy(), { timeout: 8000 });
 }
 const rail = () => screen.getByRole("navigation", { name: "Costing and review steps" });
 const ids = () => [...rail().querySelectorAll("ol > li button")].map((b) => b.getAttribute("data-step"));
@@ -397,6 +397,60 @@ describe("UX-006b Stage 2: Mark reviewed & continue (client-local cost acknowled
     expect(box.outerHTML).not.toMatch(/\|/); // the key is joined with '|'
     expect(box.outerHTML).not.toContain(g.__QID!);
   }, 30000);
+});
+
+describe("UX-006b Stage 2: the view follows real workflow transitions and nothing else (#176's pin, on READY fixtures)", () => {
+  const SUB = { state: "ESTIMATOR_REVIEW", row: { customer_confirmed_cents: 1000000000, customer_confirmed_by: "A Customer", handoff_by_email: "rep@nq" } };
+  const viewedStage = () => document.querySelector('[data-testid="stage-nav"] [aria-current="step"]')!.getAttribute("data-stage");
+  // The fake database hands out its rows by reference, so a change must REPLACE the row (as a real database would), or the page's earlier view would change under it.
+  const patchRow = (id: string, patch: (r: Record<string, unknown>) => Record<string, unknown>) => { const arr = db.rows("newquip_quotes") as Array<Record<string, unknown>>; const i = arr.findIndex((r) => r.id === id); arr[i] = { ...arr[i], ...patch(arr[i]) }; };
+  const reread = async (id: string) => actions.getGrowerQuoteAction(id);
+
+  it("Estimator sign-off: the editor STAYS on Stage 2 (sign-off gained does not move the view) and the Estimator group says 'Signed off'", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "5", ...SUB });
+    const id = g.__QID!;
+    vi.spyOn(actions, "signOffGrowerQuoteAction").mockImplementation((async () => { patchRow(id, (r) => ({ estimator_signoff_hash: r.draft_hash, estimator_signoff_by_email: "e@nq", estimator_signoff_at: "2026-11-03T08:00:00Z" })); return reread(id); }) as never);
+    fireEvent.click(await waitFor(() => within(panel("signoff") as HTMLElement).getByRole("button", { name: /Estimator: I double-checked/ })));
+    await waitFor(() => expect(gstatus("estimator")).toBe("Workflow: Signed off"), { timeout: 8000 });
+    expect(viewedStage()).toBe("2");
+    expect(status("signoff")).toBe("Complete");
+  }, 60000);
+
+  it("Rep submit: the quote moves to Estimator review and the Rep stays on Stage 2 reading 'Submitted - awaiting the Estimator'", async () => {
+    vi.spyOn(ca, "getQuoteCustomerAction").mockResolvedValue({ ok: true, data: { available: true, snapshot: { cin7CustomerId: "c1", name: { state: "present", value: "Acme" }, tradingName: { state: "missing" }, billingAddress: null, vatNumber: { state: "missing" }, currency: { state: "missing" }, paymentTerm: { state: "missing" }, contacts: [], chosenContact: { name: "Sean", email: "s@x.co", source: "CIN7_CONTACT", phone: null } }, snapshotId: "s1", seq: 1, issues: [], currency: null, selectedContactIndex: null, confirmationContact: null, editable: true, lockedReason: null, changeReturnsToRep: false, history: [] } } as never);
+    await open({ roles: ["REP"], step: "3" });
+    const id = g.__QID!;
+    vi.spyOn(actions, "sendGrowerQuoteToEstimatorAction").mockImplementation((async () => { patchRow(id, () => ({ state: "ESTIMATOR_REVIEW", customer_confirmed_cents: 1000000000, customer_confirmed_by: "Sean", handoff_by_email: "rep@nq" })); return reread(id); }) as never);
+    const send = await waitFor(() => { const b = within(panel("submit") as HTMLElement).getByRole("button", { name: /Record pre-approval price confirmation/ }) as HTMLButtonElement; expect(b.disabled).toBe(false); return b; }, { timeout: 8000 });
+    fireEvent.click(send);
+    await waitFor(() => expect(gstatus("rep")).toBe("Workflow: Submitted - awaiting the Estimator"), { timeout: 8000 });
+    expect(viewedStage()).toBe("2");
+    expect(status("submit")).toBe("Complete");
+  }, 60000);
+
+  it("Manager approval moves the view on (a real workflow change clears the pin): to the customer quotation stage", async () => {
+    vi.spyOn(da, "getQuoteDeliveryAction").mockResolvedValue({ ok: true, data: { available: false } } as never);
+    await open({ stage: "3", roles: ["MANAGER"], commercials: true, state: "ESTIMATOR_REVIEW", row: { __useDraftHash: true, customer_confirmed_cents: 1000000000, customer_confirmed_by: "A Customer", requires_customer_acceptance: true } });
+    const id = g.__QID!;
+    vi.spyOn(actions, "approveGrowerQuoteAction").mockImplementation((async () => { patchRow(id, () => ({ state: "MANAGER_APPROVED_FINAL", approved_by_email: "m@nq" })); return reread(id); }) as never);
+    const approve = await waitFor(() => { const b = screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement; expect(b.disabled).toBe(false); return b; }, { timeout: 8000 });
+    expect(viewedStage()).toBe("3");
+    fireEvent.click(approve);
+    await waitFor(() => expect(viewedStage()).toBe("4"), { timeout: 8000 });
+  }, 60000);
+
+  for (const roles of [["REP"], ["ESTIMATOR"]] as Role[][]) {
+    it(`${roles[0]}: Save draft keeps the same stage and step (a draft change is not a workflow transition)`, async () => {
+      await open({ roles, commercials: roles[0] === "ESTIMATOR", step: "2" });
+      const box = within(panel("charges") as HTMLElement).getByLabelText(/Exclude Feed saver mat/, { selector: "input" }) as HTMLInputElement;
+      await act(async () => { fireEvent.click(box); });
+      await act(async () => { fireEvent.change((within(panel("charges") as HTMLElement).getAllByPlaceholderText("Reason (required)") as HTMLInputElement[]).find((i) => i.value === "")!, { target: { value: "Customer supplies it" } }); });
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save draft" })); });
+      await waitFor(() => expect(screen.getByText("All changes saved")).toBeTruthy(), { timeout: 8000 });
+      expect(viewedStage()).toBe("2");
+      expect(rail().querySelector('[aria-current="step"]')!.getAttribute("data-step")).toBe("charges");
+    }, 60000);
+  }
 });
 
 describe("UX-006b Stage 2: Load Demo Defaults keeps the viewed step", () => {
