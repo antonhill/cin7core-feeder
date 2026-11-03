@@ -124,7 +124,7 @@ describe("UX-006i2 Stage 2 is the Estimator's: who has which steps", () => {
     expect(screen.queryByLabelText(/Exclude /)).toBeNull();
     expect(screen.queryByTestId("submit-pointer")).toBeNull();
     // the old Rep-side status chips / pointers are not rendered
-    expect(document.body.textContent).not.toMatch(/Rep preparation|Open Stage 1 step/);
+    expect(document.body.textContent).not.toMatch(/Rep preparation(?! complete)|Open Stage 1 step/); // (the collapsed stage line may say "Rep preparation complete - next: Stage 2")
   }, 30000);
 
   it("a viewer without cost visibility has TWO steps (mapping, sign-off): the costing steps are absent, never disabled, and no cost wording appears", async () => {
@@ -222,7 +222,7 @@ describe("UX-006i2 Stage 2: an Estimator on a Rep draft (the Rep is waiting on t
       expect(panel(id)!.querySelector("[hidden][inert]")).toBeTruthy(); // the content is not shown
     }
     expect(screen.queryByRole("button", { name: /Mark reviewed/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Estimator: I double-checked/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Sign off for Manager approval/ })).toBeNull();
   }, 60000);
 
   it("a Rep draft with nothing for the Estimator to map: the line says it is with the Rep; sign-off stays locked", async () => {
@@ -240,7 +240,7 @@ describe("UX-006i2 Stage 2: Rep, Manager and observer inspect it read-only", () 
     expect(screen.getByTestId("next-owner").textContent).toBe("Estimator");
     expect(screen.queryByRole("button", { name: "Next incomplete step" })).toBeNull();
     expect(screen.getByTestId("all-steps-complete").textContent).toBe("Nothing is left for you in this stage.");
-    expect(screen.queryByRole("button", { name: /Estimator: I double-checked/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Sign off for Manager approval/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "Return to rep" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Save draft" })).toBeNull(); // no Save bar for a viewer who cannot edit here
     expect(panel("mapping")!.closest("fieldset")!.disabled).toBe(true);
@@ -262,7 +262,7 @@ describe("UX-006i2 Stage 2: Rep, Manager and observer inspect it read-only", () 
     expect(screen.queryByRole("button", { name: /Mark reviewed/ })).toBeNull();
     expect(screen.getByTestId("cost-ack-blocked").textContent).toBe("You can view the costing and margin, but only the Estimator can mark it reviewed.");
     expect(panel("costs")!.closest("fieldset")!.disabled).toBe(true);
-    expect(screen.queryByRole("button", { name: /Estimator: I double-checked/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Sign off for Manager approval/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "Save draft" })).toBeNull();
   }, 30000);
 
@@ -276,7 +276,7 @@ describe("UX-006i2 Stage 2: Rep, Manager and observer inspect it read-only", () 
     expect(screen.getByTestId("cost-ack-blocked").textContent).toContain("only the Estimator can mark it reviewed");
     fireEvent.click(within(screen.getByTestId("step-buttons")).getByRole("button", { name: "Next: Sign-off or return" }));
     expect(shown("signoff")).toBe(true);
-    expect(status("final")).toBe("Not complete"); // nothing recorded
+    expect(status("final")).not.toBe("Reviewed"); // nothing recorded
     expect(toggle()).toMatch(/· 1 complete/); // only the mapping step (data) - the click recorded nothing
     await act(async () => { await sleep(150); });
     expect(started(q)).toBe(before);
@@ -331,9 +331,9 @@ describe("UX-006i2 Stage 2: Final review - Mark reviewed & continue (client-loca
     expect(within(screen.getByTestId("step-buttons")).queryByRole("button", { name: /^Next/ })).toBeNull(); // no plain Next while unmarked
     expect(within(screen.getByTestId("final-review-checklist")).getAllByRole("listitem").length).toBeGreaterThanOrEqual(3);
     expect(screen.getByTestId("cost-ack").textContent).toContain("It is not the Estimator sign-off.");
-    expect(status("final")).toBe("Not complete");
+    expect(status("final")).not.toBe("Reviewed");
     expect(toggle()).toMatch(/· 1 complete/); // mapping (data) only
-    const signBefore = (within(panel("signoff") as HTMLElement).getByRole("button", { name: /Estimator: I double-checked/, hidden: true }) as HTMLButtonElement).disabled;
+    const signBefore = (within(panel("signoff") as HTMLElement).getByRole("button", { name: /Sign off for Manager approval/, hidden: true }) as HTMLButtonElement).disabled;
     const live = screen.getByTestId("cost-ack-live"); // the live region exists EMPTY first so the announcement is reliable
     expect(live.getAttribute("aria-live")).toBe("polite"); expect(live.textContent).toBe("");
     fireEvent.click(ackBtn());
@@ -344,7 +344,8 @@ describe("UX-006i2 Stage 2: Final review - Mark reviewed & continue (client-loca
     expect(screen.getByTestId("cost-ack-live")).toBe(live);
     await act(async () => { await sleep(150); });
     expect(started(q)).toBe(before); // client-local
-    expect((within(panel("signoff") as HTMLElement).getByRole("button", { name: /Estimator: I double-checked/ }) as HTMLButtonElement).disabled).toBe(signBefore); // sign-off keeps its own gate
+    expect(signBefore).toBe(true); // before the mark the sign-off waits (UX policy)
+    expect((within(panel("signoff") as HTMLElement).getByRole("button", { name: /Sign off for Manager approval/ }) as HTMLButtonElement).disabled).toBe(false); // after it, the sign-off keeps only its own READY gate
     fireEvent.click(rail().querySelector('[data-step="final"]')!);
     expect(status("final")).toBe("Reviewed");
     expect(rail().querySelector('[data-step="final"]')!.textContent).not.toContain("✓");
@@ -402,7 +403,7 @@ describe("UX-006i2 Stage 2: Final review - Mark reviewed & continue (client-loca
     expect(within(screen.getByTestId("step-buttons")).queryByRole("button", { name: /Next/ })).toBeNull();
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save draft" })); });
     await waitFor(() => expect(screen.getByText("All changes saved")).toBeTruthy(), { timeout: 8000 });
-    expect(status("final")).toBe("Not complete");
+    expect(status("final")).not.toBe("Reviewed"); // (this fixture's project costs are incomplete, so the step also says it needs attention)
     expect(ackBtn()).toBeTruthy(); // and it can be given again for the new version
   }, 60000);
 
@@ -442,7 +443,7 @@ describe("UX-006i2 Stage 2: Final review - Mark reviewed & continue (client-loca
 describe("UX-006i2 Stage 2: Sign-off or return (only the actions valid for the authenticated Estimator)", () => {
   it("the Estimator is offered sign-off and, below it, a Return to the Rep section that names the next owner (the Rep) and the correction needed; the Rep and observers see neither button", async () => {
     await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
-    expect(screen.getByRole("button", { name: /Estimator: I double-checked/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Sign off for Manager approval/ })).toBeTruthy();
     const ret = screen.getByTestId("return-section");
     expect(screen.getByTestId("return-next-owner").textContent).toMatch(/Next responsible role: Rep\. The quotation comes back as a new revision/);
     expect(ret.textContent).toMatch(/Say what the Rep must correct/);
@@ -469,18 +470,19 @@ describe("UX-006i2 Stage 2: Sign-off or return (only the actions valid for the a
   }, 60000);
 
   it("sign-off: inline success naming the Manager as the next owner, with an obvious next-stage action; the editor STAYS on Stage 2", async () => {
-    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "3", ...SUBMITTED });
     const id = g.__QID!;
+    fireEvent.click(screen.getByRole("button", { name: /Mark reviewed/ })); // sign-off waits for the review mark (UX policy); this lands on step 4
     const patchRow = (patch: (r: Record<string, unknown>) => Record<string, unknown>) => { const arr = db.rows("newquip_quotes") as Array<Record<string, unknown>>; const i = arr.findIndex((r) => r.id === id); arr[i] = { ...arr[i], ...patch(arr[i]) }; };
     vi.spyOn(actions, "signOffGrowerQuoteAction").mockImplementation((async () => { patchRow((r) => ({ estimator_signoff_hash: r.draft_hash, estimator_signoff_by_email: "e@nq", estimator_signoff_at: "2026-11-03T08:00:00Z" })); return actions.getGrowerQuoteAction(id); }) as never);
     expect(screen.queryByTestId("signoff-success")).toBeNull();
-    fireEvent.click(await waitFor(() => { const b = screen.getByRole("button", { name: /Estimator: I double-checked/ }) as HTMLButtonElement; expect(b.disabled).toBe(false); return b; }, { timeout: 8000 }));
+    fireEvent.click(await waitFor(() => { const b = screen.getByRole("button", { name: /Sign off for Manager approval/ }) as HTMLButtonElement; expect(b.disabled).toBe(false); return b; }, { timeout: 8000 }));
     const ok = await screen.findByTestId("signoff-success", {}, { timeout: 8000 });
     expect(ok.textContent).toContain("Estimator sign-off complete");
     expect(screen.getByTestId("signoff-next-owner").textContent).toMatch(/Next responsible role: Manager/);
     expect(screen.getByTestId("next-manager-cue").textContent).toBe("Next: Manager approval (Stage 3).");
     expect(document.querySelector('[data-testid="stage-nav"] [aria-current="step"]')!.getAttribute("data-stage")).toBe("2");
-    expect(screen.queryByRole("button", { name: /Estimator: I double-checked/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Sign off for Manager approval/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "Return to rep" })).toBeNull(); // the Manager owns the next decision
     fireEvent.click(within(ok).getByRole("button", { name: "Open Manager approval (Stage 3)" }));
     expect(document.querySelector('[data-testid="stage-nav"] [aria-current="step"]')!.getAttribute("data-stage")).toBe("3");
@@ -634,7 +636,7 @@ describe("UX-006i2 Stage 2: navigation (Back only to permitted steps; no navigat
     await open({ roles: ["ESTIMATOR"], commercials: true, ...SUBMITTED });
     expect(rail().querySelectorAll("ol").length).toBe(1);
     expect(rail().querySelectorAll('[aria-current="step"]').length).toBe(1);
-    expect(toggle()).toBe("Step 2 of 4 · Costs, margins & pricing exceptions · 1 complete");
+    expect(toggle()).toMatch(/^Step 2 of 4 · Costs, margins & pricing exceptions · 1 complete/);
     fireEvent.click(within(rail()).getByRole("button", { name: /Sign-off or return/ }));
     expect(rail().querySelector('[aria-current="step"]')!.textContent).toContain("Sign-off or return");
     expect(document.activeElement?.textContent).toBe("Step 4 · Sign-off or return");
@@ -809,8 +811,8 @@ describe("UX-006i2 review fixes: wording that is true to the current state (revi
     expect(screen.getByTestId("cost-ack-live").textContent).toBe("Final review marked as reviewed for this session. This is not a sign-off.");
     fireEvent.click(rail().querySelector('[data-step="final"]')!);
     expect(screen.getByTestId("cost-ack-done").textContent).toContain("Marked reviewed for this session (not saved - repeat after a reload before signing off)");
-    expect(screen.getByTestId("final-review-checklist").textContent).toContain("Costing figures are available");
-    expect(screen.getByTestId("final-review-checklist").textContent).not.toContain("can be reviewed");
+    expect(screen.getByTestId("final-review-checklist").textContent).toMatch(/Costing figures: incomplete \(\d+ lines? (has|have) no cost\)/); // ONE margin story: attention, never "Met", while project costs are incomplete
+    expect(screen.getByTestId("final-check-costing").textContent).toBe("Not met");
   }, 60000);
 
   it("a Rep reaching Stage 2 has NO 'Next' that dead-ends: only the way back to their own stage; a Manager or observer inspects with a secondary Next that records nothing", async () => {
@@ -842,4 +844,55 @@ describe("UX-006i2 review fixes: wording that is true to the current state (revi
     expect(src).toContain("An Estimator or Manager can map this package.");
     expect(src).not.toContain("A manager can map");
   });
+});
+
+describe("UX-006i2 round 2: sign-off waits for the review mark, one margin story, labels", () => {
+  const signBtn = () => screen.getByRole("button", { name: "Sign off for Manager approval" }) as HTMLButtonElement;
+  it("Sign off is visible but DISABLED with the visible reason until the review is marked; Return to the Rep is never gated; marking enables it", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
+    expect(signBtn().disabled).toBe(true);
+    expect(document.getElementById("signoff-why")!.textContent).toBe("Mark the costing reviewed first (Final review).");
+    expect(signBtn().getAttribute("aria-describedby")).toBe("signoff-why");
+    expect(rail().querySelector('[data-step="signoff"]')!.textContent).toContain("Sign-off waits for the final review mark; Return is open");
+    expect(status("signoff")).not.toBe("Locked"); // the step is open; only the sign-off action waits
+    fireEvent.change(screen.getByLabelText(/Return to rep — reason/), { target: { value: "Wrong delivery charge" } });
+    expect((screen.getByRole("button", { name: "Return to rep" }) as HTMLButtonElement).disabled).toBe(false); // never gated by the mark
+    fireEvent.click(rail().querySelector('[data-step="final"]')!);
+    fireEvent.click(screen.getByRole("button", { name: /Mark reviewed/ }));
+    expect(signBtn().disabled).toBe(false);
+    expect(document.getElementById("signoff-why")).toBeNull() ;
+    expect(screen.getByTestId("signoff-effect").textContent).toBe("Signs off this version for the Manager. Any later edit withdraws it.");
+    expect(signBtn().getAttribute("aria-describedby")).toBe("signoff-effect");
+    // an unsaved edit invalidates the mark, and the sign-off waits again
+    fireEvent.click(rail().querySelector('[data-step="mapping"]')!);
+    await act(async () => { fireEvent.change(within(panel("mapping") as HTMLElement).getAllByLabelText("Reason", { selector: "input" })[0], { target: { value: "Changed after the review" } }); });
+    fireEvent.click(rail().querySelector('[data-step="signoff"]')!);
+    expect(status("signoff")).not.toBe("Locked");
+  }, 60000);
+
+  it("with incomplete project costs the sign-off step says what the Manager will see, next to the button, and does NOT block", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "3", ...SUBMITTED });
+    fireEvent.click(screen.getByRole("button", { name: /Mark reviewed/ }));
+    expect(screen.getByTestId("signoff-costs-consequence").textContent).toMatch(/^Costs are incomplete for \d+ lines?\. If you sign off, the Manager will see margin as unknown\.$/);
+    expect(signBtn().disabled).toBe(false);
+    expect(signBtn().parentElement!.contains(screen.getByTestId("signoff-costs-consequence"))).toBe(true); // adjacent to the button
+  }, 60000);
+
+  it("ONE margin story: the summary bar, the totals and the Final review all say 'indicative (price-list basis)' with the number of lines with no cost; the margin detail and cost capture disclosures open on their own", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "2", ...SUBMITTED });
+    const bar = screen.getByTestId("quote-summary-bar");
+    expect(within(bar).getByText("Indicative margin (price-list basis)")).toBeTruthy();
+    expect(screen.getByTestId("summary-margin-note").textContent).toMatch(/project margin not available: \d+ lines? (has|have) no cost/);
+    expect(screen.getByTestId("totals-margin-note").textContent).toMatch(/project margin not available/);
+    expect(panel("costs")!.textContent).toContain("Estimated cost · indicative margin (price-list basis)");
+    expect(screen.getByTestId("disc-margin").hasAttribute("open")).toBe(true);
+    expect(screen.getByTestId("disc-cost-capture").hasAttribute("open")).toBe(true);
+    expect(screen.getByTestId("disc-scope").hasAttribute("open")).toBe(false);
+    expect(within(screen.getByTestId("disc-scope")).getByText("Physical scope")).toBeTruthy();
+  }, 60000);
+
+  it("a Rep never sees any margin wording (unchanged)", async () => {
+    await open({ roles: ["REP"], ...SUBMITTED });
+    expect(document.body.textContent).not.toMatch(/margin/i);
+  }, 30000);
 });

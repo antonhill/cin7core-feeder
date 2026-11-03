@@ -112,14 +112,14 @@ describe("F-12 Solution Builder disabled controls say why", () => {
   it("Estimator sign-off and the return buttons: a non-Estimator is not offered them and is told whose action it is", async () => {
     // UX-006i2: the sign-off and return controls exist only for the authenticated Estimator ("only valid actions"); a Rep reads who has the work instead of meeting a disabled button.
     await open("2", ["REP"], "ESTIMATOR_REVIEW", "Sign off or return");
-    expect(screen.queryByRole("button", { name: /Estimator: I double-checked/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Sign off for Manager approval/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "Return to rep" })).toBeNull();
     expect(screen.getByTestId("signoff-not-yours").textContent).toMatch(/Only an Estimator can sign off or return it here/);
   }, 30000);
 
   it("Estimator sign-off keeps its READY gate and reason, and the return button says a reason is required", async () => {
     await open("2", ["ESTIMATOR"], "ESTIMATOR_REVIEW", "Sign off or return");
-    const so = screen.getByRole("button", { name: /Estimator: I double-checked/ }) as HTMLButtonElement;
+    const so = screen.getByRole("button", { name: /Sign off for Manager approval/ }) as HTMLButtonElement;
     expect(so.disabled ? described(so) : "").toMatch(so.disabled ? /must be READY/ : /^\s*$/); // gate unchanged: disabled only with its reason (this fixture's readiness decides which)
     const ret = screen.getByRole("button", { name: "Return to rep" }) as HTMLButtonElement;
     expect(ret.disabled).toBe(true);

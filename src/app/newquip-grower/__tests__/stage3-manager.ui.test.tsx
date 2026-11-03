@@ -132,7 +132,7 @@ describe("UX-006i2 Stage 3: the Manager's signed-off workspace", () => {
     expect(within(screen.getByTestId("rep-summary")).queryAllByRole("button").length).toBe(0);
     expect(screen.queryByRole("button", { name: "Confirm source-backed mappings" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Save draft" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Mark reviewed|Estimator: I double-checked/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Mark reviewed|Sign off for Manager approval/ })).toBeNull();
   }, 60000);
 
   it("Approve is enabled only with a current sign-off; Return buttons need a reason; the checklist (checkApproval's own conditions) is unchanged and shown once", async () => {
@@ -277,13 +277,18 @@ describe("UX-006i2 review fixes: the Manager workspace", () => {
   }, 90000);
 
   it("EstimatorResult flags an incomplete or unknown margin visibly (never a block), only when told it is unknown", () => {
-    const props = { signedOffBy: "e@nq", signedOffAt: null, signoffCurrent: true, totalCents: 100, confirmedCents: 100, costing: { estimatedCost: 50, marginPct: null }, priceExceptions: [], costOverrides: [], showPriceDetail: true, largestLines: null };
+    const props = { signedOffBy: "e@nq", signedOffAt: null, signoffCurrent: true, totalCents: 100, confirmedCents: 100, costing: { estimatedCost: 50, marginPct: null }, priceExceptions: [], costOverrides: [], showPriceDetail: true, largestLines: null, missingCostLines: null };
     const { unmount } = render(createElement(EstimatorResult, { ...props, marginUnknown: true }));
     expect(screen.getByTestId("margin-flag").textContent).toMatch(/margin cannot be relied on/);
     expect(document.body.textContent).toContain("Margin: incomplete or unknown");
     unmount();
-    render(createElement(EstimatorResult, { ...props, marginUnknown: false }));
+    const r2 = render(createElement(EstimatorResult, { ...props, marginUnknown: false })); const unmount2 = r2.unmount;
     expect(screen.queryByTestId("margin-flag")).toBeNull();
+    unmount2();
+    const r3 = render(createElement(EstimatorResult, { ...props, marginUnknown: true, missingCostLines: 12 }));
+    expect(screen.getByTestId("margin-flag").textContent).toMatch(/12 costed lines have no cost, so project margin is not available; the percentage shown is indicative \(price-list basis\)/);
+    expect(screen.getByTestId("estimator-result").textContent).toContain("indicative margin (price-list basis)");
+    r3.unmount();
   });
 
   it("the build stamp is a labelled muted footer and renders nothing when the build carries no commit", () => {

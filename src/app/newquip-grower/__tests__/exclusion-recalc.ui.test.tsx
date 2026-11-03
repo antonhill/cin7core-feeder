@@ -254,7 +254,7 @@ describe("D3-C Solution Builder: visible selected / excluded states and a stable
     await open();
     const bar = screen.getByTestId("quote-summary-bar");
     expect(within(bar).getByText("Quote total (ex VAT)")).toBeTruthy();
-    expect(within(bar).getByText("Gross margin")).toBeTruthy(); // the viewer can see commercials
+    expect(within(bar).getByText(/^(Gross|Indicative) margin/)).toBeTruthy(); // the viewer can see commercials (UX-006i2: the label reads "Indicative margin (price-list basis)" while project costs are incomplete, as in this fixture)
     expect(within(bar).queryByText(/unsaved edits/)).toBeNull();
     fireEvent.click(box(/Exclude CCM feeder/i));
     expect(within(bar).getByText("Preview of unsaved edits")).toBeTruthy();
@@ -313,17 +313,17 @@ describe("D3-C Solution Builder: visible selected / excluded states and a stable
       render(createElement(Page));
       await waitFor(() => expect(screen.getByTestId("quote-summary-bar")).toBeTruthy(), { timeout: 8000 });
       await sleep(300);
-      expect(within(screen.getByTestId("quote-summary-bar")).queryByText("Gross margin")).toBeNull();
+      expect(within(screen.getByTestId("quote-summary-bar")).queryByText(/^(Gross|Indicative) margin/)).toBeNull();
       cleanup();
     }
   }, 60000);
   it("margin is shown on the working stages but hidden on the customer-facing quotation stage", async () => {
     await open();
-    expect(within(screen.getByTestId("quote-summary-bar")).getByText("Gross margin")).toBeTruthy();
+    expect(within(screen.getByTestId("quote-summary-bar")).getByText(/^(Gross|Indicative) margin/)).toBeTruthy();
     cleanup();
     await open("4").catch(() => undefined);
     await waitFor(() => expect(screen.getByTestId("quote-summary-bar")).toBeTruthy(), { timeout: 8000 });
-    expect(within(screen.getByTestId("quote-summary-bar")).queryByText("Gross margin")).toBeNull();
+    expect(within(screen.getByTestId("quote-summary-bar")).queryByText(/^(Gross|Indicative) margin/)).toBeNull();
   }, 30000);
   describe("Manager: why Final approval is disabled", () => {
     async function openAsManager(signoff: "none" | "stale" | "current") {

@@ -103,7 +103,7 @@ export default function ApprovalDetailPage() {
       <ModuleHeader variant="workspace" module={APPROVALS_MODULE}>{DOC_TYPE_LABEL[r.doc_type]} {r.doc_ref}</ModuleHeader>
       <p className="mt-1 text-sm"><Link href="/approvals" className="underline">All approvals</Link> · <Link href={docHref} className="underline">View {r.doc_type === "QUOTE" ? "document" : "project"}</Link></p>
       {error && <div className="mt-3"><Alert tone="danger">{error}</Alert></div>}
-      {r.status === "PENDING" && d.can.decide && <div className="mt-3" data-testid="needs-your-decision"><Alert tone="warning"><strong>Waiting for your decision.</strong> Review the submitted revision below, then <a href="#decision" className="underline">decide</a>.</Alert></div>}
+      {r.status === "PENDING" && d.can.decide && <div className="mt-3" data-testid="needs-your-decision"><Alert tone="warning"><strong>Waiting for your decision.</strong> Review the submitted version below, then <a href="#decision" className="underline">decide</a>.</Alert></div>}
       {r.status === "PENDING" && !showDecisionPanel(d) && <div className="mt-3"><Alert tone="info">{r.assigned_to_email ? `This approval is waiting for ${r.assigned_to_email}.` : `This approval is waiting for ${d.stage ? `any ${d.stage.role.toLowerCase().replace("_", " ")}` : "a manager"}.`} You cannot decide it from this account, so there is nothing for you to do here.</Alert></div>}
 
       <Panel className="mt-4">
@@ -154,10 +154,11 @@ export default function ApprovalDetailPage() {
             {d.can.decide && <Button variant="destructive" aria-pressed={mode === "REJECT"} aria-describedby={busy ? "decision-busy-why" : undefined} disabled={busy} onClick={() => setMode("REJECT")}>Reject…</Button>}
             {d.can.withdraw && <Button variant="secondary" aria-pressed={mode === "WITHDRAW"} aria-describedby={busy ? "decision-busy-why" : undefined} disabled={busy} onClick={() => setMode("WITHDRAW")}>Withdraw…</Button>}
           </div>
+          {d.can.withdraw && <p className="mt-2 text-xs text-slate-700" data-testid="withdraw-explain">Withdraw takes this submission back from review without a decision.</p>}
           <div className="mt-2"><DisabledReason id="decision-busy-why">{busyWhy}</DisabledReason></div>
           {mode && (
             <div className="mt-3 max-w-2xl space-y-2 border-l-4 border-indigo-600 bg-slate-50 py-3 pl-4 pr-3 text-sm">
-              <p>{mode === "APPROVE" ? "Approve" : mode === "RETURN" ? "Return" : mode === "REJECT" ? "Reject" : "Withdraw"} {DOC_TYPE_LABEL[r.doc_type].toLowerCase()} <strong>{r.doc_ref}</strong>, revision {r.revision}, <strong>{rand(r.amount_cents)}</strong> ex VAT, submitted {formatSast(r.submitted_at)}?</p>
+              <p>{mode === "APPROVE" ? "Approve" : mode === "RETURN" ? "Return" : mode === "REJECT" ? "Reject" : "Withdraw"} {DOC_TYPE_LABEL[r.doc_type].toLowerCase()} <strong>{r.doc_ref}</strong>, approval request {r.revision}, <strong>{rand(r.amount_cents)}</strong> ex VAT, submitted {formatSast(r.submitted_at)}?</p>
               <Input {...(overrideReasonHint && !reasonError(mode) ? { "aria-describedby": "override-reason-why" } : {})} label={mode === "RETURN" ? "What must change? (required)" : mode === "REJECT" ? "Reason for rejection (required)" : mode === "APPROVE" && d.can.needsOverride ? "Override reason (required)" : "Comment (optional)"} value={reason} onChange={(e) => { setReason(e.target.value); setReasonTouched(true); }} error={reasonError(mode)} />
               {!reasonError(mode) && <DisabledReason id="override-reason-why">{overrideReasonHint}</DisabledReason>}
               {mode === "RETURN" && d.can.returnToEstimator && (
@@ -173,7 +174,7 @@ export default function ApprovalDetailPage() {
               </div>
               <DisabledReason id="confirm-why">{confirmWhy(mode)}</DisabledReason>
               <ActionFeedback state={acts.stateOf("decision")} />
-              <p className="text-xs text-slate-700">Approving records the decision only. It does not create or authorise anything in Cin7, and does not skip the existing stock, claim-posting or variation-billing controls.</p>
+              {mode === "APPROVE" && <p className="text-xs text-slate-700">Approving records the decision only. It does not create or authorise anything in Cin7, and does not skip the existing stock, claim-posting or variation-billing controls.</p>}
             </div>
           )}
           {d.can.reassign && (
@@ -187,8 +188,8 @@ export default function ApprovalDetailPage() {
         </Panel>
       )}
 
-      <Panel className="mt-4"><PanelTitle>This revision</PanelTitle><div className="mt-3"><ApprovalTimeline events={d.history} /></div></Panel>
-      {d.docHistoryAll.length > d.history.length && <Panel className="mt-4"><PanelTitle>Full history of this document (all revisions)</PanelTitle><div className="mt-3"><ApprovalTimeline events={d.docHistoryAll} /></div></Panel>}
+      <Panel className="mt-4"><PanelTitle>This approval request</PanelTitle><div className="mt-3"><ApprovalTimeline events={d.history} /></div></Panel>
+      {d.docHistoryAll.length > d.history.length && <Panel className="mt-4"><PanelTitle>Full history of this document (all approval requests)</PanelTitle><div className="mt-3"><ApprovalTimeline events={d.docHistoryAll} /></div></Panel>}
     </main>
   );
 }
