@@ -184,8 +184,12 @@ export async function applyCustomerChange(
  */
 export async function invalidateConfirmation(
   db: Db, orgId: string, quoteId: string,
+  /** Who withdrew it (D5): kept as the return record when the quotation goes back to the Rep. */
+  by: ReturnBy,
   /** What the caller observed (the confirmed amount and revision it decided on). If the quotation no longer matches, e.g. a handoff committed meanwhile, NOTHING is cleared. */
   expected?: { cents: number | null; revision: number },
+  /** Why: AMOUNT_CHANGED (the total changed: `newCents` is the new total) or CONTACT_CHANGED (default). */
+  change?: { kind: "AMOUNT_CHANGED" | "CONTACT_CHANGED"; newCents?: number },
 ): Promise<{ returnedToRep: boolean; signoffCleared: boolean; confirmationCleared: boolean }> {
   const q = await mustLoad(db, orgId, quoteId);
   if (expected && (q.customer_confirmed_cents !== expected.cents || q.revision !== expected.revision)) fail("The quotation changed while withdrawing the confirmation; refresh and try again.");
@@ -194,6 +198,9 @@ export async function invalidateConfirmation(
   if (!confirmationCleared) return { returnedToRep: false, signoffCleared: false, confirmationCleared: false };
   const inReview = q.state === "ESTIMATOR_REVIEW";
   const signoffCleared = q.estimator_signoff_hash != null;
+  // The reason is kept BEFORE the state change (a failed record changes nothing), bound to the revision it produces; a Rep draft has nothing to return, so only a review-state withdrawal is recorded.
+  const kind = change?.kind ?? "CONTACT_CHANGED";
+  const recId = inReview ? await recordReturn(db, orgId, by, { quoteId, kind, reason: NEUTRAL_REASON[kind], destination: "REP", fromState: q.state, fromRevision: q.revision, toRevision: q.revision + 1, ...(q.customer_confirmed_cents != null ? { previousCents: q.customer_confirmed_cents } : {}), ...(kind === "AMOUNT_CHANGED" && change?.newCents != null ? { newCents: change.newCents } : {}) }, `Returned a NewQuip quotation to the Rep: the ${kind === "AMOUNT_CHANGED" ? "total" : "confirmed contact"} changed (local only)`) : null;
   // compare-and-set on state, revision AND the confirmed amount as read: a handoff or edit committed since the load clears nothing
   const upd = db.from("newquip_quotes").update({
     customer_confirmed_cents: null, customer_confirmed_by: null, customer_confirmed_at: null, handoff_by_email: null,
@@ -201,8 +208,7 @@ export async function invalidateConfirmation(
     ...(inReview ? { state: "REP_DRAFT", revision: q.revision + 1 } : {}),
   }).eq("org_id", orgId).eq("id", quoteId).eq("state", q.state).eq("revision", q.revision);
   const r = await (q.customer_confirmed_cents != null ? upd.eq("customer_confirmed_cents", q.customer_confirmed_cents) : upd.is("customer_confirmed_cents", null)).select("id");
-  if (r.error) fail(r.error.message);
-  if (!r.data || r.data.length === 0) fail("The quotation changed while withdrawing the confirmation; refresh and try again.");
+  if (r.error || !r.data || r.data.length === 0) { if (recId) await voidReturn(db, orgId, quoteId, recId, r.error?.message ?? "no row updated"); fail(r.error?.message ?? "The quotation changed while withdrawing the confirmation; refresh and try again."); }
   return { returnedToRep: inReview, signoffCleared, confirmationCleared };
 }
 

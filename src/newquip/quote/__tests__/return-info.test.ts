@@ -79,4 +79,13 @@ describe("latestReturnInfo: which return explains where the quotation is NOW", (
     expect(returnRoleOf(new Set(["rep", "estimator"]))).toBe("estimator");
     expect(returnRoleOf(new Set(["rep"]))).toBe("rep");
   });
+  it("S1b audit row is the same event as its record: the record (revision-bound, with the actor's capacity) wins, and a stale pair never outlives its revision", () => {
+    const record = rec({ kind: "AMOUNT_CHANGED", previousCents: 100, newCents: 200, at: "2026-11-03T08:00:00.000Z", revision: 2, id: "r1" });
+    const audit = rec({ kind: "AMOUNT_CHANGED", previousCents: 100, newCents: 200, at: "2026-11-03T08:00:01.000Z", source: "AUDIT", byRole: null, revision: undefined });
+    expect(latestReturnInfo(rep, { candidates: [record, audit] })).toMatchObject({ source: "RECORD", byRole: "estimator" });
+    // revision moved on: the record no longer applies and neither does its audit twin (it would otherwise resurface with no revision to check)
+    expect(latestReturnInfo({ ...rep, revision: 3 }, { candidates: [record, audit] })).toBeNull();
+    // an audit row with NO record (before the record existed) still explains the state
+    expect(latestReturnInfo(rep, { candidates: [audit] })).toMatchObject({ source: "AUDIT" });
+  });
 });

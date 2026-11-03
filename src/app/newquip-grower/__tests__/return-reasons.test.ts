@@ -217,7 +217,9 @@ describe("D5: LEGACY paths (before the roles / staged approvals migration) store
 });
 
 describe("D5 review fixes", () => {
-  const editDraft = async () => { const d = structuredClone(quote().draft) as Record<string, any>; d.estimator.charges.delivery += 1000; return grower.saveGrowerDraftAction("q1", d as never); }; // eslint-disable-line @typescript-eslint/no-explicit-any
+  // UX-006 integration: S1b withdraws the customer's confirmation (and returns the quotation to the Rep, now with an AMOUNT_CHANGED record) when an edit changes the TOTAL. These tests are about an edit that
+  // changes the CONTENT (so the sign-off is cleared) but not the amount, so the edit is to the Estimator's assumptions text. The total-changing edit is covered in ux006-integration-withdrawals.test.ts.
+  const editDraft = async () => { const d = structuredClone(quote().draft) as Record<string, any>; d.estimator.assumptions = `${d.estimator.assumptions ?? ""} edited`; return grower.saveGrowerDraftAction("q1", d as never); }; // eslint-disable-line @typescript-eslint/no-explicit-any
   const toEstimator = async () => { await as("rep"); await send(); await as("estimator"); await grower.signOffGrowerQuoteAction("q1"); await as("manager"); expect((await grower.returnGrowerQuoteToEstimatorAction("q1", "Re-check the supplier price")).error).toBeUndefined(); };
 
   it("P2-a: Estimator re-signs off, then edits again: the OLD Manager return does not resurface", async () => {

@@ -34,6 +34,7 @@ import { buildCustomerSnapshot, withChosenContact } from "@/lib/newquip-quotes/c
 import { readCin7Customer } from "@/lib/newquip-customers/cin7-customer-read";
 
 const NQ = "e1aea782-d095-47ad-90fb-4fa65c9bf855";
+const REP_BY = { email: "rep@example.com", role: "rep" as const };
 const U = { owner: "u-owner", rep: "u-rep", est: "u-est", mgr: "u-mgr" };
 const EMAIL: Record<string, string> = { "u-owner": DEMO_OWNER_EMAIL, "u-rep": "rep@sparkconsulting.co.za", "u-est": "estimator@sparkconsulting.co.za", "u-mgr": "manager@sparkconsulting.co.za" };
 const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
@@ -186,7 +187,7 @@ describe("confirmation invalidation on a contact change", () => {
   });
   it("invalidateConfirmation with nothing recorded is a no-op and never touches a sign-off-free REP_DRAFT", async () => {
     const rev = quote().revision;
-    expect(await invalidateConfirmation(db as never, NQ, "q1")).toEqual({ returnedToRep: false, signoffCleared: false, confirmationCleared: false });
+    expect(await invalidateConfirmation(db as never, NQ, "q1", REP_BY)).toEqual({ returnedToRep: false, signoffCleared: false, confirmationCleared: false });
     expect(quote().revision).toBe(rev);
   });
   it("assertConfirmationCurrent: valid passes; a stale contact or amount is refused (the hook sign-off / approval call)", async () => {
@@ -259,8 +260,8 @@ describe("amount change withdraws the confirmation (one helper for every draft w
   });
   it("invalidateConfirmation compare-and-set: a handoff/amount that differs from what the caller read clears NOTHING", async () => {
     await confirmed();
-    await expect(invalidateConfirmation(db as never, NQ, "q1", { cents: total + 1, revision: quote().revision })).rejects.toThrow(/changed while withdrawing/);
-    await expect(invalidateConfirmation(db as never, NQ, "q1", { cents: total, revision: quote().revision + 5 })).rejects.toThrow(/changed while withdrawing/);
+    await expect(invalidateConfirmation(db as never, NQ, "q1", REP_BY, { cents: total + 1, revision: quote().revision })).rejects.toThrow(/changed while withdrawing/);
+    await expect(invalidateConfirmation(db as never, NQ, "q1", REP_BY, { cents: total, revision: quote().revision + 5 })).rejects.toThrow(/changed while withdrawing/);
     expect(quote()).toMatchObject({ state: "ESTIMATOR_REVIEW", customer_confirmed_cents: total });
   });
 });

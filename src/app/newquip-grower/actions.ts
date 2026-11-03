@@ -240,7 +240,7 @@ export async function saveGrowerDraftAction(quoteId: string, draft: QuoteDraft):
       if (nowName && nowName !== snapName) { const cur = await loadQuote(db, a.orgId, quoteId); if (cur) await saveDraft(db, a.orgId, a.roles, quoteId, cur.draft, nowName); }
     }
     // A change of the commercial total withdraws the customer's confirmation (one helper for every draft writer); otherwise changed content only re-syncs the approval request.
-    const amount = await reconcileConfirmationAmount(db, whoOf(a), quoteId, evaluationContext(true));
+    const amount = await reconcileConfirmationAmount(db, whoOf(a), quoteId, evaluationContext(true), returnByOf(a));
     // saveDraft already withdrew an existing sign-off for the changed content, so it counts as cleared in the reported effect
     let confirmationEffect: ConfirmationEffectView | undefined = amount ? { ...amount, signoffCleared: amount.signoffCleared || saved.signoffCleared } : undefined;
     if (!amount && saved.draftHash !== prior?.draft_hash && (await stagedAvailable(db))) {

@@ -128,3 +128,20 @@ describe("UX-006c static: presentation and derivation import no server action or
     expect(src).not.toMatch(/from "[^"]*(actions|-store|supabase|server-only)[^"]*"/);
   });
 });
+
+describe("UX-006 integration: the baseline-exception row of the Stage 3 checklist", () => {
+  const base = { readinessState: "READY" as const, readinessReasons: [], totalExVatCents: 100, customerConfirmedCents: 100, signoffHash: "h", currentDraftHash: "h", dirty: false, isManager: true, costing: { complete: true, reason: null } };
+  it("no exception row unless the server says one is required", () => {
+    expect(deriveApprovalChecklist(base).some((x) => x.id === "exception")).toBe(false);
+    expect(deriveApprovalChecklist({ ...base, baselineException: { baselineExceptionRequired: false, items: [] } }).some((x) => x.id === "exception")).toBe(false);
+    expect(deriveApprovalChecklist({ ...base, baselineException: null }).some((x) => x.id === "exception")).toBe(false);
+  });
+  it("a required exception is an UNMET row naming the items and pointing at 'Approve with recorded exception'; the checklist is then not met", () => {
+    const items = deriveApprovalChecklist({ ...base, baselineException: { baselineExceptionRequired: true, items: [{ label: "M75 feed distribution system" }] } });
+    const row = items.find((x) => x.id === "exception")!;
+    expect(row).toMatchObject({ met: false, fixStage: null });
+    expect(row.detail).toMatch(/M75 feed distribution system/);
+    expect(row.detail).toMatch(/Approve with recorded exception/);
+    expect(items.every((x) => x.met)).toBe(false);
+  });
+});

@@ -7,6 +7,7 @@ import { logActivity } from "@/lib/activity-log";
 import { demoAuditDetail, type DemoInfo } from "@/lib/demo-mode/context";
 import { legacyCtx, resyncQuoteApprovals, stagedAvailable } from "@/lib/approvals/approval-store";
 import { invalidateConfirmation, loadQuote } from "./quote-store";
+import type { ReturnBy } from "./return-store";
 import { confirmationStatus } from "./confirmation-status";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
@@ -45,13 +46,13 @@ export const commercialTotalCents = (draft: Parameters<typeof evaluateDraft>[0],
  * are withdrawn (in estimator review the quotation returns to the Rep as a new revision), audited and the approval request re-synced. Returns the facts for the UI, or
  * null when nothing was withdrawn. An undeterminable total does not withdraw (approval still fails closed on it).
  */
-export async function reconcileConfirmationAmount(db: Db, w: Who, quoteId: string, ctx: EvaluationContext): Promise<AmountInvalidation | null> {
+export async function reconcileConfirmationAmount(db: Db, w: Who, quoteId: string, ctx: EvaluationContext, by: ReturnBy): Promise<AmountInvalidation | null> {
   const q = await loadQuote(db, w.orgId, quoteId);
   if (!q || q.customer_confirmed_cents == null || q.state === "MANAGER_APPROVED_FINAL") return null;
   const previousCents = q.customer_confirmed_cents; // captured now: a row object may be updated in place by the clear below
   const total = commercialTotalCents(q.draft, ctx);
   if (total == null || confirmationStatus(q, total, null) !== "amount_changed") return null;
-  const effect = await invalidateConfirmation(db, w.orgId, quoteId, { cents: previousCents, revision: q.revision });
+  const effect = await invalidateConfirmation(db, w.orgId, quoteId, by, { cents: previousCents, revision: q.revision }, { kind: "AMOUNT_CHANGED", newCents: total });
   if (!effect.confirmationCleared) return null;
   await audit(db, w, { action: "newquip.quote_confirmation_invalidated", summary: "Withdrew the customer's pre-approval price confirmation: the quotation total changed (local only)", detail: { quoteId, reason: "AMOUNT_CHANGED", previousCents, newCents: total, ...effect } });
   const approvalSyncError = await resyncApprovalsLogged(db, w, quoteId, effect);

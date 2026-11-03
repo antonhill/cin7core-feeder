@@ -135,7 +135,10 @@ export function latestReturnInfo(q: ReturnQuoteFacts, input: ReturnHistory | rea
   const signoffs = (h.signoffAts ?? []).map(time);
   const live = h.candidates.filter((c) => !(c.id && voided.has(c.id)));
   const records = live.filter((c) => c.source === "RECORD");
-  const fresh = live.filter((c) => !(c.source === "APPROVAL" && records.some((r) => r.reason === c.reason && (r.byEmail ?? "").toLowerCase() === (c.byEmail ?? "").toLowerCase())));
+  // A RECORD is written just BEFORE its S1b audit row (same kind, same previous total), so the audit row is the same event seen from a poorer source (no actor capacity, no revision): it is dropped
+  // when a RECORD of that kind precedes it. Without this the later-timestamped audit row would always win over its own record and a stale one could outlive the revision it belonged to.
+  const pairedAudit = (c: ReturnCandidate) => c.source === "AUDIT" && records.some((r) => r.kind === c.kind && time(r.at) <= time(c.at) && (r.previousCents == null || c.previousCents == null || r.previousCents === c.previousCents));
+  const fresh = live.filter((c) => !pairedAudit(c) && !(c.source === "APPROVAL" && records.some((r) => r.reason === c.reason && (r.byEmail ?? "").toLowerCase() === (c.byEmail ?? "").toLowerCase())));
   let best: ReturnCandidate | null = null;
   for (const c of fresh) {
     if (!appliesTo(q, c)) continue;

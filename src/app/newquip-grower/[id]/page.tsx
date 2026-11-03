@@ -51,6 +51,7 @@ import { currentStepId, deriveWizard, isPermitted, resolveEntryStep, toRailSteps
 import { costAckKey, deriveStage2Steps, type Stage2Input } from "@/newquip/quote/stage2-steps";
 import { commercialReadiness, confirmedAmountChange, deriveFinalReviewChecklist, deriveStage2Wizard, deriveStage3Wizard, estimatorWork, finalReviewBlockText, STAGE2_WIZARD_IDS, STAGE2_WIZARD_LABEL, type Stage2WizardId } from "@/newquip/quote/stage23-wizard";
 import { Disclosure, EstimatorResult, FinalReviewChecklist, OwnerTag, RepSubmittedSummary } from "./Stage23Panels";
+import { EstimatorReturnNotice, returnNoticeText } from "./ReturnNotice";
 import { ConfirmationPanel } from "./ConfirmationPanel";
 import { DeliveryPanel, type DeliveryGate } from "./DeliveryPanel";
 import { ApprovalChecklist, AcceptanceStatusBanner, HandoverChecklist } from "./Stage36Guidance";
@@ -158,8 +159,9 @@ export default function QuoteEditorPage() {
   // "none" = the history was read and holds no RETURN with a reason (the request was withdrawn / superseded instead, e.g. an Estimator price edit changed the total); "unavailable" = it could not be read.
   const [returnRead, setReturnRead] = useState<"pending" | "none" | "unavailable">("pending");
   const returnedLoaded = view?.quote.state === "REP_DRAFT" && (view?.quote.revision ?? 1) > 1;
-  // Prepared for the persisted return reason (stream D5): when QuoteView carries a return-info field it is shown directly and the lazy history read below is skipped. Until then this is always null.
-  const persistedReturn = (view as unknown as { returnInfo?: { by: string; at: string; reason: string } | null } | null)?.returnInfo ?? null;
+  // Server QuoteView.returnInfo (D5), a return TO THE REP: shown directly and the lazy history read below is skipped. A return to the Estimator is not the Rep's banner.
+  const serverReturn = view?.returnInfo && view.returnInfo.destination === "REP" ? view.returnInfo : null;
+  const persistedReturn = serverReturn ? { by: serverReturn.byEmail ?? "the Estimator/Manager", at: serverReturn.at, reason: serverReturn.reason } : null;
   useEffect(() => {
     if (!returnedLoaded || persistedReturn) return;
     let live = true;
@@ -587,7 +589,7 @@ export default function QuoteEditorPage() {
   };
   const next4Open = nextIncompleteStepId(stage4, step4Id);
   // Stage 3 / 5 / 6 guidance, derived from state already held here (the predicates are checkApproval, the stage-5 status and resolveScheduleChoice).
-  const approvalChecklist = deriveApprovalChecklist({ readinessState: rd.state, readinessReasons: rd.reasons, totalExVatCents: totalCents, customerConfirmedCents: q.customer_confirmed_cents, signoffHash: q.estimator_signoff_hash, currentDraftHash: q.draft_hash, dirty, isManager: roles.has("manager"), costing: costingSrv, signoffExplainedBelow: approveSignoffMissing || approveSignoffStale });
+  const approvalChecklist = deriveApprovalChecklist({ readinessState: rd.state, readinessReasons: rd.reasons, totalExVatCents: totalCents, customerConfirmedCents: q.customer_confirmed_cents, signoffHash: q.estimator_signoff_hash, currentDraftHash: q.draft_hash, dirty, isManager: roles.has("manager"), costing: costingSrv, baselineException: view.baselineException ?? null, signoffExplainedBelow: approveSignoffMissing || approveSignoffStale });
   const acceptanceBanner = deriveAcceptanceBanner(stages[4], final ? gate.status : null);
   const handoverReadiness = deriveHandoverReadiness({ approved: final, acceptanceRequired: gate.requires, accepted: gate.accepted, scheduleOk: resolveScheduleChoice(scheduleChoice).ok, isManager: roles.has("manager") });
   // A stage that is not yet available can be "Preview only" where the page genuinely shows something read-only: Stage 4's customer summary once the quote is READY.
@@ -651,6 +653,7 @@ export default function QuoteEditorPage() {
 
       <StageNav compact={stage <= 2} hideNext={stage === 2} stages={stagesView} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state, estimatorOpen: mappingOpen.length, signedOff: s2Base.signoff === "current" }} />
 
+      {view.returnInfo?.destination === "ESTIMATOR" && !view.viewer.canViewCommercials && q.state === "ESTIMATOR_REVIEW" && stage === 1 && <p role="status" className="mt-3 text-sm text-slate-800" data-testid="rep-with-estimator">{returnNoticeText(view.returnInfo, fmtCents).headline}</p>}
       {gated1 && <p role="status" aria-live="polite" className="mt-4 text-sm text-slate-700" data-testid="stage1-shell">Preparing your quotation steps…</p>}
       {stage === 1 && (
         <div hidden={gated1} inert={gated1}>
@@ -659,9 +662,14 @@ export default function QuoteEditorPage() {
               <p className="font-semibold">Returned to the Rep (revision {q.revision})</p>
               {effectInfo?.confirmationCleared && effectInfo.previousCents != null && effectInfo.newCents != null ? (
                 <p className="mt-1 font-medium" data-testid="return-amount-change">The total changed from {fmtCents(effectInfo.previousCents)} to {fmtCents(effectInfo.newCents)}; the customer&apos;s confirmation was withdrawn: reconfirm the new amount with the customer and submit again.{effectInfo.approvalSyncError ? ` The approval request could not be updated: ${effectInfo.approvalSyncError}` : ""}</p>
-              ) : (persistedReturn ?? returnInfo) ? (
+              ) : serverReturn ? (
                 <>
-                  <p className="mt-1" data-testid="return-reason">Returned by {(persistedReturn ?? returnInfo)!.by} on {formatSast((persistedReturn ?? returnInfo)!.at)}: &ldquo;{(persistedReturn ?? returnInfo)!.reason}&rdquo;</p>
+                  <p className="mt-1" data-testid={serverReturn.kind === "AMOUNT_CHANGED" ? "return-amount-change" : "return-reason"}>{returnNoticeText(serverReturn, fmtCents).detail}</p>
+                  {returnNoticeText(serverReturn, fmtCents).action && <p className="mt-1">{returnNoticeText(serverReturn, fmtCents).action}</p>}
+                </>
+              ) : returnInfo ? (
+                <>
+                  <p className="mt-1" data-testid="return-reason">Returned by {returnInfo.by} on {formatSast(returnInfo.at)}: &ldquo;{returnInfo.reason}&rdquo;</p>
                   <p className="mt-1">Fix what the Estimator described, then submit again.</p>
                 </>
               ) : returnRead === "none" && q.customer_confirmed_cents == null ? (
@@ -697,6 +705,7 @@ export default function QuoteEditorPage() {
 
       {stage === 2 && (
         <>
+          {canCommercials && q.state === "ESTIMATOR_REVIEW" && <EstimatorReturnNotice info={view.returnInfo} fmt={fmtCents} />}
           <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm" data-testid="stage2-owner">
             <span className="font-semibold text-slate-900">Stage 2 is the Estimator&apos;s review.</span>
             <span role="status" aria-live="polite" className="text-slate-800" data-testid="stage2-status-line">{wizard2.statusLine}</span>
@@ -1081,6 +1090,7 @@ export default function QuoteEditorPage() {
                   <ul className="mt-1 list-disc space-y-0.5 pl-5">{commercial.items.map((x) => <li key={x.text}><b>{x.owner}:</b> {x.text}</li>)}</ul>
                 </details>
               )}
+              {isEstimator && q.state === "ESTIMATOR_REVIEW" && <div className="mt-4" data-testid="bx-note"><BaselineExceptionNote view={view.baselineException} /></div>}
               <FinalReviewChecklist items={finalChecklist} />
               {isEstimator && q.state === "ESTIMATOR_REVIEW" && <p className="mt-3 text-xs text-slate-700" data-testid="session-only-note">&ldquo;Mark reviewed&rdquo; is kept on this screen for this session only: it is not saved, and after a reload you mark it again. Signing off needs it in the same session, so repeat it after a reload. Returning the quote to the Rep never does.</p>}
             </Panel>
@@ -1185,7 +1195,7 @@ export default function QuoteEditorPage() {
                     blockedWhy={!roles.has("manager") ? "Only a Manager can accept this exception." : !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash ? "Waiting for the Estimator's sign-off on the current quotation." : dirty ? "Save or discard your edits first." : isWorking ? "Another action is in progress. Please wait." : undefined}
                     onApprove={(request) => act(() => approveGrowerQuoteAction(id, { baselineException: request }), "Approved with a recorded exception. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL")} />}
                   <div className="flex flex-wrap items-center gap-3">
-                    <Button variant="primary" className="min-h-11" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty || approveNotReady || bxRequired} aria-describedby={[approveDescribedBy, bxRequired && `${uid}-approve-bx`].filter(Boolean).join(" ") || undefined}
+                    <Button variant={bxRequired ? "secondary" : "primary"} className="min-h-11" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty || approveNotReady || bxRequired} aria-describedby={[approveDescribedBy, bxRequired && `${uid}-approve-bx`].filter(Boolean).join(" ") || undefined}
                       onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL")}>Manager: final approval</Button>
                     {roles.has("manager") && (<>
                       <Button variant="secondary" className="min-h-11" aria-describedby={returnWhy ? "return-mgr-why" : undefined} disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "approve", (v) => v.quote.state === "REP_DRAFT")}>Return to rep (reject)</Button>
