@@ -154,7 +154,7 @@ describe("UX-006a Stage 1 step rail", () => {
     await open({ siteName: "", config: { ...goodConfig, lengthM: 0 } }, snapshotView(true), ["MANAGER"], "5");
     const issues = screen.getByTestId("stage1-review-issues");
     expect(within(issues).getByText("Site / project name is required.")).toBeTruthy();
-    expect(within(issues).getByText(/lengthM must be greater than zero/)).toBeTruthy();
+    expect(within(issues).getByText(/Length must be greater than zero/)).toBeTruthy();
     fireEvent.click(within(issues).getByRole("button", { name: /Go to step 2: Contact & site name/ }));
     expect(panel("site").hasAttribute("hidden")).toBe(false);
     for (let n = 0; n < 3; n++) fireEvent.click(screen.getByRole("button", { name: "Next" }));
@@ -180,5 +180,36 @@ describe("UX-006a Stage 1 step rail", () => {
     fireEvent.click(screen.getByRole("button", { name: /Room measurements/ }));
     await act(async () => { fireEvent.change(screen.getByLabelText(/^Length/), { target: { value: "50" } }); });
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
+  }, 30000);
+
+  it("if the customer details cannot be read, step 1 says so (Needs attention) instead of 'Reading…' forever", async () => {
+    await open();
+    cleanup();
+    asRoles("REP", "ESTIMATOR");
+    vi.spyOn(ca, "getQuoteCustomerAction").mockResolvedValue({ ok: false, error: "boom" } as never);
+    const { default: Page } = await import("../[id]/page");
+    render(createElement(Page));
+    await waitFor(() => expect(status("customer")).toBe("Needs attention"), { timeout: 5000 });
+    expect(within(screen.getByTestId("step-rail")).getByText("Could not read the Cin7 customer details")).toBeTruthy();
+    expect(within(screen.getByTestId("step-rail")).queryByText(/Reading the Cin7/)).toBeNull();
+  }, 30000);
+
+  it("a viewer who cannot edit sees no 'All changes saved' chip, and the step-2 'Choose the contact' link still navigates", async () => {
+    await open({}, customerView({ editable: false }), ["MANAGER"], "2");
+    expect(screen.getByTestId("save-state").textContent).toBe("");
+    const link = screen.getByRole("link", { name: "Choose the contact in step 1" });
+    expect(link.closest("fieldset")!.disabled).toBe(true); // inside the disabled fieldset, yet a link stays usable
+    fireEvent.click(link);
+    expect(panel("customer").hasAttribute("hidden")).toBe(false);
+  }, 30000);
+
+  it("a blank Room is Not complete with a human-readable review reason; Show all lays Room inputs and Selections in one shared grid", async () => {
+    await open({ config: { ...goodConfig, lengthM: 0 } }, snapshotView(true), ["REP"], "5");
+    expect(status("room")).toBe("Not complete");
+    expect(within(screen.getByTestId("stage1-review-issues")).getByText("Length must be greater than zero.")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Show all steps"));
+    expect(panel("room").className).toBe("contents");
+    expect(panel("equipment").className).toBe("contents");
+    expect(panel("room").querySelector("section")!.className).toContain("order-3");
   }, 30000);
 });

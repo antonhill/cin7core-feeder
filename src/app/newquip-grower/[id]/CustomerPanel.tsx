@@ -44,7 +44,8 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
 
   useEffect(() => {
     let live = true;
-    void getQuoteCustomerAction(quoteId).then((r) => { if (!live) return; if (r.ok && r.data) setV(r.data); else setErr(r.error ?? "Could not load the customer details."); });
+    const failed = (message: string) => { setErr(message); factsRef.current?.({ loaded: true, available: true, hasSnapshot: false, hasContact: false, contactName: null, loadError: true }); };
+    void getQuoteCustomerAction(quoteId).then((r) => { if (!live) return; if (r.ok && r.data) setV(r.data); else failed(r.error ?? "Could not load the customer details."); }).catch(() => { if (live) failed("Could not load the customer details."); });
     return () => { live = false; };
   }, [quoteId]);
 
