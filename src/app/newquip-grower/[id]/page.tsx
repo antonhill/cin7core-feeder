@@ -3,7 +3,7 @@
 import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState, useId } from "react";
+import { useCallback, useEffect, useRef, useState, useId } from "react";
 import { ActionFeedback, useKeyedActions } from "@/components/ui/action-feedback";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { ModuleHeader } from "@/app/ModuleHeader";
@@ -49,7 +49,7 @@ import { StepRail, StepPanel } from "@/components/ui/StepRail";
 import { useShowAllSteps } from "@/components/ui/use-show-all-steps";
 import { nextIncompleteStepId, parseStepParam } from "@/components/ui/step-rail-model";
 import { deriveStage1Steps, NO_CUSTOMER_FACTS, STAGE1_STEP_IDS, STAGE1_STEP_LABEL, type Stage1CustomerFacts, type Stage1StepId } from "@/newquip/quote/stage1-steps";
-import { deriveStage2Steps, nextCandidates, stage2StepIds, STAGE2_STEP_LABEL, type Stage2StepId } from "@/newquip/quote/stage2-steps";
+import { deriveStage2Steps, nextCandidates, type Stage2Input, stage2StepIds, STAGE2_STEP_LABEL, type Stage2StepId } from "@/newquip/quote/stage2-steps";
 import { ConfirmationPanel } from "./ConfirmationPanel";
 import { DeliveryPanel, type DeliveryGate } from "./DeliveryPanel";
 import { ApprovalChecklist, AcceptanceStatusBanner, HandoverChecklist } from "./Stage36Guidance";
@@ -121,6 +121,13 @@ export default function QuoteEditorPage() {
   // Defaults, any edit that makes the quote READY) can never move it. Only an authoritative workflow change (state, revision, project link, delivery status) clears it.
   const [landing, setLanding] = useState<StageId | null>(null);
   const gateSig = useRef<string | null>(null);
+  // The commercial status as the panels and the delivery read report it. A CHANGED signature (issued / sent / answered / verified) is a real workflow transition: the view follows
+  // the quotation to its new current stage. The first read never moves it. Stable identity: the panels list `onGate` in their effect dependencies.
+  const noteGateSig = useCallback((sig: string) => {
+    if (gateSig.current !== null && gateSig.current !== sig) { setPicked(null); setLanding(null); }
+    gateSig.current = sig;
+  }, []);
+  const applyGate = useCallback((g: DeliveryGate) => { noteGateSig(`${g.status}|${g.hasDocument}|${g.linkState}`); setGate(g); }, [noteGateSig]);
   // Stage 1 steps: navigation and guidance only (completion is derived from data, never from a visit). The customer facts are lifted from the CustomerPanel that already loads them.
   const [stepNo, setStepNo] = useState<number>(() => (parseStage(search.get("stage")) === 2 || parseStage(search.get("stage")) === 4 ? 1 : parseStepParam(search.get("step"), STAGE1_STEP_IDS.length)));
   // Stage 2 has its own step number but SHARES the "Show all steps" preference (one setting for the builder, one storage key).
@@ -145,9 +152,16 @@ export default function QuoteEditorPage() {
     onError: (d, e) => setFailedFor({ draft: d, message: e instanceof Error ? e.message : "The live recalculation failed." }),
   }));
 
-  function adopt(v: QuoteView) {
-    // A changed workflow state / revision / project link is a real transition: let the view follow the quotation to its new current stage (a draft or readiness change never does).
-    if (view && (v.quote.state !== view.quote.state || v.quote.revision !== view.quote.revision || v.quote.project_id !== view.quote.project_id)) { setPicked(null); setLanding(null); }
+  // A changed workflow state / revision / project link is a real transition: let the view follow the quotation to its new current stage. `workflow` = the result of a workflow
+  // action (act()): a withdrawn Estimator sign-off (e.g. the Manager returning it to the Estimator, same state and revision) counts too. A draft or readiness change never does,
+  // and neither does the user's own Save (workflow false).
+  function followTransition(v: QuoteView, workflow: boolean) {
+    if (!view) return;
+    const signed = (x: QuoteView["quote"]) => !!x.estimator_signoff_hash && x.estimator_signoff_hash === x.draft_hash;
+    if (v.quote.state !== view.quote.state || v.quote.revision !== view.quote.revision || v.quote.project_id !== view.quote.project_id || (workflow && signed(view.quote) && !signed(v.quote))) { setPicked(null); setLanding(null); }
+  }
+  function adopt(v: QuoteView, workflow = false) {
+    followTransition(v, workflow);
     setView(v);
     setDraft(v.quote.draft);
     setEv(v.evaluation);
@@ -168,14 +182,12 @@ export default function QuoteEditorPage() {
       if (!live) return;
       if (!r.ok) { setGateError(r.error ?? "The quotation's delivery status could not be loaded."); return; }
       setGateError(null);
-      const sig = r.data?.available ? `${r.data.status}|${r.data.latestDocumentId != null}|${r.data.links.state}` : "unavailable";
-      if (gateSig.current !== null && gateSig.current !== sig) { setPicked(null); setLanding(null); } // issued / sent / answered: a real transition
-      gateSig.current = sig;
-      if (r.data?.available) setGate({ requires: r.data.requiresAcceptance, accepted: r.data.accepted, status: r.data.status, hasDocument: r.data.latestDocumentId != null, linkState: r.data.links.state });
+      if (r.data?.available) applyGate({ requires: r.data.requiresAcceptance, accepted: r.data.accepted, status: r.data.status, hasDocument: r.data.latestDocumentId != null, linkState: r.data.links.state });
+      else noteGateSig("unavailable");
       setGateReady(true); // read (an unavailable feature before migration 0115 is a legitimate, settled answer)
     }).catch(() => { if (live) setGateError("The quotation's delivery status could not be loaded."); });
     return () => { live = false; };
-  }, [id, finalNow, gateKey, gateTry]);
+  }, [id, finalNow, gateKey, gateTry, applyGate, noteGateSig]);
 
   // Live recalculation (writes nothing): the same server engine as Save, on the unsaved draft, after a short pause in typing.
   useEffect(() => {
@@ -232,7 +244,7 @@ export default function QuoteEditorPage() {
   const onCustomerChanged = (name: string) => {
     void getGrowerQuoteAction(id).then((r) => {
       if (!r.ok || !r.data) return;
-      if (dirty) { setView(r.data); edit((d) => { d.customerName = name; }); } else adopt(r.data);
+      if (dirty) { followTransition(r.data, false); setView(r.data); edit((d) => { d.customerName = name; }); } else adopt(r.data);
     });
   };
   const edit = (fn: (d: QuoteDraft) => void) => { setDraft((p) => { const n = structuredClone(p!); fn(n); return n; }); setDirty(true); };
@@ -249,7 +261,7 @@ export default function QuoteEditorPage() {
         if (!s.ok) return { ok: false, error: s.error ?? "Could not save" } as { ok: boolean; error?: string; data?: QuoteView };
       }
       const r = await fn();
-      if (r.ok && r.data) adopt(r.data);
+      if (r.ok && r.data) adopt(r.data, true);
       return r;
     }, {
       pending: "Working… please wait",
@@ -257,7 +269,7 @@ export default function QuoteEditorPage() {
       reconcile: async () => {
         const v = await getGrowerQuoteAction(id);
         if (!v.ok || !v.data || !confirm) return "unknown";
-        if (confirm(v.data)) { adopt(v.data); return "done"; }
+        if (confirm(v.data)) { adopt(v.data, true); return "done"; }
         return "not_done";
       },
     });
@@ -321,21 +333,28 @@ export default function QuoteEditorPage() {
   const step2Id = step2Ids[step2Cur - 1];
   // The key names the exact version and costing it was given on (quote, revision, content hash, last update and the live cost and margin). It is never rendered or put in an attribute.
   const costKey = budget ? [q.id, q.revision, q.draft_hash, q.updated_at, budget.totals.estimatedCost, budget.totals.overallMarginPct].join("|") : null;
-  const costAcknowledged = costKey != null && costAck === costKey && !dirty;
-  const canAckCost = canCommercials && q.state === "ESTIMATOR_REVIEW" && (roles.has("estimator") || roles.has("manager")) && costKey != null;
-  const onCostUnmarked = canAckCost && step2Id === "cost" && !costAcknowledged;
-  const onCostMarked = canAckCost && step2Id === "cost" && costAcknowledged;
-  const stage2 = deriveStage2Steps({
+  const s2Base: Omit<Stage2Input, "costAcknowledged"> = {
     canViewCommercials: canCommercials, editable, roles: { rep: roles.has("rep"), estimator: roles.has("estimator"), manager: roles.has("manager") }, revision: q.revision, state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", calcValid: ev.calc.valid, lines: ev.calc.lines,
     readiness: { state: rd.state, reasons: rd.reasons, missingMappings: rd.counts.missingMappings },
     budget: budget ? { incomplete: budget.incomplete, estimatedCost: budget.totals.estimatedCost, marginPct: budget.totals.overallMarginPct, lines: budget.lines, charges: budget.charges } : null,
     blankExclusionCount: blankExclusionKeys.length, incompleteCostOverrideCount: Object.keys(previewCostOverrides(draft.estimator.costOverrides).errors).length,
     blankPriceReasonCount: Object.values(draft.estimator.priceResolutions).filter((r) => r && !r.reason.trim()).length,
     totalAvailable: totalCents != null, confirmedRecorded: q.customer_confirmed_cents != null,
-    costAcknowledged, dirty, signoff: !q.estimator_signoff_hash ? "none" : q.estimator_signoff_hash === q.draft_hash ? "current" : "stale",
-  });
+    dirty, signoff: !q.estimator_signoff_hash ? "none" : q.estimator_signoff_hash === q.draft_hash ? "current" : "stale",
+  };
+  // Any unsaved edit clears the acknowledgement (reverting does not restore it: safe), and so does a save or any change to the costing. The cost and margin in the key are belt-and-braces
+  // beside the revision, content hash and update time. It is offered only while the Cost step is genuinely in the "Review needed" state (not while the costing needs attention).
+  const costReviewable = deriveStage2Steps({ ...s2Base, costAcknowledged: false }).steps.find((x) => x.id === "cost")?.status === "review";
+  const canAckCost = canCommercials && q.state === "ESTIMATOR_REVIEW" && (roles.has("estimator") || roles.has("manager")) && costKey != null && costReviewable;
+  const costAcknowledged = canAckCost && costAck === costKey && !dirty;
+  const onCostUnmarked = canAckCost && step2Id === "cost" && !costAcknowledged;
+  const onCostMarked = canAckCost && step2Id === "cost" && costAcknowledged;
+  const ACK_EXPLAIN = "This records that you have looked at the costing and margin for this version. It is not the Estimator sign-off.";
+  const markReviewed = () => { setCostAck(costKey); if (!showAllSteps) goStep2("signoff"); };
+  const stage2 = deriveStage2Steps({ ...s2Base, costAcknowledged });
   const groupTone = { success: "complete", warning: "attention", danger: "attention", info: "incomplete", neutral: "neutral" } as const;
   const stage2Groups = stage2.groups.map((g) => ({ id: g.id, label: g.label, owner: g.id === "rep" ? "Rep" : "Estimator", statusText: `Workflow: ${g.statusLine}`, tone: groupTone[g.tone] }));
+  const signoffOutstandingForYou = q.state === "ESTIMATOR_REVIEW" && (roles.has("estimator") || roles.has("manager")) && stage2.steps.find((x) => x.id === "signoff")?.status !== "complete";
   const goStep2No = (n: number) => {
     const next = Math.min(Math.max(n, 1), step2Ids.length);
     setStep2No(next); // the address bar gets stage and step together, so a reload lands on the same step
@@ -431,20 +450,12 @@ export default function QuoteEditorPage() {
               <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-800"><input type="checkbox" className="size-6" checked={showAllSteps} onChange={(e) => setShowAllSteps(e.target.checked)} /> Show all steps</label>
               {next2Open
                 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep2(next2Open)}>Next incomplete step</Button>
-                : <span className="text-sm text-slate-700" data-testid="all-steps-complete">Nothing is left for you in this stage.</span>}
+                : <span className="text-sm text-slate-700" data-testid="all-steps-complete">{signoffOutstandingForYou ? "Next: sign off or return the quotation." : "Nothing is left for you in this stage."}</span>}
             </div>
           )} />
       )}
 
-      {stage === 2 && canAckCost && (showAllSteps || step2Id === "cost") && (
-        <div className="mt-4 max-w-3xl rounded-lg border border-indigo-200 bg-indigo-50 p-4" data-testid="cost-ack">
-          <p className="text-sm text-slate-800">This records that you have looked at the costing and margin for this version. It is not the Estimator sign-off.</p>
-          {costAcknowledged
-            ? <p className="mt-2 text-sm font-semibold text-slate-900" data-testid="cost-ack-done">You marked the costing reviewed for this version.</p>
-            : <Button type="button" className="mt-3 min-h-11" onClick={() => { setCostAck(costKey); if (!showAllSteps) goStep2("signoff"); }}>Mark reviewed &amp; continue</Button>}
-        </div>
-      )}
-      {stage === 2 && canAckCost && costAcknowledged && <p role="status" className="mt-3 text-sm text-slate-800" data-testid="cost-ack-status">Cost &amp; margin marked reviewed - this is not a sign-off.</p>}
+      {stage === 2 && canAckCost && <div role="status" data-testid="cost-ack-live">{costAcknowledged && <p className="mt-3 text-sm text-slate-800" data-testid="cost-ack-status">Cost &amp; margin marked reviewed - this is not a sign-off.</p>}</div>}
       {stage <= 2 && (
         <>
           <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -821,6 +832,15 @@ export default function QuoteEditorPage() {
         )}
 
 
+        {showAllSteps && canAckCost && (
+          <div className="mt-4 max-w-3xl rounded-lg border border-indigo-200 bg-indigo-50 p-4" data-testid="cost-ack">
+            <p className="text-sm text-slate-800">{ACK_EXPLAIN}</p>
+            {costAcknowledged
+              ? <p className="mt-2 text-sm font-semibold text-slate-900" data-testid="cost-ack-done">You marked the costing reviewed for this version.</p>
+              : <Button type="button" className="mt-3 min-h-11" onClick={markReviewed}>Mark reviewed &amp; continue</Button>}
+          </div>
+        )}
+
         <StepPanel railId="s2" stepId="signoff" number={step2Ids.indexOf("signoff") + 1} title={STAGE2_STEP_LABEL.signoff} current={step2Id === "signoff"} showAll={showAllSteps} className="mt-6 space-y-6">
           <Panel>
             <PanelTitle>Estimator review and handoff</PanelTitle>
@@ -856,9 +876,22 @@ export default function QuoteEditorPage() {
         </StepPanel>
 
         {!showAllSteps && (
-          <div className="mt-6 flex items-center justify-between gap-3" data-testid="step-buttons">
+          <div className="mt-6 flex flex-wrap items-end justify-between gap-3" data-testid="step-buttons">
             {step2Cur > 1 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep2No(step2Cur - 1)}>Back</Button> : <span />}
-            {step2Cur < step2Ids.length ? <Button type="button" variant={onCostUnmarked ? "secondary" : "primary"} className="min-h-11" onClick={() => goStep2No(step2Cur + 1)}>{onCostUnmarked ? "Next without marking reviewed" : onCostMarked ? "Next: Sign-off or return" : "Next"}</Button> : <span />}
+            {onCostUnmarked ? (
+              <div className="flex max-w-xl flex-col items-end gap-2" data-testid="cost-ack">
+                <p className="text-right text-sm text-slate-800">{ACK_EXPLAIN}</p>
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep2No(step2Cur + 1)}>Next without marking reviewed</Button>
+                  <Button type="button" className="min-h-11" onClick={markReviewed}>Mark reviewed &amp; continue</Button>
+                </div>
+              </div>
+            ) : step2Cur < step2Ids.length ? (
+              <div className="flex flex-col items-end gap-2">
+                {onCostMarked && <p className="text-sm font-semibold text-slate-900" data-testid="cost-ack-done">You marked the costing reviewed for this version.</p>}
+                <Button type="button" className="min-h-11" onClick={() => goStep2No(step2Cur + 1)}>{onCostMarked ? "Next: Sign-off or return" : "Next"}</Button>
+              </div>
+            ) : <span />}
           </div>
         )}
         </>
@@ -929,7 +962,7 @@ export default function QuoteEditorPage() {
                 </div>
               )} />
           )}
-          {final && q.accepted_baseline && <DeliveryPanel quoteId={id} contractCents={q.accepted_baseline.contractCents} onGate={setGate} section="quotation" steps={{ current: step4Id, showAll: showAllSteps }} />}
+          {final && q.accepted_baseline && <DeliveryPanel quoteId={id} contractCents={q.accepted_baseline.contractCents} onGate={applyGate} section="quotation" steps={{ current: step4Id, showAll: showAllSteps }} />}
           {final && q.accepted_baseline && !showAllSteps && (
             <div className="flex items-center justify-between gap-3" data-testid="step-buttons">
               {step4No > 1 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep4No(step4No - 1)}>Back</Button> : <span />}
@@ -972,7 +1005,7 @@ export default function QuoteEditorPage() {
           {!final && <Alert tone="info">Customer acceptance is recorded against the issued, Manager-approved quotation. It becomes available once the quotation has been issued.</Alert>}
           {final && !gate.requires && !acceptanceBanner && <Alert tone="info">This quotation was approved before customer acceptance was introduced, so it is grandfathered: a Project does not depend on a recorded acceptance. A response can still be recorded if the customer gives one.</Alert>}
           {final && acceptanceBanner && <AcceptanceStatusBanner banner={acceptanceBanner} />}
-          {final && q.accepted_baseline && <AcceptancePanel quoteId={id} onGate={setGate} />}
+          {final && q.accepted_baseline && <AcceptancePanel quoteId={id} onGate={applyGate} />}
         </div>
       )}
 

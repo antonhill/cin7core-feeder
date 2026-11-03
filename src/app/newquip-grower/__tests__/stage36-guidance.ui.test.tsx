@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import * as da from "../delivery-actions";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -294,6 +295,21 @@ describe("UX-006c interplay with the pinned landing stage", () => {
     expect(document.querySelector('[data-stage="3"]')!.getAttribute("aria-current")).toBe("step");
     fireEvent.click(approve);
     await waitFor(() => expect(document.querySelector('[data-stage="4"]')!.getAttribute("aria-current")).toBe("step"), { timeout: 15000 });
+  }, 60000);
+});
+
+describe("UX-006c Stage 4 wiring follows the stable gate callback", () => {
+  it("after a send is recorded (gate: SENT) the Stage 4 rail completes both steps and the view moves 4 -> 5", async () => {
+    vi.mocked(da.sendQuoteToCustomerAction).mockImplementation((async () => {
+      g.__DELIVERY = delivery({ status: "SENT_TO_CUSTOMER", latestDocumentId: "d0", sends: [{ id: "s1", status: "ACCEPTED", at: "2026-01-02T08:00:00Z", sentBy: "rep@nq", to: ["c@farm.co"], cc: [], suppressed: [], alternatives: [], alternativeReason: null, error: null, resendReason: null }] });
+      return { ok: true, data: {} };
+    }) as never);
+    await open({ stage: "4", roles: ["REP"], row: FINAL, delivery: delivery({ latestDocumentId: "d0" }), docs: docs(1), step: "2" });
+    const box = await screen.findByLabelText(/I have opened and reviewed the PDF/, {}, { timeout: 8000 });
+    expect(document.querySelector('[data-stage="4"]')!.getAttribute("aria-current")).toBe("step");
+    fireEvent.click(box);
+    fireEvent.click(screen.getByRole("button", { name: "Send quotation to customer" }));
+    await waitFor(() => expect(document.querySelector('[data-stage="5"]')!.getAttribute("aria-current")).toBe("step"), { timeout: 15000 });
   }, 60000);
 });
 

@@ -195,6 +195,10 @@ describe("Stage 2 steps and groups (UX-006b)", () => {
     expect(d({ ...sub, roles: EST }).steps.find((q) => q.id === "cost")).toMatchObject({ status: "review" });
     expect(d({ ...sub, roles: EST }).steps.find((q) => q.id === "cost")!.counted).toBeUndefined();
   });
+  it("with a current sign-off the formal sign-off governs: an acknowledgement does not rewrite the Cost note to 'You marked this reviewed'", () => {
+    const x = d({ ...sub, roles: EST, signoff: "current", costAcknowledged: true });
+    expect(x.steps.find((q) => q.id === "cost")).toMatchObject({ counted: true, statusLabel: "Reviewed", note: "Cin7 cost capture is checked in the Cost panel" });
+  });
   it("an acknowledgement never applies: with unsaved edits, outside Estimator review, to a Rep, or without cost visibility", () => {
     const acked = { ...sub, roles: EST, costAcknowledged: true };
     expect(d({ ...acked, dirty: true }).steps.find((q) => q.id === "cost")!.counted).toBeUndefined();
