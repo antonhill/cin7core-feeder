@@ -49,6 +49,8 @@ export interface CommercialBillingCounts {
   preparing: number;
   /** APPROVED and live but with no posting row. */
   approvedUnposted: number;
+  /** A cancelled / no-write claim that still has a posting that is live or unresolved (PENDING, CREATED, RECONCILED, FAILED_UNCERTAIN, unknown). */
+  cancelledWithPosting: number;
   /** APPROVED whose posting is a confirmed no-write failure: nothing in Cin7, can be retried. */
   retryable: number;
 }
@@ -60,14 +62,18 @@ const PREPARING = new Set(["DRAFT", "READY_FOR_APPROVAL"]);
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 export function commercialBillingState(input: CommercialBillingInput): CommercialBillingResult {
-  const counts: CommercialBillingCounts = { live: 0, reconciled: 0, uncertain: 0, mismatched: 0, awaitingReconciliation: 0, sending: 0, preparing: 0, approvedUnposted: 0, retryable: 0 };
+  const counts: CommercialBillingCounts = { live: 0, reconciled: 0, uncertain: 0, mismatched: 0, awaitingReconciliation: 0, sending: 0, preparing: 0, approvedUnposted: 0, cancelledWithPosting: 0, retryable: 0 };
   let liveAllReconciled = true;
 
   for (const c of input.claims) {
     const p = c.posting;
     // An APPROVED claim whose posting was a confirmed no-write failure: not live (nothing created), but it is approved value that has not been invoiced.
     if (p?.posting_state === "FAILED_CONFIRMED_NO_WRITE" && c.status === "APPROVED") { counts.retryable += 1; continue; }
-    if (NOT_LIVE.has(c.status)) continue;
+    if (NOT_LIVE.has(c.status)) {
+      // Ignored only when it has no posting (or a confirmed no-write one). A cancelled claim that still has a live or unresolved posting contradicts itself: never skipped.
+      if (p && p.posting_state !== "FAILED_CONFIRMED_NO_WRITE") { counts.cancelledWithPosting += 1; liveAllReconciled = false; }
+      continue;
+    }
     counts.live += 1;
     if (PREPARING.has(c.status) && !p) { counts.preparing += 1; liveAllReconciled = false; continue; }
     if (!p) {
@@ -100,10 +106,13 @@ export function commercialBillingState(input: CommercialBillingInput): Commercia
   if (counts.uncertain > 0) attention.push(`${plural(counts.uncertain, "posting has", "postings have")} an uncertain outcome and must be reconciled before anything else`);
   if (counts.mismatched > 0) attention.push(`${plural(counts.mismatched, "Cin7 invoice has", "Cin7 invoices have")} a recorded amount mismatch`);
   if (counts.approvedUnposted > 0) attention.push(`${plural(counts.approvedUnposted, "approved claim is", "approved claims are")} not posted to Cin7 yet`);
+  if (counts.cancelledWithPosting > 0) attention.push(`${plural(counts.cancelledWithPosting, "cancelled claim still has", "cancelled claims still have")} a Cin7 posting that is not resolved`);
   if (counts.retryable > 0) attention.push(`${plural(counts.retryable, "approved claim was", "approved claims were")} not created in Cin7 (can be retried)`);
   if (input.stages.some((s) => s.belowCommitted)) attention.push("approved progress is below what has been billed on a stage");
   if (input.scheduleBalanced === false) attention.push("stage values do not add up to the contract");
   if (input.uncertainClaimBlocking) attention.push("a claim with an uncertain outcome is blocking further claims");
+  const over = input.stages.filter((s) => s.committedCents > s.valueCents).length;
+  if (over > 0) attention.push(`${plural(over, "stage is", "stages are")} over-billed (billed more than the stage value)`);
   if (input.scope === "VARIATION" && input.approvedAmountCents !== undefined && committed > input.approvedAmountCents) attention.push("billed more than the approved variation amount");
   if (attention.length > 0) return { state: "NEEDS_ATTENTION", reasons: attention, counts };
 
@@ -157,14 +166,14 @@ export function commercialBillingFromView(view: ViewLike, scope: "BASE" | "VARIA
 
 /**
  * Derivation for a variation from what the Variations tab already has: the posting counts of its own billing project plus its committed total. The summary has
- * no claim rows, so approved-but-unposted value is detected as committed value that no posting accounts for (committed > the postings' ex-VAT total).
+ * no claim rows, so the postings' ex-VAT total is compared with the committed total (any difference needs attention; unknown is never COMPLETE).
  */
 export interface PostingCountsLike {
   reconciled: number; awaiting: number; mismatched: number; uncertain: number; inProgress: number;
   /** Postings that are a confirmed no-write failure. */
   retryable?: number;
-  /** Ex-VAT total of every posting that accounts for committed value (all but a confirmed no-write failure); undefined = not read. */
-  postingExVatCents?: number;
+  /** Ex-VAT total of every posting that accounts for committed value (all but a confirmed no-write failure). REQUIRED: null = not known, which can never be COMPLETE. */
+  postingExVatCents: number | null;
 }
 export function commercialBillingFromSummary(r: PostingCountsLike, v: { approvedAmountCents: number; committedCents: number; billingStarted: boolean }): CommercialBillingResult {
   const claims: BillingClaimFact[] = [];
@@ -175,11 +184,19 @@ export function commercialBillingFromSummary(r: PostingCountsLike, v: { approved
   add(r.uncertain, "APPROVED", { posting_state: "FAILED_UNCERTAIN" });
   add(r.inProgress, "APPROVED", { posting_state: "PENDING", stalePending: false });
   add(r.retryable ?? 0, "APPROVED", { posting_state: "FAILED_CONFIRMED_NO_WRITE" });
-  if (r.postingExVatCents !== undefined && v.committedCents > r.postingExVatCents) add(1, "APPROVED", null);
-  return commercialBillingState({
+  const res = commercialBillingState({
     scope: "VARIATION", claims, stages: [{ valueCents: v.approvedAmountCents, committedCents: v.committedCents }],
     approvedAmountCents: v.approvedAmountCents, billingStarted: v.billingStarted,
   });
+  // The summary has no claim rows, so the posted amount is checked against the billed amount instead, conservatively: any difference needs attention, and an unknown posted
+  // amount is "not verified", never COMPLETE.
+  const posted = r.postingExVatCents;
+  if (posted !== null && posted !== v.committedCents) {
+    const why = posted < v.committedCents ? "the posted amount is below the billed amount (approved value not posted to Cin7)" : "the posted amount is above the billed amount";
+    return { state: "NEEDS_ATTENTION", reasons: [why, ...(res.state === "NEEDS_ATTENTION" ? res.reasons : [])], counts: res.counts };
+  }
+  if (posted === null && res.state === "COMPLETE") return { state: "IN_PROGRESS", reasons: ["the posted amounts could not be verified against the billed amount"], counts: res.counts };
+  return res;
 }
 
 /**
