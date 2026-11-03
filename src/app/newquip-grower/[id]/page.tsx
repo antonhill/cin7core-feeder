@@ -278,7 +278,7 @@ export default function QuoteEditorPage() {
   const goStep = (id: string) => goStepNo(STAGE1_STEP_IDS.indexOf(id as Stage1StepId) + 1);
   const nextOpen = nextIncompleteStepId(stage1.steps, stepId);
   // Guided: each step is its own grid and a single panel spans the full width. Show all: the step sections are `contents`, so every panel joins the fieldset's one grid
-  // and Room inputs | Selections sit side by side again (order-* keeps the headings above their panels). A hidden step is never `contents` (hidden wins via !important).
+  // and Room inputs | Selections sit side by side again (xl:order-* puts the two headings above their panels at xl only; below xl the one-column source order keeps each heading right before its own panel). A hidden step is never `contents` (hidden wins via !important).
   const stepPanelCls = showAllSteps ? "contents" : "col-span-full grid min-w-0 items-start gap-6 xl:grid-cols-2";
   const wide = showAllSteps ? "" : "col-span-full";
 
@@ -388,15 +388,15 @@ export default function QuoteEditorPage() {
               </div>
               <p className="mt-4 text-sm text-slate-800" data-testid="step2-contact-status">
                 Quotation contact: {customerFacts.contactName ? <strong>{customerFacts.contactName}</strong> : <span className="text-amber-900">{customerFacts.loaded && customerFacts.available ? "not chosen yet" : "not read yet"}</span>}
-                {" "}{/* A link, not a button: navigation must keep working for a viewer who cannot edit (the fieldset disables buttons). */}
-                <a href="?step=1" onClick={(e) => { e.preventDefault(); goStep("customer"); }} className="inline-flex min-h-11 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Choose the contact in step 1</a>
+                {" "}{/* A link, not a button: navigation must keep working for a viewer who cannot edit (the fieldset disables buttons). A "#" href is an in-page link the unsaved guard ignores. */}
+                <a href="#s1-customer-heading" onClick={(e) => { e.preventDefault(); goStep("customer"); }} className="inline-flex min-h-11 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Choose the contact in step 1</a>
               </p>
               <p className="mt-2 text-xs text-slate-600">The site name and pricing basis are saved with Save draft.</p>
             </Panel>
           </StepPanel>
 
-          <StepPanel railId="s1" stepId="room" number={3} title={STAGE1_STEP_LABEL.room} current={stepId === "room"} showAll={showAllSteps} className={stepPanelCls} headingClassName={showAllSteps ? "order-1" : undefined}>
-            <Panel className={showAllSteps ? "order-3" : wide}>
+          <StepPanel railId="s1" stepId="room" number={3} title={STAGE1_STEP_LABEL.room} current={stepId === "room"} showAll={showAllSteps} className={stepPanelCls} headingClassName={showAllSteps ? "xl:order-1" : undefined}>
+            <Panel className={showAllSteps ? "xl:order-3" : wide}>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <PanelTitle>Room inputs — describe ONE room</PanelTitle>
                 <Button variant="secondary" size="sm" onClick={() => edit((d) => { d.config = { ...structuredClone(TOPIGS_GROWER_INPUT), feederVariant: "STANDARD", exclusions: {}, estimatorQuantities: {}, quantityOverrides: {}, quantityOverrideReasons: {} }; })}>Load Topigs sample inputs</Button>
@@ -417,8 +417,8 @@ export default function QuoteEditorPage() {
             </Panel>
           </StepPanel>
 
-          <StepPanel railId="s1" stepId="equipment" number={4} title={STAGE1_STEP_LABEL.equipment} current={stepId === "equipment"} showAll={showAllSteps} className={stepPanelCls} headingClassName={showAllSteps ? "order-2" : undefined}>
-            <Panel className={showAllSteps ? "order-4" : wide}>
+          <StepPanel railId="s1" stepId="equipment" number={4} title={STAGE1_STEP_LABEL.equipment} current={stepId === "equipment"} showAll={showAllSteps} className={stepPanelCls} headingClassName={showAllSteps ? "xl:order-2" : undefined}>
+            <Panel className={showAllSteps ? "xl:order-4" : wide}>
               <PanelTitle>Selections</PanelTitle>
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <Select label="CCM feeder variant" helperText={`One feeder, two variants. Capacity ${CCM_FEEDER_CAPACITY_PIGS} pigs per feeder.`} value={cfg.feederVariant ?? "STANDARD"} onChange={(e) => edit((d) => { d.config.feederVariant = e.target.value as "STANDARD" | "WINDOW"; delete d.estimator.confirmedMappings.feeder; })}>
@@ -434,7 +434,7 @@ export default function QuoteEditorPage() {
               </div>
             </Panel>
 
-            <Panel className={`xl:col-span-2${showAllSteps ? " order-5" : ""}`}>
+            <Panel className={`xl:col-span-2${showAllSteps ? " xl:order-5" : ""}`}>
               <PanelTitle>Ventilation — optional inside Grower</PanelTitle>
               <p className="mt-2 max-w-4xl text-sm text-amber-800">{VENTILATION_SCOPE_STATUS}. AS.03 is not yet ingested: no fan, cooling or controller rule is invented — once selected, the estimator enters the quantity after engineering review.</p>
               <ul className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
