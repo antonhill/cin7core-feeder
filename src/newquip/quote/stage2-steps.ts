@@ -195,3 +195,11 @@ export function deriveStage2Steps(i: Stage2Input): Stage2Derived {
 export function nextCandidates(d: Stage2Derived, currentId: string): Stage2Step[] {
   return d.steps.filter((s) => d.actionable.has(s.id) || s.id === currentId);
 }
+
+/**
+ * The key an acknowledgement is bound to: the exact version (quote, revision, content hash, last update) and, as belt-and-braces, the live cost and margin. Pure, so every component's
+ * effect on it is pinned by a test. It is never rendered or put in an attribute.
+ */
+export function costAckKey(p: { quoteId: string; revision: number; draftHash: string; updatedAt: string; estimatedCost: number; marginPct: number | null }): string {
+  return [p.quoteId, p.revision, p.draftHash, p.updatedAt, p.estimatedCost, p.marginPct].join("|");
+}

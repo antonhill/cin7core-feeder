@@ -306,7 +306,7 @@ describe("UX-006b Stage 2: Mark reviewed & continue (client-local cost acknowled
     expect(live.getAttribute("role")).toBe("status"); expect(live.textContent).toBe("");
     fireEvent.click(ackBtn());
     expect(document.activeElement?.textContent).toBe("Step 5 · Sign-off or return");
-    expect(screen.getByTestId("cost-ack-live").textContent).toBe("Cost & margin marked reviewed - this is not a sign-off.");
+    expect(screen.getByTestId("cost-ack-live").textContent).toBe("Cost & margin marked reviewed. This is not a sign-off.");
     fireEvent.click(rail().querySelector('[data-step="cost"]')!);
     expect(within(screen.getByTestId("step-buttons")).getByRole("button", { name: "Next: Sign-off or return" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Mark reviewed/ })).toBeNull();
@@ -329,6 +329,56 @@ describe("UX-006b Stage 2: Mark reviewed & continue (client-local cost acknowled
     await open({ roles: ["MANAGER"], commercials: true, state: "MANAGER_APPROVED_FINAL", step: "4" });
     expect(screen.queryByRole("button", { name: /Mark reviewed/ })).toBeNull(); // final
   }, 60000);
+
+  it("the Stage 2 step bar is sticky at the bottom of the viewport (opaque, bordered, safe-area aware) so the primary action is always in view; a pointer under the rail says where it is and focuses it", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
+    const bar = screen.getByTestId("step-buttons");
+    for (const c of ["sticky", "bottom-0", "bg-white", "border-t", "z-10", "pb-[max(0.75rem,env(safe-area-inset-bottom))]"]) expect(bar.className, c).toContain(c);
+    expect(screen.getByTestId("cost-ack-pointer").textContent).toContain("Review the costing below, then use Mark reviewed & continue.");
+    fireEvent.click(within(screen.getByTestId("cost-ack-pointer")).getByRole("button", { name: "Go to the button" }));
+    expect(document.activeElement).toBe(ackBtn());
+    fireEvent.click(ackBtn());
+    expect(screen.queryByTestId("cost-ack-pointer")).toBeNull();
+  }, 60000);
+
+  it("Show all steps: after marking, focus lands on the 'marked reviewed' text (the button is gone)", async () => {
+    vi.stubGlobal("localStorage", { getItem: (k: string) => (k === "nq-builder-show-all" ? "1" : null), setItem: () => undefined });
+    await open({ roles: ["ESTIMATOR"], commercials: true, ...SUBMITTED });
+    fireEvent.click(ackBtn());
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId("cost-ack-done")));
+  }, 30000);
+
+  it("the announcement is an always-mounted polite region (empty first) and is cleared when the step changes", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
+    const live = screen.getByTestId("cost-ack-live");
+    expect(live.getAttribute("aria-live")).toBe("polite"); expect(live.textContent).toBe("");
+    fireEvent.click(ackBtn());
+    expect(screen.getByTestId("cost-ack-live")).toBe(live); // the same element: it was not remounted with its text
+    expect(live.textContent).toContain("marked reviewed");
+    fireEvent.click(within(rail()).getByRole("button", { name: /Lines & mappings/ }));
+    expect(live.textContent).toBe("");
+  }, 30000);
+
+  it("a Rep and a non-commercial Estimator get NONE of it: no box, live region, pointer, 'Reviewed', or cost/margin wording", async () => {
+    for (const o of [{ roles: ["REP"] as Role[], commercials: false }, { roles: ["ESTIMATOR"] as Role[], commercials: false }]) {
+      await open({ ...o, ...SUBMITTED });
+      for (const id of ["cost-ack", "cost-ack-live", "cost-ack-pointer", "cost-ack-status", "cost-ack-done"]) expect(screen.queryByTestId(id), id).toBeNull();
+      expect(document.body.textContent).not.toMatch(/Reviewed|Mark reviewed|Cost & margin|Internal margins|margin sheet marked|cost attention/);
+      cleanup();
+    }
+  }, 90000);
+
+  it("after the Estimator's sign-off a visible, polite cue names the next role: 'Next: Manager approval (Stage 3).' - for everyone, with no cost wording; absent before sign-off", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, ...SUBMITTED });
+    expect(screen.queryByTestId("next-manager-cue")).toBeNull();
+    cleanup();
+    await open({ roles: ["ESTIMATOR"], commercials: true, state: "ESTIMATOR_REVIEW", row: { __useDraftHash: true, customer_confirmed_cents: 1000000000 } });
+    expect(screen.getByTestId("next-manager-cue").textContent).toBe("Next: Manager approval (Stage 3).");
+    expect(screen.getByTestId("next-role-live").getAttribute("role")).toBe("status");
+    cleanup();
+    await open({ roles: ["REP"], state: "ESTIMATOR_REVIEW", row: { __useDraftHash: true, customer_confirmed_cents: 1000000000 } });
+    expect(screen.getByTestId("next-manager-cue")).toBeTruthy();
+  }, 90000);
 
   it("the plain Next on Cost & margin is pure navigation: it moves on without marking anything reviewed", async () => {
     await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
@@ -485,10 +535,10 @@ describe("UX-006b Stage 2: Load Demo Defaults keeps the viewed step", () => {
       expect(ran.every((n) => /^(previewGrowerDraftAction|getQuote|getGrowerQuote|getMapping|getQuoteScope|getQuoteCost|getQuoteCustomer|getQuoteDelivery)/.test(n)), ran.join(",")).toBe(true);
     }, 30000);
   }
-  it("a ?step= this viewer does not have (a Rep given step=5) says so politely instead of jumping silently; the note is a status and goes once they navigate", async () => {
+  it("a ?step= this viewer does not have (a Rep given step=5) says so politely instead of jumping silently; the note is static text and goes once they navigate", async () => {
     await open({ roles: ["REP"], step: "5" });
     expect(screen.getByTestId("step-unavailable").textContent).toBe("That step is not available to you, so the first step is shown.");
-    expect(screen.getByTestId("step-unavailable").getAttribute("role")).toBe("status");
+    expect(screen.getByTestId("step-unavailable").closest("[role=status]")).toBeNull(); // a static note, not a live-region pretence
     expect(document.body.textContent).not.toMatch(/Internal margins|Cost & margin/); // the note names no cost data
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.queryByTestId("step-unavailable")).toBeNull();
