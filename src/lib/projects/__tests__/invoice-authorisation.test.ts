@@ -122,6 +122,27 @@ describe("labels and next step never present the snapshot as current", () => {
   });
 });
 
+describe("postings signature: panel rows and view claims agree", () => {
+  // Realistic PostingRow-shaped data: odd status case/whitespace, null timestamps, and states with leftover invoice fields. The verification is stored under the PANEL's signature
+  // and compared with the VIEW's, so any disagreement would wrongly hide a fresh verification right after a reconcile.
+  const raw = (claim_id: string, posting_state: string, over: Record<string, unknown> = {}) => ({ claim_id, posting_state, cin7_invoice_number: null, cin7_status: null, completed_at: null, reconciled_at: null, ...over });
+  const sets = [
+    [raw("a", "RECONCILED", { cin7_invoice_number: "INV-1", cin7_status: " draft ", completed_at: "2026-11-01T07:50:00Z", reconciled_at: "2026-11-01T08:00:00Z" }), raw("b", "CREATED", { cin7_invoice_number: " INV-2 ", cin7_status: "Authorised", completed_at: "2026-11-01T09:00:00Z" }), raw("c", "PENDING"), raw("d", "FAILED_UNCERTAIN", { cin7_invoice_number: "INV-9" }), raw("e", "FAILED_CONFIRMED_NO_WRITE", { cin7_invoice_number: "INV-8", cin7_status: "DRAFT" })],
+    [raw("a", "RECONCILED", { cin7_invoice_number: "INV-1", cin7_status: null, reconciled_at: "2026-11-01T08:00:00Z" })],
+    [],
+  ];
+  it.each(sets.map((s, i) => [i, s] as const))("set %i: equal signatures from the same data, whatever the order", (_i, rows) => {
+    const claims = [...rows].reverse().map((r) => ({ id: r.claim_id, cin7Status: claimCin7Status(r as never) }));
+    expect(viewPostingsSignature(claims)).toBe(postingsSignature(rows as never));
+  });
+  it("and both change together on a reconcile", () => {
+    const before = sets[0].map((r) => (r.claim_id === "b" ? { ...r, posting_state: "RECONCILED", reconciled_at: "2026-11-03T08:00:00Z" } : r));
+    const claims = before.map((r) => ({ id: r.claim_id, cin7Status: claimCin7Status(r as never) }));
+    expect(viewPostingsSignature(claims)).toBe(postingsSignature(before as never));
+    expect(postingsSignature(before as never)).not.toBe(postingsSignature(sets[0] as never));
+  });
+});
+
 describe("postings signature", () => {
   const rows = [
     { claim_id: "b", posting_state: "RECONCILED", cin7_status: "Draft", cin7_invoice_number: "INV-2", completed_at: "t1", reconciled_at: "t2" },
