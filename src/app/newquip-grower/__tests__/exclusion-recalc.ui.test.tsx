@@ -93,7 +93,8 @@ const subtotal = () => {
 };
 
 
-const box = (label: RegExp) => screen.getByLabelText(label) as HTMLInputElement;
+// UX-006i1: the quantity / reason inputs now carry real accessible names ("Quantity per room for <item>"), so the tick-boxes are selected by type.
+const box = (label: RegExp) => screen.getByLabelText(label, { selector: 'input[type="checkbox"]' }) as HTMLInputElement;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // Captured at import, before any test installs its request queue: the expected figure is computed OUTSIDE the queue under test, so it neither delays nor appears in it.
 const realPreview = actions.previewGrowerDraftAction;
