@@ -465,7 +465,7 @@ export async function decideDocument(db: Db, ctx: ApprovalCtx, docType: Approval
   const staged = await stagedAvailable(db);
   // AUTHORISE FIRST. Everything up to and including this call only READS. An unauthorised, forbidden or invalid attempt must leave the database exactly as it was:
   // no supersession, no re-opening, no new request, no event, no notification and no audit row attributed to the person who was refused.
-  await authoriseBeforeMutating(db, ctx, docType, docId, action, input, req, staged);
+  const reopen = await authoriseBeforeMutating(db, ctx, docType, docId, action, input, req, staged);
   if (!req) {
     if (staged && docType === "QUOTE") req = await resyncQuoteApprovals(db, ctx, docId, { quiet: true, actor: undefined });
     else {
@@ -475,11 +475,10 @@ export async function decideDocument(db: Db, ctx: ApprovalCtx, docType: Approval
     if (!req) fail(`This ${docType.toLowerCase()} is not waiting for a decision.`);
   }
   if (staged && input.stage && (req.stage ?? "MANAGER") !== input.stage) fail(`This quotation is waiting for ${STAGE_LABEL[req.stage ?? "MANAGER"].toLowerCase()}, not ${STAGE_LABEL[input.stage].toLowerCase()}.`);
-  if (staged && req.stage === "ESTIMATOR") {
+  if (reopen) {
     // The estimator signs off the content they are looking at: if it changed since the request was opened, the request is re-opened on the current content first.
-    // (The actor has already been authorised against the re-opened request above.)
-    const cur = await loadSnapshot(db, ctx.orgId, docType, docId, "ESTIMATOR");
-    if (cur.state === "SUBMITTABLE" && cur.digest !== req.digest) req = await submitStaged(db, ctx, docType, docId, { stage: "ESTIMATOR", quiet: true, assignTo: req.assigned_to_email });
+    // It is re-opened on EXACTLY the snapshot the actor was authorised against above (read once), so the decision authorised is the decision executed.
+    req = await submitStaged(db, ctx, docType, docId, { stage: "ESTIMATOR", quiet: true, assignTo: req.assigned_to_email, snapshot: reopen });
   }
   const { stage: _stage, ...rest } = input; void _stage;
   return decide(db, ctx, req.id, action, { ...rest, expectedVersion: req.version, expectedDigest: req.digest });
@@ -490,7 +489,7 @@ export async function decideDocument(db: Db, ctx: ApprovalCtx, docType: Approval
  * evaluated against the request that decideDocument is ABOUT to act on: the open one; the one it would open when none is open; or the one it would re-open
  * (on the current content, with the current preparer/originator) when the Estimator's view of the content has moved on. It never writes.
  */
-async function authoriseBeforeMutating(db: Db, ctx: ApprovalCtx, docType: ApprovalDocType, docId: string, action: Exclude<ApprovalAction, "WITHDRAW">, input: { reason?: string; override?: boolean; destination?: "ESTIMATOR" | "PREPARER" | null; stage?: ApprovalStage }, open: ApprovalRequestRow | null, staged: boolean): Promise<void> {
+async function authoriseBeforeMutating(db: Db, ctx: ApprovalCtx, docType: ApprovalDocType, docId: string, action: Exclude<ApprovalAction, "WITHDRAW">, input: { reason?: string; override?: boolean; destination?: "ESTIMATOR" | "PREPARER" | null; stage?: ApprovalStage }, open: ApprovalRequestRow | null, staged: boolean): Promise<DocSnapshot | null> {
   const { stage: wantedStage, ...rest } = input;
   if (!staged) {
     // Phase H: the same manager-only policy that `decide` applies, evaluated against the open request or the one a decision would first submit.
@@ -498,7 +497,7 @@ async function authoriseBeforeMutating(db: Db, ctx: ApprovalCtx, docType: Approv
     if (snap && snap.state !== "SUBMITTABLE") fail(`This ${docType.toLowerCase()} is not in a state that can be submitted for approval (${snap.stateLabel}).`);
     const verdict = authoriseDecision({ email: ctx.email, isManager: ctx.isManager }, action, open ?? { status: "PENDING", prepared_by_email: snap!.preparedBy }, rest);
     if (!verdict.ok) fail(verdict.error);
-    return;
+    return null;
   }
   const roles = await resolveRoles(db, ctx.orgId, ctx.userId, ctx.isManager);
   const policies = await loadPolicies(db, ctx.orgId);
@@ -520,28 +519,35 @@ async function authoriseBeforeMutating(db: Db, ctx: ApprovalCtx, docType: Approv
     check(open, stage);
     if (stage === "ESTIMATOR") {
       const cur = await loadSnapshot(db, ctx.orgId, docType, docId, "ESTIMATOR");
-      if (cur.state === "SUBMITTABLE" && cur.digest !== open.digest) check(prospective(cur, "ESTIMATOR", open.assigned_to_email), "ESTIMATOR");
+      if (cur.state === "SUBMITTABLE" && cur.digest !== open.digest) {
+        // Deliberately STRICTER than `decide`: `decide` only sees the re-opened request after it exists, and the re-open would already have been written. Judging the
+        // request that WOULD be re-opened (current preparer/originator) as well as the open one fails closed before any write. The open-request check above stays
+        // because it is the one that applies when the content has not moved on.
+        check(prospective(cur, "ESTIMATOR", open.assigned_to_email), "ESTIMATOR");
+        return cur;
+      }
     }
-    return;
+    return null;
   }
   if (docType === "QUOTE") {
-    const stage = await wantedQuoteStage(db, ctx.orgId, docId);
+    const stage = (await wantedQuoteStage(db, ctx.orgId, docId)).stage;
     if (!stage) fail("This quotation is not waiting for a decision.");
     mismatch(stage);
     const snap = await loadSnapshot(db, ctx.orgId, docType, docId, stage);
     if (snap.state !== "SUBMITTABLE") fail(`This quotation is not waiting for a decision (${snap.stateLabel}).`);
     check(prospective(snap, stage, null), stage);
-    return;
+    return null;
   }
   const snap = await loadSnapshot(db, ctx.orgId, docType, docId);
   if (snap.state !== "SUBMITTABLE") fail(`This ${docType.toLowerCase()} is not in a state that can be submitted for approval (${snap.stateLabel}).`);
   check(prospective(snap, "MANAGER", null), "MANAGER");
+  return null;
 }
 
 /** READ-ONLY. Which stage a quotation with nothing open should be waiting at: signed off -> MANAGER; confirmed but unsigned -> ESTIMATOR; otherwise none. */
-async function wantedQuoteStage(db: Db, orgId: string, quoteId: string): Promise<ApprovalStage | null> {
+async function wantedQuoteStage(db: Db, orgId: string, quoteId: string): Promise<{ stage: ApprovalStage | null; signed: DocSnapshot }> {
   const signed = await loadSnapshot(db, orgId, "QUOTE", quoteId, "MANAGER");
-  return signed.state === "SUBMITTABLE" ? "MANAGER" : signed.state === "UNSIGNED" ? "ESTIMATOR" : null;
+  return { stage: signed.state === "SUBMITTABLE" ? "MANAGER" : signed.state === "UNSIGNED" ? "ESTIMATOR" : null, signed };
 }
 
 /** The preparer (or a manager) takes a document out of review by editing/cancelling it elsewhere: the pending submission is withdrawn, never left dangling. */
@@ -566,11 +572,11 @@ const uniq = (xs: Array<string | null | undefined>) => [...new Set(xs.filter((x)
  * Submits one STAGE of the current revision. The assignee is the named approver of the stage's policy (or the one passed in), and must hold the stage's role;
  * with nobody named, every holder of the role is notified. Changed content supersedes a pending submission; identical content at the same stage is a no-op.
  */
-async function submitStaged(db: Db, ctx: ApprovalCtx, docType: ApprovalDocType, docId: string, opts: { assignTo?: string | null; now?: Date; actor?: { email: string; name: string }; stage?: ApprovalStage; quiet?: boolean }): Promise<ApprovalRequestRow> {
+async function submitStaged(db: Db, ctx: ApprovalCtx, docType: ApprovalDocType, docId: string, opts: { assignTo?: string | null; now?: Date; actor?: { email: string; name: string }; stage?: ApprovalStage; quiet?: boolean; /** A snapshot the caller already read and authorised against; used instead of reading again. */ snapshot?: DocSnapshot }): Promise<ApprovalRequestRow> {
   const now = opts.now ?? new Date();
   const stage = opts.stage ?? "MANAGER";
   if (stage === "ESTIMATOR" && docType !== "QUOTE") fail("Only a quotation has an estimator stage.");
-  const snap = await loadSnapshot(db, ctx.orgId, docType, docId, stage);
+  const snap = opts.snapshot ?? await loadSnapshot(db, ctx.orgId, docType, docId, stage);
   if (snap.state !== "SUBMITTABLE") fail(`This ${docType.toLowerCase()} is not in a state that can be submitted for ${stage === "ESTIMATOR" ? "estimator review" : "approval"} (${snap.stateLabel}).`);
   const settings = await loadSettings(db, ctx.orgId);
   const sp = stageOf(await loadPolicies(db, ctx.orgId), docType, stage);
@@ -681,8 +687,8 @@ async function decideStaged(db: Db, ctx: ApprovalCtx, req: ApprovalRequestRow, a
  */
 export async function resyncQuoteApprovals(db: Db, ctx: ApprovalCtx, quoteId: string, opts: { quiet?: boolean; actor?: { email: string; name: string } } = {}): Promise<ApprovalRequestRow | null> {
   if (!(await stagedAvailable(db))) return null;
-  const wanted = await wantedQuoteStage(db, ctx.orgId, quoteId);
-  const signed = wanted === "MANAGER" ? await loadSnapshot(db, ctx.orgId, "QUOTE", quoteId, "MANAGER") : null;
+  const { stage: wanted, signed: managerSnap } = await wantedQuoteStage(db, ctx.orgId, quoteId);
+  const signed = wanted === "MANAGER" ? managerSnap : null;
   const pending = await pendingRequestFor(db, ctx.orgId, "QUOTE", quoteId);
   if (!wanted) { if (pending) await withdrawPendingFor(db, ctx, "QUOTE", quoteId, "The quotation is no longer in review."); return null; }
   const snap = signed ?? await loadSnapshot(db, ctx.orgId, "QUOTE", quoteId, "ESTIMATOR");

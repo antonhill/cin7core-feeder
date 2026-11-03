@@ -10,6 +10,9 @@ import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { createWorkbookPriceSource } from "@/newquip/grower/workbook-price-source";
 import { NEWQUIP_MASTER_POC_SNAPSHOT } from "@/newquip/grower/snapshot";
 import { installStaged } from "./staged-emulator";
+import { goldenFixtureBaseline } from "@/lib/projects/baseline";
+import { seedGoldenFixture, createClaimDraft, submitClaimForApproval } from "@/lib/projects/project-store";
+import { raiseVariation } from "@/lib/projects/variation-store";
 
 vi.mock("server-only", () => ({}));
 import { decide, decideDocument, docHistory, pendingRequestFor, resyncQuoteApprovals, type ApprovalCtx } from "../approval-store";
@@ -114,6 +117,16 @@ describe("an unauthorised decision on the ESTIMATOR stage changes nothing", () =
     expect(nonEmpty(db)).toEqual(before.tables);
   });
 
+  it("the OPEN request is judged too (kills 'drop check(open)'): an Estimator who originated the content when the request opened is refused even if the re-opened content is no longer theirs", async () => {
+    const db = world();
+    quote(db).handoff_by_email = "est@a"; // the Estimator handed it off, so the request that opens names them as preparer AND originator
+    await resyncQuoteApprovals(db as never, EST, "q1");
+    quote(db).handoff_by_email = "rep@a"; estimatorEdits(db); // later the Rep owns the content and it moved on: the re-opened request alone would look innocent
+    const before = snapshot(db);
+    await expect(decideDocument(db as never, EST, "QUOTE", "q1", "APPROVE", { stage: "ESTIMATOR" })).rejects.toThrow(/prepared or originated/);
+    expect(nonEmpty(db)).toEqual(before.tables);
+  });
+
   it("an already-decided request cannot be decided again, and a refused retry changes nothing", async () => {
     const db = world();
     const est = (await resyncQuoteApprovals(db as never, REP, "q1"))!;
@@ -199,6 +212,48 @@ describe("the authorised path is unchanged", () => {
     expect(quote(db).estimator_signoff_by_email).toBe("est@a");
     expect(await pendingRequestFor(db as never, ORG, "QUOTE", "q1")).toMatchObject({ stage: "MANAGER" });
   });
+});
+
+describe("staged claims and variations with NO open request: an unauthorised decision changes nothing", () => {
+  async function stagedProjectWorld() {
+    const db = new FakeDb();
+    db.approvalsApplied = true; db.rolesApplied = true;
+    installStaged(db);
+    (db as any).auth = { admin: { getUserById: async (id: string) => ({ data: { user: { email: EMAILS[id] } } }) } }; // eslint-disable-line @typescript-eslint/no-explicit-any
+    db.rows("org_members").push({ org_id: ORG, user_id: "u-rep", role: "member" }, { org_id: ORG, user_id: "u-mgr", role: "admin" }, { org_id: ORG, user_id: "u-adm", role: "admin" });
+    const grant = (user: string, role: string) => db.rows("org_functional_roles").push({ id: `r-${user}-${role}`, org_id: ORG, user_id: user, user_email: EMAILS[user], role, assigned_by_email: "adm@a", assigned_at: "t" });
+    grant("u-rep", "REP"); grant("u-mgr", "MANAGER"); grant("u-adm", "ADMINISTRATOR");
+    db.rows("approval_settings").push({ org_id: ORG, roles_enforced: true });
+    const projectId = await seedGoldenFixture(db as never, ORG, "seed@a", goldenFixtureBaseline());
+    return { db, projectId };
+  }
+  async function docs(db: FakeDb, projectId: string, preparer: string) {
+    const d = await createClaimDraft(db as never, ORG, preparer, projectId); await submitClaimForApproval(db as never, ORG, projectId, d.claimId);
+    const v = await raiseVariation(db as never, ORG, preparer, { projectId, title: "V1", description: "extra", amountCents: 100_000_00 });
+    return { CLAIM: d.claimId, VARIATION: v.variationId };
+  }
+  for (const docType of ["CLAIM", "VARIATION"] as const) {
+    it(`${docType}: a Rep, an Administrator with no override, and another organisation are refused; nothing is written`, async () => {
+      const { db, projectId } = await stagedProjectWorld();
+      const id = (await docs(db, projectId, "rep@a"))[docType];
+      const calls = watchRpc(db);
+      const before = snapshot(db);
+      for (const actor of [REP, ADM, OTHER_ORG]) await expect(decideDocument(db as never, actor, docType, id, "APPROVE")).rejects.toThrow();
+      await expect(decideDocument(db as never, REP, docType, id, "REJECT", { reason: "no thanks" })).rejects.toThrow();
+      expect(nonEmpty(db)).toEqual(before.tables);
+      expect(db.writes.length).toBe(before.writes);
+      expect(calls.filter((c) => /submit|decide|reassign/.test(c))).toEqual([]);
+      expect(db.rows("approval_requests")).toHaveLength(0);
+    });
+    it(`${docType}: the manager who prepared it, approving without an override, is refused before anything is submitted`, async () => {
+      const { db, projectId } = await stagedProjectWorld();
+      const id = (await docs(db, projectId, "mgr@a"))[docType];
+      const before = snapshot(db);
+      await expect(decideDocument(db as never, MGR, docType, id, "APPROVE")).rejects.toThrow(/prepared or originated/);
+      expect(nonEmpty(db)).toEqual(before.tables);
+      expect(db.rows("approval_requests")).toHaveLength(0);
+    });
+  }
 });
 
 beforeEach(() => vi.useRealTimers());
