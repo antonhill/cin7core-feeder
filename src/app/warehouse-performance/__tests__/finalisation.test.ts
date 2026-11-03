@@ -111,6 +111,17 @@ describe("finalizeReviewAction refuses to finalise an incomplete review (the Nov
   });
 });
 
+describe("deployment order: finalise before migration 0121 is applied", () => {
+  it("fails closed with a clear message and reports no success", async () => {
+    vi.mocked(queries.listMetricResults).mockResolvedValue([result("m1", 8), result("m2", 6)] as never);
+    rpc.mockResolvedValue({ data: null, error: { code: "PGRST202", message: "Could not find the function public.scorecard_finalise_review" } });
+    const res = await finalizeReviewAction("rev-1");
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/0121 has not been applied/);
+    expect(update).not.toHaveBeenCalled();
+  });
+});
+
 describe("saveMetricResultAction rejects invalid score values", () => {
   it.each([Number.NaN, Number.POSITIVE_INFINITY, -0.1, 10.1])("score %s is rejected before any write", async (score) => {
     const res = await saveMetricResultAction("rev-1", "m1", { score });

@@ -250,6 +250,21 @@ export async function saveMetricResultAction(
   }
 }
 
+/**
+ * Deployment-order guard. This code calls database functions added by migration
+ * 0121. If it is ever deployed before that migration is applied, PostgREST answers
+ * PGRST202 ("could not find the function"); say so plainly instead of surfacing a
+ * raw error. Nothing has been written when this happens (the call never ran), so
+ * failing closed here is safe — the review simply cannot be finalised/reopened
+ * until the migration is applied.
+ */
+function rpcFailureMessage(error: { code?: string; message: string }): string {
+  if (error.code === "PGRST202" || /could not find the function/i.test(error.message)) {
+    return "Warehouse Performance database update 0121 has not been applied yet, so this action is unavailable. No changes were made.";
+  }
+  return error.message;
+}
+
 export interface FinalizeResultData {
   overallScore: number | null;
   /** Present when finalisation was refused: every KPI still needing a valid score. */
@@ -302,7 +317,7 @@ export async function finalizeReviewAction(reviewId: string): Promise<ActionResu
       p_overall_score: overallScore,
       p_snapshot: snapshot,
     });
-    if (error) return { ok: false, error: error.message };
+    if (error) return { ok: false, error: rpcFailureMessage(error) };
 
     return { ok: true, data: { overallScore } };
   } catch (e) {
@@ -333,7 +348,7 @@ export async function reverseFinalisationAction(reviewId: string, reason: string
     if (review.status !== "final") return { ok: false, error: "This review is not finalised, so there is nothing to undo." };
 
     const { error } = await db.rpc("scorecard_reverse_finalisation", { p_review_id: reviewId, p_org_id: orgId, p_actor: userId, p_reason: trimmed });
-    if (error) return { ok: false, error: error.message };
+    if (error) return { ok: false, error: rpcFailureMessage(error) };
     return { ok: true, data: null };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
@@ -378,7 +393,8 @@ export async function listReviewHistoryAction(): Promise<ActionResult<ReviewHist
     if (!scorecard) return { ok: false, error: "Warehouse Performance is not configured for your organization." };
     const reviews = await listReviews(db, orgId, scorecard.scorecardDefinitionId, 13);
     const ids = reviews.map((r) => r.id);
-    const [scoredCounts, events] = await Promise.all([countScoredResultsByReview(db, ids), listReviewEvents(db, ids)]);
+    // The audit trail is a nice-to-have on this screen: if migration 0121 is not applied yet (code deployed first), the History tab must still render.
+    const [scoredCounts, events] = await Promise.all([countScoredResultsByReview(db, ids), listReviewEvents(db, ids).catch(() => [] as Awaited<ReturnType<typeof listReviewEvents>>)]);
     const totalKpis = scorecard.metrics.length;
 
     let canReverse = false;

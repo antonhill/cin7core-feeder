@@ -82,6 +82,25 @@ describe("reverseFinalisationAction — reason, state and idempotence", () => {
   });
 });
 
+describe("deployment order: code deployed BEFORE migration 0121 is applied", () => {
+  it("undo fails closed with a clear message when the database function does not exist", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "PGRST202", message: "Could not find the function public.scorecard_reverse_finalisation(...) in the schema cache" } });
+    const res = await reverseFinalisationAction("rev-1", "Finalised in error");
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/0121 has not been applied/);
+  });
+
+  it("the History tab still renders (without audit detail) if the events table does not exist yet", async () => {
+    vi.mocked(queries.getEnabledOrgScorecard).mockResolvedValue({ scorecardDefinitionId: "def-1", metrics: new Array(33).fill({}) } as never);
+    vi.mocked(queries.listReviews).mockResolvedValue([{ id: "oct", review_period: "2026-10-01", status: "final", overall_score: 6.27, finalised_at: "2026-10-05T07:39:42Z" }] as never);
+    vi.mocked(queries.countScoredResultsByReview).mockResolvedValue(new Map([["oct", 32]]));
+    vi.mocked(queries.listReviewEvents).mockRejectedValue(new Error('relation "scorecard_review_events" does not exist'));
+    const res = await listReviewHistoryAction();
+    expect(res.ok).toBe(true);
+    expect(res.data!.entries[0]).toMatchObject({ reviewId: "oct", overallScore: 6.27, reopenedCount: 0 });
+  });
+});
+
 describe("listReviewHistoryAction — integrity states", () => {
   const review = (id: string, period: string, status: "draft" | "final", score: number | null) => ({ id, review_period: period, status, overall_score: score, finalised_at: status === "final" ? "2026-11-03T07:58:13Z" : null });
 
