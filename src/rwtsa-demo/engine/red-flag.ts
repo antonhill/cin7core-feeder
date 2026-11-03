@@ -1,12 +1,12 @@
 import type { RwtsaDataset } from "@/rwtsa-demo/dataset";
 import { detectAnomalies } from "./anomaly";
-import { daysBetween, lastCompleteMonth, monthOf, monthsBetweenExclusive, monthsEndingAt } from "./calendar";
+import { daysBetween, lastCompleteMonth, monthOf, monthsBetweenExclusive, monthsEndingAt, shiftDays } from "./calendar";
 import { resolveConfig, type RedFlagConfigInput } from "./config";
 import { demandForecast, WEEKS_PER_MONTH, type DemandForecast } from "./forecast";
 import { allocateUnits, classifyPoStatus, etaWeek } from "./inbound";
 import { availableOf } from "./stock";
 import { SIZE_ORDER } from "@/rwtsa-demo/contracts/tabs";
-import type { AnomalyRow, Assumption, Exclusion, InboundReport, RedFlagConfig, RedFlagResult, SizeAllocationLine, SkuResult, WindowInfo } from "./types";
+import type { AnomalyRow, Assumption, Classification, ClassificationSource, Exclusion, InboundReport, RedFlagConfig, RedFlagResult, SizeAllocationLine, SkuResult, WindowInfo } from "./types";
 import { rollUpStyles } from "./rollup";
 
 const EPS = 1e-9;
@@ -222,16 +222,26 @@ export function runRedFlag(ds: RwtsaDataset, input: RedFlagConfigInput = {}, exc
     const weekly = m === null ? null : m / WEEKS_PER_MONTH;
     const available = st ? availableOf(st) : null;
     const reported = st?.available ?? null;
-    const tender = it.isTender === true;
+    // Classification: the planner's choice wins over the workbook; a SKU with neither is UNCLASSIFIED (never assumed ordinary or tender).
+    const plannerClass = cfg.planner.classification[it.sku];
+    const cls: Classification = plannerClass ?? (it.isTender === true ? "tender" : it.isTender === false ? "ordinary" : "unclassified");
+    const clsSource: ClassificationSource = plannerClass !== undefined ? "planner" : it.isTender === null ? "none" : "workbook";
+    const tender = cls === "tender";
     const minLevel = it.minLevel;
-    const evaluable = !tender && minLevel !== null;
+    const ov = cfg.planner.minOverrides[it.sku] ?? null;
+    const weekDate = (w: number) => shiftDays(cfg.stockDate, 7 * w);
+    const ovActive = (w: number) => ov !== null && ov.effectiveFrom <= weekDate(w) && (ov.expires === null || weekDate(w) <= ov.expires);
+    const minAt = (w: number): number | null => (ovActive(w) && ov !== null ? ov.replacement : minLevel);
+    const anyMin = minLevel !== null || (ov !== null && Array.from({ length: H }, (_, i) => i + 1).some(ovActive));
+    // A tender SKU has no standing minimum, and none is invented: its projected risk is a stock-out (balance below zero).
+    const evaluable = tender ? true : anyMin;
     const inboundWeeks = weeksBy.get(it.sku) as number[];
     const inboundTotal = inboundWeeks.reduce((a, b) => a + b, 0);
 
     const limits: string[] = [];
     if (st === undefined) limits.push("No Stock row: opening Available is unknown.");
     if (f.status === "insufficient") limits.push(f.missingMonths.length > 0 ? `Demand history missing for the forecast window (${f.missingMonths.join(", ")}): no forecast.` : "No demand observations remain in the forecast window: no forecast.");
-    if (!tender && minLevel === null) limits.push("No minimum stock level: shortage is not evaluated.");
+    if (!tender && !anyMin) limits.push("No minimum stock level: shortage is not evaluated.");
 
     const balances: number[] = [];
     let firstBreachWeek: number | null = null;
@@ -242,18 +252,16 @@ export function runRedFlag(ds: RwtsaDataset, input: RedFlagConfigInput = {}, exc
       for (let w = 1; w <= H; w++) {
         bal = bal + inboundWeeks[w - 1] - weekly - (due[w] ?? 0);
         balances.push(bal);
-        if (minLevel !== null) {
-          if (firstBreachWeek === null && bal < minLevel - EPS) firstBreachWeek = w;
-          shortfall = Math.max(shortfall, minLevel - bal);
+        const floor = tender ? 0 : minAt(w);
+        if (floor !== null) {
+          if (firstBreachWeek === null && bal < floor - EPS) firstBreachWeek = w;
+          shortfall = Math.max(shortfall, floor - bal);
         }
       }
     }
-    if (tender || minLevel === null) {
-      firstBreachWeek = null;
-      shortfall = 0;
-    }
     if (shortfall < EPS) shortfall = 0;
-    const proposedOrder = tender || shortfall === 0 ? 0 : Math.ceil(shortfall - EPS);
+    // The approved minimum-shortfall proposal (whole units). A tender SKU never has a standing proposal.
+    const approvedProposal = tender ? 0 : !evaluable || balances.length === 0 ? null : shortfall === 0 ? 0 : Math.ceil(shortfall - EPS);
     const monthsOfCover = available === null || m === null || m <= 0 ? null : Math.max(0, available / m);
     // RFP DP-17: (available + inbound) / average demand. Available already nets committed stock. Only usable inbound inside the horizon counts.
     const monthsOfCoverWithInbound = available === null || m === null || m <= 0 ? null : Math.max(0, (available + inboundTotal) / m);
@@ -261,12 +269,23 @@ export function runRedFlag(ds: RwtsaDataset, input: RedFlagConfigInput = {}, exc
     const dueTotal = Object.entries(cfg.committedDue[it.sku] ?? {}).reduce((a, [w, u]) => (Number(w) >= 1 && Number(w) <= H ? a + u : a), 0);
     const netRequirement = tender ? 0 : available === null || weekly === null ? null : Math.max(0, Math.ceil(weekly * H + dueTotal - available - inboundTotal - EPS));
 
+    const proposalCalculated = tender ? 0 : cfg.replenishmentFormula === "net-requirement" ? netRequirement : approvedProposal;
+    // Only an ORDINARY SKU has a proposal. An unclassified SKU's number is held back until the planner classifies it.
+    const proposedOrder = cls === "ordinary" ? (proposalCalculated ?? 0) : 0;
+
     return {
       sku: it.sku,
       styleCode: it.styleCode,
       size: it.size,
       tenderExempt: tender,
+      classification: cls,
+      classificationSource: clsSource,
       minLevel,
+      effectiveMin: minAt(0),
+      minOverride: ov,
+      minOverrideWeeks: Array.from({ length: H }, (_, i) => i + 1).filter(ovActive).length,
+      proposalCalculated,
+      proposalFormula: cfg.replenishmentFormula,
       available,
       availableReported: reported,
       availableDifference: available !== null && reported !== null ? available - reported : null,
@@ -325,12 +344,14 @@ export function runRedFlag(ds: RwtsaDataset, input: RedFlagConfigInput = {}, exc
   const summary = {
     skuCount: skus.length,
     shortageSkus: skus.filter((s) => !s.tenderExempt && s.shortfall > 0).length,
-    firstBreachWeek: breaches.length === 0 ? null : Math.min(...breaches.map((s) => s.firstBreachWeek as number)),
-    totalShortfall: skus.reduce((a, s) => a + s.shortfall, 0),
+    firstBreachWeek: breaches.filter((s) => !s.tenderExempt).length === 0 ? null : Math.min(...breaches.filter((s) => !s.tenderExempt).map((s) => s.firstBreachWeek as number)),
+    totalShortfall: skus.filter((s) => !s.tenderExempt).reduce((a, s) => a + s.shortfall, 0),
     totalProposedOrder: skus.reduce((a, s) => a + s.proposedOrder, 0),
     anomaliesToReview: anomalies.filter((a) => a.inWindow && !a.excluded).length,
     anomaliesExcluded: anomalies.filter((a) => a.excluded).length,
     tenderExemptSkus: skus.filter((s) => s.tenderExempt).length,
+    unclassifiedSkus: skus.filter((s) => s.classification === "unclassified").length,
+    tenderStockoutSkus: skus.filter((s) => s.tenderExempt && s.shortfall > 0).length,
     skusWithoutForecast: skus.filter((s) => s.forecast.status === "insufficient").length,
     exclusionsApplied: [...excl.values()].reduce((a, m) => a + m.size, 0),
     availableMismatchSkus: skus.filter((s) => s.availableDifference !== null && Math.abs(s.availableDifference) > EPS).length,

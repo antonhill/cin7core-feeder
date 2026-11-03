@@ -1,6 +1,23 @@
 import type { AnomalyConfig } from "./anomaly";
 import type { DemandForecast } from "./forecast";
 
+export type Classification = "ordinary" | "tender" | "unclassified";
+export type ClassificationSource = "planner" | "workbook" | "none";
+export type ReplenishmentFormula = "minimum-shortfall" | "net-requirement";
+
+/** A planner's temporary minimum for one SKU. Applies in each projection week whose closing date is on or after `effectiveFrom` and, when set, on or before `expires`. */
+export interface MinOverrideInput {
+  readonly replacement: number;
+  readonly effectiveFrom: string;
+  /** null = until removed by the planner. */
+  readonly expires: string | null;
+}
+export interface PlannerInputs {
+  /** The planner's tender / ordinary classification per SKU (overrides the workbook). A SKU absent here keeps the workbook's value, or is unclassified. */
+  readonly classification: Readonly<Record<string, "ordinary" | "tender">>;
+  readonly minOverrides: Readonly<Record<string, MinOverrideInput>>;
+}
+
 export type HistoryAnchor = "last-available" | "strict";
 export type OverdueOnWater = "week-1" | "exclude";
 export type SizeCurveConfig =
@@ -30,6 +47,9 @@ export interface RedFlagConfig {
   readonly sizeCurve: SizeCurveConfig;
   /** A genuinely separate dated commitment schedule: sku -> week (1-based) -> units due. Empty by default (never derived from Committed). */
   readonly committedDue: Readonly<Record<string, Readonly<Record<number, number>>>>;
+  /** Which formula drives the calculated replenishment proposal. The approved minimum-shortfall rule is the default. */
+  readonly replenishmentFormula: ReplenishmentFormula;
+  readonly planner: PlannerInputs;
 }
 
 export const DEFAULT_RED_FLAG_CONFIG: RedFlagConfig = {
@@ -41,6 +61,8 @@ export const DEFAULT_RED_FLAG_CONFIG: RedFlagConfig = {
   anomaly: { multiple: 5, floor: 40 },
   sizeCurve: { kind: "none" },
   committedDue: {},
+  replenishmentFormula: "minimum-shortfall",
+  planner: { classification: {}, minOverrides: {} },
 };
 
 /** A planner's exclusion of one SKU's monthly observation from the demand forecast. The reason is mandatory. */
@@ -87,8 +109,20 @@ export interface SkuResult {
   readonly sku: string;
   readonly styleCode: string;
   readonly size: string;
+  /** True for a tender / customer-order-only SKU (no standing replenishment). */
   readonly tenderExempt: boolean;
+  readonly classification: Classification;
+  readonly classificationSource: ClassificationSource;
+  /** The workbook's minimum, never overwritten. */
   readonly minLevel: number | null;
+  /** The minimum in force at the stock date (the override while it is active, else the original). */
+  readonly effectiveMin: number | null;
+  readonly minOverride: MinOverrideInput | null;
+  /** Projection weeks (1..H) in which the override is in force. */
+  readonly minOverrideWeeks: number;
+  /** The proposal by the selected formula. 0 for tender; the value for an unclassified SKU is NOT a proposal until it is classified. Null when it cannot be calculated. */
+  readonly proposalCalculated: number | null;
+  readonly proposalFormula: ReplenishmentFormula;
   /** Opening Available by the brief's formula, or null when the SKU has no Stock row. */
   readonly available: number | null;
   readonly availableReported: number | null;
@@ -141,6 +175,8 @@ export interface StyleResult {
   readonly shortageSkus: number;
   readonly skusWithoutForecast: number;
   readonly tenderExemptSkus: number;
+  /** Tender SKUs whose projected balance falls below zero. Their risk is shown, but is not part of the style's standing shortfall. */
+  readonly tenderStockoutSkus: number;
   readonly anomaliesToReview: number;
   readonly anomaliesExcluded: number;
 }
@@ -193,6 +229,8 @@ export interface RedFlagSummary {
   readonly anomaliesToReview: number;
   readonly anomaliesExcluded: number;
   readonly tenderExemptSkus: number;
+  readonly unclassifiedSkus: number;
+  readonly tenderStockoutSkus: number;
   readonly skusWithoutForecast: number;
   readonly availableMismatchSkus: number;
   /** Planner exclusions in force, whether or not the detector currently flags the month. */

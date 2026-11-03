@@ -23,12 +23,12 @@ export function rulesApply(state: DemoState): boolean {
   return state.kind === "validated" && state.provenance === "LOCAL WORKBOOK" && state.dataset !== null;
 }
 
-export const tenderRule = (): UnresolvedRule => ({
+export const tenderRule = (unclassified = 0): UnresolvedRule => ({
   id: "tender-classification",
   title: "Tender SKU classification",
-  detail: "Not every SKU carries a tender marker (Items.isTender is absent or incomplete), so the tender replenishment exemption cannot be applied reliably and no unmarked SKU can be confirmed as orderable.",
-  withholds: "Proposed order quantities",
-  how: "owner",
+  detail: `${unclassified} SKU(s) are not classified as ordinary replenishment or tender / customer-order-only: the workbook has no SKU-level marker and none is assumed. The planner classifies each SKU on this page. Demand, history and projected inventory risk are calculated for every SKU regardless.`,
+  withholds: "Proposed order quantities for the unclassified SKUs only",
+  how: "choose",
 });
 
 export const overdueRule = (units: number): UnresolvedRule => ({

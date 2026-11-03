@@ -5,11 +5,13 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { OUTCOME_MESSAGES, type FormOutcome } from "@/rwtsa-demo/state/exclusion-form";
+import { PLANNER_MESSAGES, type PlannerOutcome } from "@/rwtsa-demo/state/planner-form";
 import type { ChartSeries, RedFlagModel } from "@/rwtsa-demo/state/red-flag-model";
 import { settingsQuery } from "@/rwtsa-demo/state/red-flag-settings";
 import { ProvenanceBadge, ReadinessBadge } from "./Badges";
 import { RulesBadge, RulesPanel } from "./Rules";
 import { ScenarioACorePanels } from "./ScenarioACore";
+import { ScenarioAPlanner } from "./ScenarioAPlanner";
 
 const n0 = (v: number): string => Math.round(v).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 const n1 = (v: number): string => (Math.round(v * 10) / 10).toFixed(1);
@@ -103,7 +105,7 @@ function Indicator({ label, value, testid, hint }: { label: string; value: strin
 
 const field = "rounded-md border border-slate-300 bg-white px-2 py-1 text-sm";
 
-export function RedFlagPageView({ model, outcome }: { model: RedFlagModel; outcome: FormOutcome | null }) {
+export function RedFlagPageView({ model, outcome }: { model: RedFlagModel; outcome: FormOutcome | PlannerOutcome | null }) {
   const s = model.settings;
   const r = model.result;
   const basis = BASIS_TEXT[model.basis];
@@ -136,7 +138,7 @@ export function RedFlagPageView({ model, outcome }: { model: RedFlagModel; outco
       </div>
 
       <Alert tone={model.banner.tone === "neutral" ? "info" : model.banner.tone}>{model.banner.text}</Alert>
-      {outcome && <Alert tone={OUTCOME_MESSAGES[outcome].tone}>{OUTCOME_MESSAGES[outcome].text}</Alert>}
+      {outcome && (() => { const msg = outcome in PLANNER_MESSAGES ? PLANNER_MESSAGES[outcome as PlannerOutcome] : OUTCOME_MESSAGES[outcome as FormOutcome]; return <Alert tone={msg.tone}>{msg.text}</Alert>; })()}
       {model.stateError && <Alert tone="danger">{model.stateError}</Alert>}
       {s.errors.length > 0 && (
         <Alert tone="warning">
@@ -233,6 +235,13 @@ export function RedFlagPageView({ model, outcome }: { model: RedFlagModel; outco
                 </select>
               </label>
               <label className="flex flex-col gap-1">
+                Replenishment formula for proposals
+                <select name="formula" defaultValue={s.values.formula} className={field}>
+                  <option value="minimum-shortfall">Approved: largest shortfall against the minimum</option>
+                  <option value="net-requirement">RFP DP-13: net requirement over the horizon</option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1">
                 Size curve for style-level POs
                 <select name="curve" defaultValue={s.values.curve} className={field}>
                   <option value="none">None (leave unallocated)</option>
@@ -277,18 +286,20 @@ export function RedFlagPageView({ model, outcome }: { model: RedFlagModel; outco
           {(
           <>
           <ScenarioACorePanels model={model} />
-          <div data-testid="indicators" className="grid grid-cols-2 gap-3 md:grid-cols-5">
+          <div data-testid="indicators" className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
             <Indicator label="Projected shortage SKUs" testid="ind-shortage" value={String(r.summary.shortageSkus)} hint={`of ${r.summary.skuCount} SKUs`} />
             <Indicator label="First projected breach" testid="ind-first" value={r.summary.firstBreachWeek === null ? "None" : `Week ${r.summary.firstBreachWeek}`} hint={`of ${r.config.horizonWeeks}`} />
-            <Indicator label="Total projected shortfall" testid="ind-shortfall" value={`${n0(r.summary.totalShortfall)} units`} hint={model.withheld.proposedOrders ? "proposed orders withheld" : `proposed ${n0(r.summary.totalProposedOrder)} units`} />
+            <Indicator label="Total projected shortfall" testid="ind-shortfall" value={`${n0(r.summary.totalShortfall)} units`} hint={model.withheld.proposedOrders ? "proposed orders withheld for unclassified SKUs" : `proposed ${n0(r.summary.totalProposedOrder)} units`} />
+            <Indicator label="Proposed (planner-adjusted)" testid="ind-adjusted" value={`${n0(model.adjustedProposedTotal)} units`} hint="ordinary SKUs: overrides where saved, else calculated" />
             <Indicator label="Anomalies to review" testid="ind-anomalies" value={String(r.summary.anomaliesToReview)} hint={`${r.summary.anomaliesExcluded} excluded`} />
-            <Indicator label="Tender-exempt SKUs" testid="ind-tender" value={String(r.summary.tenderExemptSkus)} hint="not auto-ordered" />
+            <Indicator label="Tender-exempt SKUs" testid="ind-tender" value={String(r.summary.tenderExemptSkus)} hint={`not auto-ordered; ${r.summary.tenderStockoutSkus} at projected stock-out risk`} />
           </div>
 
           <Panel>
             <PanelTitle>{s.view === "sku" ? "Results by SKU / size" : "Results by style"}</PanelTitle>
-            <p className="mt-1 text-xs text-slate-600">{r.labels.proposedOrder}</p>
-            {model.withheld.proposedOrders && <p data-testid="proposed-withheld" className="mt-1 text-xs text-amber-700">Proposed order quantities are withheld: a tender classification rule above is unresolved, so no SKU can be confirmed as orderable.</p>}
+            <p data-testid="shortfall-note" className="mt-1 text-xs text-slate-700">Projected inventory shortfall. This is a forecast inventory risk, not a purchase order recommendation. For a tender SKU it is the stock-out below zero (no standing minimum is assumed).</p>
+            <p className="mt-1 text-xs text-slate-600">{r.labels.proposedOrder} Proposed orders are separate from the shortfall column and use the formula chosen in the controls.</p>
+            {model.withheld.proposedOrders && <p data-testid="proposed-withheld" className="mt-1 text-xs text-amber-700">Proposed order quantities are withheld for {model.withheld.unclassifiedSkus} unclassified SKU(s): classify each as ordinary replenishment or tender-only in the planner panel. Their demand and projected shortfall are still calculated.</p>}
             <div className="mt-3 overflow-x-auto">
               <Table>
                 <THead>
@@ -300,11 +311,11 @@ export function RedFlagPageView({ model, outcome }: { model: RedFlagModel; outco
                     <TH align="right">Inbound</TH>
                     <TH align="right">Weekly forecast</TH>
                     <TH align="right">First breach</TH>
-                    <TH align="right">Shortfall</TH>
+                    <TH align="right">Projected inventory shortfall</TH>
                     <TH align="right">Cover: opening (months)</TH>
                     <TH align="right">Cover incl. inbound (months)</TH>
                     <TH>Anomaly</TH>
-                    <TH align="right">Proposed order</TH>
+                    <TH align="right">Proposed order (calculated)</TH>
                   </TR>
                 </THead>
                 <TBody>
@@ -357,8 +368,9 @@ export function RedFlagPageView({ model, outcome }: { model: RedFlagModel; outco
                         <span data-anomaly={row.anomalyKind}>{row.anomaly}</span>
                       </TD>
                       <TD align="right" numeric>
-                        <span data-testid="proposed-cell" data-state={model.withheld.proposedOrders ? "withheld" : "value"} />
-                        {model.withheld.proposedOrders ? "Withheld" : row.tenderExempt ? "0 (tender)" : row.proposedOrder > 0 ? n0(row.proposedOrder) : dash}
+                        <span data-testid="proposed-cell" data-state={row.proposalWithheld ? "withheld" : "value"} />
+                        {row.proposalWithheld ? "Withheld" : row.tenderExempt ? "0 (tender)" : row.proposedOrder > 0 ? n0(row.proposedOrder) : dash}
+                        {!row.proposalWithheld && row.planner?.override && <div className="text-xs text-amber-800" data-testid="adjusted-cell" data-value={row.planner.override.quantity}>planner-adjusted {n0(row.planner.override.quantity)}</div>}
                       </TD>
                     </TR>
                   ))}
@@ -366,6 +378,8 @@ export function RedFlagPageView({ model, outcome }: { model: RedFlagModel; outco
               </Table>
             </div>
           </Panel>
+
+          <ScenarioAPlanner model={model} returnTo={returnTo} />
 
           <Panel>
             <span id="projection" />

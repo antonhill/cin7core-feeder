@@ -45,7 +45,7 @@ export function makeDataset(opts: { months?: string[]; skus: SkuSpec[]; pos?: Po
     const size = s.size ?? "M";
     items.push({
       sku: s.sku, styleCode: style, description: null, productionCode: null, fabric: null, colour: null, size, source: "Import", unit: null,
-      minLevel: s.minLevel === undefined ? 10 : s.minLevel, reorderPoint: null, standardCost: 1, standardSellPrice: null, isTender: s.tender ?? false,
+      minLevel: s.minLevel === undefined ? 10 : s.minLevel, reorderPoint: null, standardCost: 1, standardSellPrice: null, isTender: s.tender === undefined ? false : s.tender,
     });
     const jhb = s.jhb ?? 0, durban = s.durban ?? 0, capeTown = s.capeTown ?? 0, factoryStore = s.factory ?? 0, committed = s.committed ?? 0;
     const computed = jhb + durban + capeTown + factoryStore - committed;
