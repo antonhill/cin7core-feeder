@@ -15,6 +15,6 @@ export function deriveAcceptanceBanner(stage5: StageView, commercial: string | n
     case "AWAITING_ACTION": return commercial === "ACCEPTANCE_PENDING_VERIFICATION"
       ? { headline: "Pending verification", tone: "warning", body: stage5.summary, next: stage5.next }
       : { headline: "Awaiting customer response", tone: "info", body: stage5.summary, next: stage5.next };
-    default: return { headline: "Awaiting the quotation to be sent", tone: "info", body: stage5.summary, next: null };
+    default: return { headline: "Awaiting the quotation to be sent", tone: "info", body: stage5.summary, next: "Issue and send the quotation in Stage 4." };
   }
 }

@@ -34,11 +34,12 @@ function Checklist({ testId, label, intro, items }: { testId: string; label: str
 
 export function ApprovalChecklist({ items, onGoStage }: { items: ApprovalCheckItem[]; onGoStage: (n: 1 | 2) => void }) {
   return <Checklist testId="approval-checklist" label="Before you decide" intro="What final approval needs. These are the same checks the server makes; the buttons below keep their own gates."
-    items={items.map((x) => ({ ...x, fix: x.fixStage && !x.met ? <> <button type="button" className="inline-flex min-h-11 items-center underline" onClick={() => onGoStage(x.fixStage!)}>{x.fixStage === 1 ? "Open Stage 1" : "Open Stage 2"}</button></> : null }))} />;
+    items={items.map((x) => ({ ...x, fix: x.fixStage && !x.met ? <> <button type="button" className="-my-3 inline-flex min-h-11 items-center underline" onClick={() => onGoStage(x.fixStage!)}>{x.fixStage === 1 ? "Open Stage 1" : "Open Stage 2"}</button></> : null }))} />;
 }
 
-export function HandoverChecklist({ items }: { items: HandoverItem[] }) {
-  return <Checklist testId="handover-checklist" label="Before the Project is created" intro="What creating the Project needs. The button below keeps its own gates and reasons." items={items} />;
+export function HandoverChecklist({ items, onGoStage }: { items: HandoverItem[]; onGoStage: (n: 3 | 5) => void }) {
+  return <Checklist testId="handover-checklist" label="Before the Project is created" intro="What creating the Project needs. The button below keeps its own gates and reasons."
+    items={items.map((x) => ({ ...x, fix: x.fixStage && !x.met ? <> <button type="button" className="-my-3 inline-flex min-h-11 items-center underline" onClick={() => onGoStage(x.fixStage!)}>{x.fixStage === 5 ? "Open Customer Acceptance (Stage 5)" : "Open Manager Approval (Stage 3)"}</button></> : null }))} />;
 }
 
 export function AcceptanceStatusBanner({ banner }: { banner: AcceptanceBanner }) {

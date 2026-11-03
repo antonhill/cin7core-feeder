@@ -10,13 +10,13 @@ import { navStatusLabel } from "../stage-nav-model";
 import { computeStages, type StageInput } from "../stages";
 import { nextIncompleteStepId } from "@/components/ui/step-rail-model";
 
-const ok: ApprovalChecklistInput = { readinessState: "READY", readinessReasons: [], totalExVatCents: 1_000_000, customerConfirmedCents: 1_000_000, signoffHash: "h1", currentDraftHash: "h1", dirty: false };
+const ok: ApprovalChecklistInput = { readinessState: "READY", readinessReasons: [], totalExVatCents: 1_000_000, customerConfirmedCents: 1_000_000, signoffHash: "h1", currentDraftHash: "h1", dirty: false, isManager: true };
 const met = (i: Partial<ApprovalChecklistInput>) => Object.fromEntries(deriveApprovalChecklist({ ...ok, ...i }).map((x) => [x.id, x.met]));
 
 describe("UX-006c Stage 3 checklist (derived from checkApproval)", () => {
   it("everything met when checkApproval passes", () => {
     const items = deriveApprovalChecklist(ok);
-    expect(items.map((x) => x.id)).toEqual(["ready", "total", "confirmed", "signoff", "amount"]);
+    expect(items.map((x) => x.id)).toEqual(["ready", "total", "confirmed", "signoff", "amount", "manager"]);
     expect(approvalChecklistMet(items)).toBe(true);
     expect(checkApproval({ readiness: { state: "READY", reasons: [] } as never, totalExVatCents: 1_000_000, customerConfirmedCents: 1_000_000, signoffHash: "h1", currentDraftHash: "h1" }).ok).toBe(true);
   });
@@ -33,6 +33,22 @@ describe("UX-006c Stage 3 checklist (derived from checkApproval)", () => {
     expect(byId({ signoffHash: null }).signoff).toBe("The estimator has not signed off this quote.");
     expect(byId({ signoffHash: "old" }).signoff).toMatch(/changed after the estimator signed off/);
     expect(byId({ customerConfirmedCents: 900_000 }).amount).toMatch(/total changed since the customer confirmed/);
+  });
+  it("a viewer without the Manager role gets an unmet Manager row (the Approve gate needs it), with no figures", () => {
+    const items = deriveApprovalChecklist({ ...ok, isManager: false });
+    expect(items.find((x) => x.id === "manager")).toMatchObject({ met: false, detail: "Only a Manager can make the final decision." });
+    expect(approvalChecklistMet(items)).toBe(false);
+    expect(met({ isManager: false })).toMatchObject({ ready: true, total: true, confirmed: true, signoff: true, amount: true, manager: false });
+  });
+  it("when the page already explains the sign-off right below, the row points to it instead of repeating it (only while unmet)", () => {
+    const d = (i: Partial<ApprovalChecklistInput>) => deriveApprovalChecklist({ ...ok, signoffExplainedBelow: true, ...i }).find((x) => x.id === "signoff")!;
+    expect(d({ signoffHash: null }).detail).toBe("Explained in the note below.");
+    expect(d({}).detail).toBeNull();
+  });
+  it("the page's total is rounded exactly as the server rounds the saved total (same expression in both)", () => {
+    const expr = "Math.round(budget.totals.subtotalExTax * 100)";
+    expect(readFileSync(join(__dirname, "../../../app/newquip-grower/[id]/page.tsx"), "utf8")).toContain(`budget && !budget.incomplete ? ${expr} : null`);
+    expect(readFileSync(join(__dirname, "../../../lib/newquip-quotes/quote-store.ts"), "utf8")).toContain(`ev.budget && !ev.budget.incomplete ? ${expr.replace("budget.", "ev.budget.")} : null`);
   });
   it("unsaved edits add a sixth, unmet row (approval applies to the saved quotation)", () => {
     const items = deriveApprovalChecklist({ ...ok, dirty: true });
@@ -54,7 +70,7 @@ describe("UX-006c Stage 4 steps (from the issued-document and sent records only)
   });
   it("unknown (null) commercial status never marks send complete", () => expect(st(true, null)).toEqual(["complete", "incomplete"]));
   it("Next incomplete step skips an unavailable step", () => expect(nextIncompleteStepId(deriveStage4Steps({ hasDocument: false, commercial: null }), "issue")).toBeNull());
-  it("states that only a Rep can send, on the step itself", () => expect(deriveStage4Steps({ hasDocument: true, commercial: null })[1].note).toMatch(/Only a Rep/));
+  it("states that only a Rep can send, on the step itself", () => expect(deriveStage4Steps({ hasDocument: true, commercial: null })[1].note).toMatch(/Sent by a Rep/));
 });
 
 const base: StageInput = { state: "MANAGER_APPROVED_FINAL", revision: 1, ready: true, customerSelected: true, confirmed: true, signedOff: true, commercial: "SENT_TO_CUSTOMER", hasDocument: true, requiresAcceptance: true, projectLinked: false };
@@ -70,6 +86,9 @@ describe("UX-006c Stage 5 banner (restates the existing stage-5 status)", () => 
     expect(banner({ commercial: "ACCEPTANCE_REJECTED" })?.headline).toBe("Returned: acceptance rejected");
     expect(banner({ requiresAcceptance: false })).toMatchObject({ headline: "Not required (grandfathered)" });
   });
+  it("before the quotation is sent the banner names the single next action", () => {
+    expect(banner({ commercial: "APPROVED_INTERNALLY", hasDocument: false })).toMatchObject({ headline: "Awaiting the quotation to be sent", next: "Issue and send the quotation in Stage 4." });
+  });
   it("the next action text is the existing stage's own; nothing for loading or an unavailable stage", () => {
     const s = computeStages({ ...base, commercial: "CUSTOMER_DECLINED" })[4];
     expect(deriveAcceptanceBanner(s, "CUSTOMER_DECLINED")?.next).toBe(s.next);
@@ -83,6 +102,7 @@ describe("UX-006c Stage 6 readiness", () => {
   it("all met for an accepted quote and a Manager", () => expect(Object.values(r({}))).toEqual([true, true, true, true]));
   it("acceptance, role and (when acceptance is not required) schedule each go unmet on their own", () => {
     expect(r({ accepted: false })).toMatchObject({ acceptance: false, manager: true });
+    expect(deriveHandoverReadiness({ approved: true, acceptanceRequired: true, accepted: false, scheduleOk: true, isManager: true }).find((x) => x.id === "acceptance")!.fixStage).toBe(5);
     expect(r({ isManager: false })).toMatchObject({ manager: false, acceptance: true });
     expect(r({ acceptanceRequired: false, scheduleOk: false })).toMatchObject({ schedule: false, acceptance: true });
     expect(r({ acceptanceRequired: true, scheduleOk: false }).schedule).toBe(true); // the printed schedule is used
