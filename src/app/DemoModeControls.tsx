@@ -14,7 +14,8 @@ export function DemoModeControls({ state }: { state: DemoBarState }) {
     setBusy(true); setError(null);
     const r = await fn();
     if (!r.ok) { setBusy(false); setError(r.error ?? "Could not switch."); return; }
-    window.location.reload();
+    // Land on the prepared quotation: the page itself opens at the first step this role may act on.
+    if (state.quotePath) window.location.assign(state.quotePath); else window.location.reload();
   };
   const active = state.active;
   return (
@@ -26,12 +27,12 @@ export function DemoModeControls({ state }: { state: DemoBarState }) {
       </span>
       <span className="flex items-center gap-2">
         {state.selectable && (
-          <label className="flex items-center gap-1 text-xs font-medium">
-            Act as
-            <select aria-label="Demo identity" disabled={busy} value={active?.slot ?? "owner"} onChange={(e) => go(() => selectDemoIdentityAction(e.target.value))} className="rounded bg-white px-2 py-0.5 text-slate-900">
-              {OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-            </select>
-          </label>
+          <span role="group" aria-label="Demo identity" className="flex items-center gap-1">
+            {OPTIONS.map(([v, l]) => {
+              const on = (active?.slot ?? "owner") === v;
+              return <button key={v} type="button" aria-pressed={on} disabled={busy} onClick={() => go(() => selectDemoIdentityAction(v))} className={`rounded-full px-3 py-0.5 text-xs font-semibold ${on ? "bg-white text-slate-900" : "border border-white/70 hover:bg-white/10"}`}>{l}</button>;
+            })}
+          </span>
         )}
         {active && <button type="button" disabled={busy} onClick={() => go(exitDemoModeAction)} className="rounded-full border border-white/70 px-3 py-0.5 text-xs font-semibold hover:bg-white/10">Exit Demo Mode</button>}
         {error && <span className="text-xs text-yellow-200">{error}</span>}

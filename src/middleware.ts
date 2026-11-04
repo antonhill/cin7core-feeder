@@ -5,6 +5,7 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { writeAllowedFor } from "@/lib/billing-status";
 import type { SubscriptionStatus } from "@/lib/billing";
 import { ACTIVE_ORG_COOKIE, resolveActiveOrgId } from "@/lib/active-org-resolution";
+import { presenterGate } from "@/lib/demo-mode/presenter";
 
 // Must match src/lib/org-switch.ts's IMPERSONATED_ORG_COOKIE — duplicated
 // rather than imported, since that module calls next/headers' cookies() and
@@ -82,7 +83,10 @@ export async function middleware(request: NextRequest) {
     userId = null;
   }
 
-  const isPublic = PUBLIC_PATHS.some((p) => request.nextUrl.pathname.startsWith(p));
+  const isPublic =
+    PUBLIC_PATHS.some((p) => request.nextUrl.pathname.startsWith(p)) ||
+    // UAT-only presenter sign-in: public ONLY while its own gate is open (Preview + switch + dedicated UAT database); closed everywhere else.
+    (request.nextUrl.pathname === "/presenter" && presenterGate(process.env as Record<string, string | undefined>).allowed);
   // The root path is public too, but can't just join PUBLIC_PATHS — that
   // array is prefix-matched (startsWith), and "/" prefixes every path, which
   // would make the whole app public. An exact-match check keeps this narrow:
