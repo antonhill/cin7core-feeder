@@ -311,7 +311,8 @@ export default function QuoteEditorPage() {
   const marginLabel = marginIncomplete ? "Indicative margin (price-list basis)" : "Margin (costed scope)";
   // The SERVER's costing verdict (QuoteView.costing; cost-entitled callers only). Falls back to the margin sheet's count when the server did not send it.
   const costingSrv = view.costing ?? null;
-  const costingIncomplete = costingSrv ? !costingSrv.complete : (marginInfo?.missing ?? 0) > 0;
+  const poc = view.poc === true; // POC Presentation Mode quotation: no cost / mapping diagnostics or exception forms (the server records the POC exceptions itself)
+  const costingIncomplete = poc ? false : costingSrv ? !costingSrv.complete : (marginInfo?.missing ?? 0) > 0;
   const costingReason = costingSrv?.reason ?? null;
   const marginNote = marginIncomplete ? (marginInfo!.missing > 0 ? `project margin not available: ${marginInfo!.missing} line${marginInfo!.missing === 1 ? " has" : "s have"} no cost` : marginInfo!.exempt.length > 0 ? `margin is indicative: ${marginInfo!.exempt.length} line${marginInfo!.exempt.length === 1 ? " is" : "s are"} Estimator-priced (no supplier cost by design)` : "margin is indicative (price-list basis)") : null;
   // "Manager: final approval" is described by whichever of the existing messages currently applies (each is already on the page, so nothing is duplicated). Role/process wording only.
@@ -1069,9 +1070,9 @@ export default function QuoteEditorPage() {
           {canCommercials && (
             <StepPanel railId="s2" stepId="costs" number={visible2.indexOf("costs") + 1} title={STAGE2_WIZARD_LABEL.costs} current={step2Id === "costs"} showAll={showAllSteps} locked={lockedFor2("costs")} className="space-y-6">
               {editWarning && <Alert tone="warning"><span data-testid="edit-clears-signoff-costs">{editWarning}</span></Alert>}
-              <Disclosure testId="disc-cost-capture" title="Cin7 cost capture and FX rates" summary={costingIncomplete ? (marginInfo && marginInfo.missing > 0 ? `Costs are incomplete for ${marginInfo.missing} line${marginInfo.missing === 1 ? "" : "s"}: capture or enter them here` : `Costing is incomplete: ${costingReason ?? "supplier costs are unresolved"}`) : "Latest supplier prices from Cin7, exchange rates and exceptions"} attention={costingIncomplete}>
+              {!poc && (<Disclosure testId="disc-cost-capture" title="Cin7 cost capture and FX rates" summary={costingIncomplete ? (marginInfo && marginInfo.missing > 0 ? `Costs are incomplete for ${marginInfo.missing} line${marginInfo.missing === 1 ? "" : "s"}: capture or enter them here` : `Costing is incomplete: ${costingReason ?? "supplier costs are unresolved"}`) : "Latest supplier prices from Cin7, exchange rates and exceptions"} attention={costingIncomplete}>
                 {final ? <CostPanel quoteId={id} /> : <CostPanel quoteId={id} unsaved={dirty} previewDraft={dirty ? previewedFor : null} />}
-              </Disclosure>
+              </Disclosure>)}
               {marginInfo && marginInfo.exempt.length > 0 && <p className="text-sm text-slate-800" data-testid="est-priced-note">Estimator-priced (no supplier cost by design): {marginInfo.exempt.join("; ")}. They keep the margin indicative; they are not missing costs.</p>}
               {totalsPanel}
               {/* The detail sits in labelled disclosures (closed unless something needs attention); they stay mounted, so nothing is requested differently. */}
@@ -1112,7 +1113,7 @@ export default function QuoteEditorPage() {
                   <ul className="mt-1 list-disc space-y-0.5 pl-5">{commercial.items.map((x) => <li key={x.text}><b>{x.owner}:</b> {x.text}</li>)}</ul>
                 </details>
               )}
-              {isEstimator && q.state === "ESTIMATOR_REVIEW" && <div className="mt-4" data-testid="bx-note"><BaselineExceptionNote view={view.baselineException} /><UnmappedTypedPriceNote view={view.baselineException} /></div>}
+              {isEstimator && !poc && q.state === "ESTIMATOR_REVIEW" && <div className="mt-4" data-testid="bx-note"><BaselineExceptionNote view={view.baselineException} /><UnmappedTypedPriceNote view={view.baselineException} /></div>}
               {costingSrv?.acceptedIncomplete && <p className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" data-testid="costing-accepted-incomplete">{costingAcceptedIncompleteText(costingSrv.acceptedIncomplete)}</p>}
               <FinalReviewChecklist items={finalChecklist} />
               {isEstimator && q.state === "ESTIMATOR_REVIEW" && <p className="mt-3 text-xs text-slate-700" data-testid="session-only-note">&ldquo;Mark reviewed&rdquo; is kept on this screen for this session only: it is not saved, and after a reload you mark it again. Signing off needs it in the same session, so repeat it after a reload. Returning the quote to the Rep never does.</p>}
@@ -1215,7 +1216,7 @@ export default function QuoteEditorPage() {
               {q.state === "ESTIMATOR_REVIEW" && (
                 <>
                   {roles.has("manager") && <div className="max-w-xl"><TextField label="Return to rep — reason" value={returnReason} onChange={setReturnReason} hint="Required only when you return the quotation instead of approving it. Say what must be corrected; it is recorded in the Approval history." /></div>}
-                  {view.baselineException && <BaselineExceptionBlock view={view.baselineException} revision={q.revision} draftHash={q.draft_hash} pending={acts.isPending("approve")}
+                  {view.baselineException && !poc && <BaselineExceptionBlock view={view.baselineException} revision={q.revision} draftHash={q.draft_hash} pending={acts.isPending("approve")}
                     canDecide={!isWorking && roles.has("manager") && !!q.estimator_signoff_hash && q.estimator_signoff_hash === q.draft_hash && !dirty}
                     blockedWhy={!roles.has("manager") ? "Only a Manager can accept this exception." : !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash ? "Waiting for the Estimator's sign-off on the current quotation." : dirty ? "Save or discard your edits first." : isWorking ? "Another action is in progress. Please wait." : undefined}
                     onApprove={(request) => act(() => approveGrowerQuoteAction(id, { baselineException: request }), "Approved with a recorded exception. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL")} />}
