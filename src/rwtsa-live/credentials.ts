@@ -4,7 +4,10 @@ import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { ROLES, RwtsaLiveError, type LocationMap, type Role, type RwtsaCredentials } from "./types";
 
 const fail = (m: string): never => { throw new RwtsaLiveError("CREDENTIALS", m); };
-const KEYS = ["RWTSA_CIN7_ACCOUNT_ID", "RWTSA_CIN7_APPLICATION_KEY", "RWTSA_CIN7_INSTANCE_LABEL"] as const;
+const K_ACCOUNT = "RWTSA_CIN7_ACCOUNT_ID";
+const K_APP = "RWTSA_CIN7_APPLICATION_KEY";
+const K_LABEL = "RWTSA_CIN7_INSTANCE_LABEL";
+const KEYS = [K_ACCOUNT, K_APP, K_LABEL] as const;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function expectedDir(home: string): string { return path.join(home, "rwtsa-local", "credentials"); }
