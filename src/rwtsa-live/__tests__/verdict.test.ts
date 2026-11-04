@@ -26,6 +26,10 @@ describe("API contract verdict", () => {
     const m = good(); m.endpoints[1].records = 1400; expect(fail(m)).toContain("pagination");
     const n = good(); n.endpoints[1].reportedTotal = null; expect(fail(n)).toContain("pagination");
   });
+  it("FAILS when the products endpoint returned nothing or is incomplete", () => {
+    const e = good(); e.endpoints[2].records = 0; e.endpoints[2].reportedTotal = 0; expect(fail(e)).toContain("products endpoint");
+    const m = good(); m.endpoints = m.endpoints.filter((x) => x.path !== "/product"); expect(fail(m)).toContain("products endpoint");
+  });
   it("FAILS when the snapshot is INCOMPLETE", () => { const s = good(); s.completeness.status = "INCOMPLETE"; expect(fail(s)).toContain("completeness"); });
   it("the Bond classification check requires Bond stock to be excluded from usable stock", () => {
     const s = good(); s.stock = [{ sku: "A", byRole: {}, physical: 10, bond: 4, unrestricted: 6, allocatedUnrestricted: 1, usable: 5, unmapped: 0, reportedAvailable: 0, onOrder: 0, inTransit: 0 }]; expect(contractVerdict(s).overall).toBe("PASS");

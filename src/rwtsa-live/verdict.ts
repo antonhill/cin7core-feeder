@@ -6,7 +6,7 @@ const QTY = ["OnHand", "Allocated", "Available", "OnOrder", "InTransit"] as cons
 /** The first-live-run contract verdict. Counts and field TYPES only - no stock values, names or identifiers. */
 export function contractVerdict(s: Snapshot): { overall: "PASS" | "FAIL"; checks: Check[] } {
   const ep = (p: string) => s.endpoints.find((e) => e.path === p);
-  const loc = ep("/ref/location"), av = ep("/ref/productavailability");
+  const loc = ep("/ref/location"), av = ep("/ref/productavailability"), prod = ep("/product");
   const types = s.verification.fieldTypes;
   const qtyBad = QTY.filter((f) => types[f] !== "number");
   const badPaging = s.endpoints.filter((e) => !e.complete || e.reportedTotal === null || e.records !== e.reportedTotal);
@@ -15,6 +15,7 @@ export function contractVerdict(s: Snapshot): { overall: "PASS" | "FAIL"; checks
     { name: "account identity", pass: s.source.identity.status === "VERIFIED", detail: s.source.identity.status },
     { name: "locations endpoint", pass: !!loc && loc.complete && loc.records > 0, detail: loc ? `${loc.records} locations in ${loc.pages} page(s)` : "not read" },
     { name: "Bond location ID", pass: s.locationMapping.bond.verifiedInLocationList, detail: s.locationMapping.bond.verifiedInLocationList ? "configured ID is present in the account's location list" : "configured ID NOT found in the account's location list" },
+    { name: "products endpoint", pass: !!prod && prod.complete && prod.records > 0, detail: prod ? `${prod.records} products in ${prod.pages} page(s)` : "not read" },
     { name: "availability structure", pass: !!av && av.records > 0 && types.SKU === "string" && (types.Location === "string" || types.LocationID === "string" || types.LocationId === "string"), detail: av ? `${av.records} rows; SKU ${types.SKU ?? "absent"}, Location ${types.Location ?? types.LocationID ?? types.LocationId ?? "absent"}` : "not read" },
     { name: "stock quantity fields", pass: qtyBad.length === 0, detail: qtyBad.length ? `missing or not numeric: ${qtyBad.join(", ")}` : `${QTY.join(", ")} are all numeric` },
     { name: "pagination", pass: badPaging.length === 0 && s.endpoints.length > 0, detail: s.endpoints.map((e) => `${e.path}: ${e.pages} page(s), ${e.records}/${e.reportedTotal ?? "no total"}`).join("; ") },

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmodSync, closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, renameSync, unlinkSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, realpathSync, renameSync, unlinkSync, writeSync } from "node:fs";
 import path from "node:path";
 import { loadIdentityApproval } from "./identity";
 import { loadLocationMap } from "./credentials";
@@ -15,7 +15,11 @@ function assertNotInGit(dir: string): void {
 function ensureDir(home: string): string {
   const dir = credentialsDir(home);
   assertNotInGit(dir);
+  const base = path.join(home, "rwtsa-local");
+  if (existsSync(base) && lstatSync(base).isSymbolicLink()) fail("~/rwtsa-local is a symlink; refusing to create credentials through it.");
   mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (realpathSync(dir) !== path.join(realpathSync(home), "rwtsa-local", "credentials")) fail("The credentials directory resolves outside ~/rwtsa-local/credentials.");
+  assertNotInGit(realpathSync(dir));
   chmodSync(dir, 0o700);
   return dir;
 }

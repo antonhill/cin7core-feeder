@@ -6,7 +6,7 @@
 // - Creates ~/rwtsa-local/credentials (700) with cin7.env, identity.json, locations.json (600); derives the account-identity hash itself.
 // - Every network step asks first. GET only, three allowlisted paths, the fixed Cin7 host, fail-closed identity: the same code paths as snapshot.ts.
 // - The location mapping is PROPOSED from the real API results (exact names only); anything ambiguous or unmatched is chosen by YOU from a numbered list.
-// - Writes a share-safe summary (no secrets, SKUs or quantities) to ~/rwtsa-local/cin7-snapshots/live-verification-<time>.json.
+// - Writes a summary with NO secrets, account ID or SKUs (it does hold aggregate stock totals and counts) to ~/rwtsa-local/cin7-snapshots/live-verification-<time>.json.
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -14,7 +14,7 @@ import { createReadOnlyClient } from "../../src/rwtsa-live/client";
 import { collectLocations } from "../../src/rwtsa-live/collect";
 import { loadLocationMap, loadRwtsaCredentials } from "../../src/rwtsa-live/credentials";
 import { loadIdentityApproval, verifyIdentity } from "../../src/rwtsa-live/identity";
-import { createPrompter } from "../../src/rwtsa-live/prompt";
+import { createPrompter, PromptError } from "../../src/rwtsa-live/prompt";
 import { runSnapshot } from "../../src/rwtsa-live/run";
 import { credentialsDir, proposeLocationMap, recordApprovedFingerprint, writeInitialCredentials, writeLocationMap, type NamedLocation } from "../../src/rwtsa-live/setup-logic";
 import { writeSnapshotAtomic, writeTextAtomic } from "../../src/rwtsa-live/store";
@@ -72,8 +72,9 @@ async function main(): Promise<number> {
     return finish(1);
   }
   if (identity.status === "NOT_APPROVED") {
-    const a = await p.ask('\nIf this is the DEDICATED RWTSA POC instance, type APPROVE to record this fingerprint (anything else stops): ');
-    if (a.trim() !== "APPROVE") { out("Not approved. Nothing recorded and no stock was read."); return finish(1); }
+    const token = `APPROVE ${identity.fingerprint.slice(0, 8)}`;
+    const a = await p.ask(`\nIf this is the DEDICATED RWTSA POC instance, type exactly "${token}" to record this fingerprint (anything else stops): `);
+    if (a.trim() !== token) { out("Not approved. Nothing recorded and no stock was read."); return finish(1); }
     recordApprovedFingerprint({ home, fingerprint: identity.fingerprint });
     approval = loadIdentityApproval(dir);
     out("Fingerprint recorded.");
@@ -87,7 +88,9 @@ async function main(): Promise<number> {
     if (chosen[r]) continue;
     out(`\n${r.replace("_", " ")}: ${proposal.ambiguous.includes(r) ? "more than one location matches" : "no exact match"}. Choose it yourself.`);
     for (;;) {
-      const n = Number((await p.ask(`  Enter the number of the ${r.replace("_", " ")} location (1-${named.length}), or 0 to stop: `)).trim());
+      const typed = (await p.ask(`  Enter the number of the ${r.replace("_", " ")} location (1-${named.length}), or 0 to stop: `)).trim();
+      if (!/^\d{1,4}$/.test(typed)) { out("  Enter a whole number."); continue; }
+      const n = Number(typed);
       if (n === 0) { out("Stopped; no mapping written."); return finish(1); }
       const pick = Number.isInteger(n) ? named[n - 1] : undefined;
       if (!pick) { out("  Not a valid number."); continue; }
@@ -123,11 +126,15 @@ async function main(): Promise<number> {
   if (snap.completeness.status === "COMPLETE") {
     const wb = (await p.ask(`\nReconcile offline against the original workbook? Enter its path, or press Enter for the default [${existsSync(DEFAULT_WORKBOOK) ? "found" : "NOT found"}], or "skip": `)).trim();
     if (wb.toLowerCase() !== "skip" && (wb || existsSync(DEFAULT_WORKBOOK))) {
-      const r = await runReconcile({ snapshotFile: snapFile, workbookFile: wb || DEFAULT_WORKBOOK, knownFile: existsSync(KNOWN) ? KNOWN : undefined, allowIncomplete: false });
+      let r;
+      try { r = await runReconcile({ snapshotFile: snapFile, workbookFile: wb || DEFAULT_WORKBOOK, knownFile: existsSync(KNOWN) ? KNOWN : undefined, allowIncomplete: false }); }
+      catch (e) { report.reconciliation = { error: e instanceof RwtsaLiveError ? e.message : "reconciliation failed (details withheld)" }; out(`Reconciliation failed: ${(report.reconciliation as { error: string }).error}`); r = undefined; }
+      if (r) {
       const s = r.summary;
       out(`RECONCILIATION · ${s.skus} SKUs · match ${s.match} · explained ${s.explained} · unexplained ${s.unexplained} · only in workbook ${s.onlyInWorkbook} · only in Cin7 ${s.onlyInCin7}`);
       out(`  workbook physical ${s.totals.workbookPhysical} vs Cin7 ${s.totals.cin7Physical} · Bond ${s.totals.workbookBond} vs ${s.totals.cin7Bond} · usable ${s.totals.workbookUsable} vs ${s.totals.cin7Usable} · known transactions supplied: ${r.knownCount}`);
       report.reconciliation = { file: path.basename(r.file), summary: s, knownTransactions: r.knownCount };
+      }
     }
   } else out("\nReconciliation skipped: the snapshot is not COMPLETE.");
 
@@ -137,4 +144,4 @@ async function main(): Promise<number> {
   return finish(verdict.overall === "PASS" ? 0 : 1);
 }
 
-main().then((c) => process.exit(c), (e) => { console.error(e instanceof RwtsaLiveError ? `\nFAILED [${e.code}] ${e.message}` : e instanceof Error && /cancel/i.test(e.message) ? "\nCancelled." : "\nFAILED: unexpected error (details withheld)."); process.exit(1); });
+main().then((c) => process.exit(c), (e) => { console.error(e instanceof RwtsaLiveError ? `\nFAILED [${e.code}] ${e.message}` : e instanceof PromptError ? `\n${e.message}` : "\nFAILED: unexpected error (details withheld)."); process.exit(1); });

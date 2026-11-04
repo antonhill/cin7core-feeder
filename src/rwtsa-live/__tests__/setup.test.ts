@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { PassThrough } from "node:stream";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync, mkdirSync, writeFileSync } from "node:fs";
-import { mkdtempSync, chmodSync } from "node:fs";
+import { mkdtempSync, chmodSync, symlinkSync as require_symlink } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createPrompter } from "@/rwtsa-live/prompt";
@@ -36,6 +36,36 @@ describe("secure prompting", () => {
     const input = new PassThrough(); const output = new PassThrough();
     const p = createPrompter({ input: input as never, output: output as never });
     await expect(p.askHidden("k: ")).rejects.toThrow(/interactive terminal/i);
+  });
+});
+
+describe("prompt input hygiene (independent review P1/P2)", () => {
+  const mk = (extra: Record<string, unknown> = {}) => { const input = new PassThrough(); const output = new PassThrough(); const chunks: string[] = []; output.on("data", (d) => chunks.push(String(d))); return { input, output, out: () => chunks.join(""), p: createPrompter({ input: input as never, output: output as never, allowNonTty: true, ...extra }) }; };
+  it("typed-ahead input that arrived BEFORE a prompt is discarded, never used as its answer", async () => {
+    const { input, p } = mk(); const first = p.ask("a: "); input.write("one\ny\ny\n"); expect(await first).toBe("one");
+    await new Promise((r) => setTimeout(r, 5)); // leftover "y\ny\n" is now buffered and would answer YES if it were used
+    const c = p.confirm("go? "); input.write("n\n"); expect(await c).toBe(false);
+  });
+  it("input typed while a call is running (between prompts) cannot answer the next confirmation", async () => {
+    const { input, p } = mk(); const a = p.ask("a: "); input.write("x\n"); await a;
+    input.write("y\n"); await new Promise((r) => setTimeout(r, 5));
+    const c = p.confirm("go? "); input.write("n\n"); expect(await c).toBe(false);
+  });
+  it("a hidden answer followed by extra pasted lines is REJECTED, not split across later prompts", async () => {
+    const { input, out, p } = mk(); const a = p.askHidden("k: "); input.write("SECRETPART\nAPPROVE\ny\n");
+    await expect(a).rejects.toThrow(/extra input/i); expect(out()).not.toContain("SECRETPART");
+  });
+  it("control characters and escape sequences in a hidden answer are rejected", async () => {
+    for (const bad of ["ab\u001b[Acd\n", "ab\u0015cd\n", "ab\tcd\n"]) { const { input, p } = mk(); const a = p.askHidden("k: "); input.write(bad); await expect(a).rejects.toThrow(/control/i); }
+  });
+  it("raw mode is switched on BEFORE the hidden prompt text is written", async () => {
+    const order: string[] = []; const input = Object.assign(new PassThrough(), { isTTY: true, setRawMode: (on: boolean) => { order.push(on ? "raw-on" : "raw-off"); } });
+    const output = { write: (s: string) => { order.push(`write:${s.trim()}`); } };
+    const p = createPrompter({ input: input as never, output: output as never }); const a = p.askHidden("Key: "); input.write("x\n"); await a;
+    expect(order.indexOf("raw-on")).toBeLessThan(order.indexOf("write:Key:")); expect(order).toContain("raw-off");
+  });
+  it("closed input (EOF) rejects the waiting prompt instead of hanging", async () => {
+    const { input, p } = mk(); const a = p.ask("x: "); input.end(); await expect(a).rejects.toThrow(/closed/i);
   });
 });
 
@@ -87,6 +117,12 @@ describe("credential files are created private and the identity hash is derived"
 });
 
 describe("setup hardening (surviving-mutant fixes)", () => {
+  it("refuses a ~/rwtsa-local that is a symlink into a git working tree", () => {
+    const home = tmpHome(); const repo = mkdtempSync(path.join(tmpdir(), "repo-")); mkdirSync(path.join(repo, ".git")); mkdirSync(path.join(repo, "x"));
+    require_symlink(path.join(repo, "x"), path.join(home, "rwtsa-local"));
+    expect(() => writeInitialCredentials({ home, accountId: ACCOUNT, applicationKey: APPKEY, instanceLabel: "x", replace: false })).toThrow(/git|symlink/i);
+    expect(existsSync(path.join(repo, "x", "credentials", "cin7.env"))).toBe(false);
+  });
   it("re-restricts a pre-existing credentials directory that is open to group or others", () => {
     const home = tmpHome(); const dir = path.join(home, "rwtsa-local", "credentials"); mkdirSync(dir, { recursive: true }); chmodSync(dir, 0o755);
     writeInitialCredentials({ home, accountId: ACCOUNT, applicationKey: APPKEY, instanceLabel: "x", replace: false });
