@@ -23,12 +23,17 @@ vi.mock("@/lib/approvals/role-store", () => ({ resolveRoles: vi.fn(), canSeeCost
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: () => db }));
 vi.mock("@/lib/activity-log", () => ({ logActivity: vi.fn(() => Promise.resolve()) }));
 const ORG = "org-nq";
+import { seedGoldenLibrary } from "@/newquip/grower/__tests__/golden-catalogue";
 const SESSION = { orgId: ORG, userId: "u1", email: "u@nq" };
 const member = rolesFor("member");
 const asRoles = (...r: Array<"REP" | "ESTIMATOR" | "MANAGER">) => vi.mocked(resolveRoles).mockResolvedValue(new Set(r) as never);
 
 beforeEach(() => {
   db = new FakeDb();
+  // D-19 (expected workflow change): an unmapped product the Estimator only typed a price for (the LED line) is now reported to the Manager and DISABLES plain Approve, because the server refuses it
+  // and no exception can cover it. These fixtures are about the Manager decision on a clean quotation, so the golden library maps all three packages (the shared helper); the unmapped case is
+  // asserted in baseline-exception.test.ts / the Stage 3 checklist tests.
+  seedGoldenLibrary(db, ORG);
 
   vi.clearAllMocks();
   vi.mocked(requireNewquipPocOrg).mockResolvedValue(SESSION as never);
@@ -328,4 +333,17 @@ describe("UX-006 corrections: Approve mirrors the server rule and shows what is 
     const ok = within(screen.getByTestId("approval-checklist")).getByText("Costing is complete").closest("li")!;
     expect(ok.querySelector("[data-testid^=check-status]")!.textContent).toBe("Met");
   }, 90000);
+});
+
+describe("D-19: an unmapped product the Estimator only typed a price for (LED) blocks the Manager, by name", () => {
+  it("plain Approve is DISABLED with the reason, the checklist has an UNMET 'Mapping unresolved' row naming it (and the waivable systems), and no exception button is offered", async () => {
+    db.rows("newquip_package_mappings").length = 0; // nothing mapped: LED (typed price) is a blocking item, M75 / penning are waivable
+    await open({ stage: "3", roles: ["MANAGER"], commercials: true, ...SIGNED, draftOver: COSTED });
+    await waitFor(() => expect(approve().disabled).toBe(true), { timeout: 8000 });
+    const why = (approve().getAttribute("aria-describedby") ?? "").split(" ").map((id) => document.getElementById(id)?.textContent ?? "").join(" ");
+    expect(why).toMatch(/LED light.*needs an active library mapping.*covers only M75 \/ penning systems, and is offered only once these are mapped/);
+    expect(ws().textContent).toMatch(/Mapping unresolved: .*LED light.* these need an active library mapping; the Manager exception covers only M75 \/ penning systems\./);
+    expect(ws().textContent).toMatch(/could be covered by an exception, but only once the unmapped products above are mapped/);
+    expect(screen.queryByRole("button", { name: "Approve with recorded exception" })).toBeNull();
+  }, 60000);
 });

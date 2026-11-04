@@ -23,6 +23,7 @@ vi.mock("@/newquip/require-newquip-poc-org", () => ({ requireNewquipPocOrg: vi.f
 vi.mock("@/lib/approvals/role-store", () => ({ resolveRoles: vi.fn(), canSeeCosts: vi.fn() }));
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: () => db }));
 vi.mock("@/lib/activity-log", () => ({ logActivity: vi.fn(() => Promise.resolve()) }));
+import { seedGoldenLibrary } from "@/newquip/grower/__tests__/golden-catalogue";
 const ORG = "org-nq";
 const SESSION = { orgId: ORG, userId: "u1", email: "u@nq" };
 const member = rolesFor("member");
@@ -713,6 +714,9 @@ describe("UX-006i2 Stage 2: the view follows real workflow transitions and nothi
   }, 60000);
 
   it("Manager approval moves the view on (a real workflow change clears the pin): to the customer quotation stage", async () => {
+    // D-19 (expected workflow change): an unmapped typed-price product now disables plain Approve (the server refuses it and no exception covers it); this test is about the view moving on after a
+    // Manager approval of a clean quotation, so the shared golden library maps the packages.
+    seedGoldenLibrary(db, ORG);
     vi.spyOn(da, "getQuoteDeliveryAction").mockResolvedValue({ ok: true, data: { available: false } } as never);
     await open({ stage: "3", roles: ["MANAGER"], commercials: true, state: "ESTIMATOR_REVIEW", row: { ...SUB.row, __useDraftHash: true, requires_customer_acceptance: true } , draftOver: COSTED });
     const id = g.__QID!;
