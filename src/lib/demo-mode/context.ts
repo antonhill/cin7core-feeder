@@ -76,14 +76,12 @@ export function demoAuditDetail(d: DemoInfo, extra: Record<string, unknown> = {}
   return { demo: true, marker: "DEMO/IMPERSONATED", effectiveUser: d.effectiveEmail, effectiveUserId: d.effectiveUserId, selectedRole: d.roleLabel, actualOwner: d.ownerEmail, actualOwnerUserId: d.ownerUserId, ...extra };
 }
 
-export interface DemoBarState { visible: boolean; selectable: boolean; active: { slot: Exclude<DemoSlot, "owner">; label: string; email: string; expiresAt: string } | null; reason: string | null;
-  /** The prepared demonstration quotation (NEWQUIP_DEMO_QUOTE_ID, a UUID) the role buttons open; null when not configured. */
-  quotePath: string | null }
+export interface DemoBarState { visible: boolean; selectable: boolean; active: { slot: Exclude<DemoSlot, "owner">; label: string; email: string; expiresAt: string } | null; reason: string | null }
 
 /** For the layout: the selector shows only to the authorised owner on an enabled Preview; an active banner shows whenever a live context exists. */
 export async function demoBarState(session: { orgId: string | null; email: string | null }): Promise<DemoBarState> {
   const claims = await liveDemoClaims();
   const gate = session.orgId ? demoGate(process.env as Record<string, string | undefined>, { orgId: session.orgId, email: session.email }) : ({ allowed: false, reason: "No organisation." } as const);
   const active = claims ? { slot: claims.slot, label: SLOT_LABEL[claims.slot], email: DEMO_IDENTITY_EMAILS[claims.slot], expiresAt: new Date(claims.exp * 1000).toISOString() } : null;
-  return { visible: gate.allowed || !!claims, selectable: gate.allowed, active, reason: gate.allowed ? null : gate.reason, quotePath: /^[0-9a-f-]{36}$/.test(process.env.NEWQUIP_DEMO_QUOTE_ID ?? "") ? `/newquip-grower/${process.env.NEWQUIP_DEMO_QUOTE_ID}` : null };
+  return { visible: gate.allowed || !!claims, selectable: gate.allowed, active, reason: gate.allowed ? null : gate.reason };
 }

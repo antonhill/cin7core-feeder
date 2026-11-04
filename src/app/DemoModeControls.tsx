@@ -14,8 +14,9 @@ export function DemoModeControls({ state }: { state: DemoBarState }) {
     setBusy(true); setError(null);
     const r = await fn();
     if (!r.ok) { setBusy(false); setError(r.error ?? "Could not switch."); return; }
-    // Land on the prepared quotation: the page itself opens at the first step this role may act on.
-    if (state.quotePath) window.location.assign(state.quotePath); else window.location.reload();
+    // Stay on the page being presented: reload THIS path (never another quotation, never a remembered or configured one). The query (?stage / ?step) is dropped so the page opens at the first
+    // step the newly selected role may act on, and replace() adds no history entry, so Back and Forward keep working on the same quotation.
+    window.location.replace(window.location.pathname);
   };
   const active = state.active;
   return (
