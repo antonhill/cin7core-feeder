@@ -29,7 +29,17 @@ async function main(): Promise<number> {
   const client = createReadOnlyClient({ creds });
   const takenAt = new Date().toISOString();
 
-  const result = await runSnapshot({ client, creds, locationMap, approval, takenAt });
+  let result;
+  try {
+    result = await runSnapshot({ client, creds, locationMap, approval, takenAt });
+  } catch (e) {
+    if (e instanceof RwtsaLiveError) {
+      const ev = { takenAt, code: e.code, status: e.status ?? null, requests: client.requests(), methodsUsed: client.methodsUsed(), stockRead: false };
+      const { file: f } = writeTextAtomic({ name: `run-failure-${takenAt.replace(/[:.]/g, "-")}.json`, text: JSON.stringify(ev, null, 2) });
+      console.log(`  evidence preserved: ${path.basename(f)} (in ~/rwtsa-local/cin7-snapshots)`);
+    }
+    throw e;
+  }
   if (result.kind === "IDENTITY_FAILED") {
     const evidence = result.evidence, identity = evidence.identity;
     const { file: ev } = writeTextAtomic({ name: `identity-check-${takenAt.replace(/[:.]/g, "-")}.json`, text: JSON.stringify(evidence, null, 2) });

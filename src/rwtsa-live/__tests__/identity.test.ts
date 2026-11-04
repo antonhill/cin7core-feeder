@@ -17,6 +17,10 @@ describe("RWTSA account identity (fails closed; not a label)", () => {
     expect(computeFingerprint([...ids, G(99)])).not.toBe(f);
     expect(computeFingerprint(ids.slice(1))).not.toBe(f);
   });
+  it("the fingerprint encoding is unambiguous: IDs containing the separator cannot collide", () => {
+    expect(computeFingerprint(["a,b", "c"])).not.toBe(computeFingerprint(["a", "b,c"]));
+    expect(computeFingerprint(["ab", "c"])).not.toBe(computeFingerprint(["a", "bc"]));
+  });
   it("VERIFIED only when the account ID hash AND the approved fingerprint both match", () => {
     const a = { accountIdSha256: sha(ACCOUNT), approvedFingerprint: computeFingerprint(ids) };
     expect(verifyIdentity({ accountId: ACCOUNT, approval: a, locationIds: ids }).status).toBe("VERIFIED");

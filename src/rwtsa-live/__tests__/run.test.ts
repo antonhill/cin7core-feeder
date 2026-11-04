@@ -32,12 +32,17 @@ describe("owner-triggered snapshot run: identity before stock", () => {
     ["no approved fingerprint (NOT_APPROVED)", { accountIdSha256: sha(ACCOUNT) }],
     ["wrong approved fingerprint (FINGERPRINT_MISMATCH)", { accountIdSha256: sha(ACCOUNT), approvedFingerprint: "0".repeat(64) }],
     ["wrong account hash (ACCOUNT_MISMATCH)", { accountIdSha256: sha("other"), approvedFingerprint: good.approvedFingerprint }],
-  ])("%s: stops after the location list; stock and product endpoints are never called", async (_n, approval) => {
+  ])("%s: stock and product endpoints are never called (a wrong account sends no request at all)", async (n, approval) => {
     const { f, client } = setup();
     const r = await runSnapshot({ client, creds, locationMap: LOC, approval, takenAt: "2026-11-04T10:00:00.000Z" });
     expect(r.kind).toBe("IDENTITY_FAILED");
-    expect(paths(f.calls)).toEqual(["/ref/location"]);
+    expect(paths(f.calls)).toEqual(String(n).includes("ACCOUNT_MISMATCH") ? [] : ["/ref/location"]);
     if (r.kind === "IDENTITY_FAILED") { expect(r.evidence.stockRead).toBe(false); expect(JSON.stringify(r.evidence)).not.toContain(ACCOUNT); expect(JSON.stringify(r.evidence)).not.toContain("JHB"); }
+  });
+  it("a wrong account ID is rejected BEFORE any request is sent", async () => {
+    const { f, client } = setup();
+    const r = await runSnapshot({ client, creds, locationMap: LOC, approval: { accountIdSha256: sha("other"), approvedFingerprint: good.approvedFingerprint }, takenAt: "2026-11-04T10:00:00.000Z" });
+    expect(r.kind).toBe("IDENTITY_FAILED"); expect(f.calls).toHaveLength(0);
   });
   it("an incomplete location list never verifies identity, even with a matching fingerprint", async () => {
     const f = fakeFetch({ "/ref/location": () => ({ body: { LocationList: FP_LOCS } }) }); // no Total

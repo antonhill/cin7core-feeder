@@ -30,7 +30,8 @@ export function writeTextAtomic(i: { home?: string; name: string; text: string }
 
 export function writeSnapshotAtomic(i: { home?: string; snapshot: Snapshot; creds: { accountId: string; applicationKey: string } }): { file: string } {
   const text = JSON.stringify(i.snapshot, null, 2);
-  if (text.includes(i.creds.accountId) || text.includes(i.creds.applicationKey)) fail("Refusing to write: the snapshot contains credential material.");
+  const esc = (v: string) => JSON.stringify(v).slice(1, -1);
+  if ([i.creds.accountId, i.creds.applicationKey].some((v) => text.includes(v) || text.includes(esc(v)))) fail("Refusing to write: the snapshot contains credential material.");
   if (!verifySnapshotIntegrity(i.snapshot)) fail("Refusing to write: the snapshot failed its own integrity check.");
   return writeTextAtomic({ home: i.home, name: `snapshot-${i.snapshot.takenAt.replace(/[:.]/g, "-")}.json`, text });
 }

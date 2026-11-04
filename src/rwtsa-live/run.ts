@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import type { ReadOnlyClient } from "./client";
 import { collectAvailability, collectLocations, collectProducts } from "./collect";
-import { verifyIdentity, type IdentityApproval, type IdentityResult } from "./identity";
+import { accountMatches, verifyIdentity, type IdentityApproval, type IdentityResult } from "./identity";
 import { buildSnapshot, type Snapshot } from "./snapshot";
 import type { LocationMap, RwtsaCredentials } from "./types";
 
@@ -12,6 +13,10 @@ export type RunResult = { kind: "SNAPSHOT"; snapshot: Snapshot } | { kind: "IDEN
  * Anything short of VERIFIED (or an incomplete location list) stops here: no stock or product endpoint is called.
  */
 export async function runSnapshot(i: { client: ReadOnlyClient; creds: RwtsaCredentials; locationMap: LocationMap; approval: IdentityApproval; takenAt: string }): Promise<RunResult> {
+  // A wrong-account credential set must not even cause one request.
+  if (!accountMatches(i.creds.accountId, i.approval)) {
+    return { kind: "IDENTITY_FAILED", evidence: { takenAt: i.takenAt, identity: { status: "ACCOUNT_MISMATCH", fingerprint: "", locationCount: 0, accountIdSha256: createHash("sha256").update(i.creds.accountId).digest("hex") }, locationsComplete: false, locationProblems: [], requests: 0, methodsUsed: [], stockRead: false } };
+  }
   const locations = await collectLocations(i.client);
   const identity = verifyIdentity({ accountId: i.creds.accountId, approval: i.approval, locationIds: locations.rows.map((r) => String(r.ID ?? "")).filter(Boolean) });
   if (identity.status !== "VERIFIED" || !locations.complete) {

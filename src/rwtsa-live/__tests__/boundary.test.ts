@@ -9,8 +9,9 @@ const isCode = (f: string) => /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/.test(f);
 const LIVE = path.join(ROOT, "src", "rwtsa-live");
 const SCRIPTS = path.join(ROOT, "scripts", "rwtsa-live");
 const prodFiles = () => [...walk(LIVE), ...walk(SCRIPTS)].filter((f) => isCode(f) && !f.includes(`${path.sep}__tests__${path.sep}`));
-const roleOf = (f: string): Role => (f.startsWith(SCRIPTS) ? "script" : path.basename(f) === "client.ts" ? "client" : "module");
-const bad = (src: string, role: Role = "module") => scanSource(src, "snippet.ts", role);
+const roleOf = (f: string): Role => (f.startsWith(SCRIPTS) ? "script" : f === path.join(LIVE, "client.ts") ? "client" : "module");
+const VF = path.join(ROOT, "src", "rwtsa-live", "snippet.ts");
+const bad = (src: string, role: Role = "module", file = VF) => scanSource(src, file, role);
 
 describe("RWTSA live module: AST boundary over the real tree", () => {
   it("scans a non-trivial set of files", () => { expect(prodFiles().length).toBeGreaterThan(10); });
@@ -20,7 +21,7 @@ describe("RWTSA live module: AST boundary over the real tree", () => {
   });
   it("only client.ts holds the Cin7 auth header names", () => {
     const withHeaders = prodFiles().filter((f) => /api-auth-/i.test(readFileSync(f, "utf8")));
-    expect(withHeaders.map((f) => path.basename(f))).toEqual(["client.ts"]);
+    expect(withHeaders).toEqual([path.join(LIVE, "client.ts")]);
   });
 });
 
@@ -63,6 +64,21 @@ describe("negative tests: every bypass shape is flagged", () => {
     ["POST literal", `const m = "POST";`],
     ["method other than GET", `const o = { method: m };`],
     ["WebSocket", `new WebSocket(u);`],
+    ["relative import escaping the module into the Toolbox gateway", `import { cin7Request } from "../cin7/http";`],
+    ["relative import escaping to the Supabase admin helper", `import { a } from "../../lib/supabase/admin";`],
+    ["alias path that climbs out with ..", `import x from "@/rwtsa-live/../cin7/rate-limit";`],
+    ["global (Node's globalThis alias)", `global["fe" + "tch"](u);`],
+    ["process.getBuiltinModule", `process.getBuiltinModule("node:https");`],
+    ["destructured process.env", `const { env } = process;`],
+    ["Object.entries(process)", `Object.entries(process);`],
+    ["Reflect", `Reflect.get(x, "y");`],
+    ["shorthand method", `const method = m; const o = { method };`],
+    ["computed method key", `const o = { ["method"]: m };`],
+    ["new Request", `new Request(u, init);`],
+    ["concatenated method literal", `const m = "PO" + "ST";`],
+    ["concatenated header name", `const h = "api-auth-" + "accountid";`],
+    ["recursive setTimeout poller", `const tick = () => setTimeout(tick, 1000);`],
+    ["setImmediate", `setImmediate(() => {});`],
   ])("flags: %s", (_n, src) => { expect(bad(src).length, src).toBeGreaterThan(0); });
 
   it("the client role may call fetch and hold the header names, but still cannot use a non-GET method or a URL literal", () => {
@@ -70,6 +86,11 @@ describe("negative tests: every bypass shape is flagged", () => {
     expect(bad(`await fetch(u, { method: "POST" });`, "client").length).toBeGreaterThan(0);
     expect(bad(`await fetch("https://evil.example", { method: "GET" });`, "client").length).toBeGreaterThan(0);
     expect(bad(`await import("node:http");`, "client").length).toBeGreaterThan(0);
+  });
+  it("relative imports that stay inside the module are fine; a sibling client.ts elsewhere gets no client privileges", () => {
+    expect(bad(`import { a } from "./policy"; import { b } from "../types";`, "module", path.join(LIVE, "__tests__", "x.ts"))).toEqual([]);
+    const sub = path.join(LIVE, "sub", "client.ts");
+    expect(scanSource(`await fetch(u, { method: "GET" });`, sub, roleOf(sub)).length).toBeGreaterThan(0);
   });
   it("scripts may use only the two audited workbook adapter modules from the RWTSA tree", () => {
     expect(bad(`import { buildDataset } from "@/rwtsa-demo/workbook/build-dataset";`, "script")).toEqual([]);

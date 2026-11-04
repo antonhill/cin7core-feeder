@@ -27,6 +27,10 @@ describe("snapshot store", () => {
     const { home } = makeHome(); const s = mini({ label: `label-${APPKEY}` });
     expect(() => writeSnapshotAtomic({ home, snapshot: s, creds: { accountId: ACCOUNT, applicationKey: APPKEY } })).toThrow(/credential/i);
   });
+  it("also catches a credential whose JSON-escaped form differs from the raw value", () => {
+    const { home } = makeHome(); const key = 'k"ey\\SECRET'; const s = mini({ label: key });
+    expect(() => writeSnapshotAtomic({ home, snapshot: s, creds: { accountId: ACCOUNT, applicationKey: key } })).toThrow(/credential/i);
+  });
   it("refuses a snapshot directory inside a git working tree", () => {
     const { home } = makeHome(); mkdirSync(path.join(home, "rwtsa-local"), { recursive: true }); mkdirSync(path.join(home, ".git"));
     expect(() => writeSnapshotAtomic({ home, snapshot: mini(), creds: { accountId: ACCOUNT, applicationKey: APPKEY } })).toThrow(/git/i);

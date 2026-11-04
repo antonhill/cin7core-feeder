@@ -27,11 +27,17 @@ describe("workbook versus Cin7 reconciliation (report only)", () => {
 
 import { assertReconcilable, parseKnownTransactions } from "@/rwtsa-live/reconcile";
 describe("reconcile input hardening (independent review P1/P2)", () => {
-  const complete = { completeness: { status: "COMPLETE" } } as never, partial = { completeness: { status: "INCOMPLETE" } } as never;
+  const complete = { completeness: { status: "COMPLETE" }, source: { identity: { status: "VERIFIED" } } } as never, partial = { completeness: { status: "INCOMPLETE" }, source: { identity: { status: "VERIFIED" } } } as never;
   it("refuses an INCOMPLETE snapshot unless explicitly allowed", () => {
     expect(() => assertReconcilable(complete, false)).not.toThrow();
     expect(() => assertReconcilable(partial, false)).toThrow(/incomplete/i);
     expect(() => assertReconcilable(partial, true)).not.toThrow();
+  });
+  it("always requires a VERIFIED account identity, even with --allow-incomplete", () => {
+    for (const status of ["NOT_APPROVED", "ACCOUNT_MISMATCH", "FINGERPRINT_MISMATCH", undefined]) {
+      const s = { completeness: { status: "COMPLETE" }, source: { identity: status ? { status } : undefined } } as never;
+      expect(() => assertReconcilable(s, true)).toThrow(/identity/i);
+    }
   });
   it("validates the known-transactions file: numbers only, unique ref+sku", () => {
     expect(parseKnownTransactions([{ ref: "PO-00002", sku: "A", physicalDelta: 5 }])).toHaveLength(1);

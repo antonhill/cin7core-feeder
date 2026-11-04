@@ -20,7 +20,7 @@ const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
 export function computeFingerprint(locationIds: readonly string[]): string {
   const set = [...new Set(locationIds.map((i) => i.toLowerCase()))].sort();
-  return sha(`rwtsa-location-set-v1|${set.length}|${set.join(",")}`);
+  return sha(`rwtsa-location-set-v2|${set.length}|${set.map((i) => `${i.length}:${i}`).join("")}`); // length-prefixed: no separator ambiguity
 }
 
 /** ~/rwtsa-local/credentials/identity.json: { "accountIdSha256": "<64 hex>", "approvedFingerprint": "<64 hex>" (added by the owner after review) } */
@@ -37,6 +37,9 @@ export function loadIdentityApproval(dir: string): IdentityApproval {
   if (o.approvedFingerprint !== undefined && (typeof o.approvedFingerprint !== "string" || !HEX64.test(o.approvedFingerprint))) fail("identity.json: approvedFingerprint must be 64 lowercase hex characters.");
   return { accountIdSha256: o.accountIdSha256 as string, approvedFingerprint: o.approvedFingerprint as string | undefined };
 }
+
+/** True when SHA-256 of the configured account ID equals the owner-approved hash. Checked BEFORE any request is sent. */
+export function accountMatches(accountId: string, approval: IdentityApproval): boolean { return sha(accountId) === approval.accountIdSha256; }
 
 export function verifyIdentity(i: { accountId: string; approval: IdentityApproval; locationIds: readonly string[] }): IdentityResult {
   const fingerprint = computeFingerprint(i.locationIds);

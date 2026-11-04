@@ -15,7 +15,8 @@ const EPS = 1e-9;
 const z = (n: number) => Math.abs(n) < EPS;
 
 /** Reconciling a partial snapshot would present gaps as differences; refuse unless the owner explicitly accepts that. */
-export function assertReconcilable(s: Pick<Snapshot, "completeness">, allowIncomplete: boolean): void {
+export function assertReconcilable(s: Pick<Snapshot, "completeness" | "source">, allowIncomplete: boolean): void {
+  if (s.source?.identity?.status !== "VERIFIED") throw new RwtsaLiveError("STORE", "The snapshot does not carry a VERIFIED account identity; refusing to reconcile it (this cannot be overridden).");
   if (s.completeness.status !== "COMPLETE" && !allowIncomplete) throw new RwtsaLiveError("STORE", "The snapshot is INCOMPLETE; refusing to reconcile it (pass --allow-incomplete to override knowingly).");
 }
 /** Validates the owner-supplied known-transactions file: numbers only, unique ref+sku. Messages never echo file values. */
