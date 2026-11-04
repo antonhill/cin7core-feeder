@@ -1,5 +1,39 @@
 # NewQuip multi-role demonstration: hosted UAT setup and presenter run sheet
 
+## Presenter quick guide (one page): demo quotation NQ-Q-0003
+
+**URL (open it directly, do not use a stale deployment link):** `https://cin7core-feeder-git-feature-newquip-ux006-final-baa0e2-spark18.vercel.app`
+**Quotation page (plain URL, no `?stage=` / `?step=`):** `<URL>/newquip-grower/cbfc2385-6684-4667-944c-3d9549221ab1` (NQ-Q-0003, site "ZZ UAT DEMO 2 Site", customer "ZZ UAT Demo Farm (Pty) Ltd", state REP_DRAFT).
+Nothing in this demo sends a customer email or writes to Cin7 or Xero (all off on this Preview). Do not use the "Testing utility (Preview only)".
+
+**Preconditions (owner, before the demo)**
+1. Branch Auth SMTP: the Supabase branch `uat-ux006` inherited SMTP credentials that the mail server rejects (auth log `535 Authentication credentials invalid`), so no 6-digit login code is emailed until the owner sets the SMTP password in the branch's Authentication > SMTP settings (branch Auth settings are per branch and independent of Production; do not touch Production). Test by requesting a code for one account before the audience arrives.
+2. You can sign in to Vercel as the `spark18` team owner account in all three browser profiles (section 1A). Vercel Authentication stays ON.
+
+**Three profiles (one cookie jar per role)**
+| Window | Role | Browser | Vercel login | App sign-in |
+|---|---|---|---|---|
+| A | Rep | Chrome profile "NQ Rep" | owner's Vercel account | Rep mailbox: emailed 6-digit code |
+| B | Estimator | Safari | same Vercel account | Estimator mailbox: code |
+| C | Manager | Chrome profile "NQ Manager" | same Vercel account | Manager mailbox: code |
+
+In each profile: open the URL, you land on the Vercel login page (this is a separate login from the app), sign in to Vercel, you are returned to the app's `/login`, enter the role's email, press Send code, type the 6-digit code from that mailbox. Check the header shows the right account before you continue.
+
+**Golden rule: the app never refreshes itself. At every handover press reload (Cmd+R) in the window you switch to, then act.** The first load of a quotation can take up to 20 seconds ("Loading the quotation").
+
+**Steps**
+1. **Rep (A)**: open the quotation URL. Steps 1 to 4 are complete. Step 5: tick the confirmation, Submit to Estimator. Say: the amount is indicative; no cost or margin is shown to the Rep. Expect: state Estimator review.
+2. **Estimator (B)**, Cmd+R: Stage 2 mappings. "Confirm source-backed mappings"; choose door product NQ2114; enter manual prices with a reason for mat 450, cup drinker 650, slats 380, door 4 200; Save draft. Expect: the total changes and the quotation returns to the Rep (revision 2).
+3. **Rep (A)**, Cmd+R: read the "total changed, reconfirm" banner, tick, Submit again. Expect: Estimator review, revision 2.
+4. **Estimator (B)**, Cmd+R: "Cin7 cost capture and FX rates": add a manual estimate per SKU (Unit cost, Reason, Save): tank 18 000, feeder 6 500, mat 300, cup 120, pipe 60, plate 40, bracket 50, bolt 3, nut 2, washer 1, slats 270, LED 600, door 3 000 (several minutes: narrate, or do it off-screen beforehand). Then Final review, Mark reviewed & continue, Sign off for Manager approval. Say: these are labelled UAT working figures; live Cin7 cost capture is not tested here.
+5. **Manager (C)**, Cmd+R: review costs and margins; read "Approval exception required" (M75 and penning are deliberately unmapped); enter a written reason, tick, "Approve with recorded exception". Expect: Manager approved (final). Press Cmd+R in Rep (A) and Estimator (B): both show Approved.
+
+**Recovery**: a stale or greyed button means reload, do not click. A Vercel login page means that profile's Vercel cookie expired: sign in to Vercel again. The app login page means that role's app session expired: request a new code. A wedged quotation: the Manager returns it; otherwise ask the coordinator for a fresh seeded quotation. Never "fix" by disabling Vercel protection.
+
+---
+
+# Detailed reference
+
 Status: **hosted three-role workflow verified end to end on an isolated Preview and an isolated Supabase branch database (2026-11-04). Stopped at the owner acceptance gate.** Builds on `docs/newquip-uat-multirole-procedure.md` (roles, capability matrix), `docs/newquip-ux006-hosted-uat-runsheet.md` (flag list) and `docs/newquip-uat-branch-setup.md` (what was set up and how to tear it down). No credential, key, token, session or login code appears here.
 
 ## 0. OUTSTANDING INTEGRATION GATES (not part of this acceptance run)
@@ -14,7 +48,17 @@ Status: **hosted three-role workflow verified end to end on an isolated Preview 
 
 `https://cin7core-feeder-git-feature-newquip-ux006-final-baa0e2-spark18.vercel.app` (stable branch alias of `feature/newquip-ux006-final-candidate`, PR #197). It is wired ONLY to the Supabase branch `wevhibjvinmdvuuyurql` (client bundle contains that ref and not the production ref; section 6).
 
-**Vercel deployment protection is ON (Vercel SSO).** Each tester must, in each browser profile, sign in to Vercel with an account that is a member of the `spark18` team, or the owner relaxes protection for this Preview, or supplies a bypass method. Without it the URL answers with a redirect to `vercel.com/sso-api`.
+**Vercel deployment protection is ON and stays ON (Vercel Authentication, "all deployments except custom domains": it covers this branch alias and every Preview). Do not disable it.** Only members of the `spark18` Vercel team can pass it; today that is one member, the owner (role OWNER, GitHub-linked account). An unauthenticated request answers 302 to `vercel.com/sso-api`.
+
+### 1A. Passing Vercel protection in three independent browser profiles
+
+Vercel login is a SEPARATE login from the app login: it grants access to the site, the app then asks for its own email code. Repeat in each profile (each profile has its own cookies, so each needs its own Vercel sign-in):
+1. Open the Preview URL (type or paste it directly into the address bar).
+2. The browser is redirected to `vercel.com` (the Vercel login page). If the profile is already signed in to Vercel it redirects straight back (step 5).
+3. Sign in with the owner's `spark18` account using the method offered on that page (GitHub for the linked `antonhill` account, or the account's email).
+4. Vercel may show a "Continue to" / authorise access page for the deployment: accept it.
+5. You are redirected back to the app and land on the app `/login`. The Vercel cookie is set on the Preview host; do the app sign-in (emailed code) next.
+Chrome profiles: no special steps. Safari: the flow uses full-page redirects (no embedded frame), so cross-site tracking prevention should not block it; if it loops or the app login page never appears, first retry by opening the URL directly in a new tab after signing in to vercel.com in that same Safari window; allowing cross-site tracking or cookies for `vercel.com` is a fallback that is UNVERIFIED here. The Vercel cookie lifetime (believed to be about a day) was not verified: sign in again if the Vercel login page reappears mid-demo. A teammate who is not a `spark18` member cannot pass; adding one is an owner decision (Vercel team settings), not part of this guide.
 
 ## 2. UAT fixtures (all labelled UAT)
 
@@ -33,11 +77,11 @@ Status: **hosted three-role workflow verified end to end on an isolated Preview 
 
 One jar per role (the auth cookie has the same name for every user on one origin). In each: open the URL, pass Vercel protection, sign in as that role, check the header shows the right account. **Sign-in delivery of the login code: see section 4 (it does NOT work today).**
 
-## 4. Login codes: NOT deliverable today (owner action)
+## 4. Login codes: NOT deliverable until the owner sets the branch SMTP password
 
-The app signs in with an emailed 6-digit code sent by Supabase Auth itself (`signInWithOtp`). On the UAT branch, requesting a code for an existing account returned **HTTP 500 "Error sending magic link email"**: the branch has no working mail delivery (Supabase's default sender only serves team members and the branch does not inherit production's SMTP). The app's own emails are separately off (placeholder Resend key). The SMTP settings could not be read with the tools available here, so the cause is inferred from the failure.
+The app signs in with an emailed 6-digit code sent by Supabase Auth itself (`signInWithOtp`). Requesting a code on the UAT branch fails because the branch's inherited custom SMTP settings are rejected by the mail server (Supabase auth log: `535 "Authentication credentials invalid"`, surfaced to the app as "Error sending magic link email"). Branch Auth settings (SMTP included) are configured per branch and are independent of Production; Production login is not affected.
 
-**Owner action (either):** (a) configure custom SMTP on the branch Auth settings (Authentication > SMTP) with a sender that can reach the three mailboxes, then each tester signs in normally; or (b) have the coordinator mint a session per role for the presenter's browsers (works, proven in this run) which means handing session material to the presenter and is therefore a deliberate owner decision. Nothing here was changed on the branch.
+**Owner action:** in the Supabase dashboard open the branch `uat-ux006` (ref `wevhibjvinmdvuuyurql`), Authentication > SMTP, set the SMTP password (or a working sender), save, then request a code for each of the three accounts to confirm delivery. Alternative (deliberate owner decision only): the coordinator mints a session per role for the presenter's browsers. Nothing here was changed on the branch.
 
 ## 5. Verified result of the full workflow (real Supabase sessions, hosted Preview, branch database)
 
