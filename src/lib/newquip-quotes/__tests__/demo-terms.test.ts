@@ -12,6 +12,9 @@ describe("demonstration-only quotation wording", () => {
     expect(p.legalName).toBe(profile.legalName);
     expect(p.vatNumber).toBe("1");
   });
+  it("also covers the Rep-start demonstration quotation NQ-Q-0026", () => {
+    expect(applyDemoTerms(profile, ORG, "NQ-Q-0026")).toMatchObject(DEMO_TERMS);
+  });
   it.each([["NQ-Q-0024", ORG], ["NQ-Q-0017", ORG], ["NQ-Q-0025", "00000000-0000-4000-8000-000000000000"]])("leaves %s in %s untouched", (ref, org) => {
     expect(applyDemoTerms(profile, org, ref)).toBe(profile);
   });
