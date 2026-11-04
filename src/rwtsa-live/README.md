@@ -24,7 +24,6 @@ RWTSA_CIN7_APPLICATION_KEY=...
 RWTSA_CIN7_INSTANCE_LABEL=rwtsa-demo-instance      # a non-secret label recorded in each snapshot
 # locations.json  (chmod 600)  - location GUIDs from the dedicated instance; Bond is required
 { "BOND": "<guid>", "JHB": "<guid>", "DURBAN": "<guid>", "CAPE_TOWN": "<guid>", "FACTORY_STORE": "<guid>" }
-```
 # identity.json  (chmod 600)  - account identity: NOT the label
 { "accountIdSha256": "<sha256 of the RWTSA account ID>" }       # compute: printf %s "$ACCOUNT_ID" | shasum -a 256
 # after the first run reports the fingerprint, and ONLY if it is the intended RWTSA instance, the owner adds:
