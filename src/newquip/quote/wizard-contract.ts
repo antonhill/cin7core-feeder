@@ -1,5 +1,5 @@
 import type { StepStatus } from "@/components/ui/step-rail-model";
-import { STAGE1_STEP_IDS, STAGE1_STEP_LABEL, type OwnedItem, type Stage1CustomerFacts, type Stage1Derived, type Stage1StepId } from "./stage1-steps";
+import { STAGE1_STEP_IDS, STAGE1_STEP_LABEL, type Stage1CustomerFacts, type Stage1Derived, type Stage1StepId } from "./stage1-steps";
 import type { StageStatus } from "./stages";
 
 // THE WIZARD CONTRACT (pure). One place that answers, for the signed-in viewer and the quotation as it is now: which steps exist, who owns each, whether the viewer may EDIT it, only
@@ -171,5 +171,3 @@ export function toRailSteps<I extends string = WizardStepId>(steps: readonly Wiz
   return steps.filter((s) => s.access !== "hidden").map((s) => ({ id: s.id, label: s.label, status: s.status, ...(s.note ? { note: s.note } : {}), ...(s.counted ? { counted: true } : {}), ...(s.statusLabel ? { statusLabel: s.statusLabel } : {}), ...(s.access === "locked" ? { locked: true, blockedBy: s.blockedBy } : {}) }));
 }
 
-/** A Rep-owned item can be fixed by the viewer only when they may edit and the step is open; otherwise the owner is just named. */
-export const itemLinkable = (o: OwnedItem, steps: readonly WizardStep[]): boolean => !!o.stepId && o.owner === "Rep" && steps.find((s) => s.id === o.stepId)?.access === "edit";

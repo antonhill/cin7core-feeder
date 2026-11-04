@@ -7,7 +7,15 @@ import { checkApproval } from "./workflow";
 // quotation, so an unsaved edit is called out by its own "No unsaved edits" row.
 
 export type ApprovalCheckId = "ready" | "costing" | "total" | "confirmed" | "signoff" | "amount" | "mapping" | "exception" | "manager" | "saved";
+/** One honest sentence for an accepted-incomplete costing: who accepted it, when and why. Used by the Manager checklist, the Stage 2 Final review and the Stage 6 baseline summary. */
+export function costingAcceptedIncompleteText(a: { reason: string; by: string; at: string }): string {
+  const day = /^\d{4}-\d{2}-\d{2}/.exec(a.at)?.[0] ?? a.at;
+  return `Costing accepted incomplete by ${a.by} on ${day}: ${a.reason}`;
+}
+
 export interface ApprovalCheckItem {
+  /** "accepted-incomplete": met (the rule allows it) but NOT complete; shown as its own state, never as "Met". */
+  state?: "accepted-incomplete";
   id: ApprovalCheckId;
   label: string;
   met: boolean;
@@ -30,7 +38,7 @@ export interface ApprovalChecklistInput {
   /** The viewer has the Manager role (the Approve button needs it too; the server enforces it). */
   isManager: boolean;
   /** The SERVER's costing verdict (QuoteView.costing). Present only for a caller with cost visibility; absent (a Rep) means it is not judged here. */
-  costing?: { complete: boolean; reason: string | null } | null;
+  costing?: { complete: boolean; reason: string | null; acceptedIncomplete?: { reason: string; by: string; at: string } | null } | null;
   /** The SERVER's baseline-exception verdict (QuoteView.baselineException, S3). Present only for a caller with cost visibility. When an exception is REQUIRED (Estimator-priced systems with no Cin7 SKU) plain approval is unavailable: the Manager must use "Approve with recorded exception". */
   baselineException?: { baselineExceptionRequired: boolean; items: readonly { label: string }[]; blocking?: readonly { label: string }[] } | null;
   /** The page already shows the sign-off explanation (its existing Alert, also Approve's aria-describedby target) right below: the row then points to it instead of repeating it. */
@@ -50,7 +58,9 @@ export function deriveApprovalChecklist(i: ApprovalChecklistInput): ApprovalChec
   const totalOk = i.totalExVatCents != null && i.totalExVatCents > 0;
   const items: ApprovalCheckItem[] = [
     one("ready", "The quote is READY", { readiness }, 2),
-    ...(i.costing ? [one("costing", "Costing is complete", { costing: { complete: i.costing.complete, reasons: i.costing.reason ? [i.costing.reason] : [] } }, 2)] : []),
+    ...(i.costing ? [i.costing.complete && i.costing.acceptedIncomplete
+      ? { ...one("costing", costingAcceptedIncompleteText(i.costing.acceptedIncomplete), { costing: { complete: true, reasons: [] } }, 2), state: "accepted-incomplete" as const }
+      : one("costing", "Costing is complete", { costing: { complete: i.costing.complete, reasons: i.costing.reason ? [i.costing.reason] : [] } }, 2)] : []),
     one("total", "The quote has a contract value", { totalExVatCents: i.totalExVatCents, customerConfirmedCents: i.totalExVatCents }, 2),
     one("confirmed", "The customer's confirmation is recorded", { customerConfirmedCents: i.customerConfirmedCents == null ? null : 1 }, 2),
     // The sign-off must be the Estimator's on THIS content: both the "never signed" and the "stale" messages come from checkApproval.

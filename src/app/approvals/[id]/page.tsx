@@ -19,6 +19,7 @@ import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Select } from "@/components/ui/Select";
 import { DisabledReason } from "@/components/ApprovalDisabledReason";
 import { applyDecision, showDecisionPanel } from "@/lib/approvals/detail-state";
+import { baselineExceptionLine, parseBaselineExceptionDecision } from "@/newquip/quote/baseline-exception";
 import { formatSast, isOverdue, waitingLabel } from "@/lib/approvals/time";
 import { DOC_TYPE_LABEL, STATUS_LABEL, type ApprovalAction, type ApprovalStatus } from "@/lib/approvals/types";
 import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
@@ -138,7 +139,8 @@ export default function ApprovalDetailPage() {
           <PanelTitle>Decision recorded</PanelTitle>
           <p className="mt-2 text-sm text-slate-800"><Status tone={TONE[r.status]}>{STATUS_LABEL[r.status]}</Status> by <strong>{r.decided_by_name ?? r.decided_by_email}</strong> on {formatSast(r.decided_at)}.</p>
           {r.admin_override && <div className="mt-2"><Alert tone="warning"><strong>Administrator override of separation of duties.</strong> {r.decision_reason ? `Reason given: ${r.decision_reason}` : "No reason was recorded."}</Alert></div>}
-          {!r.admin_override && r.decision_reason && <p className="mt-2 text-sm text-slate-700"><strong>Reason:</strong> {r.decision_reason}</p>}
+          {(() => { const bx = parseBaselineExceptionDecision(r.decision_reason); return bx ? <p className="mt-2 text-sm text-amber-900" data-testid="accepted-exception-line"><strong>{baselineExceptionLine(bx)}</strong>. Reason recorded: {bx.reason}</p> : null; })()}
+          {!r.admin_override && r.decision_reason && !parseBaselineExceptionDecision(r.decision_reason) && <p className="mt-2 text-sm text-slate-700"><strong>Reason:</strong> {r.decision_reason}</p>}
           <ActionFeedback state={acts.stateOf("decision")} />
           <p className="mt-2 text-xs text-slate-600">This decision is final. It cannot be repeated or changed from here.</p>
         </Panel>

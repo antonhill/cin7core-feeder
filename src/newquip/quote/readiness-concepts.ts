@@ -29,7 +29,11 @@ export function estimatorOpenItems(r: Pick<Readiness, "estimatorReasons">): { co
   return { count: r.estimatorReasons.length, reasons: [...r.estimatorReasons] };
 }
 
-export interface CostingStatus { complete: boolean; reasons: string[] }
+export interface CostingStatus {
+  complete: boolean; reasons: string[];
+  /** The Estimator's authorised accepted-incomplete-cost exception, present ONLY when it is what makes `complete` true (there really are open cost reasons it waives). "Complete" and "accepted incomplete" are different states. */
+  acceptedIncomplete?: { reason: string; by: string; at: string };
+}
 
 /**
  * ESTIMATOR_COSTING_COMPLETE. Evaluate the draft with cost VISIBLE server-side and pass the result here; only this boolean / reason list may travel to a caller who
@@ -66,6 +70,7 @@ export function estimatorCostingComplete(draft: QuoteDraft, costEvaluation: Quot
       cost.push(`A cost override is invalid: ${e instanceof Error ? e.message : "unknown error"}`);
     }
   }
-  if (!draft.estimator.costBasis?.incompleteAccepted) reasons.push(...cost);
-  return { complete: reasons.length === 0, reasons };
+  const accepted = draft.estimator.costBasis?.incompleteAccepted;
+  if (!accepted) reasons.push(...cost);
+  return { complete: reasons.length === 0, reasons, ...(accepted && cost.length > 0 && reasons.length === 0 ? { acceptedIncomplete: { reason: accepted.reason, by: accepted.by, at: accepted.at } } : {}) };
 }

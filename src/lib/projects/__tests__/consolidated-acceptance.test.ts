@@ -9,7 +9,7 @@ import { emptyDraft } from "@/newquip/grower/draft";
 import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
 import { withAcceptedIncompleteCosting } from "@/newquip/grower/__tests__/golden";
 import { sealWithUnresolvedScope } from "@/newquip/grower/__tests__/baseline-exception-fixture";
-import { baselineMatchesHash, type AcceptedBaseline } from "@/newquip/quote/baseline";
+import { baselineMatchesHash } from "@/newquip/quote/baseline";
 import { buildMarginSheet, redactInternalFinancials } from "@/newquip/quote/margin";
 import { POC_SIX_STAGE_SCHEDULE } from "@/newquip/quote/billing-schedule";
 import { quoteToProjectBaseline } from "@/newquip/quote/to-project";

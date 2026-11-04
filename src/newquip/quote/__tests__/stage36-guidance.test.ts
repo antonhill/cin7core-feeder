@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { checkApproval } from "../workflow";
-import { approvalChecklistMet, deriveApprovalChecklist, type ApprovalChecklistInput } from "../stage3-approval";
+import { approvalChecklistMet, costingAcceptedIncompleteText, deriveApprovalChecklist, type ApprovalChecklistInput } from "../stage3-approval";
 import { deriveStage4Steps } from "../stage4-steps";
 import { deriveAcceptanceBanner } from "../stage5-banner";
 import { deriveHandoverReadiness } from "../stage6-handover";
@@ -163,5 +163,23 @@ describe("D-19: the Stage 3 checklist names unmapped products no exception can c
   });
   it("no row when nothing is blocking", () => {
     expect(deriveApprovalChecklist({ ...base, baselineException: { baselineExceptionRequired: false, items: [], blocking: [] } }).some((x) => x.id === "mapping")).toBe(false);
+  });
+});
+
+describe("ROUND 4: an accepted-incomplete costing is its own state, never 'Costing is complete'", () => {
+  const base = { readinessState: "READY" as const, readinessReasons: [], totalExVatCents: 100, customerConfirmedCents: 100, signoffHash: "h", currentDraftHash: "h", dirty: false, isManager: true };
+  const acc = { reason: "Supplier prices follow the PO", by: "est@nq", at: "2026-11-02T08:00:00Z" };
+  it("the costing row names who accepted it, when and why; it is allowed (met) but flagged accepted-incomplete", () => {
+    const row = deriveApprovalChecklist({ ...base, costing: { complete: true, reason: null, acceptedIncomplete: acc } }).find((x) => x.id === "costing")!;
+    expect(row).toMatchObject({ met: true, state: "accepted-incomplete", label: "Costing accepted incomplete by est@nq on 2026-11-02: Supplier prices follow the PO" });
+    expect(row.label).not.toMatch(/is complete/);
+  });
+  it("a genuinely complete costing keeps 'Costing is complete'; an incomplete one stays unmet", () => {
+    expect(deriveApprovalChecklist({ ...base, costing: { complete: true, reason: null } }).find((x) => x.id === "costing")).toMatchObject({ label: "Costing is complete", met: true });
+    expect(deriveApprovalChecklist({ ...base, costing: { complete: true, reason: null } }).find((x) => x.id === "costing")!.state).toBeUndefined();
+    expect(deriveApprovalChecklist({ ...base, costing: { complete: false, reason: "2 SKUs have no cost" } }).find((x) => x.id === "costing")).toMatchObject({ met: false });
+  });
+  it("costingAcceptedIncompleteText is one sentence with the date only", () => {
+    expect(costingAcceptedIncompleteText(acc)).toBe("Costing accepted incomplete by est@nq on 2026-11-02: Supplier prices follow the PO");
   });
 });

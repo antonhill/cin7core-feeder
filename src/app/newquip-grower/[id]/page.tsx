@@ -55,7 +55,7 @@ import { EstimatorReturnNotice, returnNoticeText } from "./ReturnNotice";
 import { ConfirmationPanel } from "./ConfirmationPanel";
 import { DeliveryPanel, type DeliveryGate } from "./DeliveryPanel";
 import { ApprovalChecklist, AcceptanceStatusBanner, HandoverChecklist } from "./Stage36Guidance";
-import { deriveApprovalChecklist } from "@/newquip/quote/stage3-approval";
+import { costingAcceptedIncompleteText, deriveApprovalChecklist } from "@/newquip/quote/stage3-approval";
 import { deriveStage4Steps, STAGE4_STEP_IDS, type Stage4StepId } from "@/newquip/quote/stage4-steps";
 import { deriveAcceptanceBanner } from "@/newquip/quote/stage5-banner";
 import { deriveHandoverReadiness } from "@/newquip/quote/stage6-handover";
@@ -1093,6 +1093,7 @@ export default function QuoteEditorPage() {
                 </details>
               )}
               {isEstimator && q.state === "ESTIMATOR_REVIEW" && <div className="mt-4" data-testid="bx-note"><BaselineExceptionNote view={view.baselineException} /><UnmappedTypedPriceNote view={view.baselineException} /></div>}
+              {costingSrv?.acceptedIncomplete && <p className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" data-testid="costing-accepted-incomplete">{costingAcceptedIncompleteText(costingSrv.acceptedIncomplete)}</p>}
               <FinalReviewChecklist items={finalChecklist} />
               {isEstimator && q.state === "ESTIMATOR_REVIEW" && <p className="mt-3 text-xs text-slate-700" data-testid="session-only-note">&ldquo;Mark reviewed&rdquo; is kept on this screen for this session only: it is not saved, and after a reload you mark it again. Signing off needs it in the same session, so repeat it after a reload. Returning the quote to the Rep never does.</p>}
             </Panel>
@@ -1320,6 +1321,7 @@ export default function QuoteEditorPage() {
                   ["Price source", q.accepted_baseline.pricing.source.label],
                   ["Pricing basis", view.viewer.canViewCommercials ? q.accepted_baseline.pricing.basis : QUOTE_TYPE_NEUTRAL[draft.quoteType]],
                   ["Overrides · exclusions · price resolutions", `${q.accepted_baseline.overrides.length} · ${q.accepted_baseline.exclusions.length} · ${q.accepted_baseline.priceResolutions.length}`],
+                  ...(view.viewer.canViewCommercials && q.accepted_baseline.physicalCostEstimate?.incomplete && q.accepted_baseline.physicalCostEstimate.costBasis?.incompleteAccepted ? [["Costing", costingAcceptedIncompleteText(q.accepted_baseline.physicalCostEstimate.costBasis.incompleteAccepted)]] : []),
                   ["Seal (sha256)", `${(q.baseline_hash ?? "").slice(0, 16)}…`],
                 ].map(([k, v]) => <div key={k}><dt className="text-xs text-slate-600">{k}</dt><dd className="mt-0.5 break-words font-medium text-slate-900">{v}</dd></div>)}
               </dl>

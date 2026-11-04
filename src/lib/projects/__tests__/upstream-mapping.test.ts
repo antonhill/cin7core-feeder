@@ -16,7 +16,7 @@ import { baselineMatchesHash, commercialLinesOf } from "@/newquip/quote/baseline
 import { buildPhysicalScope } from "@/newquip/quote/physical-scope";
 import { applyMappingLibrary, effectiveScope, scopeFromSnapshot, type LibraryMapping, type ScopeItem } from "../product-scope";
 import { libraryOf, listActiveMappings, saveMappingVersion } from "../package-mapping-store";
-import { describeScope, quoteScopeView } from "@/lib/newquip-quotes/scope-preview";
+import { quoteScopeView } from "@/lib/newquip-quotes/scope-preview";
 import { recoverLinkExistingSale } from "../cin7-sale-recovery-store";
 import { buildCreationPlan, externalIdFor, type SaleReadBack } from "../cin7-sale-creation";
 import { createSaleForProject } from "../cin7-sale-creation-store";

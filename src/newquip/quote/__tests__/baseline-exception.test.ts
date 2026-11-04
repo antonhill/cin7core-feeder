@@ -173,3 +173,20 @@ describe("D-19: unmapped products no exception can cover are exposed by name", (
     expect(msg2).toMatch(/\(.*LED light/); // even when an exception was offered
   });
 });
+
+describe("ROUND 4: the recorded exception can be read back from its decision text (Approvals page line)", () => {
+  it("round-trips exceptionDecisionText: count, labels and reason", async () => {
+    const { parseBaselineExceptionDecision, baselineExceptionLine } = await import("../baseline-exception");
+    const items = estimatorPricedUnmapped(lines, scopeOf(lines, true)).map((g) => g.item);
+    const text = exceptionDecisionText({ unresolved: items, reason: "Because. Reason: nested text" });
+    const p = parseBaselineExceptionDecision(text)!;
+    expect(p.count).toBe(2);
+    expect(p.labels.sort()).toEqual(items.map((i) => i.label).sort());
+    expect(p.reason).toBe("Because. Reason: nested text");
+    expect(baselineExceptionLine({ count: 1, labels: ["X"] })).toBe("Accepted exception: 1 unmapped Estimator-priced system (X)");
+  });
+  it("is null for any other reason", async () => {
+    const { parseBaselineExceptionDecision } = await import("../baseline-exception");
+    for (const t of [null, undefined, "", "Looks right", "Accepted incomplete: something else"]) expect(parseBaselineExceptionDecision(t)).toBeNull();
+  });
+});

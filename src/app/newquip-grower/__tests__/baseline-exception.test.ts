@@ -92,7 +92,9 @@ describe("the freeze rule is NOT weakened", () => {
   });
   it("a Rep/member never receives it", async () => {
     as(false);
-    expect((await grower.getGrowerQuoteAction("q1")).data!.baselineException).toBeUndefined();
+    const rep = (await grower.getGrowerQuoteAction("q1")).data!;
+    expect(rep.baselineException).toBeUndefined();
+    expect(rep.costing).toBeUndefined(); // ... nor the accepted-incomplete costing detail
   });
 });
 
@@ -235,6 +237,8 @@ describe("it waives ONLY the listed Estimator-priced systems", () => {
     const v = (await grower.getGrowerQuoteAction("q1")).data!;
     expect(v.baselineException).toMatchObject({ baselineExceptionRequired: true, costException });
     expect(v.baselineException?.items.map((i) => i.itemKey).sort()).toEqual(ITEMS);
+    // ROUND 4: costing passes ONLY through the Estimator's exception, and the cost-entitled view says so (a distinct state: who / when / why), it is not reported as plain complete
+    expect(v.costing).toMatchObject({ complete: true, acceptedIncomplete: { reason: costException.reason } });
     const before = snapshot();
     expect((await grower.approveGrowerQuoteAction("q1")).error).toMatch(/2 package\(s\) are not mapped to Cin7 SKUs/);
     expect(snapshot()).toBe(before);

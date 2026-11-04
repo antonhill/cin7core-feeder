@@ -101,7 +101,6 @@ export function InvoiceVerificationProvider({ scope = "", signature, claimIds = 
 export function useInvoiceVerification(): InvoiceVerificationApi { return useContext(Ctx) ?? NOOP; }
 /** True when a provider exists (InvoiceStatusSection falls back to local state without one). */
 export function useHasInvoiceVerificationProvider(): boolean { return useContext(Ctx) !== null; }
-export function useInvoiceVerified(claimId: string): VerifiedRef | null { return useInvoiceVerification().verifiedFor(claimId); }
 
 /** The display model for one claim's invoice, from the recorded posting plus whatever is currently verified. */
 export function useInvoiceAuthorisation(claimId: string, recorded: ClaimCin7Status): InvoiceAuthorisation {

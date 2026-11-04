@@ -60,7 +60,6 @@ beforeEach(() => {
 const RAW = { ID: "cin7-s", Name: "Spark", Currency: "ZAR", Addresses: [{ Type: "Billing", Line1: "PO Box 1", DefaultForType: true }], Contacts: [{ Name: "AJ Mbulo", Email: "testing@sparkconsulting.co.za" }, { Name: "Anton Hill", Email: "anton@sparkconsulting.co.za" }] };
 const RAW2 = { ...RAW, ID: "cin7-w", Name: "Wynplaas", Contacts: [{ Name: "Sarie", Email: "sarie@wynplaas.co.za" }] };
 const snaps = () => db.rows("newquip_quote_customers") as Array<Record<string, any>>; // eslint-disable-line @typescript-eslint/no-explicit-any
-const latest = () => snaps().at(-1)!.snapshot as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 const as = async (slot: string) => { const r = await demo.selectDemoIdentityAction(slot); expect(r.error).toBeUndefined(); };
 const send = (c: Parameters<typeof grower.sendGrowerQuoteToEstimatorAction>[2]) => grower.sendGrowerQuoteToEstimatorAction("q1", total, c);
 
@@ -169,5 +168,43 @@ describe("S1b withdrawals record their return (D5 glue)", () => {
     const ri = await info("rep");
     expect(ri).toMatchObject({ kind: "AMOUNT_CHANGED", previousCents: total, source: "RECORD" });
     expect(ri!.newCents).toBeGreaterThan(total);
+  });
+
+  // (d) ROUND 4: the Estimator edit FOLLOWING sign-off, with S1b's amount rule on top, through the real action chain. #195's own suite (estimator-edit-after-signoff.test.ts) covers the content-only
+  // edit in isolation; these two put both rules in ONE flow and show how they differ.
+  const reqs = () => (db.rows("approval_requests") as Array<Record<string, any>>).map((r) => `${r.stage}:${r.status}`); // eslint-disable-line @typescript-eslint/no-explicit-any
+  const signedOff = async () => { await as("rep"); await send({ source: "QUOTATION_CONTACT" }); await as("estimator"); expect((await grower.signOffGrowerQuoteAction("q1")).error).toBeUndefined(); expect(reqs()).toEqual(["ESTIMATOR:APPROVED", "MANAGER:PENDING"]); };
+  it("edit after sign-off that does NOT change the total: sign-off cleared, confirmation KEPT, request back at the ESTIMATOR stage, no return record, then re-sign-off and approval", async () => {
+    await signedOff();
+    const d = structuredClone(quote().draft) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+    d.estimator.assumptions = "Site access by gravel road";
+    expect((await grower.saveGrowerDraftAction("q1", d as never)).error).toBeUndefined();
+    expect(quote()).toMatchObject({ state: "ESTIMATOR_REVIEW", estimator_signoff_hash: null, customer_confirmed_cents: total, revision: 1 });
+    expect(reqs()).toEqual(["ESTIMATOR:APPROVED", "MANAGER:SUPERSEDED", "ESTIMATOR:PENDING"]);
+    expect(records()).toEqual([]);
+    expect((await grower.signOffGrowerQuoteAction("q1")).error).toBeUndefined();
+    await as("manager");
+    expect((await grower.approveGrowerQuoteAction("q1")).error).toBeUndefined();
+    expect(quote().state).toBe("MANAGER_APPROVED_FINAL");
+  });
+  it("edit after sign-off that CHANGES the total: S1b withdraws the confirmation and returns the quotation to the Rep (AMOUNT_CHANGED record); no MANAGER request is left pending", async () => {
+    await signedOff();
+    // The staged emulator has no legacy `approval_decide` (used to WITHDRAW a pending request); twin just that call, exactly as customer-integrity.test.ts does, so a real withdrawal succeeds here.
+    const rpc = (db as any).rpc; // eslint-disable-line @typescript-eslint/no-explicit-any
+    (db as any).rpc = async (fn: string, a: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+      if (fn === "approval_decide" && a.p_action === "WITHDRAW") { for (const r of db.rows("approval_requests")) if (r.id === a.p_request) r.status = "WITHDRAWN"; return { data: null, error: null }; }
+      return rpc(fn, a);
+    };
+    const d = structuredClone(quote().draft) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+    d.estimator.charges.delivery += 100_000;
+    const r = await grower.saveGrowerDraftAction("q1", d as never);
+    expect(r.error).toBeUndefined();
+    expect(r.data!.confirmationEffect?.approvalSyncError).toBeUndefined();
+    expect(r.data!.confirmationEffect).toMatchObject({ confirmationCleared: true, returnedToRep: true, previousCents: total });
+    expect(quote()).toMatchObject({ state: "REP_DRAFT", estimator_signoff_hash: null, customer_confirmed_cents: null, revision: 2 });
+    expect(reqs().filter((x) => x.endsWith("PENDING"))).toEqual([]);
+    expect(reqs()).not.toContain("MANAGER:PENDING");
+    expect(records()).toHaveLength(1);
+    expect(records()[0].detail).toMatchObject({ kind: "AMOUNT_CHANGED", fromState: "ESTIMATOR_REVIEW", toRevision: 2, previousCents: total });
   });
 });

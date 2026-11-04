@@ -177,3 +177,20 @@ export function baselineExceptionView(g: Pick<BaselineMappingGate, "required" | 
     otherBlockers: g.blocked ? [...g.remainingPackages, ...(g.missingSkus.length ? [`${g.missingSkus.length} SKU(s) have no supplier cost selected`] : [])] : [],
   };
 }
+
+/**
+ * Reads back the decision text `exceptionDecisionText` wrote into the approval record, so the Approvals page can show a compact, read-only line without any new query. Null for any other reason.
+ * Format: "<TITLE>. Unresolved: <label> [<itemKey>] (<pricing>); ... . Reason: <reason>".
+ */
+export function parseBaselineExceptionDecision(text: string | null | undefined): { count: number; labels: string[]; reason: string } | null {
+  if (!text || !text.startsWith(`${BASELINE_EXCEPTION_TITLE}. Unresolved: `)) return null;
+  const rest = text.slice(`${BASELINE_EXCEPTION_TITLE}. Unresolved: `.length);
+  const at = rest.indexOf(". Reason: ");
+  if (at < 0) return null;
+  const labels = rest.slice(0, at).split("; ").map((p) => p.replace(/ \[[^\]]*\].*$/, "").trim()).filter(Boolean);
+  return { count: labels.length, labels, reason: rest.slice(at + ". Reason: ".length) };
+}
+/** "Accepted exception: N unmapped Estimator-priced system(s) (A, B)". */
+export function baselineExceptionLine(p: { count: number; labels: readonly string[] }): string {
+  return `Accepted exception: ${p.count} unmapped Estimator-priced system${p.count === 1 ? "" : "s"} (${p.labels.join(", ")})`;
+}

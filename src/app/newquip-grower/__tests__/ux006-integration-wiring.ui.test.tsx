@@ -79,4 +79,8 @@ describe("UX-006 integration: mounts in the new Stage 2/3/6 structure", () => {
     expect(page).toMatch(/needs\" : \"need\"\} an active library mapping/);
     expect(page).toMatch(/<UnmappedTypedPriceNote view=\{view\.baselineException\} \/>/);
   });
+  it("ROUND 4: the accepted-incomplete costing is shown on Stage 2 Final review (cost viewers) and in the Stage 6 baseline summary (cost viewers only)", () => {
+    expect(page).toMatch(/costingSrv\?\.acceptedIncomplete && <p [^>]*data-testid="costing-accepted-incomplete">\{costingAcceptedIncompleteText\(costingSrv\.acceptedIncomplete\)\}/);
+    expect(page).toMatch(/view\.viewer\.canViewCommercials && q\.accepted_baseline\.physicalCostEstimate\?\.incomplete && q\.accepted_baseline\.physicalCostEstimate\.costBasis\?\.incompleteAccepted \? \[\["Costing", costingAcceptedIncompleteText/);
+  });
 });

@@ -107,7 +107,7 @@ export interface QuoteView {
   evaluation: QuoteEvaluation;
   viewer: { roles: QuoteRole[]; canViewCommercials: boolean; /** SERVER-derived: true only on a Vercel Preview deployment (VERCEL_ENV === "preview"); never true in Production. Gates the whole-quote testing utility. */ previewTools: boolean };
   /** ESTIMATOR_COSTING_COMPLETE. Present ONLY for a caller who may see cost (Estimator / Manager / observer with cost); never in a Rep payload. `reason` is the first open reason (counts / labels / SKUs, never a value). */
-  costing?: { complete: boolean; reason: string | null };
+  costing?: { complete: boolean; reason: string | null; /** Present when the Estimator's authorised accepted-incomplete-cost exception is what makes costing pass: a distinct state, not "complete". */ acceptedIncomplete?: { reason: string; by: string; at: string } };
   /**
    * WHY THE QUOTATION IS BACK (D5). Non-null only while the quotation is in the place a return/withdrawal sent it to (Rep draft revision >= 2, or Estimator review after a
    * Manager return): { kind, reason, byEmail, byRole, at, destination, previousCents?, newCents?, source }. Totals are ex VAT; no cost data. A viewer WITHOUT commercial visibility (a Rep) gets a neutral line (reason "With the Estimator for review.", no actor) for destination ESTIMATOR: Manager->Estimator reasons are internal. Always present (null = nothing to show).
@@ -124,7 +124,7 @@ async function view(db: ReturnType<typeof createServiceRoleClient>, quote: Quote
   if (canViewCommercials) {
     // Only an open quotation can need one; once approved the exception (if any) is read from the sealed baseline.
     if (quote.state === "ESTIMATOR_REVIEW") { try { baselineException = await baselineExceptionOf(db, a.orgId, quote.draft, evaluationContext(true)); } catch { baselineException = undefined; } }
-    try { const c = await costingOf(db, a.orgId, quote.draft, evaluationContext(true)); costing = { complete: c.complete, reason: c.reasons[0] ?? null }; } catch { costing = undefined; }
+    try { const c = await costingOf(db, a.orgId, quote.draft, evaluationContext(true)); costing = { complete: c.complete, reason: c.reasons[0] ?? null, ...(c.acceptedIncomplete ? { acceptedIncomplete: c.acceptedIncomplete } : {}) }; } catch { costing = undefined; }
   }
   return {
     quote: redactInternalFinancials(quote, canViewCommercials),

@@ -330,8 +330,9 @@ describe("UX-006 corrections: Approve mirrors the server rule and shows what is 
     await open({ stage: "3", roles: ["MANAGER"], commercials: true, ...SIGNED, draftOver: COSTED });
     expect(approve().disabled).toBe(false);
     expect(screen.queryByTestId("approve-not-ready")).toBeNull();
-    const ok = within(screen.getByTestId("approval-checklist")).getByText("Costing is complete").closest("li")!;
-    expect(ok.querySelector("[data-testid^=check-status]")!.textContent).toBe("Met");
+    // ROUND 4 (expected change, the owner's finding): the fixture is complete ONLY through the Estimator's accepted-incomplete exception, so the row is no longer "Costing is complete: Met"
+    const ok = within(screen.getByTestId("approval-checklist")).getByText(/^Costing accepted incomplete by e@nq on 2026-11-02: Test exception$/).closest("li")!;
+    expect(ok.querySelector("[data-testid^=check-status]")!.textContent).toBe("Accepted incomplete");
   }, 90000);
 });
 
@@ -345,5 +346,13 @@ describe("D-19: an unmapped product the Estimator only typed a price for (LED) b
     expect(ws().textContent).toMatch(/Mapping unresolved: .*LED light.* these need an active library mapping; the Manager exception covers only M75 \/ penning systems\./);
     expect(ws().textContent).toMatch(/could be covered by an exception, but only once the unmapped products above are mapped/);
     expect(screen.queryByRole("button", { name: "Approve with recorded exception" })).toBeNull();
+  }, 60000);
+
+  it("ROUND 4: with only the Estimator's accepted-incomplete-cost exception, the 'Before you decide' costing row says so (who / when / why), not 'Costing is complete: Met'", async () => {
+    await open({ stage: "3", roles: ["MANAGER"], commercials: true, ...SIGNED, draftOver: COSTED });
+    const row = await waitFor(() => { const r = document.querySelector('[data-check="costing"]'); expect(r).toBeTruthy(); return r as HTMLElement; }, { timeout: 8000 });
+    expect(row.textContent).toMatch(/Costing accepted incomplete by e@nq on 2026-11-02: Test exception/);
+    expect(row.textContent).not.toMatch(/Costing is complete/);
+    expect(screen.getByTestId("check-status-costing").textContent).toBe("Accepted incomplete");
   }, 60000);
 });

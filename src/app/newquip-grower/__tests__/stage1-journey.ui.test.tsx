@@ -235,6 +235,22 @@ describe("the entry step is resolved ONCE, after the customer facts settle", () 
     expect(current()).toBe("customer");
   }, 60000);
 
+  it("ROUND 4 (#176 behaviour, re-asserted after #185): a garbage, zero or negative ?step= falls back to the entry step, exactly like an out-of-range one", async () => {
+    for (const bad of ["abc", "0", "-3", "1.5"]) {
+      await open({ view: snapshotView(true), step: bad });
+      expect(current(), `?step=${bad}`).toBe("customer");
+      cleanup();
+    }
+  }, 90000);
+
+  it("ROUND 4: with unsaved edits there is still ONE contact chooser (step 1) and no 'Choose the contact' leave-page link anywhere, so no leave-page confirm can be raised by it", async () => {
+    await open({ view: snapshotView(true), step: "2" });
+    fireEvent.change(screen.getByLabelText(/^Site \/ project name/), { target: { value: "Changed (unsaved)" } });
+    await waitFor(() => expect(screen.getByTestId("save-state").textContent).toContain("Unsaved"));
+    expect(screen.queryByRole("link", { name: /Choose the contact/ })).toBeNull();
+    expect(screen.getAllByRole("group", { name: "Quotation contact", hidden: true }).length).toBe(1);
+  }, 30000);
+
   it("a RETURNED quotation (Rep draft, revision 2) shows the banner with the approval-history disclosure and opens at the first incomplete step", async () => {
     await open({ view: snapshotView(true), draftOver: { siteName: "" }, row: { revision: 2 } });
     const banner = screen.getByTestId("returned-banner");
@@ -403,6 +419,15 @@ describe("show all steps, persistence and roles", () => {
     cleanup();
     await open({ view: snapshotView(true), draftOver: { siteName: "" } });
     await waitFor(() => expect((screen.getByLabelText("Show all steps") as HTMLInputElement).checked).toBe(true));
+  }, 30000);
+
+  it("ROUND 4: Show all steps keeps the declared step ORDER (rail buttons and panels) and reveals every step the viewer may see", async () => {
+    await open({ view: snapshotView(true) });
+    fireEvent.click(screen.getByLabelText("Show all steps"));
+    const rail = [...document.querySelectorAll("[data-step]")].map((e) => e.getAttribute("data-step"));
+    const declared = ["customer", "site", "equipment", "review", "submit"].filter((id) => rail.includes(id));
+    expect(rail.filter((id) => declared.includes(id as string))).toEqual(declared);
+    for (const id of declared) expect(shown(id), id).toBe(true);
   }, 30000);
 
   it("renders correctly (guided) when storage throws", async () => {

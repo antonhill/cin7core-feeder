@@ -63,12 +63,13 @@ describe("ESTIMATOR_COSTING_COMPLETE", () => {
     expect(c.complete).toBe(false);
     expect(c.reasons.join(" ")).toMatch(/cost/i);
     const accepted = readyDraft(); // carries the fixture's recorded incompleteAccepted exception
-    expect(estimatorCostingComplete(accepted, evaluateDraft(accepted, vis))).toEqual({ complete: true, reasons: [] });
+    // ROUND 4: still passes, but as its own state - the accepted exception is reported (who / when / why), so no screen has to call it 'complete'
+    expect(estimatorCostingComplete(accepted, evaluateDraft(accepted, vis))).toEqual({ complete: true, reasons: [], acceptedIncomplete: expect.objectContaining({ reason: expect.any(String), by: expect.any(String), at: expect.any(String) }) });
   });
   it("Estimator-priced-by-design lines (M75, penning, manual price) are NOT missing costs: with every SKU costed it is complete without an exception", () => {
     const { draft } = withCapturedSupplierCosts(readyDraft(), vis);
     expect(draft.estimator.costBasis).toBeUndefined();
-    expect(estimatorCostingComplete(draft, evaluateDraft(draft, vis))).toEqual({ complete: true, reasons: [] });
+    expect(estimatorCostingComplete(draft, evaluateDraft(draft, vis))).toEqual({ complete: true, reasons: [] }); // genuinely complete: no acceptedIncomplete
   });
   it("a priced catalogue line or physical SKU with no cost still blocks", () => {
     const { draft, skus } = withCapturedSupplierCosts(readyDraft(), vis, ["PNQ082"]);

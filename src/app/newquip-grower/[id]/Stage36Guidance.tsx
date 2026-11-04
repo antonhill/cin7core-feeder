@@ -11,7 +11,7 @@ import type { HandoverItem } from "@/newquip/quote/stage6-handover";
 
 const MARK = (met: boolean) => <span aria-hidden className={`inline-flex size-6 shrink-0 items-center justify-center rounded-full border text-xs font-bold ${met ? "border-emerald-700 bg-emerald-700 text-white" : "border-amber-600 bg-amber-50 text-amber-900"}`}>{met ? "✓" : "!"}</span>;
 
-function Checklist({ testId, label, intro, items }: { testId: string; label: string; intro: string; items: Array<{ id: string; label: string; met: boolean; detail: string | null; fix?: React.ReactNode }> }) {
+function Checklist({ testId, label, intro, items }: { testId: string; label: string; intro: string; items: Array<{ id: string; label: string; met: boolean; state?: "accepted-incomplete"; detail: string | null; fix?: React.ReactNode }> }) {
   return (
     <section aria-label={label} data-testid={testId} className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
       <h3 className="text-sm font-semibold text-slate-900">{label}</h3>
@@ -19,10 +19,10 @@ function Checklist({ testId, label, intro, items }: { testId: string; label: str
       <ul className="mt-2 space-y-2">
         {items.map((x) => (
           <li key={x.id} data-check={x.id} className="flex items-start gap-2 text-sm">
-            {MARK(x.met)}
+            {MARK(x.met && x.state !== "accepted-incomplete")}
             <span className="min-w-0">
               <span className="font-medium text-slate-900">{x.label}</span>{" "}
-              <span className={`text-xs font-semibold ${x.met ? "text-emerald-800" : "text-amber-900"}`} data-testid={`check-status-${x.id}`}>{x.met ? "Met" : "Not met"}</span>
+              <span className={`text-xs font-semibold ${x.met && x.state !== "accepted-incomplete" ? "text-emerald-800" : "text-amber-900"}`} data-testid={`check-status-${x.id}`}>{x.state === "accepted-incomplete" ? "Accepted incomplete" : x.met ? "Met" : "Not met"}</span>
               {x.detail && <span className="block text-xs text-slate-700">{x.detail}{x.fix}</span>}
             </span>
           </li>

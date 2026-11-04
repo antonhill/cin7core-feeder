@@ -8,7 +8,6 @@ import type { QuoteRole } from "./roles";
 //
 // Estimator-owned (the audit's ownership matrix): estimator.confirmedMappings, confirmedPackages, priceResolutions, costOverrides, physicalCosts, costBasis.
 
-export const ESTIMATOR_OWNED_DRAFT_FIELDS = ["confirmedMappings", "confirmedPackages", "priceResolutions", "costOverrides", "physicalCosts", "costBasis"] as const;
 
 export const hasEstimatorAuthority = (roles: ReadonlySet<QuoteRole>): boolean => roles.has("estimator") || roles.has("manager");
 

@@ -169,7 +169,6 @@ export function deriveStage2Wizard(i: Stage2WizardInput): StageWizard<Stage2Wiza
 
 // ── Stage 3 ──
 export type Stage3WizardId = "summary" | "decision";
-export const STAGE3_WIZARD_IDS: readonly Stage3WizardId[] = ["summary", "decision"];
 export const STAGE3_WIZARD_LABEL: Record<Stage3WizardId, string> = { summary: "Signed-off summary", decision: "Approve or return" };
 export interface Stage3WizardInput {
   state: QuoteStateName;

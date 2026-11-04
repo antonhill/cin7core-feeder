@@ -84,7 +84,6 @@ export const FIELD_LABEL: Record<string, string> = {
   penningPigSize: "Penning pig size", feederVariant: "CCM feeder variant", slattedFloorAreaM2: "Slatted floor area", penningRunningMetresPerRoom: "Penning running metres",
 };
 const friendly = (i: { field: string; message: string }) => (i.message.startsWith(i.field) && FIELD_LABEL[i.field] ? FIELD_LABEL[i.field] + i.message.slice(i.field.length) : i.message);
-export const NEEDED_BEFORE_ESTIMATOR = "Needed before sending to the Estimator";
 
 /** Budget-line statuses that only an Estimator/Manager can resolve (product mapping, package confirmation, a manual quotation price): the mapping-access rule on the server. */
 export const ESTIMATOR_LINE_STATUSES: ReadonlySet<string> = new Set(["unmapped", "package_unconfirmed", "package_incomplete", "not_in_price_source", "supplier_quote_required"]);
