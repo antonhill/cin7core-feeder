@@ -9,4 +9,9 @@ No secrets here. Demo data is labelled DEMO DATA; no Cin7/Xero writes, no custom
 3. **Manager** button - read the Estimator result; *Manager: final approval*.
 4. **Rep** button - Stage 4 *Generate customer quotation PDF*, then *Open PDF*.
 
-Talking points: quote 19.89% margin from the margin sheet only if asked (the Estimator panel shows a different, whole-contract basis). Practice on the spare copy first; a quotation cannot be reset once approved.
+5. **Manager** button -> Stage 5 *Customer Acceptance*: record "Customer accepted" with an evidence reference and a PDF evidence file (any demo PDF), *Record response*. Stage 6: *Create Project from accepted quote*, *Open the Project*.
+6. **Owner (you)** button (project administration needs the owner, not a role): *Stages* -> *Update progress* on Deposit: record physical 100%, then approve commercial 100%. *Commercial / Claims*: tick Deposit, *Preview claim*, *Save as draft claim*, *Submit*.
+7. **Manager** button -> *Approvals*: open the claim, *Approve...*, *Confirm* (separation of duties: the preparer cannot approve).
+8. Show the Cin7 panel: scope the Sale will carry and "Cin7 writes OFF". State plainly: Cin7 Sale creation, stock movement and invoice posting are not run in this UAT environment (no Cin7 connection); stock reduction is not built in the Toolbox (Cin7 does picking/shipping).
+
+Margin definitions: costed-scope margin = (product selling - product cost incl. audited cost overrides) / product selling, excl. delivery and installation (no cost); the Cost panel's figure divides by the whole contract. Do not mix them.
