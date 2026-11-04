@@ -229,9 +229,9 @@ values ('00000000-0000-0000-0000-0000000005b1','00000000-0000-0000-0000-00000000
 -- ── RLS ──────────────────────────────────────────────────────────────────────
 select pg_temp.act_as('00000000-0000-0000-0000-0000000005a1');
 do $$ begin
-  if (select count(*) from project_variation_stages) <> 3 then raise exception 'member A should see its schedules'; end if;
-  if (select count(*) from project_variation_schedule_amendments) <> 2 then raise exception 'member A should see its amendment audit'; end if;
-  if (select count(*) from project_cin7_sale_creations) <> 1 then raise exception 'member A should see its creation intent'; end if;
+  if (select count(*) from project_variation_stages) <> 0 then raise exception 'a signed-in member must read NOTHING from project_variation_stages (0122: no member read policy)'; end if;
+  if (select count(*) from project_variation_schedule_amendments) <> 0 then raise exception 'a signed-in member must read NOTHING from project_variation_schedule_amendments (0122: no member read policy)'; end if;
+  if (select count(*) from project_cin7_sale_creations) <> 0 then raise exception 'a signed-in member must read NOTHING from project_cin7_sale_creations (0122: no member read policy)'; end if;
 end $$;
 select pg_temp.expect_no_rows_changed($q$update project_cin7_sale_creations set last_error_message = 'x'$q$, 'member update creation intent');
 select pg_temp.expect_denied($q$insert into project_cin7_sale_creations (org_id, project_id, instance_id, sale_role, external_id, request_fingerprint, plan, contract_ex_vat_cents, requested_by_email) values ('00000000-0000-0000-0000-0000000005b1','00000000-0000-0000-0000-0000000005c3','00000000-0000-0000-0000-0000000005e1','VARIATION','Z','f','{}',1,'m@x')$q$, 'member insert creation intent');
