@@ -217,7 +217,7 @@ export function CostPanelBody(p: CostPanelBodyProps) {
         <div className="mt-3 text-sm">
           <div>Estimated physical cost: <strong className="tabular-nums">{fmtCents(e.totalCostCents)}</strong>{e.incomplete && <span className="ml-1 text-amber-700">(incomplete)</span>}</div>
           {v!.contractCents != null && <div>Contract (ex VAT): <span className="tabular-nums">{fmtCents(v!.contractCents)}</span></div>}
-          {v!.complete ? <div>Margin on physical cost: <strong className="tabular-nums">{v!.marginPct}%</strong> (gross profit {fmtCents(v!.gpCents!)})</div>
+          {v!.complete ? <div>Margin on whole contract (delivery and installation carry no cost): <strong className="tabular-nums">{v!.marginPct}%</strong> (gross profit {fmtCents(v!.gpCents!)})</div>
             : <div className="text-amber-700">Margin is incomplete: {e.missingSkus.length ? `${e.missingSkus.length} SKU(s) have no cost` : ""}{e.missingSkus.length && e.unresolvedPackages.length ? " and " : ""}{e.unresolvedPackages.length ? `${e.unresolvedPackages.length} package(s) are not mapped to Cin7 SKUs` : ""}. A partial total is never shown as the margin.</div>}
         </div>
       )}
