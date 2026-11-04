@@ -170,4 +170,3 @@ export function toRailSteps<I extends string = WizardStepId>(steps: readonly Wiz
   // A step that is "hidden" for this viewer (e.g. the cost steps for a viewer without cost visibility) is not on the rail at all: absent, not disabled.
   return steps.filter((s) => s.access !== "hidden").map((s) => ({ id: s.id, label: s.label, status: s.status, ...(s.note ? { note: s.note } : {}), ...(s.counted ? { counted: true } : {}), ...(s.statusLabel ? { statusLabel: s.statusLabel } : {}), ...(s.access === "locked" ? { locked: true, blockedBy: s.blockedBy } : {}) }));
 }
-

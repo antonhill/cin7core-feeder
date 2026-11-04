@@ -174,6 +174,7 @@ describe("costing status in the quote view", () => {
     asRoles("REP", "ESTIMATOR", "MANAGER");
     vi.mocked(canSeeCosts).mockResolvedValue(true);
     const est = await actions.getGrowerQuoteAction(id);
-    expect(est.data!.costing).toEqual({ complete: true, reason: null }); // the fixture carries the recorded exception
+    // ROUND 4: complete ONLY through the recorded accepted-incomplete exception, which the cost-entitled view now reports (who / when / why) instead of calling it plain complete
+    expect(est.data!.costing).toEqual({ complete: true, reason: null, acceptedIncomplete: { at: expect.any(String), by: expect.any(String), reason: expect.any(String) } }); // the fixture carries the recorded exception
   });
 });
