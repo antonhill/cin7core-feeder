@@ -38,3 +38,5 @@ export function fakeFetch(routes: Record<string, (page: number, call: Call) => {
   return { impl, calls };
 }
 export const noSleep = async () => {};
+
+export const FP_LOCS = [{ ID: LOC.JHB, Name: "JHB" }, { ID: LOC.DURBAN, Name: "Durban" }, { ID: LOC.CAPE_TOWN, Name: "Cape Town" }, { ID: LOC.FACTORY_STORE, Name: "Factory Store" }, { ID: LOC.BOND, Name: "Bond" }];

@@ -25,12 +25,24 @@ RWTSA_CIN7_INSTANCE_LABEL=rwtsa-demo-instance      # a non-secret label recorded
 # locations.json  (chmod 600)  - location GUIDs from the dedicated instance; Bond is required
 { "BOND": "<guid>", "JHB": "<guid>", "DURBAN": "<guid>", "CAPE_TOWN": "<guid>", "FACTORY_STORE": "<guid>" }
 ```
+# identity.json  (chmod 600)  - account identity: NOT the label
+{ "accountIdSha256": "<sha256 of the RWTSA account ID>" }       # compute: printf %s "$ACCOUNT_ID" | shasum -a 256
+# after the first run reports the fingerprint, and ONLY if it is the intended RWTSA instance, the owner adds:
+{ "accountIdSha256": "...", "approvedFingerprint": "<64-hex fingerprint of the account's location-ID set>" }
+```
 Use a **read-only** Cin7 API application on the **dedicated RWTSA instance**. Never reuse NewQuip or production credentials.
 
 ```
 npx tsx scripts/rwtsa-live/snapshot.ts --i-confirm-read-only-snapshot
 npx tsx scripts/rwtsa-live/reconcile.ts --snapshot <file> --workbook <protected workbook> [--known known-transactions.json]
 ```
+
+## Account identity (fails closed; never just a label)
+The run first makes ONE bounded GET of the location list and computes a fingerprint of the account's location-ID set (GUIDs unique to a
+Cin7 account). It then proceeds to stock only if (a) SHA-256 of the configured account ID equals `accountIdSha256` and (b) the fingerprint
+equals the owner-approved `approvedFingerprint`. There is **no trust-on-first-use**: with no approved fingerprint the run stops, writes
+`identity-check-<time>.json` (hashes and counts only), and prints the fingerprint for the owner to confirm. Any mismatch stops the run with
+the same evidence file; no stock or product endpoint is called (tested).
 
 ## Location identity
 Bond (and the other four roles) are identified by **location ID** from `locations.json`, and each ID must exist in the account's own
@@ -43,6 +55,12 @@ The field names actually seen are recorded in the snapshot (`contract`) as verif
 - `physical` = sum of OnHand over the five mapped roles (Bond included); locations outside the map are reported (`unmapped`), never merged.
 - `bond` = OnHand at the Bond location. `unrestricted` = physical - bond.
 - `usable` = unrestricted - allocated at the four non-Bond roles. **Bond is never usable before release.** Phase 2 owns the full rule.
+
+## Boundary enforcement
+`src/rwtsa-live/__tests__/boundary.test.ts` parses every file with the TypeScript AST (not text), so comment/string tricks cannot hide an
+import or call. Only `client.ts` may touch `fetch` or hold the Cin7 auth header names; every `method` must be the literal `"GET"`; imports are
+allowlisted; `process.env`, dynamic loading and `setInterval` are banned; and no file in `src/`, `scripts/` or `rwtsa-demo/` may import this
+module. The repo-wide gateway test allows the header names in exactly two files: `cin7/http.ts` and `rwtsa-live/client.ts`.
 
 ## Reconciliation
 Report only; never forces agreement. A difference is `EXPLAINED` only by an owner-supplied known-transactions file (e.g. MO-00001,

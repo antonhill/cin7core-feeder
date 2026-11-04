@@ -12,7 +12,7 @@ export interface ReadOnlyClientOptions {
   timeoutMs?: number;
   backoffBaseMs?: number;
 }
-export interface ReadOnlyClient { get<T = Record<string, unknown>>(path: string, query?: Record<string, string | number>): Promise<T>; requests(): number }
+export interface ReadOnlyClient { get<T = Record<string, unknown>>(path: string, query?: Record<string, string | number>): Promise<T>; requests(): number; methodsUsed(): string[] }
 
 const RETRYABLE = new Set([429, 503]);
 
@@ -30,6 +30,7 @@ export function createReadOnlyClient(opts: ReadOnlyClientOptions): ReadOnlyClien
   const backoffBase = opts.backoffBaseMs ?? 5000;
   let last = Number.NEGATIVE_INFINITY;
   let count = 0;
+  const methods = new Set<string>();
 
   async function pace(): Promise<void> {
     const wait = Math.max(0, last + minInterval - now());
@@ -39,12 +40,14 @@ export function createReadOnlyClient(opts: ReadOnlyClientOptions): ReadOnlyClien
 
   return {
     requests: () => count,
+    methodsUsed: () => [...methods],
     async get<T>(path: string, query?: Record<string, string | number>): Promise<T> {
       const url = assertReadOnlyRequest("GET", path);
       for (const [k, v] of Object.entries(query ?? {})) url.searchParams.set(k, String(v));
       for (let attempt = 0; ; attempt++) {
         await pace();
         count++;
+        methods.add("GET");
         let res: Response;
         try {
           res = await doFetch(url.toString(), {

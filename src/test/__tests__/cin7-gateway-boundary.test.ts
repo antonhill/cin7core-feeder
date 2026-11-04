@@ -39,6 +39,16 @@ function listTsFiles(dir: string, excludeName?: string): string[] {
   return files;
 }
 
+function headerOffenders(files: Map<string, string>, allowed: Set<string>): { file: string; line: number }[] {
+  const headerPattern = /api-auth-(accountid|applicationkey)/i;
+  const offenders: { file: string; line: number }[] = [];
+  for (const [file, text] of files) {
+    if (allowed.has(file)) continue;
+    text.split("\n").forEach((line, i) => { if (headerPattern.test(line)) offenders.push({ file, line: i + 1 }); });
+  }
+  return offenders;
+}
+
 describe("Cin7 HTTP gateway boundary", () => {
   it("no file under src/cin7/ other than http.ts calls fetch() directly", () => {
     const cin7Dir = join(__dirname, "..", "..", "cin7");
@@ -81,24 +91,32 @@ describe("Cin7 HTTP gateway boundary", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("the two literal Cin7 auth header names appear only inside cin7/http.ts's gateway functions", () => {
+  it("the two literal Cin7 auth header names appear only inside cin7/http.ts's gateway functions (plus the ONE reviewed RWTSA client)", () => {
     const srcDir = join(__dirname, "..", "..");
-    const httpTsPath = join(srcDir, "cin7", "http.ts");
-    const headerPattern = /api-auth-(accountid|applicationkey)/i;
-    const offenders: { file: string; line: number }[] = [];
-    // The ONE other reviewed place: the RWTSA read-only snapshot client (PR #198). It is deliberately separate from the Toolbox gateway
-    // (it must not use the Supabase-backed limiter or the stored-credential path) and is itself pinned to GET, an exact path allowlist,
-    // the fixed Cin7 origin and a dedicated credentials file (src/rwtsa-live/__tests__ prove each of these).
-    const rwtsaLiveClient = join(srcDir, "rwtsa-live", "client.ts");
+    const files = new Map(listTsFiles(srcDir).map((f) => [f, readFileSync(f, "utf8")]));
+    expect(headerOffenders(files, ALLOWED_HEADER_FILES(srcDir))).toEqual([]);
+  });
 
-    for (const file of listTsFiles(srcDir)) {
-      if (file === httpTsPath || file === rwtsaLiveClient) continue;
-      const lines = readFileSync(file, "utf8").split("\n");
-      lines.forEach((line, i) => {
-        if (headerPattern.test(line)) offenders.push({ file, line: i + 1 });
-      });
-    }
+  // ---- the exception is path-specific: prove it cannot be reused by any other file or path ----
+  const ALLOWED_HEADER_FILES = (srcDir: string) => new Set([join(srcDir, "cin7", "http.ts"), join(srcDir, "rwtsa-live", "client.ts")]);
 
-    expect(offenders).toEqual([]);
+  it("the allowlist is EXACTLY the gateway plus src/rwtsa-live/client.ts (no wildcard, no directory)", () => {
+    const srcDir = "/r/src";
+    expect([...ALLOWED_HEADER_FILES(srcDir)].sort()).toEqual(["/r/src/cin7/http.ts", "/r/src/rwtsa-live/client.ts"]);
+  });
+
+  it("header handling placed in ANY other file is flagged, including siblings of the exempt client and same-named files elsewhere", () => {
+    const srcDir = "/r/src";
+    const hdr = `headers: { "api-auth-accountid": a, "api-auth-applicationkey": k }`;
+    const files = new Map<string, string>([
+      ["/r/src/rwtsa-live/client.ts", hdr],                 // exempt
+      ["/r/src/cin7/http.ts", hdr],                         // exempt
+      ["/r/src/rwtsa-live/other.ts", hdr],                  // sibling: flagged
+      ["/r/src/rwtsa-live/sub/client.ts", hdr],             // same name, other directory: flagged
+      ["/r/src/lib/client.ts", hdr],                        // same name, elsewhere: flagged
+      ["/r/src/cin7/client.ts", `const h = "API-AUTH-ACCOUNTID";`], // case variants: flagged
+      ["/r/src/app/x.ts", "const h = `api-auth-${'applicationkey'}`;"], // split via template: not a literal match, so the AST scanner in rwtsa-live/__tests__/boundary also bans templates
+    ]);
+    expect(headerOffenders(files, ALLOWED_HEADER_FILES(srcDir)).map((o) => o.file).sort()).toEqual(["/r/src/cin7/client.ts", "/r/src/lib/client.ts", "/r/src/rwtsa-live/other.ts", "/r/src/rwtsa-live/sub/client.ts"]);
   });
 });

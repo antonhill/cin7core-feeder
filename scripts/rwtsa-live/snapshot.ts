@@ -10,10 +10,10 @@
 import { homedir } from "node:os";
 import path from "node:path";
 import { createReadOnlyClient } from "../../src/rwtsa-live/client";
-import { collectAvailability, collectLocations, collectProducts } from "../../src/rwtsa-live/collect";
 import { loadLocationMap, loadRwtsaCredentials } from "../../src/rwtsa-live/credentials";
-import { buildSnapshot } from "../../src/rwtsa-live/snapshot";
-import { writeSnapshotAtomic } from "../../src/rwtsa-live/store";
+import { loadIdentityApproval } from "../../src/rwtsa-live/identity";
+import { runSnapshot } from "../../src/rwtsa-live/run";
+import { writeSnapshotAtomic, writeTextAtomic } from "../../src/rwtsa-live/store";
 import { RwtsaLiveError } from "../../src/rwtsa-live/types";
 
 async function main(): Promise<number> {
@@ -23,14 +23,27 @@ async function main(): Promise<number> {
   }
   const home = homedir();
   const creds = loadRwtsaCredentials({ home });
-  const locationMap = loadLocationMap(path.join(home, "rwtsa-local", "credentials"));
+  const credDir = path.join(home, "rwtsa-local", "credentials");
+  const locationMap = loadLocationMap(credDir);
+  const approval = loadIdentityApproval(credDir);
   const client = createReadOnlyClient({ creds });
-  const locations = await collectLocations(client);
-  const availability = await collectAvailability(client);
-  const products = await collectProducts(client);
-  const snapshot = buildSnapshot({ creds, locationMap, locations, availability, products, takenAt: new Date().toISOString() });
+  const takenAt = new Date().toISOString();
+
+  const result = await runSnapshot({ client, creds, locationMap, approval, takenAt });
+  if (result.kind === "IDENTITY_FAILED") {
+    const evidence = result.evidence, identity = evidence.identity;
+    const { file: ev } = writeTextAtomic({ name: `identity-check-${takenAt.replace(/[:.]/g, "-")}.json`, text: JSON.stringify(evidence, null, 2) });
+    console.log(`IDENTITY NOT VERIFIED (${identity.status}${evidence.locationsComplete ? "" : ", location list incomplete"}) · ${identity.locationCount} locations · no stock was read · ${client.requests()} GET request(s)`);
+    if (identity.status === "NOT_APPROVED") console.log(`  OWNER CONFIRMATION NEEDED: if this is the intended RWTSA instance, add "approvedFingerprint": "${identity.fingerprint}" to ~/rwtsa-local/credentials/identity.json and re-run.`);
+    if (identity.status === "ACCOUNT_MISMATCH") console.log("  The configured account ID does not match the owner-approved hash in identity.json. Check you are using the RWTSA credentials.");
+    if (identity.status === "FINGERPRINT_MISMATCH") console.log("  This account's locations differ from the owner-approved fingerprint: this may not be the RWTSA instance. Nothing was read beyond the location list.");
+    console.log(`  evidence preserved: ${path.basename(ev)} (in ~/rwtsa-local/cin7-snapshots)`);
+    return 1;
+  }
+  const snapshot = result.snapshot;
+  const identity = snapshot.source.identity;
   const { file } = writeSnapshotAtomic({ home, snapshot, creds });
-  console.log(`SNAPSHOT ${snapshot.completeness.status} · ${snapshot.counts.skus} SKUs · ${snapshot.counts.availabilityRows} stock rows · ${snapshot.counts.locations} locations · ${snapshot.counts.products} products · ${client.requests()} GET requests`);
+  console.log(`SNAPSHOT ${snapshot.completeness.status} · identity ${identity.status} · methods ${client.methodsUsed().join(",")} · ${snapshot.counts.skus} SKUs · ${snapshot.counts.availabilityRows} stock rows · ${snapshot.counts.locations} locations · ${snapshot.counts.products} products · ${client.requests()} GET requests`);
   console.log(`  Bond location ID verified in the account's location list: ${snapshot.locationMapping.bond.verifiedInLocationList ? "yes" : "NO"} · locations outside the five roles: ${snapshot.locationMapping.unmappedLocationCount}`);
   for (const p of snapshot.completeness.problems) console.log(`  problem: ${p}`);
   console.log(`  written: ${path.basename(file)} (in ~/rwtsa-local/cin7-snapshots)`);

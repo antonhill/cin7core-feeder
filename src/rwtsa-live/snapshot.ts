@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { CIN7_API_ORIGIN } from "@/cin7/api-origin";
 import type { Collected, Row } from "./collect";
+import type { IdentityResult } from "./identity";
 import { ROLES, UNRESTRICTED_ROLES, type LocationMap, type Role, type RwtsaCredentials } from "./types";
 
 export interface RoleQty { onHand: number; allocated: number; available: number; onOrder: number; inTransit: number }
@@ -24,7 +25,8 @@ export interface SkuStock {
 export interface Snapshot {
   schemaVersion: 1;
   takenAt: string;
-  source: { instanceLabel: string; apiOrigin: string; method: "GET"; readOnly: true };
+  source: { instanceLabel: string; apiOrigin: string; method: "GET"; readOnly: true; identity: IdentityResult };
+  verification: { methodsUsed: string[]; requests: number; fieldTypes: Record<string, string>; skuLocationDuplicatesFound: number };
   endpoints: Array<{ path: string; pages: number; records: number; reportedTotal: number | null; complete: boolean }>;
   contract: { availabilityFields: string[]; locationFields: string[]; productFields: string[] };
   completeness: { status: "COMPLETE" | "INCOMPLETE"; problems: string[] };
@@ -39,6 +41,12 @@ export interface Snapshot {
   contentHash: string;
 }
 
+/** Type of each observed stock field (names and JS types only, never values) - contract evidence. */
+function fieldTypes(rows: Row[]): Record<string, string> {
+  const t: Record<string, Set<string>> = {};
+  for (const r of rows) for (const [k, v] of Object.entries(r)) (t[k] ??= new Set()).add(v === null ? "null" : Array.isArray(v) ? "array" : typeof v);
+  return Object.fromEntries(Object.keys(t).sort().map((k) => [k, [...t[k]].sort().join("|")]));
+}
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 
@@ -53,9 +61,11 @@ export function verifySnapshotIntegrity(s: Snapshot): boolean {
   return typeof contentHash === "string" && hashOf(rest) === contentHash;
 }
 
-export function buildSnapshot(i: { creds: RwtsaCredentials; locationMap: LocationMap; locations: Collected<Row>; availability: Collected<Row>; products: Collected<Row>; takenAt: string }): Snapshot {
+export function buildSnapshot(i: { creds: RwtsaCredentials; locationMap: LocationMap; locations: Collected<Row>; availability: Collected<Row>; products: Collected<Row>; takenAt: string; identity: IdentityResult; clientStats?: { methodsUsed: string[]; requests: number } }): Snapshot {
   const problems: string[] = [];
   for (const [n, c] of [["location list", i.locations], ["stock availability", i.availability], ["product list", i.products]] as const) for (const p of c.problems) problems.push(`${n}: ${p}`);
+
+  if (i.identity.status !== "VERIFIED") problems.push(`account identity is not verified (${i.identity.status})`);
 
   // Location identity: ID -> {name} from the account's own location list. Names are only a join key, and only if unique.
   const idToName = new Map<string, string>();
@@ -113,7 +123,8 @@ export function buildSnapshot(i: { creds: RwtsaCredentials; locationMap: Locatio
   const body: Omit<Snapshot, "contentHash"> = {
     schemaVersion: 1,
     takenAt: i.takenAt,
-    source: { instanceLabel: i.creds.instanceLabel, apiOrigin: CIN7_API_ORIGIN, method: "GET", readOnly: true },
+    source: { instanceLabel: i.creds.instanceLabel, apiOrigin: CIN7_API_ORIGIN, method: "GET", readOnly: true, identity: i.identity },
+    verification: { methodsUsed: i.clientStats?.methodsUsed ?? [], requests: i.clientStats?.requests ?? 0, fieldTypes: fieldTypes(i.availability.rows), skuLocationDuplicatesFound: i.availability.problems.filter((p) => /duplicate/i.test(p)).length },
     endpoints: ([["/ref/location", i.locations], ["/ref/productavailability", i.availability], ["/product", i.products]] as const).map(([path, c]) => ({ path, pages: c.pages, records: c.rows.length, reportedTotal: c.reportedTotal, complete: c.complete })),
     contract: { availabilityFields: i.availability.observedFields, locationFields: i.locations.observedFields, productFields: i.products.observedFields },
     completeness: { status: problems.length === 0 ? "COMPLETE" : "INCOMPLETE", problems },

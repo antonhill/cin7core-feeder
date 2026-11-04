@@ -1,38 +1,93 @@
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import { importersOf, scanSource, type Role } from "./boundary-scan";
 
 const ROOT = path.join(__dirname, "..", "..", "..");
-const walk = (d: string): string[] => readdirSync(d).flatMap((n) => { const p = path.join(d, n); return statSync(p).isDirectory() ? walk(p) : [p]; });
-const prod = (d: string) => walk(d).filter((f) => /\.(ts|tsx)$/.test(f) && !f.includes("__tests__"));
+const walk = (d: string): string[] => readdirSync(d).flatMap((n) => { if (n === "node_modules" || n === ".next" || n === ".git") return []; const p = path.join(d, n); return statSync(p).isDirectory() ? walk(p) : [p]; });
+const isCode = (f: string) => /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/.test(f);
 const LIVE = path.join(ROOT, "src", "rwtsa-live");
-const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+const SCRIPTS = path.join(ROOT, "scripts", "rwtsa-live");
+const prodFiles = () => [...walk(LIVE), ...walk(SCRIPTS)].filter((f) => isCode(f) && !f.includes(`${path.sep}__tests__${path.sep}`));
+const roleOf = (f: string): Role => (f.startsWith(SCRIPTS) ? "script" : path.basename(f) === "client.ts" ? "client" : "module");
+const bad = (src: string, role: Role = "module") => scanSource(src, "snippet.ts", role);
 
-describe("RWTSA live module isolation", () => {
-  it("only client.ts can touch the network, and only with GET", () => {
-    for (const f of [...prod(LIVE), ...prod(path.join(ROOT, "scripts", "rwtsa-live"))]) {
-      const t = strip(readFileSync(f, "utf8"));
-      if (path.basename(f) !== "client.ts") expect(/\bfetch\b|XMLHttpRequest|WebSocket|node:https?|node:net|undici|axios/.test(t), f).toBe(false);
-    }
-    const client = strip(readFileSync(path.join(LIVE, "client.ts"), "utf8"));
-    expect(/["'`](POST|PUT|PATCH|DELETE)["'`]/i.test(client)).toBe(false);
-    expect(client).toMatch(/method:\s*"GET"/);
+describe("RWTSA live module: AST boundary over the real tree", () => {
+  it("scans a non-trivial set of files", () => { expect(prodFiles().length).toBeGreaterThan(10); });
+  it("has no violations (network only in client.ts, GET only, no env, no dynamic loading, allowlisted imports)", () => {
+    const all = prodFiles().flatMap((f) => scanSource(readFileSync(f, "utf8"), path.relative(ROOT, f), roleOf(f)));
+    expect(all).toEqual([]);
   });
-  it("imports no database, Toolbox integration, server-only or Cin7 HTTP/rate-limit modules", () => {
-    for (const f of [...prod(LIVE), ...prod(path.join(ROOT, "scripts", "rwtsa-live"))]) {
-      const imports = [...readFileSync(f, "utf8").matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1]);
-      for (const i of imports) { expect(/supabase|server-only|@\/cin7\/(http|rate-limit|load-credentials|crypto)|@\/lib\//.test(i), `${f} -> ${i}`).toBe(false); }
-    }
+  it("only client.ts holds the Cin7 auth header names", () => {
+    const withHeaders = prodFiles().filter((f) => /api-auth-/i.test(readFileSync(f, "utf8")));
+    expect(withHeaders.map((f) => path.basename(f))).toEqual(["client.ts"]);
   });
-  it("reads no process.env (credentials come only from the dedicated file)", () => {
-    for (const f of [...prod(LIVE), ...prod(path.join(ROOT, "scripts", "rwtsa-live"))]) expect(/process\.env/.test(strip(readFileSync(f, "utf8"))), f).toBe(false);
+});
+
+describe("negative tests: every bypass shape is flagged", () => {
+  it.each([
+    ["fetch after a // inside a string (comment-stripping trick)", `const s = "a//b"; await fetch(u);`],
+    ["fetch between fake comment markers in strings", `const s = "/*"; await fetch(u); const t = "*/";`],
+    ["line comment inside a string hiding the rest of the line", `const u = "//"; fetch(u);`],
+    ["alias then call", `const f = fetch; f(u);`],
+    ["globalThis computed access", `globalThis["fe" + "tch"](u);`],
+    ["globalThis.fetch", `globalThis.fetch(u);`],
+    ["element access to fetch", `const f = x["fetch"];`],
+    ["constructor escape", `(() => {}).constructor("return fetch")();`],
+    ["eval", `eval("1");`],
+    ["new Function", `new Function("return 1")();`],
+    ["dynamic import literal", `await import("node:http");`],
+    ["dynamic import template", "await import(`node:${x}`);"],
+    ["dynamic import concatenation", `await import("node:" + "http");`],
+    ["require", `const x = require("fs");`],
+    ["createRequire", `import { createRequire } from "node:module"; createRequire(import.meta.url)("node:http");`],
+    ["import = require", `import h = require("http");`],
+    ["import type of a forbidden module", `type T = import("undici").Dispatcher;`],
+    ["undici", `import { fetch as f } from "undici";`],
+    ["axios", `import axios from "axios";`],
+    ["node:http", `import http from "node:http";`],
+    ["node:net subpath", `import n from "node:net/foo";`],
+    ["export-from a network module", `export * from "node:https";`],
+    ["side-effect import of a network module", `import "node:http2";`],
+    ["supabase", `import { createServiceRoleClient } from "@/supabase/server";`],
+    ["Toolbox Cin7 gateway", `import { cin7Request } from "@/cin7/http";`],
+    ["Toolbox Cin7 rate limiter", `import { acquireCin7Slot } from "@/cin7/rate-limit";`],
+    ["server-only", `import "server-only";`],
+    ["other app library", `import { x } from "@/lib/fx";`],
+    ["process.env", `const k = process.env.HOME;`],
+    ["process[env]", `const k = process["env"];`],
+    ["setInterval poller", `setInterval(() => {}, 1000);`],
+    ["Cin7 auth header name outside client.ts", `const h = "api-auth-accountid";`],
+    ["auth header in a template", "const h = `api-auth-${x}`;"],
+    ["URL literal", `const u = "https://evil.example/x";`],
+    ["POST literal", `const m = "POST";`],
+    ["method other than GET", `const o = { method: m };`],
+    ["WebSocket", `new WebSocket(u);`],
+  ])("flags: %s", (_n, src) => { expect(bad(src).length, src).toBeGreaterThan(0); });
+
+  it("the client role may call fetch and hold the header names, but still cannot use a non-GET method or a URL literal", () => {
+    expect(bad(`const r = await (opts.fetchImpl ?? fetch)(u, { method: "GET", headers: { "api-auth-accountid": a } });`, "client")).toEqual([]);
+    expect(bad(`await fetch(u, { method: "POST" });`, "client").length).toBeGreaterThan(0);
+    expect(bad(`await fetch("https://evil.example", { method: "GET" });`, "client").length).toBeGreaterThan(0);
+    expect(bad(`await import("node:http");`, "client").length).toBeGreaterThan(0);
   });
-  it("is not imported by the RWTSA standalone shell, the engines or the planner (no automatic substitution of live values)", () => {
-    for (const d of [path.join(ROOT, "src", "rwtsa-demo"), path.join(ROOT, "rwtsa-demo"), path.join(ROOT, "scripts", "rwtsa-demo")]) {
-      for (const f of walk(d).filter((x) => /\.(ts|tsx|mjs|js)$/.test(x) && !x.includes("node_modules") && !x.includes(`${path.sep}.next${path.sep}`))) expect(/rwtsa-live/.test(readFileSync(f, "utf8").replace(/^.*boundary.*$/gm, "")) && !f.includes("__tests__"), f).toBe(false);
-    }
+  it("scripts may use only the two audited workbook adapter modules from the RWTSA tree", () => {
+    expect(bad(`import { buildDataset } from "@/rwtsa-demo/workbook/build-dataset";`, "script")).toEqual([]);
+    expect(bad(`import { x } from "@/rwtsa-demo/engine";`, "script").length).toBeGreaterThan(0);
+    expect(bad(`import { buildDataset } from "@/rwtsa-demo/workbook/build-dataset";`, "module").length).toBeGreaterThan(0);
   });
-  it("starts no timer or poller", () => {
-    for (const f of prod(LIVE)) expect(/setInterval|cron|schedule/i.test(strip(readFileSync(f, "utf8"))), f).toBe(false);
+});
+
+describe("nothing outside the live module imports it (no automatic substitution of live values)", () => {
+  const OWN = [LIVE, SCRIPTS];
+  it("no file anywhere in src/, scripts/ or rwtsa-demo/ imports rwtsa-live, found by AST (not by text)", () => {
+    const files = [path.join(ROOT, "src"), path.join(ROOT, "scripts"), path.join(ROOT, "rwtsa-demo")].flatMap(walk).filter((f) => isCode(f) && !OWN.some((o) => f.startsWith(o)));
+    expect(files.length).toBeGreaterThan(200);
+    const hits = files.flatMap((f) => importersOf(readFileSync(f, "utf8"), f, "rwtsa-live").map((h) => `${path.relative(ROOT, f)} -> ${h}`));
+    expect(hits).toEqual([]);
+  });
+  it("the finder itself catches static, dynamic, require, export-from and import-type shapes", () => {
+    for (const s of [`import x from "@/rwtsa-live/snapshot";`, `await import("@/rwtsa-live/store");`, `const q = require("../rwtsa-live/x");`, `export * from "@/rwtsa-live/run";`, `type T = import("@/rwtsa-live/types").Role;`]) expect(importersOf(s, "a.ts", "rwtsa-live").length, s).toBe(1);
+    expect(importersOf(`// import "@/rwtsa-live/x"\nconst s = "rwtsa-live";`, "a.ts", "rwtsa-live")).toEqual([]);
   });
 });

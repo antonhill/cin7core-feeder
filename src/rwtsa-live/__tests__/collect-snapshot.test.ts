@@ -41,10 +41,21 @@ describe("pagination and completeness", () => {
 
 const snap = async (avRows: unknown[], locs: unknown[] = LOCS, mapOverride = LOC) => {
   const { c } = client({ "/ref/productavailability": () => ({ body: { Total: avRows.length, ProductAvailabilityList: avRows } }), "/ref/location": () => ({ body: { Total: locs.length, LocationList: locs } }), "/product": () => ({ body: { Total: 2, Products: [{ ID: "p-A", SKU: "A" }, { ID: "p-B", SKU: "B" }] } }) });
-  return buildSnapshot({ creds, locationMap: mapOverride, locations: await collectLocations(c), availability: await collectAvailability(c), products: await collectProducts(c), takenAt: "2026-11-04T10:00:00.000Z" });
+  return buildSnapshot({ creds, locationMap: mapOverride, locations: await collectLocations(c), availability: await collectAvailability(c), products: await collectProducts(c), takenAt: "2026-11-04T10:00:00.000Z", identity: { status: "VERIFIED", fingerprint: "f", locationCount: 5, accountIdSha256: "a" } });
 };
 
 describe("snapshot", () => {
+  it("is INCOMPLETE unless the account identity is VERIFIED", async () => {
+    const { c } = client({ "/ref/productavailability": () => ({ body: { Total: 1, ProductAvailabilityList: [av("A", "JHB", 1)] } }), "/ref/location": () => ({ body: { Total: 5, LocationList: LOCS } }), "/product": () => ({ body: { Total: 0, Products: [] } }) });
+    for (const status of ["NOT_APPROVED", "ACCOUNT_MISMATCH", "FINGERPRINT_MISMATCH"] as const) {
+      const s = buildSnapshot({ creds, locationMap: LOC, locations: await collectLocations(c), availability: await collectAvailability(c), products: await collectProducts(c), takenAt: "2026-11-04T10:00:00.000Z", identity: { status, fingerprint: "f", locationCount: 5, accountIdSha256: "a" } });
+      expect(s.completeness.status).toBe("INCOMPLETE"); expect(s.completeness.problems.join()).toMatch(/identity/);
+    }
+  });
+  it("records contract evidence: field TYPES only (no values), GET as the only method, request count", async () => {
+    const s = await snap([av("A", "JHB", 1)]);
+    expect(s.verification.fieldTypes.OnHand).toBe("number"); expect(JSON.stringify(s.verification)).not.toContain("JHB");
+  });
   it("separates Bond from unrestricted stock by the verified Bond location ID, and never counts Bond as usable", async () => {
     const s = await snap([av("A", "JHB", 10, 3), av("A", "Bond", 7, 2), av("A", "Durban", 4, 0), av("B", "Bond", 5)]);
     const a = s.stock.find((x) => x.sku === "A")!;

@@ -5,7 +5,7 @@ import { writeSnapshotAtomic, readSnapshotFile } from "@/rwtsa-live/store";
 import { buildSnapshot } from "@/rwtsa-live/snapshot";
 import { ACCOUNT, APPKEY, LOC, makeHome } from "./helpers";
 
-const mini = (extra: Partial<{ label: string }> = {}) => buildSnapshot({ creds: { accountId: ACCOUNT, applicationKey: APPKEY, instanceLabel: extra.label ?? "i" }, locationMap: LOC, takenAt: "2026-11-04T10:00:00.000Z",
+const mini = (extra: Partial<{ label: string }> = {}) => buildSnapshot({ creds: { accountId: ACCOUNT, applicationKey: APPKEY, instanceLabel: extra.label ?? "i" }, locationMap: LOC, takenAt: "2026-11-04T10:00:00.000Z", identity: { status: "VERIFIED", fingerprint: "f", locationCount: 5, accountIdSha256: "a" },
   locations: { rows: [{ ID: LOC.JHB, Name: "JHB" }, { ID: LOC.BOND, Name: "Bond" }], pages: 1, reportedTotal: 2, complete: true, problems: [], observedFields: ["ID", "Name"] },
   availability: { rows: [{ SKU: "A", Location: "JHB", OnHand: 1, Allocated: 0 }], pages: 1, reportedTotal: 1, complete: true, problems: [], observedFields: ["Location", "OnHand", "SKU", "Allocated"] },
   products: { rows: [], pages: 1, reportedTotal: 0, complete: true, problems: [], observedFields: [] } });

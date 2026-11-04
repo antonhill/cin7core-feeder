@@ -21,7 +21,7 @@ function assertPrivateDir(dir: string, home: string): void {
   if (process.platform !== "win32" && (st.mode & 0o077) !== 0) fail("Directory permission too open: restrict it to the current user (chmod 700).");
   for (let d = path.dirname(dir); d !== path.dirname(d); d = path.dirname(d)) if (existsSync(path.join(d, ".git"))) fail("The credentials directory is inside a git working tree.");
 }
-function assertPrivateFile(file: string): void {
+export function assertPrivateFile(file: string): void {
   if (!existsSync(file) && !lstatSafe(file)) fail("A required RWTSA file is missing.");
   const st = lstatSync(file);
   if (st.isSymbolicLink()) fail("Refusing a symlink: the file must be a regular file in the credentials directory.");
