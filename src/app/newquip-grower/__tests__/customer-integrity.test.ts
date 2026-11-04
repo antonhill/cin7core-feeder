@@ -311,3 +311,44 @@ describe("approval re-sync failures are not silent", () => {
     spy.mockRestore();
   });
 });
+
+import { describeAmountChanges } from "@/newquip/quote/handover";
+
+describe("Estimator handover (the NQ-Q-0026 scenario)", () => {
+  const confirmed = async () => { await as("rep"); expect((await send({ source: "QUOTATION_CONTACT" })).error).toBeUndefined(); };
+  const edited = (f: (d: any) => void) => { const d = structuredClone(quote().draft) as any; f(d); return d as typeof draft; }; // eslint-disable-line @typescript-eslint/no-explicit-any
+  const projectQty = (key: string) => evaluateDraft(quote().draft as typeof draft, ctx).budget!.lines.find((l) => l.itemKey === key)!.quantity as number;
+
+  it("an Estimator selling-price edit moves the total by exactly price x quantity, returns the quotation to the Rep with the previous/new total and WHAT changed, and the Rep can reconfirm the new total", async () => {
+    await confirmed(); await as("estimator");
+    const key = Object.keys(quote().draft.estimator.priceResolutions)[0]; const qty = projectQty(key); const old = quote().draft.estimator.priceResolutions[key].unitPriceExVat as number;
+    const before = structuredClone(quote().draft) as typeof draft; const rev = quote().revision;
+    const r = await grower.saveGrowerDraftAction("q1", edited((d) => { d.estimator.priceResolutions[key].unitPriceExVat = old + 1000; }));
+    expect(r.error).toBeUndefined();
+    expect(r.data!.confirmationEffect).toMatchObject({ confirmationCleared: true, returnedToRep: true, previousCents: total });
+    expect(r.data!.confirmationEffect!.newCents! - total).toBe(1000 * qty * 100); // exactly price x quantity
+    expect(quote()).toMatchObject({ state: "REP_DRAFT", revision: rev + 1, customer_confirmed_cents: null });
+    expect(describeAmountChanges(before, quote().draft as typeof draft)).toEqual([{ key, kind: "line price", before: old, after: old + 1000 }]);
+    // the Rep reconfirms the NEW total and the quotation goes back to the Estimator
+    await as("rep");
+    const again = await grower.sendGrowerQuoteToEstimatorAction("q1", r.data!.confirmationEffect!.newCents!, { source: "QUOTATION_CONTACT" });
+    expect(again.error).toBeUndefined();
+    expect(quote()).toMatchObject({ state: "ESTIMATOR_REVIEW", customer_confirmed_cents: r.data!.confirmationEffect!.newCents });
+  });
+
+  it("a cost-only Estimator change (audited cost override) never changes the total, the confirmation or the state", async () => {
+    await confirmed(); await as("estimator");
+    const rev = quote().revision;
+    const r = await grower.saveGrowerDraftAction("q1", edited((d) => { d.estimator.costOverrides = { flex_auger: { lineCostCents: 1_000, reason: "supplier quote", by: "e", at: "t" } }; }));
+    expect(r.error).toBeUndefined(); expect(r.data!.confirmationEffect).toBeUndefined();
+    expect(quote()).toMatchObject({ state: "ESTIMATOR_REVIEW", revision: rev, customer_confirmed_cents: total });
+    expect(acts().some((x) => x.action === "newquip.quote_confirmation_invalidated")).toBe(false);
+  });
+
+  it("the handover changes are only selling prices and charges (a cost-bearing edit lists none)", async () => {
+    await confirmed(); await as("estimator");
+    const before = structuredClone(quote().draft) as typeof draft;
+    await grower.saveGrowerDraftAction("q1", edited((d) => { d.estimator.costOverrides = { flex_auger: { lineCostCents: 1_000, reason: "supplier quote", by: "e", at: "t" } }; }));
+    expect(describeAmountChanges(before, quote().draft as typeof draft)).toEqual([]);
+  });
+});

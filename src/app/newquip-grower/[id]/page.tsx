@@ -60,6 +60,8 @@ import { deriveStage4Steps, STAGE4_STEP_IDS, type Stage4StepId } from "@/newquip
 import { deriveAcceptanceBanner } from "@/newquip/quote/stage5-banner";
 import { deriveHandoverReadiness } from "@/newquip/quote/stage6-handover";
 import { StageNav } from "./StageNav";
+import { HandoverResult } from "./HandoverResult";
+import { describeAmountChanges, type AmountChange } from "@/newquip/quote/handover";
 import { AcceptancePanel } from "./AcceptancePanel";
 import { computeStages, currentStage, parseStage, type CommercialState, type StageId } from "@/newquip/quote/stages";
 import { getQuoteDeliveryAction } from "../delivery-actions";
@@ -196,6 +198,8 @@ export default function QuoteEditorPage() {
   const [sampleNote, setSampleNote] = useState<string | null>(null);
   // Inline validation is shown only for a field the viewer has touched (blurred) or whose step they have left: a fresh blank form does not shout.
   const [effectInfo, setEffectInfo] = useState<QuoteView["confirmationEffect"] | null>(null); // what the last save did to the customer's confirmation (S1b), when the server reported it
+  // Set when a save by someone who is NOT the Rep changed a customer-facing amount and so returned the quotation to the Rep: the viewer then sees a result screen, never the Rep's own steps.
+  const [handover, setHandover] = useState<{ previousCents: number | null; newCents: number | null; changes: AmountChange[] } | null>(null);
   const [mapRefused, setMapRefused] = useState(false); // the last Save was refused because the Rep changed a product-affecting control
   const [touched, setTouched] = useState<ReadonlySet<string>>(new Set());
   const touch = (...keys: string[]) => setTouched((p) => (keys.every((k) => p.has(k)) ? p : new Set([...p, ...keys])));
@@ -219,6 +223,9 @@ export default function QuoteEditorPage() {
   }
   function adopt(v: QuoteView, workflow = false) {
     followTransition(v, workflow);
+    if (view && v.confirmationEffect?.confirmationCleared && v.quote.state === "REP_DRAFT" && !v.viewer.roles.includes("rep")) {
+      setHandover({ previousCents: v.confirmationEffect.previousCents ?? null, newCents: v.confirmationEffect.newCents ?? null, changes: describeAmountChanges(view.quote.draft, v.quote.draft) });
+    }
     setEffectInfo(v.confirmationEffect ?? null);
     setView(v);
     setDraft(v.quote.draft);
@@ -618,13 +625,23 @@ export default function QuoteEditorPage() {
   const scopePanel = <ScopePanel quoteId={id} draft={dirty ? (previewedFor ?? q.draft) : draft} />;
 
   const nr = (t: string) => (view.viewer.canViewCommercials ? t : neutralPriceText(t)); // a viewer without cost visibility reads price text without the cost basis
+  // Saving a change to a selling price or charge during Estimator review moves the customer-facing total, which withdraws the Rep's confirmation and returns the quotation to the Rep. Say so BEFORE the save.
+  const savedTotalCents = q.customer_confirmed_cents;
+  const previewTotalCents = budget ? Math.round(budget.totals.subtotalExTax * 100) : null;
+  const saveReturnsToRep = q.state === "ESTIMATOR_REVIEW" && dirty && savedTotalCents != null && previewTotalCents != null && previewTotalCents !== savedTotalCents;
   const saveRow = (cls: string) => (
     <div className={`flex flex-wrap items-center gap-3 ${cls}`}>
+      {saveReturnsToRep && <p role="alert" className="basis-full rounded border border-amber-300 bg-amber-50 p-2 text-sm text-amber-950" data-testid="save-returns-to-rep">Saving changes the customer-facing total from {fmtCents(savedTotalCents!)} to {fmtCents(previewTotalCents!)} ex VAT. The Rep&apos;s confirmation will be withdrawn and the quotation returns to the Rep to reconfirm. Cost-only changes do not do this.</p>}
             <Button className="min-h-11" onClick={save} loading={acts.isPending("save")} aria-describedby={saveWhy ? "save-why" : undefined} disabled={isWorking || !editable || !dirty || incompleteOverrides || blankExclusionKeys.length > 0}>Save draft</Button>
             <span role="status" aria-live="polite" data-testid="save-state">{dirty ? <Status tone="warning">Unsaved changes</Status> : editable ? <Status tone="success">All changes saved</Status> : null}</span>
             {!editable && <span id="save-why" className="text-sm text-slate-700">{final ? "Read-only: accepted quote." : "You do not have permission to edit: only a Rep or Estimator can edit and save this quotation."}</span>}
           </div>
   );
+
+  if (handover) {
+    const lineLabel = (k: string) => budget?.lines.find((l) => l.itemKey === k)?.label ?? ({ delivery: "Delivery", installation: "Installation", concrete_slat_delivery: "Concrete slat delivery" } as Record<string, string>)[k] ?? k;
+    return <HandoverResult quoteRef={q.quote_ref} revision={q.revision} previousCents={handover.previousCents} newCents={handover.newCents} changes={handover.changes} labelOf={lineLabel} fmtCents={fmtCents} fmtRand={fmtZar} onDismiss={() => setHandover(null)} />;
+  }
 
   return (
     <main className={pageContainerClass("data")}>
