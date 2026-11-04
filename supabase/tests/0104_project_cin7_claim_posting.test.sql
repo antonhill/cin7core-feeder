@@ -103,8 +103,8 @@ select pg_temp.expect_denied($q$delete from project_claim_cin7_postings where id
 -- ── RLS ──────────────────────────────────────────────────────────────────────
 select pg_temp.act_as('00000000-0000-0000-0000-0000000004a1');
 do $$ begin
-  if (select count(*) from project_cin7_sale_links) <> 1 then raise exception 'member A should see its link'; end if;
-  if (select count(*) from project_claim_cin7_postings) <> 1 then raise exception 'member A should see its posting'; end if;
+  if (select count(*) from project_cin7_sale_links) <> 0 then raise exception 'a signed-in member must read NOTHING from project_cin7_sale_links (0122: no member read policy)'; end if;
+  if (select count(*) from project_claim_cin7_postings) <> 0 then raise exception 'a signed-in member must read NOTHING from project_claim_cin7_postings (0122: no member read policy)'; end if;
 end $$;
 select pg_temp.expect_no_rows_changed($q$update project_claim_cin7_postings set last_error_message = 'x'$q$, 'member update posting');
 select pg_temp.expect_no_rows_changed($q$update project_cin7_sale_links set last_reconciled_at = now()$q$, 'member update link');

@@ -158,11 +158,9 @@ select approval_decide('00000000-0000-0000-0000-0000000012b1', '00000000-0000-00
 
 -- RLS: members read their own organisation only; no client writes; role history is admin-only
 select pg_temp.act_as('00000000-0000-0000-0000-0000000012a1', 'est@x');
-do $$ begin
-  if (select count(*) from org_functional_roles) <> 2 then raise exception 'a member sees only their own organisation roles'; end if;
-  if (select count(*) from approval_policies) <> 1 then raise exception 'a member reads their own policy'; end if;
-  if (select count(*) from org_functional_role_events) <> 0 then raise exception 'role history is admin-only'; end if;
-end $$;
+select pg_temp.expect_denied($q$select count(*) from org_functional_roles$q$, 'a signed-in member has no read access to org_functional_roles (0122)');
+select pg_temp.expect_denied($q$select count(*) from approval_policies$q$, 'a signed-in member has no read access to approval_policies (0122)');
+select pg_temp.expect_denied($q$select count(*) from org_functional_role_events$q$, 'a signed-in member has no read access to org_functional_role_events (0122)');
 select pg_temp.expect_denied($q$insert into org_functional_roles (org_id, user_id, user_email, role, assigned_by_email) values ('00000000-0000-0000-0000-0000000012b1','00000000-0000-0000-0000-0000000012a1','a@b','MANAGER','x')$q$, 'a member cannot grant themselves a role');
 select pg_temp.expect_denied($q$select org_role_assign('00000000-0000-0000-0000-0000000012b1', '00000000-0000-0000-0000-0000000012a1', 'a@b', 'MANAGER', 'a@b')$q$, 'role functions are not callable by clients');
 select pg_temp.expect_denied($q$select approval_decide_staged('00000000-0000-0000-0000-0000000012b1', '00000000-0000-0000-0000-00000000e008', 'APPROVE', 'a@b', 'x', null, 1, repeat('e',64), false, null, '[]')$q$, 'staged decide is not callable by clients');

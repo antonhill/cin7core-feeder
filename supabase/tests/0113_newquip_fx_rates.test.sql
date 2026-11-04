@@ -37,9 +37,7 @@ select pg_temp.expect_denied($q$update newquip_fx_rates set rate = 1$q$, 'rates 
 select pg_temp.expect_denied($q$delete from newquip_fx_rates$q$, 'rates are never deleted');
 
 select pg_temp.act_as('00000000-0000-0000-0000-0000000013a1');
-do $$ begin
-  if (select count(*) from newquip_fx_rates) <> 2 then raise exception 'a member sees only their own organisation rates'; end if;
-end $$;
+select pg_temp.expect_denied($q$select count(*) from newquip_fx_rates$q$, 'a signed-in member has no read access to newquip_fx_rates (0122)');
 select pg_temp.expect_denied($q$insert into newquip_fx_rates (org_id, currency, rate, source, as_of, entered_by_email) values ('00000000-0000-0000-0000-0000000013b1','USD',1,'client',now() - interval '1 hour','x')$q$, 'client insert');
 select pg_temp.reset_role();
 select 'OK: 0113 fx rates' as result;
