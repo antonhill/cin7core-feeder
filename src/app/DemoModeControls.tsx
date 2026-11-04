@@ -19,11 +19,11 @@ export function DemoModeControls({ state }: { state: DemoBarState }) {
   };
   const active = state.active;
   return (
-    <div role="region" aria-label="Demo Mode" className={`flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-sm font-semibold print:hidden ${active ? "bg-red-700 text-white" : "bg-slate-800 text-white"}`}>
+    <div role="region" aria-label="Demo Mode" className={`flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-sm font-semibold print:hidden ${active ? "bg-indigo-700 text-white" : "bg-slate-800 text-white"}`}>
       <span>
         {active
-          ? `DEMO MODE - acting as ${active.label} (${active.email}). Actions are recorded as impersonated by the owner. Expires ${new Date(active.expiresAt).toLocaleTimeString("en-ZA", { timeZone: "Africa/Johannesburg", hour: "2-digit", minute: "2-digit" })} SAST.`
-          : "Demo Mode (Preview, owner only) - you are acting as yourself."}
+          ? `Presenting as ${active.label} · UAT demonstration, every action is audited`
+          : "UAT demonstration · choose a role to present"}
       </span>
       <span className="flex items-center gap-2">
         {state.selectable && (

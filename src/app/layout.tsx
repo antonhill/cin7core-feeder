@@ -1,3 +1,4 @@
+import { presenterGate } from "@/lib/demo-mode/presenter";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { AppShell } from "./AppShell";
@@ -61,7 +62,9 @@ export default async function RootLayout({
     hasMultipleOrgs,
   } = await getCurrentUserInfo();
 
-  const trialDaysLeft = subscriptionStatus === "trialing" && trialEndsAt ? daysUntil(trialEndsAt) : null;
+  // The UAT demonstration database is a trial organisation; the subscription notice is noise for the audience (gate is closed everywhere but the UAT Preview).
+  const presenting = presenterGate(process.env as Record<string, string | undefined>).allowed;
+  const trialDaysLeft = !presenting && subscriptionStatus === "trialing" && trialEndsAt ? daysUntil(trialEndsAt) : null;
 
   return (
     <html
