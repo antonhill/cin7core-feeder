@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { PassThrough } from "node:stream";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync, mkdirSync, writeFileSync } from "node:fs";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createPrompter } from "@/rwtsa-live/prompt";
@@ -83,6 +83,26 @@ describe("credential files are created private and the identity hash is derived"
     const dir = path.join(home, "rwtsa-local", "credentials");
     for (const f of ["identity.json", "locations.json"]) { const t = readFileSync(path.join(dir, f), "utf8"); expect(t).not.toContain(ACCOUNT); expect(t).not.toContain(APPKEY); }
     void existsSync; void writeFileSync;
+  });
+});
+
+describe("setup hardening (surviving-mutant fixes)", () => {
+  it("re-restricts a pre-existing credentials directory that is open to group or others", () => {
+    const home = tmpHome(); const dir = path.join(home, "rwtsa-local", "credentials"); mkdirSync(dir, { recursive: true }); chmodSync(dir, 0o755);
+    writeInitialCredentials({ home, accountId: ACCOUNT, applicationKey: APPKEY, instanceLabel: "x", replace: false });
+    expect(mode(dir)).toBe(0o700);
+  });
+  it("refuses BEFORE writing anything when only identity.json exists (no partial credential write)", () => {
+    const home = tmpHome(); const dir = path.join(home, "rwtsa-local", "credentials"); mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(path.join(dir, "identity.json"), "{}", { mode: 0o600 });
+    expect(() => writeInitialCredentials({ home, accountId: ACCOUNT, applicationKey: APPKEY, instanceLabel: "x", replace: false })).toThrow(/already exist/i);
+    expect(existsSync(path.join(dir, "cin7.env"))).toBe(false);
+  });
+  it("an invalid mapping never replaces a previously valid locations.json", () => {
+    const home = tmpHome(); writeInitialCredentials({ home, accountId: ACCOUNT, applicationKey: APPKEY, instanceLabel: "x", replace: false }); writeLocationMap({ home, map: LOC });
+    const f = path.join(home, "rwtsa-local", "credentials", "locations.json"); const before = readFileSync(f, "utf8");
+    expect(() => writeLocationMap({ home, map: { ...LOC, DURBAN: LOC.JHB } })).toThrow(); expect(readFileSync(f, "utf8")).toBe(before);
+    expect(() => writeLocationMap({ home, map: { ...LOC, BOND: "Bond" } })).toThrow(); expect(readFileSync(f, "utf8")).toBe(before);
   });
 });
 
