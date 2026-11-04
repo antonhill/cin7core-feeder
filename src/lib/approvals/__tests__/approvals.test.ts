@@ -12,6 +12,9 @@ import { NEWQUIP_MASTER_POC_SNAPSHOT } from "@/newquip/grower/snapshot";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { emptyDraft } from "@/newquip/grower/draft";
 import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
+import { withAcceptedIncompleteCosting } from "@/newquip/grower/__tests__/golden";
+import { managerExceptionOpts } from "@/newquip/grower/__tests__/baseline-exception-fixture";
+import { seedGoldenLibrary } from "@/newquip/grower/__tests__/golden-catalogue";
 import { addBusinessDays, formatSast, isOverdue, waitingLabel } from "../time";
 import { authoriseDecision } from "../policy";
 import { filterQueue, sortQueue, summarise, currentReturned } from "../queue";
@@ -304,14 +307,18 @@ describe("variations: submit, edit-lock, approve, reject", () => {
 
 describe("quotations: sign-off is the submission, manager approval seals the baseline", () => {
   const ctxE = { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: true };
-  const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
+  const draft = withAcceptedIncompleteCosting(applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft);
   const total = Math.round(evaluateDraft(draft, ctxE).budget!.totals.subtotalExTax * 100);
-  const seedQuote = (db: FakeDb) => db.rows("newquip_quotes").push({ id: "q1", org_id: ORG, quote_ref: "NQ-Q-0009", revision: 1, customer_name: "Test Customer", site_name: "Farm", quote_type: "project", state: "ESTIMATOR_REVIEW", draft, draft_hash: "h1", customer_confirmed_cents: total, customer_confirmed_by: "r", customer_confirmed_at: "t", handoff_by_email: "rep@a", estimator_signoff_hash: "h1", estimator_signoff_by_email: "est@a", estimator_signoff_at: "t", approved_by_email: null, approved_at: null, accepted_baseline: null, baseline_hash: null, contract_cents: null, project_id: null, created_at: "t", updated_at: "t" });
-  it("1+22: a signed-off quote is submitted; approval freezes the baseline; unresolved Cin7 mappings do NOT block it", async () => {
+  // UX-006 S3: M75 / penning / LED have no Cin7 SKU; this fixture is about approvals, so the library maps them (the exception itself is tested in baseline-exception.test.ts).
+  const seedQuote = (db: FakeDb) => { seedGoldenLibrary(db, ORG); db.rows("newquip_quotes").push({ id: "q1", org_id: ORG, quote_ref: "NQ-Q-0009", revision: 1, customer_name: "Test Customer", site_name: "Farm", quote_type: "project", state: "ESTIMATOR_REVIEW", draft, draft_hash: "h1", customer_confirmed_cents: total, customer_confirmed_by: "r", customer_confirmed_at: "t", handoff_by_email: "rep@a", estimator_signoff_hash: "h1", estimator_signoff_by_email: "est@a", estimator_signoff_at: "t", approved_by_email: null, approved_at: null, accepted_baseline: null, baseline_hash: null, contract_cents: null, project_id: null, created_at: "t", updated_at: "t" }); };
+  it("1+22: a signed-off quote is submitted; approval freezes the baseline; Estimator-priced systems without a Cin7 SKU need the Manager's recorded exception (through the approval store)", async () => {
     const { db } = await world(); seedQuote(db);
+    db.tables.newquip_package_mappings = db.rows("newquip_package_mappings").filter((m) => m.package_key === "led_light"); // M75 and penning stay unmapped by design
     const sub = await submitForApproval(db as never, MGR, "QUOTE", "q1", { now: T0 });
     expect(sub).toMatchObject({ doc_ref: "NQ-Q-0009", prepared_by_email: "est@a", amount_cents: total, revision: 1 });
-    await decide(db as never, MGR, sub.id, "APPROVE", decideArgs(sub));
+    await expect(decide(db as never, MGR, sub.id, "APPROVE", decideArgs(sub))).rejects.toThrow(/2 package\(s\) are not mapped to Cin7 SKUs/);
+    expect(db.rows("newquip_quotes")[0].state).toBe("ESTIMATOR_REVIEW");
+    await decide(db as never, MGR, sub.id, "APPROVE", { ...decideArgs(sub), baselineException: managerExceptionOpts(db.rows("newquip_quotes")[0] as never).baselineException });
     const q = db.rows("newquip_quotes")[0];
     expect(q.state).toBe("MANAGER_APPROVED_FINAL");
     expect((q.accepted_baseline as { physicalScope: Array<{ mapping: { status: string }; resolution?: unknown }> }).physicalScope.filter((i) => i.mapping.status === "UNMAPPED" && !i.resolution).length).toBeGreaterThan(0);
@@ -331,6 +338,29 @@ describe("quotations: sign-off is the submission, manager approval seals the bas
     expect(db.rows("newquip_quotes")[0].state).toBe("ESTIMATOR_REVIEW");
     const done = await decideDocument(db as never, MGR, "QUOTE", "q1", "APPROVE");
     expect(done.status).toBe("APPROVED");
+  });
+});
+
+describe("UX-006 D-3 (Phase H path): an unauthorised decideDocument changes nothing", () => {
+  it("a non-manager deciding a claim that has no open request creates no request, event or notification; another organisation likewise", async () => {
+    const { db, projectId } = await world();
+    const claimId = await draftClaim(db, projectId);
+    const nonEmpty = () => Object.fromEntries(Object.entries(structuredClone(db.tables)).filter(([, rows]) => rows.length > 0));
+    const before = nonEmpty();
+    await expect(decideDocument(db as never, PM, "CLAIM", claimId, "APPROVE")).rejects.toThrow(/Only a manager/);
+    await expect(decideDocument(db as never, PM, "CLAIM", claimId, "REJECT", { reason: "no thanks" })).rejects.toThrow(/Only a manager/);
+    await expect(decideDocument(db as never, FOREIGN, "CLAIM", claimId, "APPROVE")).rejects.toThrow(/not found/);
+    expect(nonEmpty()).toEqual(before);
+    expect(db.rows("approval_requests")).toHaveLength(0);
+    expect(db.rows("approval_events")).toHaveLength(0);
+    expect(db.rows("project_claims").find((c) => c.id === claimId)!.status).toBe("READY_FOR_APPROVAL");
+  });
+  it("a manager who prepared the document and gives no override is refused before anything is submitted", async () => {
+    const { db, projectId } = await world();
+    const d = await createClaimDraft(db as never, ORG, "mgr@a", projectId); await submitClaimForApproval(db as never, ORG, projectId, d.claimId);
+    await expect(decideDocument(db as never, MGR, "CLAIM", d.claimId, "APPROVE")).rejects.toThrow(/cannot approve it normally/);
+    expect(db.rows("approval_requests")).toHaveLength(0);
+    expect(db.rows("approval_events")).toHaveLength(0);
   });
 });
 

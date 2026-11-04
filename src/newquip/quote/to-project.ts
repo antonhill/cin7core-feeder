@@ -52,6 +52,8 @@ export function quoteToProjectBaseline(b: AcceptedBaseline, baselineHash: string
       priceSource: b.pricing.source.label,
       approvedBy: b.approvals.managerApprovedBy,
       approvedAt: b.approvals.managerApprovedAt,
+      // A Manager-recorded baseline exception (Estimator-priced systems with no Cin7 SKU) travels with the project: what was accepted, why, by whom, on which quotation version. The full record stays in the sealed baseline (baselineHash).
+      ...(b.exceptions?.length ? { baselineExceptions: b.exceptions.map((e) => ({ kind: e.kind, unresolved: e.unresolved.map((u) => ({ itemKey: u.itemKey, label: u.label, pricing: u.pricing })), reason: e.reason, approvedBy: e.approvedBy, approvedAt: e.approvedAt, version: e.version })) } : {}),
       // Where the stages came from (a template version is recorded by id + version; the stages themselves are the project's own frozen copy).
       ...(scheduleSource ? { billingSchedule: scheduleSource } : {}),
     },

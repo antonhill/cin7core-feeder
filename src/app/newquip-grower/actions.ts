@@ -10,6 +10,7 @@ import { evaluateDraft, type QuoteEvaluation } from "@/newquip/grower/evaluate";
 import { blankExclusions, previewDraftOf } from "@/newquip/grower/preview-draft";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import { stampPriceResolutions } from "@/newquip/quote/price-resolution";
+import { keepEstimatorOwnedFields } from "@/newquip/quote/draft-ownership";
 import { changedMappings, mappingsChanged, normaliseMappings } from "@/newquip/grower/mapping-integrity";
 import { verifyMappings } from "@/lib/newquip-quotes/mapping-check";
 import { searchCatalogue, type CatalogueResult } from "@/lib/projects/catalogue-search";
@@ -19,13 +20,19 @@ import { canSeeCosts, resolveRoles } from "@/lib/approvals/role-store";
 import { demoAuditDetail, resolveActing, type DemoInfo } from "@/lib/demo-mode/context";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
 import { confirmationLabel, resolveConfirmationContact, type ConfirmationInput } from "@/lib/newquip-quotes/confirmation-contact";
+import { returnByOf, returnInfoOf } from "@/lib/newquip-quotes/return-store";
+import { returnInfoForViewer, type ReturnInfo } from "@/newquip/quote/return-info";
 import { appendSnapshot, customerFeaturesAvailable, latestSnapshot } from "@/lib/newquip-quotes/customer-store";
-import { keepServerOwnedCostBasis, keepServerOwnedCosts, redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
+import { fieldValue } from "@/lib/newquip-quotes/customer-snapshot";
+import { reconcileConfirmationAmount, resyncApprovalsLogged } from "@/lib/newquip-quotes/confirmation-reconcile";
+import { assertConfirmationCurrent, assertNameMatchesSnapshot } from "@/lib/newquip-quotes/confirmation-guard";
+import { keepServerOwnedCostBasis, keepServerOwnedCosts, redactEvaluationFinancials, redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
 import { approvalsAvailable, decideDocument, legacyCtx, resyncQuoteApprovals, stagedAvailable, submitForApproval, withdrawPendingFor } from "@/lib/approvals/approval-store";
+import { BASELINE_EXCEPTION_TITLE, exceptionDecisionText, validateExceptionReason, type BaselineExceptionItem, type BaselineExceptionRequest, type BaselineExceptionView } from "@/newquip/quote/baseline-exception";
 import type { ScheduleChoice } from "@/newquip/quote/billing-schedule";
 import { resolveProjectSchedule } from "@/lib/newquip-quotes/schedule-resolve";
 import {
-  createProjectFromAcceptedQuote, createQuote, estimatorSignOff, listQuotes, loadQuote, managerApprove, returnToRep, saveDraft, sendToEstimator,
+  baselineExceptionOf, createProjectFromAcceptedQuote, costingOf, createQuote, estimatorSignOff, listQuotes, loadQuote, managerApprove, returnToRep, saveDraft, sendToEstimator,
   type QuoteRecord,
 } from "@/lib/newquip-quotes/quote-store";
 
@@ -77,6 +84,8 @@ function ctxOf(a: Actor, isManager: boolean = a.tier === "admin") {
   return legacyCtx(a.orgId, a.userId, a.email, isManager, a.demo ? { name: a.demo.actorName, demo: a.demo } : undefined);
 }
 
+const whoOf = (a: Actor) => ({ orgId: a.orgId, userId: a.userId, email: a.email, isAdmin: a.tier === "admin", demo: a.demo });
+
 /** The audit record of any action: the REAL owner is the actor, the effective user and the DEMO marker are in the detail. */
 async function audit(db: ReturnType<typeof createServiceRoleClient>, a: Actor, i: { action: string; summary: string; detail: Record<string, unknown> }) {
   await logActivity(db, a.demo
@@ -88,19 +97,42 @@ function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : "Unknown error";
 }
 
+type ConfirmationEffectView = import("@/lib/newquip-quotes/confirmation-reconcile").InvalidationEffect & { previousCents?: number; newCents?: number };
+
 /** A quote as the browser sees it: the record plus the viewer's roles. No cost ever travels in `evaluation` for non-admins. */
 export interface QuoteView {
+  /** Set only on a save that withdrew the customer's confirmation because the commercial total changed (previousCents -> newCents), or whose approval re-sync failed. */
+  confirmationEffect?: ConfirmationEffectView;
   quote: QuoteRecord;
   evaluation: QuoteEvaluation;
-  viewer: { roles: QuoteRole[]; canViewCommercials: boolean };
+  viewer: { roles: QuoteRole[]; canViewCommercials: boolean; /** SERVER-derived: true only on a Vercel Preview deployment (VERCEL_ENV === "preview"); never true in Production. Gates the whole-quote testing utility. */ previewTools: boolean };
+  /** ESTIMATOR_COSTING_COMPLETE. Present ONLY for a caller who may see cost (Estimator / Manager / observer with cost); never in a Rep payload. `reason` is the first open reason (counts / labels / SKUs, never a value). */
+  costing?: { complete: boolean; reason: string | null; /** Present when the Estimator's authorised accepted-incomplete-cost exception is what makes costing pass: a distinct state, not "complete". */ acceptedIncomplete?: { reason: string; by: string; at: string } };
+  /**
+   * WHY THE QUOTATION IS BACK (D5). Non-null only while the quotation is in the place a return/withdrawal sent it to (Rep draft revision >= 2, or Estimator review after a
+   * Manager return): { kind, reason, byEmail, byRole, at, destination, previousCents?, newCents?, source }. Totals are ex VAT; no cost data. A viewer WITHOUT commercial visibility (a Rep) gets a neutral line (reason "With the Estimator for review.", no actor) for destination ESTIMATOR: Manager->Estimator reasons are internal. Always present (null = nothing to show).
+   */
+  returnInfo: ReturnInfo | null;
+  /** Whether the Manager must accept a baseline exception to approve (Estimator-priced systems with no Cin7 SKU), and which items. Cost-entitled callers only (labels and pricing route, never a value). */
+  baselineException?: BaselineExceptionView;
 }
 
-function view(quote: QuoteRecord, a: Actor): QuoteView {
+async function view(db: ReturnType<typeof createServiceRoleClient>, quote: QuoteRecord, a: Actor): Promise<QuoteView> {
   const canViewCommercials = a.canSeeCost;
+  let costing: QuoteView["costing"];
+  let baselineException: QuoteView["baselineException"];
+  if (canViewCommercials) {
+    // Only an open quotation can need one; once approved the exception (if any) is read from the sealed baseline.
+    if (quote.state === "ESTIMATOR_REVIEW") { try { baselineException = await baselineExceptionOf(db, a.orgId, quote.draft, evaluationContext(true)); } catch { baselineException = undefined; } }
+    try { const c = await costingOf(db, a.orgId, quote.draft, evaluationContext(true)); costing = { complete: c.complete, reason: c.reasons[0] ?? null, ...(c.acceptedIncomplete ? { acceptedIncomplete: c.acceptedIncomplete } : {}) }; } catch { costing = undefined; }
+  }
   return {
     quote: redactInternalFinancials(quote, canViewCommercials),
-    evaluation: evaluateDraft(quote.draft, evaluationContext(!canViewCommercials)),
-    viewer: { roles: [...a.roles], canViewCommercials },
+    evaluation: redactEvaluationFinancials(evaluateDraft(quote.draft, evaluationContext(!canViewCommercials)), canViewCommercials),
+    viewer: { roles: [...a.roles], canViewCommercials, previewTools: process.env.VERCEL_ENV === "preview" },
+    ...(costing ? { costing } : {}),
+    returnInfo: returnInfoForViewer(await returnInfoOf(db, quote.org_id, quote), canViewCommercials),
+    ...(baselineException ? { baselineException } : {}),
   };
 }
 
@@ -113,11 +145,11 @@ export async function getGrowerViewerAction(): Promise<GrowerActionResult<{ role
   }
 }
 
-export async function listGrowerQuotesAction(): Promise<GrowerActionResult<Array<Pick<QuoteRecord, "id" | "quote_ref" | "revision" | "customer_name" | "site_name" | "state" | "contract_cents" | "project_id" | "created_at">>>> {
+export async function listGrowerQuotesAction(): Promise<GrowerActionResult<Array<Pick<QuoteRecord, "id" | "quote_ref" | "revision" | "customer_name" | "site_name" | "state" | "contract_cents" | "project_id" | "created_at"> & { signed_off: boolean }>>> {
   try {
     const a = await authorise();
     const rows = await listQuotes(createServiceRoleClient(), a.orgId);
-    return { ok: true, data: rows.map((q) => ({ id: q.id, quote_ref: q.quote_ref, revision: q.revision, customer_name: q.customer_name, site_name: q.site_name, state: q.state, contract_cents: q.contract_cents, project_id: q.project_id, created_at: q.created_at })) };
+    return { ok: true, data: rows.map((q) => ({ id: q.id, quote_ref: q.quote_ref, revision: q.revision, customer_name: q.customer_name, site_name: q.site_name, state: q.state, contract_cents: q.contract_cents, project_id: q.project_id, created_at: q.created_at, signed_off: !!q.estimator_signoff_hash && q.estimator_signoff_hash === q.draft_hash })) };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
@@ -138,7 +170,9 @@ async function sanitiseSubmittedDraft(a: Actor, db: ReturnType<typeof createServ
   await verifyMappings(db, a.orgId, changedMappings(prior?.estimator.confirmedMappings, d.estimator.confirmedMappings), d.config.feederVariant);
   const nowIso = new Date().toISOString();
   d = { ...d, estimator: { ...d.estimator, priceResolutions: stampPriceResolutions(d.estimator.priceResolutions, prior?.estimator.priceResolutions, a.roles, a.email, nowIso) as QuoteDraft["estimator"]["priceResolutions"] } };
-  return keepServerOwnedCostBasis(keepServerOwnedCosts(stampCostOverrides(d, prior?.estimator.costOverrides, a.canSeeCost, a.email, nowIso), prior?.estimator.physicalCosts), prior?.estimator.costBasis);
+  const stamped = keepServerOwnedCostBasis(keepServerOwnedCosts(stampCostOverrides(d, prior?.estimator.costOverrides, a.canSeeCost, a.email, nowIso), prior?.estimator.physicalCosts), prior?.estimator.costBasis);
+  // Last line of defence (field ownership): a caller without Estimator / Manager authority can never change an Estimator-owned field, whatever the checks above did.
+  return keepEstimatorOwnedFields(stamped, prior, a.roles);
 }
 
 export async function createGrowerQuoteAction(draft?: QuoteDraft): Promise<GrowerActionResult<{ id: string; quoteRef: string }>> {
@@ -157,9 +191,10 @@ export async function createGrowerQuoteAction(draft?: QuoteDraft): Promise<Growe
 export async function getGrowerQuoteAction(quoteId: string): Promise<GrowerActionResult<QuoteView>> {
   try {
     const a = await authorise();
-    const q = await loadQuote(createServiceRoleClient(), a.orgId, quoteId);
+    const db = createServiceRoleClient();
+    const q = await loadQuote(db, a.orgId, quoteId);
     if (!q) return { ok: false, error: "Quote not found." };
-    return { ok: true, data: view(q, a) };
+    return { ok: true, data: await view(db, q, a) };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
@@ -170,7 +205,7 @@ export async function previewGrowerDraftAction(draft: QuoteDraft): Promise<Growe
   try {
     const a = await authorise();
     // Read-only live preview: the same engine as Save, with a ticked-but-unexplained exclusion applied so the click shows its effect. Nothing is stored.
-    return { ok: true, data: evaluateDraft(previewDraftOf(draft), evaluationContext(!a.canSeeCost)) };
+    return { ok: true, data: redactEvaluationFinancials(evaluateDraft(previewDraftOf(draft), evaluationContext(!a.canSeeCost)), a.canSeeCost) };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
@@ -195,11 +230,30 @@ export async function saveGrowerDraftAction(quoteId: string, draft: QuoteDraft):
     const a = await authorise();
     const db = createServiceRoleClient();
     const prior = await loadQuote(db, a.orgId, quoteId);
-    const saved = await saveDraft(db, a.orgId, a.roles, quoteId, await sanitiseSubmittedDraft(a, db, draft, prior?.draft));
+    // Once the quotation has a Cin7 customer snapshot, the snapshot is the ONLY source of the customer name: a typed or edited name in the submitted draft is replaced by it.
+    const snapName = (await customerFeaturesAvailable(db)) ? fieldValue((await latestSnapshot(db, a.orgId, quoteId))?.snapshot.name ?? { state: "missing" }) : null;
+    const priorHash = prior?.draft_hash; // read now (D-12, #195): a store that updates the row it handed out in place must not change what "before" means
+    const saved = await saveDraft(db, a.orgId, a.roles, quoteId, await sanitiseSubmittedDraft(a, db, draft, prior?.draft), snapName);
     // Changed content invalidates the estimator's sign-off (saveDraft clears it) and any open approval of the older content: the quote goes back to estimator review.
-    if (saved.draftHash !== prior?.draft_hash && (await stagedAvailable(db))) await resyncQuoteApprovals(db, ctxOf(a), quoteId, { quiet: true }).catch(() => undefined);
+    // Race repair: if the customer was (re)selected while this save was in flight, the snapshot name wins - write it again from the stored draft.
+    if (snapName !== null || (await customerFeaturesAvailable(db))) {
+      const nowName = fieldValue((await latestSnapshot(db, a.orgId, quoteId))?.snapshot.name ?? { state: "missing" });
+      if (nowName && nowName !== snapName) { const cur = await loadQuote(db, a.orgId, quoteId); if (cur) await saveDraft(db, a.orgId, a.roles, quoteId, cur.draft, nowName); }
+    }
+    // A change of the commercial total withdraws the customer's confirmation (one helper for every draft writer); otherwise changed content only re-syncs the approval request.
+    const amount = await reconcileConfirmationAmount(db, whoOf(a), quoteId, evaluationContext(true), returnByOf(a));
+    // saveDraft already withdrew an existing sign-off for the changed content, so it counts as cleared in the reported effect
+    let confirmationEffect: ConfirmationEffectView | undefined = amount ? { ...amount, signoffCleared: amount.signoffCleared || saved.signoffCleared } : undefined;
+    if (!amount && saved.draftHash !== priorHash) {
+      // D-12 (#195): stagedAvailable is INSIDE the catch; the draft is saved, so a failed sync never fails the save. resyncApprovalsLogged still reports a sync failure to the UI.
+      await (async () => {
+        if (!(await stagedAvailable(db))) return;
+        const err = await resyncApprovalsLogged(db, whoOf(a), quoteId, { returnedToRep: false, signoffCleared: true });
+        if (err) confirmationEffect = { confirmationCleared: false, signoffCleared: saved.signoffCleared, returnedToRep: false, approvalSyncError: err };
+      })().catch(() => undefined);
+    }
     const q = await loadQuote(db, a.orgId, quoteId);
-    return q ? { ok: true, data: view(q, a) } : { ok: false, error: "Quote not found." };
+    return q ? { ok: true, data: { ...(await view(db, q, a)), ...(confirmationEffect ? { confirmationEffect } : {}) } } : { ok: false, error: "Quote not found." };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
@@ -217,7 +271,7 @@ async function step(
     const extra = await run(a, db);
     await audit(db, a, { action, summary: `${summary} (local only; no Cin7 write)`, detail: { quoteId, ...(extra ?? {}) } });
     const q = await loadQuote(db, a.orgId, quoteId);
-    return q ? { ok: true, data: view(q, a) } : { ok: false, error: "Quote not found." };
+    return q ? { ok: true, data: await view(db, q, a) } : { ok: false, error: "Quote not found." };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
@@ -237,6 +291,7 @@ export async function sendGrowerQuoteToEstimatorAction(quoteId: string, confirme
     const snap = available ? await latestSnapshot(db, a.orgId, quoteId) : null;
     if (available && !snap) throw new Error("Select the Cin7 customer and quotation contact in Step 1 (Customer & site) before the amount can be confirmed.");
     if (!available && contact.source !== "ALTERNATIVE") throw new Error("Customer contacts are not available yet; record the contact as an alternative contact with a reason.");
+    if (snap) { const cur = await loadQuote(db, a.orgId, quoteId); if (cur) assertNameMatchesSnapshot(cur.draft.customerName, cur.customer_name, snap.snapshot); }
     const resolved = resolveConfirmationContact(snap?.snapshot ?? null, contact, { by: a.email, at: new Date().toISOString(), amountCents: confirmedAmountCents });
     // The state change is a compare-and-set, so a double submit records one handoff; the contact record is appended only after it succeeded (no duplicate rows).
     await sendToEstimator(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true), { confirmedAmountCents, confirmedBy: confirmationLabel(resolved) });
@@ -260,11 +315,11 @@ export async function returnGrowerQuoteToRepAction(quoteId: string, reason: stri
     if (await approvalsAvailable(db)) {
       // A manager returning a submitted quote is a recorded RETURN decision (reason required); an estimator pulling it back withdraws the submission.
       if (a.roles.has("manager")) { await decideDocument(db, ctxOf(a, true), "QUOTE", quoteId, "RETURN", { reason }); return; }
-      await returnToRep(db, a.orgId, a.roles, quoteId, reason);
+      await returnToRep(db, a.orgId, a.roles, quoteId, reason, returnByOf(a));
       await withdrawPendingFor(db, ctxOf(a, false), "QUOTE", quoteId, reason).catch(() => undefined);
       return;
     }
-    await returnToRep(db, a.orgId, a.roles, quoteId, reason);
+    await returnToRep(db, a.orgId, a.roles, quoteId, reason, returnByOf(a));
   });
 }
 
@@ -290,14 +345,42 @@ export async function returnGrowerQuoteToEstimatorAction(quoteId: string, reason
   });
 }
 
-/** Manager final approval — freezes the accepted baseline. */
-export async function approveGrowerQuoteAction(quoteId: string) {
+/**
+ * Manager final approval — freezes the accepted baseline.
+ *
+ * `baselineException` (optional) is the Manager's explicit "approve with recorded exception" for Estimator-priced systems that have no Cin7 SKU. It is an OPTION OF THIS
+ * ACTION rather than a separate action that parks a pending exception, because a parked exception would need somewhere to live without a migration (the draft would change
+ * its hash and withdraw the Estimator's sign-off) and could outlive the content it was recorded for. Here it is recorded, bound to the version the Manager reviewed, and sealed
+ * into the baseline in ONE step; if any check fails nothing is written. Authorisation (Manager role, reason, version, "an exception really applies") is decided BEFORE the
+ * approval request is touched, so a refused request causes no write at all.
+ */
+export async function approveGrowerQuoteAction(quoteId: string, opts?: { baselineException?: BaselineExceptionRequest }) {
   return step(quoteId, "Manager approved a NewQuip quote and froze the accepted baseline", "newquip.quote_manager_approved", async (a, db) => {
+    // A stale confirmation (confirmed contact changed, or total no longer the confirmed amount) can never be approved. Read-only; the role checks below still decide who may approve.
+    if (a.roles.has("manager")) await assertConfirmationCurrent(db, a.orgId, quoteId, evaluationContext(true));
+    const bx = opts?.baselineException ? { reason: String(opts.baselineException.reason ?? ""), expectedRevision: Number(opts.baselineException.expectedRevision), expectedDraftHash: String(opts.baselineException.expectedDraftHash ?? "") } : undefined;
+    let recorded: { text: string; items: BaselineExceptionItem[]; reason: string; revision: number; draftHash: string } | undefined;
+    if (bx) {
+      if (!a.roles.has("manager")) throw new Error("Only a Manager can accept a baseline exception.");
+      const bad = validateExceptionReason(bx.reason);
+      if (bad) throw new Error(bad);
+      const q = await loadQuote(db, a.orgId, quoteId);
+      if (!q) throw new Error("Quote not found.");
+      if (bx.expectedRevision !== q.revision || bx.expectedDraftHash !== q.draft_hash) throw new Error("The quotation changed after the exception was reviewed. Review the current version and accept the exception again.");
+      const need = await baselineExceptionOf(db, a.orgId, q.draft, evaluationContext(true));
+      if (!need.baselineExceptionRequired) throw new Error(need.otherBlockers.length ? `A baseline exception cannot cover everything still unresolved: ${need.otherBlockers[0]}` : "No baseline exception applies to this quotation.");
+      recorded = { text: exceptionDecisionText({ unresolved: need.items, reason: bx.reason.trim() }), items: need.items, reason: bx.reason.trim(), revision: q.revision, draftHash: q.draft_hash };
+    }
     // One approval path: when the Approvals framework is available the decision is recorded there (separation of duties, exact revision, history).
-    if (await stagedAvailable(db)) { await decideDocument(db, ctxOf(a), "QUOTE", quoteId, "APPROVE", { stage: "MANAGER" }); return; }
-    if (await approvalsAvailable(db)) { await decideDocument(db, ctxOf(a, a.roles.has("manager")), "QUOTE", quoteId, "APPROVE"); return; }
+    if (await stagedAvailable(db)) await decideDocument(db, ctxOf(a), "QUOTE", quoteId, "APPROVE", { stage: "MANAGER", ...(bx ? { reason: recorded!.text, baselineException: bx } : {}) });
+    else if (await approvalsAvailable(db)) await decideDocument(db, ctxOf(a, a.roles.has("manager")), "QUOTE", quoteId, "APPROVE", bx ? { reason: recorded!.text, baselineException: bx } : {});
     // Approval evaluates with cost withheld; the INTERNAL margin sheet is frozen from a second, cost-visible evaluation of the same draft.
-    await managerApprove(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true), evaluationContext(false));
+    else await managerApprove(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true), evaluationContext(false), bx ? { baselineException: bx } : undefined);
+    if (!recorded) return;
+    // The exception is now sealed in the baseline. It also gets its own audit record (who, when, which version, which items, why).
+    const detail = { quoteId, revision: recorded.revision, draftHash: recorded.draftHash, unresolved: recorded.items.map((i) => ({ itemKey: i.itemKey, label: i.label, pricedBy: i.pricedBy })), reason: recorded.reason, approvedBy: a.email };
+    await audit(db, a, { action: "newquip.baseline_exception_accepted", summary: `Manager accepted a baseline exception (${BASELINE_EXCEPTION_TITLE}) for ${recorded.items.length} item(s) at revision ${recorded.revision} (local only; no Cin7 write)`, detail });
+    return { baselineException: { items: recorded.items.map((i) => i.itemKey), reason: recorded.reason, revision: recorded.revision, draftHash: recorded.draftHash } };
   });
 }
 

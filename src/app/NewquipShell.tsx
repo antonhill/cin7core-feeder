@@ -34,7 +34,7 @@ export function NewquipShell({
         <div className="mx-auto flex w-full max-w-[1920px] flex-wrap items-center gap-x-4 gap-y-1 px-4 py-1.5 md:px-6">
           <Link
             href="/"
-            className="-ml-2 inline-flex min-h-11 items-center gap-1.5 rounded-md px-2 text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 md:min-h-9"
+            className="-ml-2 inline-flex min-h-11 items-center gap-1.5 rounded-md px-2 text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4" aria-hidden>
               <path d="M15 6l-6 6 6 6" />
@@ -51,7 +51,7 @@ export function NewquipShell({
                   key={l.href}
                   href={l.href}
                   aria-current={active ? "page" : undefined}
-                  className={`inline-flex min-h-11 shrink-0 items-center rounded-md px-3 text-sm md:min-h-9 ${
+                  className={`inline-flex min-h-11 shrink-0 items-center rounded-md px-3 text-sm ${
                     active ? "bg-primary-subtle font-semibold text-indigo-900" : "font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900"
                   }`}
                 >
@@ -66,7 +66,7 @@ export function NewquipShell({
             <form action={signOutAction}>
               <button
                 type="submit"
-                className="inline-flex min-h-11 items-center rounded-md px-2 text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 md:min-h-9"
+                className="inline-flex min-h-11 items-center rounded-md px-2 text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900"
               >
                 Sign out
               </button>

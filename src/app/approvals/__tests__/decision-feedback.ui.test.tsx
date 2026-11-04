@@ -178,3 +178,21 @@ describe("unsaved decision protection", () => {
     expect(unload()).toBe(false);
   });
 });
+
+describe("ROUND 4: a recorded Manager baseline exception is visible on the approval entry", () => {
+  const TEXT = "Accepted incomplete: Estimator-priced systems without Cin7 SKU mapping. Unresolved: M75 feed distribution system [flex_auger] (priced by the Estimator (entered price)); PP penning [penning_package] (priced per running metre (penning rate)). Reason: Library mapping follows the PO";
+  it("a compact read-only line 'Accepted exception: N unmapped Estimator-priced systems (...)' appears in the decision record, with the reason, from the data the page already loads", async () => {
+    vi.mocked(actions.getApprovalDetailAction).mockResolvedValue({ ok: true, data: detail({}, { doc_type: "QUOTE", status: "APPROVED", decided_at: "2026-11-01T11:00:00Z", decided_by_email: "mgr@x.co", decision_reason: TEXT }) } as never);
+    render(<ApprovalDetailPage />);
+    const line = await screen.findByTestId("accepted-exception-line");
+    expect(line.textContent).toBe("Accepted exception: 2 unmapped Estimator-priced systems (M75 feed distribution system, PP penning). Reason recorded: Library mapping follows the PO");
+    expect(actions.getApprovalDetailAction).toHaveBeenCalledTimes(1); // no extra query
+  });
+  it("an ordinary decision reason is shown as before, with no exception line", async () => {
+    vi.mocked(actions.getApprovalDetailAction).mockResolvedValue({ ok: true, data: detail({}, { status: "APPROVED", decided_at: "2026-11-01T11:00:00Z", decided_by_email: "mgr@x.co", decision_reason: "Looks right" }) } as never);
+    render(<ApprovalDetailPage />);
+    await screen.findByText("Decision recorded");
+    expect(screen.queryByTestId("accepted-exception-line")).toBeNull();
+    expect(screen.getAllByText(/Looks right/).length).toBeGreaterThan(0);
+  });
+});

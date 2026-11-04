@@ -8,6 +8,7 @@ import { NEWQUIP_MASTER_POC_SNAPSHOT } from "@/newquip/grower/snapshot";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { emptyDraft } from "@/newquip/grower/draft";
 import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
+import { withAcceptedIncompleteCosting } from "@/newquip/grower/__tests__/golden";
 import { effectiveScope, scopeFromSnapshot } from "@/lib/projects/product-scope";
 
 vi.mock("server-only", () => ({}));
@@ -19,10 +20,11 @@ vi.mock("@/lib/require-org-admin", () => ({ requireOrgAdmin: async () => { if (!
 vi.mock("@/lib/activity-log", () => ({ logActivity: async () => undefined }));
 
 import { approveGrowerQuoteAction, createProjectFromGrowerQuoteAction } from "../actions";
+import { managerExceptionOpts } from "@/newquip/grower/__tests__/baseline-exception-fixture";
 import { getQuoteScopeAction, saveReusableMappingAction } from "../mapping-actions";
 
 const ORG = "org-nq";
-const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
+const draft = withAcceptedIncompleteCosting(applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft);
 const ctx = { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: true };
 const total = Math.round(evaluateDraft(draft, ctx).budget!.totals.subtotalExTax * 100);
 const map = (org: string, key: string, version: number, lines: Array<{ sku: string; factor: number; role?: string }>, status = "ACTIVE") =>
@@ -38,11 +40,15 @@ function seedQuote(db: FakeDb, id: string, ref: string) {
 beforeEach(() => { h.db = new FakeDb(); h.admin = true; });
 
 describe("approval -> project -> Sale scope, through the real actions", () => {
-  it("8: approval succeeds with NO mappings at all; the three packages stay visibly unresolved in the frozen scope", async () => {
+  it("8: UX-006 S3 - approval needs the Manager's exception for M75 / penning and a mapped LED package; the two Estimator-priced systems stay visibly unresolved in the frozen scope", async () => {
     const db = h.db as FakeDb; seedQuote(db, "q1", "NQ-Q-0001");
-    expect((await approveGrowerQuoteAction("q1")).ok).toBe(true);
+    expect((await approveGrowerQuoteAction("q1")).error).toMatch(/3 package\(s\) are not mapped/);
+    db.rows("newquip_package_mappings").push(map(ORG, "led_light", 1, [{ sku: "TEST-FORTIS-LED", factor: 1 }]));
+    expect((await approveGrowerQuoteAction("q1")).error).toMatch(/2 package\(s\) are not mapped/);
+    const q = db.rows("newquip_quotes")[0] as { revision: number; draft_hash: string };
+    expect((await approveGrowerQuoteAction("q1", managerExceptionOpts(q as never))).ok).toBe(true);
     const v = await getQuoteScopeAction("q1");
-    expect(v.data).toMatchObject({ frozen: true, unresolvedCount: 3 });
+    expect(v.data).toMatchObject({ frozen: true, unresolvedCount: 2 });
   });
   it("5+6: active mappings are sealed at approval, then inherited by the new project with no one re-selecting products", async () => {
     const db = h.db as FakeDb; seedQuote(db, "q1", "NQ-Q-0001");
@@ -66,8 +72,9 @@ describe("approval -> project -> Sale scope, through the real actions", () => {
   });
   it("14: another organisation's mappings are never applied", async () => {
     const db = h.db as FakeDb; seedQuote(db, "q1", "NQ-Q-0001");
-    db.rows("newquip_package_mappings").push(map("other-org", "flex_auger", 1, [{ sku: "TEST-LEAK", factor: 1 }]));
-    await approveGrowerQuoteAction("q1");
+    db.rows("newquip_package_mappings").push(map("other-org", "flex_auger", 1, [{ sku: "TEST-LEAK", factor: 1 }]), map(ORG, "led_light", 1, [{ sku: "TEST-FORTIS-LED", factor: 1 }]));
+    const q0 = db.rows("newquip_quotes")[0] as { revision: number; draft_hash: string };
+    expect((await approveGrowerQuoteAction("q1", managerExceptionOpts(q0 as never))).ok).toBe(true);
     const q = db.rows("newquip_quotes")[0].accepted_baseline as { physicalScope: Array<{ id: string; resolution?: unknown }> };
     expect(q.physicalScope.find((i) => i.id === "flex_auger:UNMAPPED")!.resolution).toBeUndefined();
   });

@@ -4,6 +4,7 @@ import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { readyDraft } from "@/newquip/grower/__tests__/golden";
 import { testPriceSource } from "@/newquip/grower/__tests__/test-snapshot";
 import { buildAcceptedBaseline } from "@/newquip/quote/baseline";
+import { GOLDEN_LIBRARY } from "@/newquip/grower/__tests__/golden-catalogue";
 import { NEWQUIP_STANDARD_SCHEDULE } from "@/newquip/quote/billing-schedule";
 import { buildCustomerSnapshot, withChosenContact } from "../customer-snapshot";
 import { issueQuotationDocument, saveProfile, type DocumentDeps } from "../document-store";
@@ -18,7 +19,7 @@ const approvals = { customerConfirmedAt: "t", customerConfirmedCents: 1, custome
 async function world() {
   const db = new FakeDb(); db.deliveryApplied = true;
   const draft = readyDraft(); draft.customerName = "Boerdery (Pty) Ltd"; draft.siteName = "Paarl";
-  const { baseline, hash } = buildAcceptedBaseline({ quoteRef: "NQ-Q-0009", revision: 1, draft, evaluation: evaluateDraft(draft, { priceSource: testPriceSource(), withholdCost: false }), approvals });
+  const { baseline, hash } = buildAcceptedBaseline({ mappingLibrary: GOLDEN_LIBRARY as never, quoteRef: "NQ-Q-0009", revision: 1, draft, evaluation: evaluateDraft(draft, { priceSource: testPriceSource(), withholdCost: false }), approvals });
   const quote = { id: "q1", org_id: "org-a", quote_ref: "NQ-Q-0009", revision: 1, state: "MANAGER_APPROVED_FINAL", accepted_baseline: baseline, baseline_hash: hash, draft: {}, requires_customer_acceptance: true };
   db.rows("newquip_quotes").push(quote);
   const files = new Map<string, Uint8Array>();

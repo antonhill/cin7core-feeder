@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createWorkbookPriceSource } from "@/newquip/grower/workbook-price-source";
 import { NEWQUIP_MASTER_POC_SNAPSHOT } from "@/newquip/grower/snapshot";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
-import { buildAcceptedBaseline, baselineMatchesHash, hashOf, type AcceptedBaseline } from "@/newquip/quote/baseline";
+import { sealWithUnresolvedScope } from "@/newquip/grower/__tests__/baseline-exception-fixture";
+import { baselineMatchesHash, hashOf, type AcceptedBaseline } from "@/newquip/quote/baseline";
 import { redactInternalFinancials } from "@/newquip/quote/margin";
 import { POC_SIX_STAGE_SCHEDULE } from "@/newquip/quote/billing-schedule";
 import { quoteToProjectBaseline } from "@/newquip/quote/to-project";
@@ -36,7 +37,7 @@ const APPROVALS = { customerConfirmedAt: "t", customerConfirmedCents: 1, custome
 
 function approvedDemo(): { baseline: AcceptedBaseline; hash: string } {
   const ctx = (withholdCost: boolean) => ({ priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost });
-  return buildAcceptedBaseline({ quoteRef: "NQ-Q-0001", revision: 1, draft: NQ_Q_0001_DRAFT, evaluation: evaluateDraft(NQ_Q_0001_DRAFT, ctx(true)), marginEvaluation: evaluateDraft(NQ_Q_0001_DRAFT, ctx(false)), approvals: APPROVALS });
+  return sealWithUnresolvedScope({ quoteRef: "NQ-Q-0001", revision: 1, draft: NQ_Q_0001_DRAFT, evaluation: evaluateDraft(NQ_Q_0001_DRAFT, ctx(true)), marginEvaluation: evaluateDraft(NQ_Q_0001_DRAFT, ctx(false)), approvals: APPROVALS });
 }
 
 describe("1-3. the approved quotation's products carry into the project unchanged, packages expand once, BOM/reference components are not products", () => {
