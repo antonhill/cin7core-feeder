@@ -57,8 +57,10 @@ describe("snapshot", () => {
     expect(s.stock[0].physical).toBe(7); expect(s.completeness.status).toBe("COMPLETE");
   });
   it("is INCOMPLETE when the configured Bond ID is not in the account's location list (fail closed, no name guessing)", async () => {
-    const s = await snap([av("A", "Bond", 7)], LOCS.filter((l) => l.ID !== LOC.BOND));
-    expect(s.completeness.status).toBe("INCOMPLETE"); expect(s.locationMapping.bond.verifiedInLocationList).toBe(false);
+    // No stock row mentions Bond, so the ONLY signal is the unverifiable configured ID.
+    const s = await snap([av("A", "JHB", 7)], LOCS.filter((l) => l.ID !== LOC.BOND));
+    expect(s.locationMapping.bond.verifiedInLocationList).toBe(false);
+    expect(s.completeness.status).toBe("INCOMPLETE"); expect(s.completeness.problems.join()).toMatch(/Bond location ID/);
   });
   it("is INCOMPLETE when two locations share a display name, because the name->ID join would be ambiguous", async () => {
     const s = await snap([av("A", "Bond", 7)], [...LOCS, { ID: "00000000-0000-4000-8000-000000000099", Name: "Bond" }]);
