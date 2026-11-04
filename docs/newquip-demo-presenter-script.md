@@ -14,7 +14,10 @@ Sign in once as testing@sparkconsulting.co.za (emailed code). Use the Owner / Re
 6. **Manager**: **Manager: final approval**.
 7. **Rep**: Stage 4 **Generate customer quotation PDF**, **Open PDF**.
 
-**C. Project and Cin7 evidence**
-8. **Manager**: Stage 5 record customer acceptance (evidence ref + any PDF), Stage 6 **Create Project from accepted quote**. This consumes NQ-Q-0026; do it only at the end. Then open **PRJ-NQ-Q-0017** for the linked Sale SO-00027 and posted invoices INV-00034 to INV-00037. Do not show PRJ-NQ-Q-0016 claim C02 (not reconciled).
-
-Margins: Estimator/Manager show margin (costed scope) 16.67% (workbook basis). The Cost panel shows a whole-contract margin (delivery and installation carry no cost). Cin7 writes are OFF.
+**C. Acceptance, project, Cin7 Sales Order, progress, claim, invoice (POC test transactions, NewQuip POC instance)**
+8. **Manager**: Stage 5 record "Customer accepted" (evidence reference + any small PDF), then Stage 6 **Create Project from accepted quote**, **Open the Project**.
+9. **Owner (you)** (project administration is owner/admin only): **Commercial / Claims** > "Create the Cin7 Sales Order": Step 2 Cin7 references: location **MSTR**, tax rule **Standard Rate Sales**, revenue account **200** (as used for SO-00027); optional preflight; Step 4 tick the confirmation and **Create**. The Sale number shows on the panel (and the Project's Cin7 link).
+10. **Stages** > Deposit **Update progress**: physical 100%, then **Approve commercial progress** 100% with a comment. **Commercial / Claims**: tick Deposit, **Preview claim**, **Save as draft claim**, **Submit**.
+11. **Manager** button > **Approvals**: open the claim, **Approve...**, **Confirm** (the preparer cannot approve their own claim).
+12. **Owner (you)** > Project > Commercial / Claims: **Post to Cin7** on the approved claim, confirm. The Cin7 invoice number shows against the claim (memo `NEWQUIP-PROJECTS:<project>:<claim>`).
+Cin7 Sales Orders and invoices carry the project reference (PRJ-NQ-Q-0026) and are created as DRAFT invoices; nothing goes to Xero; no customer emails.
