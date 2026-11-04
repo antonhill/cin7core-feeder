@@ -116,9 +116,14 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section, steps }
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} /> I have opened and reviewed the PDF, and these are the right recipients.</label>
           <Button type="button" loading={busy} aria-describedby={sendWhy ? "send-customer-why" : undefined} disabled={!reviewed || split(to).length === 0 || (altNeeded.length > 0 && altReason.trim().length < 5) || (!!resendOf && resendReason.trim().length < 3)} onClick={() => void run(async () => {
             const r = await sendQuoteToCustomerAction(quoteId, { documentId: latest.id, to: split(to), cc: split(cc), message, idempotencyKey: key, alternativeReason: altNeeded.length ? altReason : undefined, resendOfId: resendOf ?? undefined, resendReason: resendOf ? resendReason : undefined });
-            if (r.ok && r.data) { setKey(newKey()); setResendOf(null); setResendReason(""); setReviewed(false); }
+            if (r.ok && r.data) {
+              setKey(newKey()); setResendOf(null); setResendReason(""); setReviewed(false);
+              // The send is always RECORDED, but a recorded FAILED / SUPPRESSED send is not "sent": say so plainly instead of a success note.
+              if (r.data.status === "FAILED") { await reload(); return { ok: false, error: "The email was NOT sent: the email provider or its settings refused it. It is recorded as FAILED in the history below; fix the cause and use Retry." }; }
+              if (r.data.status === "SUPPRESSED") { await reload(); return { ok: false, error: "Not sent: no recipient is on the allowed list for this environment. It is recorded as SUPPRESSED in the history below." }; }
+            }
             return r.ok && r.data ? { ok: true } : r;
-          }, "Send recorded. See the history below for the outcome.")}>{resendOf ? "Send again" : "Send quotation to customer"}</Button>
+          }, "Sent: the email provider accepted it (this is not proof of inbox delivery). See the history below.")}>{resendOf ? "Send again" : "Send quotation to customer"}</Button>
           <DisabledReason id="send-customer-why">{sendWhy}</DisabledReason>
         </div>
       ) : <p className="mt-2 text-sm text-slate-600">{d.status === "CUSTOMER_ACCEPTED" ? "The customer has accepted; nothing further to send." : "Issue the quotation PDF first. Only a Rep can send it."}</p>}

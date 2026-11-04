@@ -337,6 +337,17 @@ describe("UX-006c Stage 4 wiring follows the stable gate callback", () => {
   }, 60000);
 });
 
+describe("a recorded send that FAILED or was SUPPRESSED is never reported as sent", () => {
+  it.each([["FAILED", /The email was NOT sent/], ["SUPPRESSED", /Not sent: no recipient is on the allowed list/]])("status %s shows the plain failure, not a success note", async (status, text) => {
+    vi.mocked(da.sendQuoteToCustomerAction).mockImplementation((async () => ({ ok: true, data: { status } })) as never);
+    await open({ stage: "4", roles: ["REP"], row: FINAL, delivery: delivery({ latestDocumentId: "d0" }), docs: docs(1), step: "2" });
+    fireEvent.click(await screen.findByLabelText(/I have opened and reviewed the PDF/, {}, { timeout: 8000 }));
+    fireEvent.click(screen.getByRole("button", { name: "Send quotation to customer" }));
+    expect(await screen.findByText(text, {}, { timeout: 8000 })).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/Sent: the email provider accepted it|Send recorded/);
+  }, 60000);
+});
+
 describe("UX-006c stage navigation", () => {
   it("Preview only appears on Stage 4 only when the customer summary can be inspected (READY, not approved); Stages 5 and 6 stay Not yet available", async () => {
     await open({ stage: "4", roles: ["REP"] });
