@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { verifySnapshotIntegrity, type Snapshot } from "./snapshot";
@@ -12,20 +12,27 @@ function assertOutsideGit(dir: string): void {
   for (let d = dir; d !== path.dirname(d); d = path.dirname(d)) if (existsSync(path.join(d, ".git"))) fail("Refusing to write a snapshot inside a git working tree.");
 }
 
-/** Atomic, never-overwriting, owner-only write. Refuses a snapshot that contains the credentials. */
+/** Atomic, never-overwriting, owner-only write into ~/rwtsa-local/cin7-snapshots (also used for reconciliation reports). */
+export function writeTextAtomic(i: { home?: string; name: string; text: string }): { file: string } {
+  const dir = snapshotDir(i.home);
+  assertOutsideGit(dir);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const real = realpathSync(dir);
+  assertOutsideGit(real); // a symlinked directory is judged by where it really is
+  if (process.platform !== "win32" && (statSync(real).mode & 0o077) !== 0) fail("Snapshot directory permission too open: restrict it to the current user (chmod 700).");
+  const final = path.join(real, i.name);
+  const tmp = path.join(real, `.${i.name}.${process.pid}-${Date.now()}.tmp`);
+  const fd = openSync(tmp, "wx", 0o600);
+  try { writeSync(fd, i.text); fsyncSync(fd); } finally { closeSync(fd); }
+  try { linkSync(tmp, final); } catch (e) { if ((e as NodeJS.ErrnoException).code === "EEXIST") fail("A file with this name already exists; nothing was overwritten."); throw e; } finally { try { unlinkSync(tmp); } catch { /* temp already gone */ } }
+  return { file: final };
+}
+
 export function writeSnapshotAtomic(i: { home?: string; snapshot: Snapshot; creds: { accountId: string; applicationKey: string } }): { file: string } {
   const text = JSON.stringify(i.snapshot, null, 2);
   if (text.includes(i.creds.accountId) || text.includes(i.creds.applicationKey)) fail("Refusing to write: the snapshot contains credential material.");
   if (!verifySnapshotIntegrity(i.snapshot)) fail("Refusing to write: the snapshot failed its own integrity check.");
-  const dir = snapshotDir(i.home);
-  assertOutsideGit(dir);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const final = path.join(dir, `snapshot-${i.snapshot.takenAt.replace(/[:.]/g, "-")}.json`);
-  const tmp = path.join(dir, `.snapshot-${process.pid}-${Date.now()}.tmp`);
-  const fd = openSync(tmp, "wx", 0o600);
-  try { writeSync(fd, text); fsyncSync(fd); } finally { closeSync(fd); }
-  try { linkSync(tmp, final); } catch (e) { if ((e as NodeJS.ErrnoException).code === "EEXIST") fail("A snapshot with this timestamp already exists; nothing was overwritten."); throw e; } finally { try { unlinkSync(tmp); } catch { /* temp already gone */ } }
-  return { file: final };
+  return writeTextAtomic({ home: i.home, name: `snapshot-${i.snapshot.takenAt.replace(/[:.]/g, "-")}.json`, text });
 }
 
 export function readSnapshotFile(file: string): Snapshot {

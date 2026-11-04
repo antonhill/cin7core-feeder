@@ -24,3 +24,24 @@ describe("workbook versus Cin7 reconciliation (report only)", () => {
     const workbook = [wb("A", { jhb: 3 })]; const copy = JSON.stringify(workbook); reconcileSnapshot({ snapshotStock: [st("A", { physical: 3 })], workbook, knownTransactions: [] }); expect(JSON.stringify(workbook)).toBe(copy);
   });
 });
+
+import { assertReconcilable, parseKnownTransactions } from "@/rwtsa-live/reconcile";
+describe("reconcile input hardening (independent review P1/P2)", () => {
+  const complete = { completeness: { status: "COMPLETE" } } as never, partial = { completeness: { status: "INCOMPLETE" } } as never;
+  it("refuses an INCOMPLETE snapshot unless explicitly allowed", () => {
+    expect(() => assertReconcilable(complete, false)).not.toThrow();
+    expect(() => assertReconcilable(partial, false)).toThrow(/incomplete/i);
+    expect(() => assertReconcilable(partial, true)).not.toThrow();
+  });
+  it("validates the known-transactions file: numbers only, unique ref+sku", () => {
+    expect(parseKnownTransactions([{ ref: "PO-00002", sku: "A", physicalDelta: 5 }])).toHaveLength(1);
+    for (const bad of [{}, [{ ref: "x", sku: "A", physicalDelta: "5" }], [{ ref: "x", sku: "A", physicalDelta: NaN }], [{ ref: "x", sku: "A", physicalDelta: 1 }, { ref: "x", sku: "A", physicalDelta: 1 }], [{ sku: "A", physicalDelta: 1 }]]) expect(() => parseKnownTransactions(bad)).toThrow();
+  });
+  it("refuses duplicate workbook SKUs instead of silently overwriting one", () => {
+    expect(() => reconcileSnapshot({ snapshotStock: [], workbook: [wb("A", { jhb: 1 }), wb("A", { jhb: 2 })], knownTransactions: [] })).toThrow(/duplicate/i);
+  });
+  it("compares decimals with a tolerance, not exact float equality", () => {
+    const r = reconcileSnapshot({ snapshotStock: [st("A", { physical: 0.1 + 0.2, usable: 0.1 + 0.2 })], workbook: [wb("A", { jhb: 0.3 })], knownTransactions: [] });
+    expect(r.rows[0].status).toBe("MATCH");
+  });
+});

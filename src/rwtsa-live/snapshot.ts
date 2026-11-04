@@ -82,9 +82,10 @@ export function buildSnapshot(i: { creds: RwtsaCredentials; locationMap: Locatio
   const unmappedLocationCount = [...idToName.keys()].filter((id) => !idToRole.has(id)).length;
 
   const bySku = new Map<string, SkuStock>();
-  let unknownLocationRows = 0;
+  let unknownLocationRows = 0, noSkuRows = 0, badQtyRows = 0;
   for (const a of i.availability.rows) {
-    const sku = str(a.SKU); if (!sku) continue;
+    if (typeof a.OnHand !== "number" || !Number.isFinite(a.OnHand) || typeof a.Allocated !== "number" || !Number.isFinite(a.Allocated)) badQtyRows++;
+    const sku = str(a.SKU); if (!sku) { noSkuRows++; continue; }
     const directId = str(a.LocationID ?? a.LocationId).toLowerCase();
     const name = str(a.Location);
     const ids = directId ? [directId] : nameToIds.get(name) ?? [];
@@ -97,6 +98,8 @@ export function buildSnapshot(i: { creds: RwtsaCredentials; locationMap: Locatio
     const q = (s.byRole[role] ??= { onHand: 0, allocated: 0, available: 0, onOrder: 0, inTransit: 0 });
     q.onHand += num(a.OnHand); q.allocated += num(a.Allocated); q.available += num(a.Available); q.onOrder += num(a.OnOrder); q.inTransit += num(a.InTransit);
   }
+  if (noSkuRows) problems.push(`${noSkuRows} stock row(s) have no SKU and were excluded from every total`);
+  if (badQtyRows) problems.push(`${badQtyRows} stock row(s) have a non-numeric or missing OnHand/Allocated (treated as 0 in the totals)`);
   if (unknownLocationRows) problems.push(`${unknownLocationRows} stock row(s) name a location that cannot be resolved to exactly one known location ID`);
 
   for (const s of bySku.values()) {

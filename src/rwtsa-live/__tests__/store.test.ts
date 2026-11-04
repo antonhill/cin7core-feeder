@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, realpathSync, readdirSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { writeSnapshotAtomic, readSnapshotFile } from "@/rwtsa-live/store";
 import { buildSnapshot } from "@/rwtsa-live/snapshot";
@@ -13,7 +13,7 @@ const mini = (extra: Partial<{ label: string }> = {}) => buildSnapshot({ creds: 
 describe("snapshot store", () => {
   it("writes atomically under ~/rwtsa-local/cin7-snapshots with 0600 and leaves no temp file", () => {
     const { home } = makeHome(); const r = writeSnapshotAtomic({ home, snapshot: mini(), creds: { accountId: ACCOUNT, applicationKey: APPKEY } });
-    expect(r.file.startsWith(path.join(home, "rwtsa-local", "cin7-snapshots"))).toBe(true);
+    expect(r.file.startsWith(path.join(realpathSync(home), "rwtsa-local", "cin7-snapshots"))).toBe(true);
     expect(statSync(r.file).mode & 0o777).toBe(0o600);
     expect(readdirSync(path.dirname(r.file)).filter((n) => n.includes(".tmp"))).toEqual([]);
     expect(readSnapshotFile(r.file).contentHash).toBe(mini().contentHash);
@@ -35,5 +35,26 @@ describe("snapshot store", () => {
     const { home } = makeHome(); const r = writeSnapshotAtomic({ home, snapshot: mini(), creds: { accountId: ACCOUNT, applicationKey: APPKEY } });
     writeFileSync(r.file, readFileSync(r.file, "utf8").replace('"physical": 1', '"physical": 2').replace('"physical":1', '"physical":2'));
     expect(() => readSnapshotFile(r.file)).toThrow(/integrity/i);
+  });
+});
+
+import { mkdtempSync, symlinkSync, chmodSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { writeTextAtomic } from "@/rwtsa-live/store";
+
+describe("store hardening (independent review P2)", () => {
+  it("refuses a snapshot directory that is a symlink into a git working tree", () => {
+    const { home } = makeHome(); const repo = mkdtempSync(path.join(tmpdir(), "repo-")); mkdirSync(path.join(repo, ".git")); mkdirSync(path.join(repo, "x"));
+    mkdirSync(path.join(home, "rwtsa-local"), { recursive: true }); symlinkSync(path.join(repo, "x"), path.join(home, "rwtsa-local", "cin7-snapshots"));
+    expect(() => writeSnapshotAtomic({ home, snapshot: mini(), creds: { accountId: ACCOUNT, applicationKey: APPKEY } })).toThrow(/git/i);
+  });
+  it("refuses an existing snapshot directory that is open to group or others", () => {
+    const { home } = makeHome(); const d = path.join(home, "rwtsa-local", "cin7-snapshots"); mkdirSync(d, { recursive: true }); chmodSync(d, 0o755);
+    expect(() => writeSnapshotAtomic({ home, snapshot: mini(), creds: { accountId: ACCOUNT, applicationKey: APPKEY } })).toThrow(/permission/i);
+  });
+  it("writeTextAtomic is no-overwrite and leaves no temp file (used for reconciliation reports too)", () => {
+    const { home } = makeHome(); const f = writeTextAtomic({ home, name: "r.json", text: "{}" }).file;
+    expect(() => writeTextAtomic({ home, name: "r.json", text: "{}" })).toThrow(/exists/i);
+    expect(readdirSync(path.dirname(f)).filter((n) => n.includes(".tmp"))).toEqual([]);
   });
 });

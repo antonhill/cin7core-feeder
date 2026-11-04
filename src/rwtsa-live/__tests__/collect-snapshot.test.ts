@@ -87,3 +87,32 @@ describe("snapshot", () => {
     expect(verifySnapshotIntegrity({ ...s, stock: s.stock.map((x) => ({ ...x, physical: x.physical + 1 })) })).toBe(false);
   });
 });
+
+describe("fail closed on schema drift and silent zeros (independent review P1)", () => {
+  it("is INCOMPLETE when Cin7 reports no total (completeness cannot be confirmed)", async () => {
+    const { c } = client({ "/ref/productavailability": () => ({ body: { ProductAvailabilityList: [av("A", "JHB", 1)] } }) });
+    const r = await collectAvailability(c); expect(r.complete).toBe(false); expect(r.problems.join()).toMatch(/did not report a total/i);
+  });
+  it("is INCOMPLETE for an empty availability list or a missing list key, never an all-zero COMPLETE snapshot", async () => {
+    for (const body of [{ Total: 0, ProductAvailabilityList: [] }, { Total: 3, SomethingElse: [{ x: 1 }] }]) {
+      const { c } = client({ "/ref/productavailability": () => ({ body }) });
+      expect((await collectAvailability(c)).complete).toBe(false);
+    }
+  });
+  it("is INCOMPLETE when the expected stock fields are not among the observed fields", async () => {
+    const { c } = client({ "/ref/productavailability": () => ({ body: { Total: 1, ProductAvailabilityList: [{ SKU: "A", Location: "JHB", QtyOnHand: 5 }] } }) });
+    expect((await collectAvailability(c)).problems.join()).toMatch(/OnHand/);
+  });
+  it("is INCOMPLETE when a quantity is not a number or a row has no SKU (counted, never silently zero)", async () => {
+    const s = await snap([av("A", "JHB", 1), { ...av("B", "JHB", 1), OnHand: "7" }, { ...av("", "JHB", 4), SKU: "" }]);
+    expect(s.completeness.status).toBe("INCOMPLETE"); expect(s.completeness.problems.join()).toMatch(/non-numeric/i); expect(s.completeness.problems.join()).toMatch(/no SKU/i);
+  });
+  it("detects a server that caps the page size below the request (short first page, larger total)", async () => {
+    const { c } = client({ "/product": (p) => ({ body: { Total: 900, Products: p === 1 ? Array.from({ length: 100 }, (_, i) => ({ ID: `p${i}`, SKU: `S${i}` })) : [] } }) });
+    const r = await collectProducts(c); expect(r.complete).toBe(false);
+  });
+  it("detects duplicate location IDs and duplicate product IDs", async () => {
+    const { c } = client({ "/ref/location": () => ({ body: { Total: 2, LocationList: [{ ID: LOC.JHB, Name: "A" }, { ID: LOC.JHB, Name: "B" }] } }), "/product": () => ({ body: { Total: 2, Products: [{ ID: "1", SKU: "A" }, { ID: "1", SKU: "A" }] } }) });
+    expect((await collectLocations(c)).problems.join()).toMatch(/duplicate/i); expect((await collectProducts(c)).problems.join()).toMatch(/duplicate/i);
+  });
+});
