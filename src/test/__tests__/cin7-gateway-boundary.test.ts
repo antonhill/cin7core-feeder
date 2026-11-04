@@ -86,9 +86,13 @@ describe("Cin7 HTTP gateway boundary", () => {
     const httpTsPath = join(srcDir, "cin7", "http.ts");
     const headerPattern = /api-auth-(accountid|applicationkey)/i;
     const offenders: { file: string; line: number }[] = [];
+    // The ONE other reviewed place: the RWTSA read-only snapshot client (PR #198). It is deliberately separate from the Toolbox gateway
+    // (it must not use the Supabase-backed limiter or the stored-credential path) and is itself pinned to GET, an exact path allowlist,
+    // the fixed Cin7 origin and a dedicated credentials file (src/rwtsa-live/__tests__ prove each of these).
+    const rwtsaLiveClient = join(srcDir, "rwtsa-live", "client.ts");
 
     for (const file of listTsFiles(srcDir)) {
-      if (file === httpTsPath) continue;
+      if (file === httpTsPath || file === rwtsaLiveClient) continue;
       const lines = readFileSync(file, "utf8").split("\n");
       lines.forEach((line, i) => {
         if (headerPattern.test(line)) offenders.push({ file, line: i + 1 });
