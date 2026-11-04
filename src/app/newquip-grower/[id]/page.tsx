@@ -61,6 +61,7 @@ import { deriveAcceptanceBanner } from "@/newquip/quote/stage5-banner";
 import { deriveHandoverReadiness } from "@/newquip/quote/stage6-handover";
 import { StageNav } from "./StageNav";
 import { HandoverResult } from "./HandoverResult";
+import { demoSwitchAvailableAction, selectDemoIdentityAction } from "@/app/demo-mode/actions";
 import { describeAmountChanges, type AmountChange } from "@/newquip/quote/handover";
 import { AcceptancePanel } from "./AcceptancePanel";
 import { computeStages, currentStage, parseStage, type CommercialState, type StageId } from "@/newquip/quote/stages";
@@ -200,6 +201,8 @@ export default function QuoteEditorPage() {
   const [effectInfo, setEffectInfo] = useState<QuoteView["confirmationEffect"] | null>(null); // what the last save did to the customer's confirmation (S1b), when the server reported it
   // Set when a save by someone who is NOT the Rep changed a customer-facing amount and so returned the quotation to the Rep: the viewer then sees a result screen, never the Rep's own steps.
   const [handover, setHandover] = useState<{ previousCents: number | null; newCents: number | null; changes: AmountChange[] } | null>(null);
+  // POC Presentation Mode: set when the Manager's one-click approval succeeded, so the presenter continues as the Rep (next responsible role) on the SAME quotation.
+  const [pocContinue, setPocContinue] = useState(false);
   const [mapRefused, setMapRefused] = useState(false); // the last Save was refused because the Rep changed a product-affecting control
   const [touched, setTouched] = useState<ReadonlySet<string>>(new Set());
   const touch = (...keys: string[]) => setTouched((p) => (keys.every((k) => p.has(k)) ? p : new Set([...p, ...keys])));
@@ -223,6 +226,7 @@ export default function QuoteEditorPage() {
   }
   function adopt(v: QuoteView, workflow = false) {
     followTransition(v, workflow);
+    if (workflow && v.poc && view?.quote.state === "ESTIMATOR_REVIEW" && v.quote.state === "MANAGER_APPROVED_FINAL") setPocContinue(true); // POC: after the Manager's approval the presenter continues as the Rep
     if (view && v.confirmationEffect?.confirmationCleared && v.quote.state === "REP_DRAFT" && !v.viewer.roles.includes("rep")) {
       setHandover({ previousCents: v.confirmationEffect.previousCents ?? null, newCents: v.confirmationEffect.newCents ?? null, changes: describeAmountChanges(view.quote.draft, v.quote.draft) });
     }
@@ -233,6 +237,14 @@ export default function QuoteEditorPage() {
     setDirty(false);
     loop.cancel(); setPreviewedFor(null); setFailedFor(null); // the server's figures replace any preview still on its way
   }
+  useEffect(() => {
+    if (!pocContinue) return;
+    void (async () => {
+      if (!(await demoSwitchAvailableAction().catch(() => false))) return;
+      const r = await selectDemoIdentityAction("rep");
+      if (r.ok) window.location.replace(window.location.pathname); // same path (same quotation); opens at the Rep's next stage (customer quotation)
+    })();
+  }, [pocContinue]);
   useEffect(() => {
     getGrowerQuoteAction(id).then((r) => (r.ok && r.data ? (adopt(r.data), setError(null)) : setError(r.error ?? "Unknown error")));
   }, [id]);
@@ -1198,17 +1210,17 @@ export default function QuoteEditorPage() {
             <span role="status" aria-live="polite" className="text-slate-800" data-testid="stage3-status-line">{wizard3.statusLine}</span>
             <OwnerTag role={wizard3.nextOwner} />
           </div>
-          {commercial && !commercial.complete && <Alert tone="warning"><span data-testid="s3-commercial">{commercial.headline}</span></Alert>}
+          {!poc && commercial && !commercial.complete && <Alert tone="warning"><span data-testid="s3-commercial">{commercial.headline}</span></Alert>}
           {repSummary}
           <EstimatorResult signedOffBy={q.estimator_signoff_by_email} signedOffAt={q.estimator_signoff_at} signoffCurrent={s2Base.signoff === "current"} totalCents={totalCents} confirmedCents={q.customer_confirmed_cents}
-            costing={canCommercials && budget ? { estimatedCost: shownMargin?.cost ?? budget.totals.estimatedCost, marginPct: shownMargin?.pct ?? budget.totals.overallMarginPct } : null} priceExceptions={priceExceptions} costOverrides={costOverrideRows} showPriceDetail={canCommercials}
+            costing={canCommercials && !poc && budget ? { estimatedCost: shownMargin?.cost ?? budget.totals.estimatedCost, marginPct: shownMargin?.pct ?? budget.totals.overallMarginPct } : null} priceExceptions={poc ? [] : priceExceptions} costOverrides={poc ? [] : costOverrideRows} showPriceDetail={canCommercials && !poc}
             marginUnknown={canCommercials && !!budget && (marginIncomplete || budget.incomplete || budget.totals.overallMarginPct == null)} missingCostLines={marginIncomplete && marginInfo!.missing > 0 ? marginInfo!.missing : null} estimatorPricedLines={marginInfo?.exempt.length ?? 0} largestLines={canCommercials ? largestLines : null} />
           <Panel>
             <PanelTitle>Manager approval</PanelTitle>
             <p className="mt-1 text-xs text-slate-600">Final internal commercial approval. The Rep sees the outcome here and by notification; only a Manager can decide.</p>
-            {q.state === "ESTIMATOR_REVIEW" && <ApprovalChecklist items={approvalChecklist} onGoStage={goStage} />}
+            {q.state === "ESTIMATOR_REVIEW" && !poc && <ApprovalChecklist items={approvalChecklist} onGoStage={goStage} />}
 
-            {approveNotReady && <div id={`${uid}-approve-notready`}><Alert tone="danger"><span data-testid="approve-not-ready">{rd.state !== "READY" ? <>Approval is disabled: the quotation is not ready. {rd.reasons[0] ?? "Open items remain."}{rd.reasons.length > 1 ? ` (+${rd.reasons.length - 1} more)` : ""}</> : null}{approveCostingOpen ? <>{rd.state !== "READY" ? " " : ""}Approval is disabled: costing is incomplete. {costingSrv!.reason ?? "Supplier costs are unresolved."}</> : null}{commercial && !commercial.complete ? ` ${commercial.headline}.` : ""} Return it to the Estimator to resolve them.</span></Alert></div>}
+            {approveNotReady && !poc && <div id={`${uid}-approve-notready`}><Alert tone="danger"><span data-testid="approve-not-ready">{rd.state !== "READY" ? <>Approval is disabled: the quotation is not ready. {rd.reasons[0] ?? "Open items remain."}{rd.reasons.length > 1 ? ` (+${rd.reasons.length - 1} more)` : ""}</> : null}{approveCostingOpen ? <>{rd.state !== "READY" ? " " : ""}Approval is disabled: costing is incomplete. {costingSrv!.reason ?? "Supplier costs are unresolved."}</> : null}{commercial && !commercial.complete ? ` ${commercial.headline}.` : ""} Return it to the Estimator to resolve them.</span></Alert></div>}
             {approveSignoffMissing && <div id={`${uid}-approve-signoff`}><Alert tone="info">Waiting for the Estimator&apos;s sign-off before the Manager can decide.</Alert></div>}
             {approveSignoffStale && <div id={`${uid}-approve-stale`}><Alert tone="warning">The Estimator&apos;s sign-off no longer matches the current quotation. It must be given again before the Manager can decide.</Alert></div>}
             {q.state === "ESTIMATOR_REVIEW" && dirty && <div id={`${uid}-approve-dirty`}><Alert tone="warning" >You have unsaved edits. Save or discard your edits first: approval applies to the saved quotation.</Alert></div>}
@@ -1221,8 +1233,11 @@ export default function QuoteEditorPage() {
                     blockedWhy={!roles.has("manager") ? "Only a Manager can accept this exception." : !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash ? "Waiting for the Estimator's sign-off on the current quotation." : dirty ? "Save or discard your edits first." : isWorking ? "Another action is in progress. Please wait." : undefined}
                     onApprove={(request) => act(() => approveGrowerQuoteAction(id, { baselineException: request }), "Approved with a recorded exception. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL")} />}
                   <div className="flex flex-wrap items-center gap-3">
-                    <Button variant={bxRequired ? "secondary" : "primary"} className="min-h-11" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty || approveNotReady || bxRequired || bxBlocking.length > 0} aria-describedby={[approveDescribedBy, bxRequired && `${uid}-approve-bx`, bxBlocking.length > 0 && `${uid}-approve-map`].filter(Boolean).join(" ") || undefined}
-                      onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL")}>Manager: final approval</Button>
+                    {poc ? (
+                      <Button variant="primary" className="min-h-12 px-6 text-base" data-testid="poc-approve" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty}
+                        onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. Continuing as the Rep.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL")}>Approve &amp; Continue</Button>
+                    ) : (<Button variant={bxRequired ? "secondary" : "primary"} className="min-h-11" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty || approveNotReady || bxRequired || bxBlocking.length > 0} aria-describedby={[approveDescribedBy, bxRequired && `${uid}-approve-bx`, bxBlocking.length > 0 && `${uid}-approve-map`].filter(Boolean).join(" ") || undefined}
+                      onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL")}>Manager: final approval</Button>)}
                     {roles.has("manager") && (<>
                       <Button variant="secondary" className="min-h-11" aria-describedby={returnWhy ? "return-mgr-why" : undefined} disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "approve", (v) => v.quote.state === "REP_DRAFT")}>Return to rep (reject)</Button>
                       {q.estimator_signoff_hash && (
@@ -1231,8 +1246,8 @@ export default function QuoteEditorPage() {
                     </>)}
                   </div>
                   {roles.has("manager") && <p className="text-xs text-slate-700" data-testid="return-owners">Return to rep: the Rep corrects it (new revision), then submits it again. Return to estimator: the Estimator&apos;s sign-off is withdrawn and they review again.</p>}
-                  {bxBlocking.length > 0 && <DisabledReason id={`${uid}-approve-map`}>Approval is unavailable: {bxBlocking.map((b) => b.label).join(", ")} {bxBlocking.length === 1 ? "needs" : "need"} an active library mapping. The Manager exception covers only M75 / penning systems{(view?.baselineException?.items.length ?? 0) > 0 ? ", and is offered only once these are mapped" : ""}.</DisabledReason>}
-                  {bxRequired && <DisabledReason id={`${uid}-approve-bx`}>Plain approval is unavailable: an approval exception is required (see above). Use &quot;Approve with recorded exception&quot;.</DisabledReason>}
+                  {!poc && bxBlocking.length > 0 && <DisabledReason id={`${uid}-approve-map`}>Approval is unavailable: {bxBlocking.map((b) => b.label).join(", ")} {bxBlocking.length === 1 ? "needs" : "need"} an active library mapping. The Manager exception covers only M75 / penning systems{(view?.baselineException?.items.length ?? 0) > 0 ? ", and is offered only once these are mapped" : ""}.</DisabledReason>}
+                  {!poc && bxRequired && <DisabledReason id={`${uid}-approve-bx`}>Plain approval is unavailable: an approval exception is required (see above). Use &quot;Approve with recorded exception&quot;.</DisabledReason>}
                   {isWorking && <DisabledReason id={`${uid}-approve-busy`}>Another action is in progress. Please wait.</DisabledReason>}
                   {roles.has("manager") && <DisabledReason id="return-mgr-why">{returnWhy ? `Return buttons: ${returnWhy.charAt(0).toLowerCase()}${returnWhy.slice(1)}` : undefined}</DisabledReason>}
                   {!roles.has("manager") && <p id={`${uid}-approve-role`} className="text-sm text-slate-700">Final approval needs the Manager role.</p>}

@@ -12,6 +12,11 @@ describe("demonstration-only quotation wording", () => {
     expect(p.legalName).toBe(profile.legalName);
     expect(p.vatNumber).toBe("1");
   });
+  it("a quotation CREATED in POC Presentation Mode (marked) gets the wording whatever its number; an unmarked one does not", () => {
+    expect(applyDemoTerms(profile, ORG, "NQ-Q-0031", true)).toMatchObject(DEMO_TERMS);
+    expect(applyDemoTerms(profile, ORG, "NQ-Q-0031", false)).toBe(profile);
+    expect(applyDemoTerms(profile, "00000000-0000-4000-8000-000000000000", "NQ-Q-0031", true)).toBe(profile);
+  });
   it("also covers the Rep-start demonstration quotation NQ-Q-0026", () => {
     expect(applyDemoTerms(profile, ORG, "NQ-Q-0026")).toMatchObject(DEMO_TERMS);
   });

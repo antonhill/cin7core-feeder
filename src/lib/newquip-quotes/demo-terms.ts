@@ -13,6 +13,7 @@ export const DEMO_TERMS: Pick<CompanyProfile, "paymentTerms" | "deliveryInstalla
   acceptanceInstructions: "DEMONSTRATION ONLY. This document is not available for commercial acceptance.",
 };
 
-export function applyDemoTerms(profile: CompanyProfile, orgId: string, quoteRef: string): CompanyProfile {
-  return orgId === DEMO_ORG_ID && DEMO_QUOTE_REFS.includes(quoteRef) ? { ...profile, ...DEMO_TERMS } : profile;
+/** `marked`: the quotation was created in POC Presentation Mode (its assumptions carry the POC marker). Marked quotations in the NewQuip organisation get the demonstration wording, as do the two designated references. */
+export function applyDemoTerms(profile: CompanyProfile, orgId: string, quoteRef: string, marked = false): CompanyProfile {
+  return orgId === DEMO_ORG_ID && (marked || DEMO_QUOTE_REFS.includes(quoteRef)) ? { ...profile, ...DEMO_TERMS } : profile;
 }

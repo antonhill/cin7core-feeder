@@ -22,7 +22,7 @@ export function pocPresentationEnabled(env: Record<string, string | undefined>, 
 }
 
 /** A quotation created in POC Presentation Mode (and only such a quotation) is marked in its assumptions. */
-export const isPocQuote = (draft: Pick<QuoteDraft, "estimator">): boolean => (draft.estimator.assumptions ?? "").startsWith(POC_MARKER);
+export const isPocQuote = (draft: Pick<QuoteDraft, "estimator"> | null | undefined): boolean => (draft?.estimator?.assumptions ?? "").startsWith(POC_MARKER);
 
 const RES = (unitPriceExVat: number, at: string) => ({ at, by: "poc-presentation-seed", reason: "POC PRESENTATION: illustrative demonstration price, not a validated commercial price.", unitPriceExVat });
 
