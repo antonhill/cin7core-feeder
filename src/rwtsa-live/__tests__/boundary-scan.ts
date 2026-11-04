@@ -13,7 +13,7 @@ const inside = (target: string, root: string) => target === root || target.start
 export type Role = "client" | "module" | "script";
 const NODE_OK = new Set(["node:fs", "node:os", "node:path", "node:crypto"]);
 const BANNED_IDENT = new Set(["XMLHttpRequest", "WebSocket", "EventSource", "eval", "Function", "globalThis", "global", "Reflect", "Request", "Bun", "Deno", "self", "window", "setInterval", "setImmediate", "importScripts", "createRequire", "require", "getBuiltinModule", "dlopen"]);
-const PROCESS_OK = new Set(["platform", "getuid", "pid", "argv", "exit"]);
+const PROCESS_OK = new Set(["platform", "getuid", "pid", "argv", "exit", "stdin", "stdout"]);
 const BANNED_METHOD = /^(POST|PUT|PATCH|DELETE|HEAD|OPTIONS|CONNECT|TRACE)$/i;
 
 function specifierAllowed(spec: string, role: Role, fileName: string): boolean {
