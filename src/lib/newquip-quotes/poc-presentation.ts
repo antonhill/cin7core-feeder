@@ -1,6 +1,7 @@
 import { isNewquipPocOrg } from "@/newquip/access";
 import { supabaseWiring } from "@/lib/projects/write-flag";
 import type { QuoteDraft } from "@/newquip/grower/draft";
+import type { ScopeItem } from "@/lib/projects/product-scope";
 
 // NEWQUIP POC PRESENTATION MODE (pure). For the designated demonstration only: a quotation CREATED while the mode is on carries a POC marker and is seeded with the Estimator inputs the
 // workbook cannot supply, so the presenter never types prices or mappings live. At sign-off / approval the SAME audited mechanisms the business already uses (the Estimator's incomplete-cost
@@ -41,3 +42,16 @@ export function seedPocEstimator(draft: QuoteDraft, nowIso: string): QuoteDraft 
     },
   };
 }
+
+export const POC_SCOPE_REASON = "POC PRESENTATION: product mapping not verified for this demonstration, so no Cin7 product line is sent; the value is carried by the contract charges. Not fulfilled stock.";
+
+/**
+ * Project creation from a POC-approved quotation: every scope item that is still UNMAPPED is recorded as EXCLUDED from the Cin7 Sales Order's physical lines (the project's existing,
+ * audited EXCLUDE resolution), so no invalid product ID is ever sent. The item stays in the register with its reason; nothing is represented as mapped, shipped or fulfilled.
+ */
+export function excludeUnverifiedScope(items: readonly ScopeItem[], nowIso: string): ScopeItem[] {
+  return items.map((it) => (!it.resolution && it.mapping.status === "UNMAPPED" ? { ...it, resolution: { kind: "EXCLUDE" as const, reason: POC_SCOPE_REASON, by: "POC PRESENTATION", at: nowIso } } : it));
+}
+
+/** The sealed baseline's own record that this quotation was approved in POC Presentation Mode. */
+export const approvedInPocMode = (baseline: { exceptions?: Array<{ reason?: string }> } | null | undefined): boolean => !!baseline?.exceptions?.some((e) => (e.reason ?? "").startsWith(POC_MARKER));

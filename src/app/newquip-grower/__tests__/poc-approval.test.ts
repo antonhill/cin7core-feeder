@@ -102,3 +102,56 @@ describe("POC Presentation Mode records the Manager baseline exception automatic
     expect(r.ok).toBe(false); expect(snapshot()).toBe(before);
   });
 });
+
+describe("POC Presentation Mode also covers a catalogue line with NO library mapping (the FORTIS LED), listed as UNVERIFIED", () => {
+  const noLibrary = () => { db.tables.newquip_package_mappings = []; };
+  it("a normal quotation with the LED unmapped is still refused (nothing written)", async () => {
+    noLibrary(); as(true); const before = snapshot();
+    const r = await grower.approveGrowerQuoteAction("q1");
+    expect(r.ok).toBe(false); expect(snapshot()).toBe(before);
+    on(); const r2 = await grower.approveGrowerQuoteAction("q1"); // mode on but NOT marked: still the normal rule
+    expect(r2.ok).toBe(false); expect(snapshot()).toBe(before);
+  });
+  it("a marked POC quotation is approved: the exception lists the LED as unverified, the baseline keeps it UNMAPPED, the confirmed amount and sign-off are untouched", async () => {
+    noLibrary(); on(); as(true); mark();
+    const confirmed = quote().customer_confirmed_cents, signoff = quote().estimator_signoff_by_email;
+    const r = await grower.approveGrowerQuoteAction("q1");
+    expect(r.ok, r.error).toBe(true);
+    expect(quote()).toMatchObject({ state: "MANAGER_APPROVED_FINAL", customer_confirmed_cents: confirmed, estimator_signoff_by_email: signoff });
+    const ex = quote().accepted_baseline.exceptions[0];
+    expect(ex.reason).toMatch(/^POC PRESENTATION/);
+    const led = ex.unresolved.find((i: { label: string }) => /LED/i.test(i.label));
+    expect(led).toBeTruthy(); expect(led.pricing).toMatch(/not verified/);
+    expect(ex.unresolved.map((i: { itemKey: string }) => i.itemKey)).toEqual(expect.arrayContaining(ITEMS));
+    // never represented as mapped: the sealed physical scope still has the LED lines UNMAPPED
+    const scope = JSON.stringify(quote().accepted_baseline.physicalScope);
+    expect(scope).toMatch(/UNMAPPED/);
+  });
+});
+
+import { scopeFromSnapshot, effectiveScope as effScope } from "@/lib/projects/product-scope";
+describe("POC Presentation Mode: project creation and the Cin7 Sale scope", () => {
+  const projectScope = () => scopeFromSnapshot((db.rows("projects")[0] as Record<string, any>).baseline_snapshot); // eslint-disable-line @typescript-eslint/no-explicit-any
+  it("the unverified lines are EXCLUDED from the Sale's physical lines with the POC reason; nothing blocks the Sale; mapped lines stay", async () => {
+    db.tables.newquip_package_mappings = []; on(); as(true); mark();
+    expect((await grower.approveGrowerQuoteAction("q1")).ok).toBe(true);
+    const p = await grower.createProjectFromGrowerQuoteAction("q1");
+    expect(p.ok, p.error).toBe(true);
+    const items = projectScope(); const eff = effScope(items);
+    expect(eff.blockers).toEqual([]); // the Sale scope is resolvable: nothing unmapped is left to block it
+    expect(eff.excluded.length).toBeGreaterThan(0);
+    expect(eff.excluded.every((x) => /^POC PRESENTATION/.test(x.reason))).toBe(true);
+    expect(eff.excluded.some((x) => /LED/i.test(x.description))).toBe(true);
+    expect(eff.lines.length).toBeGreaterThan(0); // the verified products still go on the Sale
+    expect(eff.lines.map((l) => l.sku)).not.toEqual(expect.arrayContaining(["TEST-FORTIS-LED"]));
+    expect(items.every((i) => i.mapping.status !== "UNMAPPED" || i.resolution?.kind === "EXCLUDE")).toBe(true);
+    expect(quote().accepted_baseline.physicalScope.some((i: { mapping: { status: string }; resolution?: unknown }) => i.mapping.status === "UNMAPPED" && !i.resolution)).toBe(true); // the sealed baseline itself is NOT rewritten
+  });
+  it("a normal quotation's project keeps its unmapped items blocking (nothing is auto-excluded)", async () => {
+    as(true);
+    const ok = await grower.approveGrowerQuoteAction("q1", { baselineException: req() });
+    expect(ok.ok, ok.error).toBe(true);
+    const p = await grower.createProjectFromGrowerQuoteAction("q1"); expect(p.ok, p.error).toBe(true);
+    expect(effScope(projectScope()).excluded.some((x) => /^POC PRESENTATION/.test(x.reason))).toBe(false);
+  });
+});

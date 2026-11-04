@@ -33,7 +33,8 @@ const isByDesign = (p: PricedBy | null): p is ByDesignPricedBy => p != null && (
 export interface BaselineExceptionItem {
   itemKey: string;
   label: string;
-  pricedBy: ByDesignPricedBy;
+  /** By-design systems carry their pricing route; in POC Presentation Mode an item that is NOT verified is listed as `poc_unverified` (or the route it was priced by). */
+  pricedBy: ByDesignPricedBy | PricedBy | "poc_unverified";
   /** How it is priced, in words. */
   pricing: string;
 }
@@ -60,6 +61,23 @@ export interface BaselineExceptionRequest {
 }
 
 const UNMAPPED_SUFFIX = ":UNMAPPED";
+
+/** POC Presentation Mode: every unresolved scope blocker becomes a listed, UNVERIFIED item (the scope itself stays unmapped in the sealed baseline). */
+function pocUnverified(lines: readonly BaselineCommercialLine[], scope: readonly ScopeItem[], blockers: readonly string[]): Array<{ item: BaselineExceptionItem; blocker: string }> {
+  const out: Array<{ item: BaselineExceptionItem; blocker: string }> = [];
+  const left = [...blockers];
+  for (const it of scope) {
+    if (it.resolution || it.mapping.status !== "UNMAPPED") continue;
+    const blocker = `${it.description}: ${it.mapping.reason}`;
+    const at = left.indexOf(blocker); if (at < 0) continue;
+    left.splice(at, 1);
+    const itemKey = it.id.endsWith(UNMAPPED_SUFFIX) ? it.id.slice(0, -UNMAPPED_SUFFIX.length) : it.id;
+    const line = lines.find((l) => l.itemKey === itemKey);
+    out.push({ item: { itemKey, label: it.description, pricedBy: line?.pricedBy ?? "poc_unverified", pricing: "demonstration only: product mapping not verified" }, blocker });
+  }
+  for (const b of left) out.push({ item: { itemKey: `unverified:${out.length + 1}`, label: b, pricedBy: "poc_unverified", pricing: "demonstration only: product mapping not verified" }, blocker: b });
+  return out;
+}
 
 /**
  * The scope items that are Estimator-priced BY DESIGN and unmapped: a whole line (not "remaining components" of a partly mapped package) with no resolution, whose
@@ -104,15 +122,17 @@ export interface BaselineMappingGate {
  * The Estimator's cost exception (`costExceptionAccepted`) waives COST reasons only, i.e. SKUs with no supplier cost. It never waives an unmapped package: an Estimator-priced
  * system without a Cin7 SKU always needs the Manager's recorded exception, and any other unmapped package keeps blocking.
  */
-export function baselineMappingGate(i: { lines: readonly BaselineCommercialLine[]; scope: readonly ScopeItem[]; physicalCosts: Parameters<typeof buildCostEstimate>[1] | undefined; costExceptionAccepted: boolean }): BaselineMappingGate {
+export function baselineMappingGate(i: { lines: readonly BaselineCommercialLine[]; scope: readonly ScopeItem[]; physicalCosts: Parameters<typeof buildCostEstimate>[1] | undefined; costExceptionAccepted: boolean;
+  /** POC Presentation Mode, marked quotations only: EVERY unresolved mapping is covered by the Manager's recorded exception (listed, never represented as verified). Normal quotations leave this off. */
+  pocWaiver?: boolean }): BaselineMappingGate {
   const captured = i.physicalCosts;
   const eff = effectiveScope(i.scope);
   // The frozen cost estimate exists only once costing has started (unchanged). The UNMAPPED-package rule below does NOT depend on that: an Estimator-priced system with no Cin7 SKU needs the
   // Manager's recorded exception whether or not costing was ever started and whether or not the Estimator recorded a cost exception.
   const estimate = captured && Object.keys(captured).length ? buildCostEstimate(eff.lines.map((l) => ({ sku: l.sku, description: l.description, quantity: l.quantity })), captured, eff.blockers) : undefined;
-  const waivable = estimatorPricedUnmapped(i.lines, i.scope);
-  const covered = waivable.filter((w) => eff.blockers.includes(w.blocker));
-  const remaining = [...eff.blockers];
+  const waivable = i.pocWaiver ? pocUnverified(i.lines, i.scope, eff.blockers) : estimatorPricedUnmapped(i.lines, i.scope);
+  const covered = waivable.filter((w) => eff.blockers.includes(w.blocker) || !!i.pocWaiver);
+  const remaining = i.pocWaiver ? [] : [...eff.blockers];
   for (const w of covered) { const at = remaining.indexOf(w.blocker); if (at >= 0) remaining.splice(at, 1); }
   // The unmapped lines left in `remaining` (count-aware, same text match as above): these can only be fixed by an active library mapping.
   const left = [...remaining];

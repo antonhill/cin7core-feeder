@@ -1,3 +1,4 @@
+import { approvedInPocMode, excludeUnverifiedScope, isPocQuote, pocPresentationEnabled } from "./poc-presentation";
 import "server-only";
 // NewQuip quotes — persistence orchestration. LOCAL ONLY: this module imports nothing from src/cin7 and never calls fetch
 // (pinned by no-cin7-write.test.ts). Every query is scoped by org_id; a quote of another org is indistinguishable from "not
@@ -87,7 +88,7 @@ export async function baselineExceptionOf(db: Db, orgId: string, draft: QuoteDra
   const scope = buildPhysicalScope(lines);
   const lib = library ? libraryOf(library) : undefined;
   const costEx = draft.estimator.costBasis?.incompleteAccepted;
-  return baselineExceptionView(baselineMappingGate({ lines, scope: lib && lib.size ? applyMappingLibrary(scope, lib, asOfIso) : scope, physicalCosts: draft.estimator.physicalCosts, costExceptionAccepted: !!costEx }), costEx ?? null);
+  return baselineExceptionView(baselineMappingGate({ lines, scope: lib && lib.size ? applyMappingLibrary(scope, lib, asOfIso) : scope, physicalCosts: draft.estimator.physicalCosts, costExceptionAccepted: !!costEx, pocWaiver: isPocQuote(draft) && pocPresentationEnabled(process.env as Record<string, string | undefined>, orgId) }), costEx ?? null);
 }
 
 // ── reads ───────────────────────────────────────────────────────────────────
@@ -314,6 +315,7 @@ export async function managerApprove(db: Db, orgId: string, roles: ReadonlySet<Q
   const { baseline, hash } = buildAcceptedBaseline({
     mappingLibrary: library ? libraryOf(library) : undefined,
     quoteRef: q.quote_ref, revision: q.revision, draft: q.draft, evaluation: ev,
+    ...(isPocQuote(q.draft) && pocPresentationEnabled(process.env as Record<string, string | undefined>, orgId) ? { pocPresentation: true } : {}),
     ...(bx ? { baselineException: { reason: bx.reason, draftHash: q.draft_hash } } : {}),
     // Cost-visible evaluation of the SAME draft, used only for the internal margin sheet frozen with the baseline.
     marginEvaluation: marginCtx ? evaluateDraft(q.draft, marginCtx) : undefined,
@@ -368,6 +370,10 @@ export async function createProjectFromAcceptedQuote(db: Db, orgId: string, emai
     const snap = await latestSnapshot(db, orgId, q.id);
     let generic = quoteToProjectBaseline(q.accepted_baseline, q.baseline_hash, q.id, accepted ? accepted.schedule : schedule, accepted ? (accepted.scheduleSource ?? scheduleSource) : scheduleSource);
     if (snap) generic = { ...generic, customer: { ...generic.customer, cin7CustomerId: snap.cin7_customer_id } }; // the selected Cin7 customer, by its authoritative ID
+    // POC Presentation Mode: a quotation approved with unverified mappings gets those scope items EXCLUDED from the Cin7 Sale's physical lines (audited resolution), never sent as invalid products.
+    if (pocPresentationEnabled(process.env as Record<string, string | undefined>, orgId) && approvedInPocMode(q.accepted_baseline as never) && Array.isArray((generic as { physicalScope?: unknown }).physicalScope)) {
+      generic = { ...generic, physicalScope: excludeUnverifiedScope((generic as unknown as { physicalScope: never[] }).physicalScope, new Date().toISOString()) } as typeof generic;
+    }
     try {
       projectId = await createProjectFromBaseline(db, orgId, email, generic, { reference: `PRJ-${q.quote_ref}`, name: `${q.accepted_baseline.quote.customerName} — ${q.accepted_baseline.quote.siteName}` });
     } catch (e) {
