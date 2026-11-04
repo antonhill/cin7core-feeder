@@ -81,7 +81,7 @@ Hosted has 0001-0117 + 0121 (warehouse). #126 carries 0107-0120 (0120 held/unapp
 ## 10. Pre-apply checklist
 
 1. Owner approves applying 0122 (Production) separately; decide D1-D6 below.
-2. On a Supabase preview branch (not Production): apply 0122, run `supabase/tests/*.test.sql` (CI does on a clean bootstrap), then smoke the app as Rep, Estimator, Manager, admin: open a quotation, save, hand off, sign off, approve, create a claim, open the portal link. Confirm PostgREST as a Rep JWT returns 401/403/"permission denied" for `/rest/v1/newquip_quotes?select=draft`.
+2. **Preview and Production share ONE Supabase database in the current setup** (see `docs/newquip-ux006-hosted-uat-runsheet.md`, rows 7 and 11). Therefore "apply to preview" means applying to the shared production database UNLESS a separate Supabase branch database is used. Procedure: (a) create a Supabase branch database (`create_branch`, which replays all migrations on an isolated copy), (b) apply 0122 only to that branch, (c) point a Vercel Preview deployment at the branch (override `SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, anon and service keys for that Preview only; branch must exist before overrides, see the branch-isolation gotchas), (d) run the smoke below, (e) delete the branch. If no branch database is used, do not describe the step as a preview: it is a Production apply and needs the Production approval. On the branch: apply 0122, run `supabase/tests/*.test.sql` (CI does on a clean bootstrap), then smoke the app as Rep, Estimator, Manager, admin: open a quotation, save, hand off, sign off, approve, create a claim, open the portal link. Confirm PostgREST as a Rep JWT returns 401/403/"permission denied" for `/rest/v1/newquip_quotes?select=draft`.
 3. Confirm `SUPABASE_SERVICE_ROLE_KEY` is set in every deployment (it already must be).
 4. Take a catalogue snapshot (`information_schema.role_table_grants` + `pg_policies`) before applying; keep the rollback file open.
 5. After applying: re-run the read-only catalogue query, run the Rep JWT probe, watch Vercel/Supabase logs for `42501` from the app (would indicate an unreviewed user-JWT read).
@@ -101,4 +101,47 @@ Hosted has 0001-0117 + 0121 (warehouse). #126 carries 0107-0120 (0120 held/unapp
 * D3 `org_functional_roles` is also revoked (nothing reads it with a JWT; it reveals who holds which role). Confirm.
 * D4 `activity_log`: hide `newquip.*|approvals.*|projects.*` from client roles and remove client write privileges. Confirm (alternative: leave untouched).
 * D5 Rollback restores read access but not the accidental TRUNCATE/DML grants. Confirm.
-* D6 Cross-cutting follow-up: Toolbox `quotes`, `quote_lines`, `products`, `sale_lines`, assembly/production tables are member-readable with cost/margin columns. Same pattern applies (all app reads are service role) but touches other modules; separate stream and approval.
+* D6 (made concrete in section 13, P2-3) Cross-cutting follow-up: Toolbox `quotes`, `quote_lines`, `products`, `sale_lines`, assembly/production tables are member-readable with cost/margin columns. Same pattern applies (all app reads are service role) but touches other modules; separate stream and approval.
+
+## 13. Review findings and owner decisions (independent review of fa08972: no P1; safe to apply to a Supabase BRANCH database after owner approval)
+
+### P2-1 Held migration 0119 CONTRADICTS 0122
+Migration 0119 (`feature/newquip-rep-customer-isolation`, e5cca7f, unapplied) conflicts with 0122 if it is ever applied AFTER 0122:
+* it re-creates member SELECT policies on the family tables (grants stay revoked, so access stays denied, but its `newquip_*_scope_ok` helpers become dead code);
+* it OVERWRITES 0122's narrowed `activity_log` policy (`drop policy ... "org members read activity_log"; create policy ... newquip_quote_scope_ok(...)`), which for a member with isolation switched OFF (default) is effectively `is_org_member(org_id)`: it RE-EXPOSES the `newquip.* / approvals.* / projects.*` audit rows to every member;
+* it creates `newquip_access_settings` and `newquip_access_setting_events`, which get the default anon/authenticated ACL (0119 only revokes them explicitly, but any other creation path would not) and are NOT in 0122's family array or covered by the CI name guard (`newquip_` prefix matches the guard, so the CI test would fail on them unless 0119 revokes; it does revoke, so they pass, but they stay outside the migration's own array).
+**Recommended resolution: do not apply 0119; supersede it with 0122; 0118 (assignments) is independent and can proceed.**
+If the owner prefers to keep 0119, the exact required rebase is: (1) renumber 0122 to run AFTER 0119 (e.g. 0122 stays, 0119 applied first, never after); (2) add `newquip_access_settings` and `newquip_access_setting_events` to the `fam` array in 0122 (revoke + drop policies); (3) in 0122 re-assert the `activity_log` policy after everything else (it already is the last statement) and add a test that the policy qual still contains `newquip|approvals|projects`; (4) remove or neutralise 0119's policy-recreation section so the final policies are none. The 0122 CI guard would catch (2) and (4) as failures.
+
+### P2-2 Future-table protection is name-pattern based; default privileges are not altered
+0122 does not change default privileges. The CI guard covers only tables named `newquip_*`, `approval_*`, `project_*`, `projects`, `org_functional_*`, `customer_rep_*`. A new table with another name gets the Supabase default ACL (anon and authenticated: ALL).
+Optional hardening, an explicit OWNER DECISION and NOT included: `ALTER DEFAULT PRIVILEGES FOR ROLE postgres, supabase_admin IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;`. Blast radius: it affects EVERY future table in `public` for EVERY module (Toolbox, warehouse, RWTSA, NewQuip): each new table would need an explicit `grant select ... to authenticated` where a client read is genuinely intended; existing tables are unaffected; migrations that rely on defaults (or tests that omit grants, as 0101-0105 re-grant explicitly) could behave differently on a clean bootstrap, so it needs its own stream, a full CI bootstrap run and a rollback (`ALTER DEFAULT PRIVILEGES ... GRANT ALL ON TABLES TO anon, authenticated`).
+
+### P2-3 OUT OF SCOPE: cost/margin-bearing Toolbox tables readable by any member (D6, made concrete)
+Hosted catalogue check (read-only). `authenticated` has SELECT on all below, and the sensitive columns are:
+| Table | Sensitive columns | anon |
+|---|---|---|
+| `quotes` | estimated_cost, overall_margin_pct, margin_revenue_ex_tax, costed_line_count, excluded_from_margin_count, margin_scope | **ALL incl. TRUNCATE** |
+| `quote_lines` | average_cost, estimated_cost, margin_pct, margin_included, unit_price, cost_snapshot_at | **ALL incl. TRUNCATE** |
+| `quote_creation_claims` | creation-claim keys/payloads | **ALL incl. TRUNCATE** |
+| `products` | average_cost, costing_method, supplier_fixed_price, supplier_product_code/name, drop_ship_supplier | none |
+| `sale_lines` | average_cost, price | none |
+| `assembly_bom_lines`, `assembly_consumption_lines`, `assembly_builds` | estimated_unit_cost, cost_percentage, unit_cost | none |
+| `production_bom_items`, `production_operations`, `production_orders`, `production_bom_operations`, `production_bom_versions` | cost_of_wastage, resource_cost_type, actual_material_cost, actual_resource_cost, wip_actual_cost | none |
+| `purchases`, `purchase_order_lines`, `purchase_receipt_lines`, `suppliers` | supplier names, purchase prices/costs | none |
+| `po_creation_claims` | claim keys | none |
+| `scorecard_actions/definitions/metric_definitions/metric_results/reviews/sections`, `scorecard_bottleneck_orders_v` | warehouse performance data | **ALL incl. TRUNCATE** (view: ALL) |
+RLS still blocks anon rows (is_org_member is false), and PostgREST cannot TRUNCATE, so the anon grants are defence-in-depth debt, but any member (including a Rep) can read the cost/margin columns of the Toolbox Quotes module directly. Same pattern applies (revoke client privileges, no policy) provided the other modules also read only via the service role (the session client reads only org_members/organizations, so very likely). It touches other modules, so it needs its own stream, per-module compatibility review and owner approval. Recommended first slice: `quotes`, `quote_lines`, `quote_creation_claims`, `products` (cost columns), then the rest.
+
+### P3 activity_log narrowing is prefix-based
+Hidden: `newquip.*`, `approvals.*`, `projects.*`. Still member-readable: `sync.*` (33k rows, sync run summaries), `audit.*` (Data Audit apply actions: `audit.apply_fixes`, `audit.apply_attribute_template`, `audit.apply_supplier_assignment` - product/supplier changes written to Cin7, may name SKUs, supplier assignments), `pricing.*` (`pricing.bulk_update`: price changes, may carry old/new prices), `supplier_planner.*`, `replenish.*`, `instance.*`, `order_fulfillment.*`. These are Toolbox rows, left as before. A NEW NewQuip action written under any other prefix would be member-readable: keep NewQuip audit actions under the three hidden prefixes (add a lint/test), or move the policy to an allow-list of Toolbox prefixes (owner decision).
+
+### P3 Limits of the vitest client-boundary guard
+`rep-isolation-client-boundary.test.ts` is a static heuristic. It catches literal `.from("<table>")` with a protected table name in files that use a user-JWT client, new user-JWT client files not on the reviewed list, and user-JWT files importing the stores. It does NOT catch: `.rpc(...)` calls, dynamically built table names, a user-JWT client created in one file and passed to a store in another (the import check only covers files that create the client), a Supabase client created with the anon key directly via `createClient` from `@supabase/supabase-js` (not matched by its client-name regex), or client-side code outside `src/` and `portal/app/`. The authoritative protection is the database (SQLSTATE 42501, plus the CI SQL guard); the unit test is an early-warning aid, not a proof.
+
+### Decision list additions
+* D7 (P2-1) Supersede 0119 with 0122 (recommended) or keep 0119 and rebase as specified.
+* D8 (P2-2) Whether to alter default privileges for all future tables (not included).
+* D9 (P2-3) Open a separate stream for the Toolbox cost/margin tables, starting with `quotes`, `quote_lines`, `quote_creation_claims`, `products`.
+* D10 (P3) activity_log: keep the prefix block-list, or switch to an allow-list.
+* D11 Preview vs Production: use a Supabase branch database for the smoke test; otherwise treat the apply as Production.
