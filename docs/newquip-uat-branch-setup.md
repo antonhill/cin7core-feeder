@@ -43,11 +43,11 @@ A fresh branch equals production's history (116 entries). Differences found and 
 
 Sign-in in the app is an emailed 6-digit code. For automated verification a session is created server-side: the Auth Admin `generate_link` (magiclink) returns a one-time token hash, `verifyOtp` on it returns a real session for that user, and the session is stored in the SSR cookie `sb-wevhibjvinmdvuuyurql-auth-token` (value `base64-` + base64url of the session JSON, split into `.0`, `.1` chunks above 3180 characters). The minting script and session files are local, mode 0600, never committed. Sessions last about one hour; re-mint to refresh. A human tester cannot be handed such a session without handing over a secret; they use the emailed code instead (see the presenter run sheet).
 
-## 5. The Cin7 customer blocker, and how it is handled
+## 5. The Cin7 customer blocker (a SEPARATE OUTSTANDING INTEGRATION GATE: NOT TESTED / OPEN, never a pass)
 
 Selecting a customer on a NEW quotation (`selectQuoteCustomerAction`) calls `readCin7Customer`: it needs the single active `cin7_instances` row with the hard-coded POC instance id, decrypts its key with `ENCRYPTION_KEY` and makes a LIVE read to the Cin7 API for that exact customer name. The branch has no such row (Cin7 credentials were deliberately not copied), so the selection screen cannot complete there.
 
-Handling: `NQ-Q-0001` is PRE-SEEDED with exactly what the app would have stored: two append-only `newquip_quote_customers` rows (seq 1 "Customer selected from Cin7", seq 2 "Quotation contact set", built by the app's own `buildCustomerSnapshot` and `withChosenContact`, hash by `snapshotHash`), with `quote.customer_name` already equal to the customer name. The workflow therefore starts from the Rep step with the customer already chosen. A new quotation created on the Preview will still hit the blocker at customer selection.
+Handling: the UAT quotations (`NQ-Q-0001` and the fresh `NQ-Q-0003`) are PRE-SEEDED with exactly what the app would have stored: two append-only `newquip_quote_customers` rows (seq 1 "Customer selected from Cin7", seq 2 "Quotation contact set", built by the app's own `buildCustomerSnapshot` and `withChosenContact`, hash by `snapshotHash`), with `quote.customer_name` already equal to the customer name. The workflow therefore starts from the Rep step with the customer already chosen. A new quotation created on the Preview will still hit the blocker at customer selection.
 
 Options to remove it (owner decision):
 - (a) supply read-only credentials for a Cin7 sandbox containing a customer named `ZZ UAT Demo Farm (Pty) Ltd` (creating it in Cin7 is a Cin7 write, so the owner does it); the instance row is then inserted on the branch, encrypted with the Preview `ENCRYPTION_KEY`;
