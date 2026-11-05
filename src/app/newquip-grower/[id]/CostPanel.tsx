@@ -2,11 +2,14 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
+import { PendingNotice } from "@/components/ui/action-feedback";
+import { OP } from "@/components/ui/operation-labels";
 import { Status } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { formatSast } from "@/lib/approvals/time";
+import { friendlyCin7Error } from "../cin7-error-text";
 import {
   acceptIncompleteCostsAction, clearManualCostEstimateAction, captureLatestCostsAction, confirmUnitBasisAction, getQuoteCostEstimateAction, recalculateCostsAction, recordFxRateAction,
   selectSupplierAction, setManualCostEstimateAction, type QuoteCostView,
@@ -17,6 +20,7 @@ import { formatMicroAmount } from "@/lib/format-money";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import { latestOnly } from "@/newquip/grower/preview-draft";
 import type { SupplierOption } from "@/lib/projects/supplier-price";
+import { deriveUnitStatus, type UnitException } from "./cost-unit-status";
 
 // INTERNAL physical-SKU cost estimate from Cin7 LATEST SUPPLIER PRICES, across every supplier, in ZAR. The page mounts it only for a viewer who may see costs
 // (owner/admin, or an explicit Estimator / Manager); the server re-checks every action. A missing cost is MISSING and flags the margin incomplete; a manual estimate
@@ -25,7 +29,7 @@ import type { SupplierOption } from "@/lib/projects/supplier-price";
 // The panel NEVER disappears: while loading it says so, and if the server refuses or fails it shows the reason with a retry.
 
 export interface CostPanelBodyProps {
-  v: QuoteCostView | null; loading: boolean; error: string | null; note: string | null; busy: boolean;
+  v: QuoteCostView | null; loading: boolean; error: string | null; note: string | null; busy: boolean; busyLabel?: string | null;
   /** The quotation has unsaved edits: this panel reflects the SAVED draft only. */
   unsaved?: boolean;
   manual: { sku: string; rand: string; reason: string } | null;
@@ -36,6 +40,8 @@ export interface CostPanelBodyProps {
   onConfirmUnit?: (reason: string) => void; onAcceptIncomplete?: (reason: string) => void;
 }
 
+/** A datetime-local keeps focus on its inner segments, so the host never matches :focus-visible and showed only the browser's segment highlight: the ring follows :focus-within instead (same ring as the app-wide rule). */
+export const DATETIME_FOCUS = "focus-within:[outline:2px_solid_var(--focus-ring)] focus-within:[outline-offset:2px]";
 const price = (micro: number | null, cur: string | null) => (micro === null ? "-" : formatMicroAmount(micro, cur));
 const key = (o: SupplierOption) => `${o.supplierId ?? ""}|${o.supplierName ?? ""}`;
 const ISSUE: Record<string, string> = { NEEDS_CHOICE: "Choose a supplier", PREFERRED_INVALID: "Preferred supplier has no usable price", NO_USABLE_PRICE: "No usable supplier price" };
@@ -79,8 +85,8 @@ function FxForm({ v, busy, onRecordFx }: { v: QuoteCostView; busy: boolean; onRe
           <Input label="Currency" value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value.toUpperCase() })} />
           <Input label="Rate" value={f.rate} inputMode="decimal" onChange={(e) => setF({ ...f, rate: e.target.value })} />
           <Input label="Source (provider, fixing or quote)" value={f.source} onChange={(e) => setF({ ...f, source: e.target.value })} />
-          <Input label="Effective (date and time)" type="datetime-local" value={f.asOf} onChange={(e) => setF({ ...f, asOf: e.target.value })} />
-          <Button size="sm" disabled={busy || !f.rate || f.source.trim().length < 3 || !f.asOf} onClick={() => onRecordFx(f.currency, f.rate, f.source, new Date(f.asOf).toISOString())}>Record rate</Button>
+          <Input label="Effective (date and time)" type="datetime-local" className={DATETIME_FOCUS} value={f.asOf} onChange={(e) => setF({ ...f, asOf: e.target.value })} />
+          <Button size="sm" className="min-h-11" disabled={busy || !f.rate || f.source.trim().length < 3 || !f.asOf} onClick={() => onRecordFx(f.currency, f.rate, f.source, new Date(f.asOf).toISOString())}>Record rate</Button>
         </div>
       )}
       <div className="mt-1 text-slate-600">A rate older than {v.maxRateAgeHours} hours is refused as stale. The rate used by a quotation is frozen into its estimate at approval.</div>
@@ -88,23 +94,38 @@ function FxForm({ v, busy, onRecordFx }: { v: QuoteCostView; busy: boolean; onRe
   );
 }
 
+const PER_STOCK_UNIT = "Supplier prices are per stock unit (Cin7 keeps one unit per product and these supplier records state no unit of their own).";
+function exceptionText(x: UnitException): string {
+  const who = `${x.sku} (${x.supplier})`;
+  if (x.kind === "STATED") return `${who}: Cin7 returned unit information on this price (${x.fields.join(", ")}) that this tool cannot interpret.`;
+  if (x.kind === "NO_STOCK_UNIT") return `${who}: Cin7 did not return the product's stock unit.`;
+  return `${who}: ${x.message}`;
+}
+
 function Declarations({ v, busy, onConfirmUnit, onAcceptIncomplete }: { v: QuoteCostView; busy: boolean; onConfirmUnit?: CostPanelBodyProps["onConfirmUnit"]; onAcceptIncomplete?: CostPanelBodyProps["onAcceptIncomplete"] }) {
   const [unitReason, setUnitReason] = useState(""); const [exception, setException] = useState("");
   const uid = useId();
+  const us = deriveUnitStatus(v.skuOptions);
   const unitWhy = busy ? "Another action is in progress." : unitReason.trim().length < 10 ? "Explain how you know (at least 10 characters) to enable this." : undefined;
   const exceptionWhy = busy ? "Another action is in progress." : exception.trim().length < 10 ? "Enter the exception reason (at least 10 characters) to enable this." : undefined;
   return (
     <div className="mt-3 grid gap-3 text-xs md:grid-cols-2">
       <div className="min-w-0 rounded border border-slate-200 p-2">
         <div className="font-medium">Unit of measure</div>
-        {v.unitBasis ? <div className="text-slate-700">Confirmed per stock unit by {v.unitBasis.confirmedBy} ({formatSast(v.unitBasis.confirmedAt)}): {v.unitBasis.reason}</div> : (
-          <>
-            <div className="text-amber-700">Cin7 does not say which unit a supplier price is for. Until someone confirms the prices are per stock unit, they are unusable.</div>
-            {onConfirmUnit && !v.frozen && (
-              <><div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-end"><div className="min-w-0 max-w-2xl flex-1"><Input label="How do you know? (required)" value={unitReason} onChange={(e) => setUnitReason(e.target.value)} /></div><Button size="sm" variant="secondary" disabled={busy || unitReason.trim().length < 10} aria-describedby={unitWhy ? `${uid}-unit-why` : undefined} onClick={() => onConfirmUnit(unitReason)}>Confirm per stock unit</Button></div>
-              <DisabledReason id={`${uid}-unit-why`}>{unitWhy}</DisabledReason></>
-            )}
-          </>
+        {v.unitBasis && <div className="text-slate-700">Confirmed per stock unit by {v.unitBasis.confirmedBy} ({formatSast(v.unitBasis.confirmedAt)}): {v.unitBasis.reason}</div>}
+        {!v.unitBasis && !us.exceptions.length && !us.legacySkus.length && (us.perStockUnit > 0 ? <div className="text-slate-600">{PER_STOCK_UNIT}</div> : us.noUnitProblem === 0 ? <div className="text-slate-600">{v.frozen ? "No unit-of-measure confirmation was recorded on this frozen estimate." : "No supplier prices have been read yet. The unit of each price is checked when the costs are captured."}</div> : null)}
+        {us.exceptions.length > 0 && (
+          <div className="text-amber-700" data-testid="uom-exceptions">
+            <div>These supplier prices are unusable because their unit cannot be established:</div>
+            <ul className="list-disc pl-4">{us.exceptions.map((x, i) => <li key={i}>{exceptionText(x)}</li>)}</ul>
+          </div>
+        )}
+        {us.exceptions.some((x) => x.kind === "STATED" || x.kind === "OTHER") && <div className="mt-1 text-slate-700" data-testid="uom-not-confirmable">Confirming per stock unit does not unblock a price whose Cin7 record states a unit, pack or conversion. Correct that supplier record in Cin7 and capture the latest costs again, or add a manual estimate for the SKU, or record an incomplete-estimate exception.</div>}
+        {us.legacySkus.length > 0 && <div className="mt-1 text-amber-700" data-testid="uom-legacy">This cost snapshot was captured before unit information was tracked, so the unit of these prices cannot be established ({us.legacySkus.join(", ")}). Capture the latest Cin7 costs again to apply the current rule. Capturing again replaces the recorded costs; nothing is captured automatically.</div>}
+        {!v.unitBasis && (us.exceptions.length > 0 || us.legacySkus.length > 0) && us.perStockUnit > 0 && <details className="mt-1 text-slate-600"><summary className="flex min-h-11 cursor-pointer items-center">{us.perStockUnit} other supplier price{us.perStockUnit === 1 ? " is" : "s are"} per stock unit</summary><div>{PER_STOCK_UNIT}</div></details>}
+        {!v.unitBasis && us.confirmableSkus.length > 0 && onConfirmUnit && !v.frozen && (
+          <><div className="mt-1 text-slate-700" data-testid="uom-confirm-scope">Confirming per stock unit unblocks: {us.confirmableSkus.join(", ")}.</div><div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-end"><div className="min-w-0 max-w-2xl flex-1"><Input label="How do you know? (required)" value={unitReason} onChange={(e) => setUnitReason(e.target.value)} /></div><Button size="sm" className="min-h-11" variant="secondary" disabled={busy || unitReason.trim().length < 10} aria-describedby={unitWhy ? `${uid}-unit-why` : undefined} onClick={() => onConfirmUnit(unitReason)}>Confirm per stock unit</Button></div>
+          <DisabledReason id={`${uid}-unit-why`}>{unitWhy}</DisabledReason></>
         )}
       </div>
       <div className="min-w-0 rounded border border-slate-200 p-2">
@@ -113,7 +134,7 @@ function Declarations({ v, busy, onConfirmUnit, onAcceptIncomplete }: { v: Quote
           <>
             <div className="text-slate-600">Approval is refused while a captured estimate is incomplete, unless an authorised exception is recorded.</div>
             {onAcceptIncomplete && !v.frozen && (
-              <><div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-end"><div className="min-w-0 max-w-2xl flex-1"><Input label="Exception reason (required)" value={exception} onChange={(e) => setException(e.target.value)} /></div><Button size="sm" variant="secondary" disabled={busy || exception.trim().length < 10} aria-describedby={exceptionWhy ? `${uid}-exception-why` : undefined} onClick={() => onAcceptIncomplete(exception)}>Record exception</Button></div>
+              <><div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-end"><div className="min-w-0 max-w-2xl flex-1"><Input label="Exception reason (required)" value={exception} onChange={(e) => setException(e.target.value)} /></div><Button size="sm" className="min-h-11" variant="secondary" disabled={busy || exception.trim().length < 10} aria-describedby={exceptionWhy ? `${uid}-exception-why` : undefined} onClick={() => onAcceptIncomplete(exception)}>Record exception</Button></div>
               <DisabledReason id={`${uid}-exception-why`}>{exceptionWhy}</DisabledReason></>
             )}
           </>
@@ -134,26 +155,27 @@ export function CostPanelBody(p: CostPanelBodyProps) {
         <PanelTitle>Cin7 latest cost - capture and margin (physical SKUs)</PanelTitle>
         {v && (v.frozen ? <Status tone="info">Frozen with the approval</Status> : <Status tone="neutral">Draft</Status>)}
       </div>
-      {p.unsaved && <div className="mt-2"><Alert tone="warning">Unsaved changes. This estimate is a live preview of your edits (nothing is saved). Capturing or selecting supplier prices works on the SAVED draft: save first.</Alert></div>}
-      <p className="mt-1 text-xs text-slate-600">Internal. Latest Supplier Price from Cin7 for every supplier, in rand. This is separate from the workbook-basis margin above; the two are not combined. {v?.note ?? ""} A missing cost is never treated as zero, FixedCost and AverageCost are never substituted, and a manual estimate is always labelled as one.</p>
-      {p.loading && !v && !error && <p className="mt-2 text-sm text-slate-600">Loading the cost estimate…</p>}
-      {error && (
-        <div className="mt-2 space-y-2">
-          <Alert tone="danger">{error}</Alert>
-          <Button size="sm" variant="secondary" disabled={busy} onClick={p.onRetry}>Try again</Button>
-        </div>
-      )}
-      {note && <div className="mt-2"><Alert tone="success">{note}</Alert></div>}
-      {stale && (
-        <div className="mt-2 flex flex-wrap items-center gap-2"><Alert tone="warning">An exchange rate or declaration has changed since these costs were captured.</Alert>{p.onRecalculate && <Button size="sm" variant="secondary" disabled={busy} onClick={p.onRecalculate}>Recalculate with current rates</Button>}</div>
-      )}
       {v?.canCapture && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <Button size="sm" disabled={busy || noSkus} loading={busy} onClick={() => p.onCapture(false)}>Capture latest costs from Cin7</Button>
+          <Button size="sm" className="min-h-11" disabled={busy || noSkus} loading={busy} onClick={() => p.onCapture(false)}>Capture latest costs from Cin7</Button>
           {noSkus && <span className="text-xs text-amber-700">No physical SKUs yet: map the packages to Cin7 SKUs in the physical scope first, then capture.</span>}
           {!noSkus && <span className="text-xs text-slate-600">Reads Cin7 only (no writes). Your supplier selections and manual estimates are kept. Changing the costs withdraws the estimator&apos;s sign-off until it is given again.</span>}
-          {!noSkus && <Button size="sm" variant="secondary" disabled={busy} onClick={() => { if (typeof window === "undefined" || window.confirm("Re-read Cin7 AND discard every supplier selection you made? Manual estimates are kept.")) p.onCapture(true); }}>Capture and replace my selections</Button>}
+          {!noSkus && <Button size="sm" className="min-h-11" variant="secondary" disabled={busy} onClick={() => { if (typeof window === "undefined" || window.confirm("Re-read Cin7 AND discard every supplier selection you made? Manual estimates are kept.")) p.onCapture(true); }}>Capture and replace my selections</Button>}
         </div>
+      )}
+      {p.unsaved && <div className="mt-2"><Alert tone="warning">Unsaved changes. This estimate is a live preview of your edits (nothing is saved). Capturing or selecting supplier prices works on the SAVED draft: save first.</Alert></div>}
+      <p className="mt-1 text-xs text-slate-600">Internal. Latest Supplier Price from Cin7 for every supplier, in rand. This is separate from the workbook-basis margin above; the two are not combined. {v?.note ?? ""} A missing cost is never treated as zero, FixedCost and AverageCost are never substituted, and a manual estimate is always labelled as one.</p>
+      {p.loading && !v && !error && <PendingNotice label={OP.loadCosts} />}
+      {error && (
+        <div className="mt-2 space-y-2">
+          <Alert tone="danger">{friendlyCin7Error(error)}</Alert>
+          <Button size="sm" className="min-h-11" variant="secondary" disabled={busy} onClick={p.onRetry}>Try again</Button>
+        </div>
+      )}
+      {p.busyLabel && <PendingNotice label={p.busyLabel} />}
+      {note && <div className="mt-2"><Alert tone="success">{note}</Alert></div>}
+      {stale && (
+        <div className="mt-2 flex flex-wrap items-center gap-2"><Alert tone="warning">An exchange rate or declaration has changed since these costs were captured.</Alert>{p.onRecalculate && <Button size="sm" className="min-h-11" variant="secondary" disabled={busy} onClick={p.onRecalculate}>Recalculate with current rates</Button>}</div>
       )}
       {v && !v.frozen && <FxForm v={v} busy={busy} onRecordFx={p.onRecordFx} />}
       {v && <Declarations v={v} busy={busy} onConfirmUnit={p.onConfirmUnit} onAcceptIncomplete={p.onAcceptIncomplete} />}
@@ -177,8 +199,8 @@ export function CostPanelBody(p: CostPanelBodyProps) {
                     <td className="whitespace-nowrap pr-3 text-right tabular-nums">{l.totalCostCents === null ? "-" : fmtCents(l.totalCostCents)}</td>
                     <td className="pr-3 text-xs">{l.status === "LATEST" ? "Cin7 supplier price" : l.status === "MANUAL" ? <span title={l.reason ?? ""}>Manual estimate: {l.reason}</span> : <span className="text-amber-700">{(l.issue && ISSUE[l.issue]) ?? "No cost"}{so?.message ? ` - ${so.message}` : ""}</span>}{l.retrievedAt ? <div className="text-slate-600">read {formatSast(l.retrievedAt)}</div> : null}</td>
                     <td>{v.canCapture && (l.status === "MISSING" || l.status === "MANUAL") && (l.status === "MANUAL"
-                      ? <Button size="sm" variant="secondary" disabled={busy} onClick={() => p.onClearManual(l.sku)}>Remove</Button>
-                      : <Button size="sm" variant="secondary" disabled={busy} onClick={() => p.onStartManual(l.sku)}>Add manual estimate</Button>)}</td>
+                      ? <Button size="sm" className="min-h-11" variant="secondary" disabled={busy} onClick={() => p.onClearManual(l.sku)}>Remove</Button>
+                      : <Button size="sm" className="min-h-11" variant="secondary" disabled={busy} onClick={() => p.onStartManual(l.sku)}>Add manual estimate</Button>)}</td>
                   </tr>
                 );
               })}
@@ -191,14 +213,14 @@ export function CostPanelBody(p: CostPanelBodyProps) {
           <div className="text-sm font-medium">{manual.sku}</div>
           <Input label="Unit cost (R)" value={manual.rand} inputMode="decimal" onChange={(ev) => p.onManualChange({ ...manual, rand: ev.target.value })} />
           <Input label="Reason (required)" value={manual.reason} onChange={(ev) => p.onManualChange({ ...manual, reason: ev.target.value })} />
-          <Button size="sm" disabled={busy || !/^\d+(\.\d{1,2})?$/.test(manual.rand.trim()) || manual.reason.trim().length < 5} onClick={p.onSaveManual}>Save</Button>
+          <Button size="sm" className="min-h-11" disabled={busy || !/^\d+(\.\d{1,2})?$/.test(manual.rand.trim()) || manual.reason.trim().length < 5} onClick={p.onSaveManual}>Save</Button>
         </div>
       )}
       {e && (
         <div className="mt-3 text-sm">
           <div>Estimated physical cost: <strong className="tabular-nums">{fmtCents(e.totalCostCents)}</strong>{e.incomplete && <span className="ml-1 text-amber-700">(incomplete)</span>}</div>
           {v!.contractCents != null && <div>Contract (ex VAT): <span className="tabular-nums">{fmtCents(v!.contractCents)}</span></div>}
-          {v!.complete ? <div>Margin on physical cost: <strong className="tabular-nums">{v!.marginPct}%</strong> (gross profit {fmtCents(v!.gpCents!)})</div>
+          {v!.complete ? <div>Margin on whole contract (delivery and installation carry no cost): <strong className="tabular-nums">{v!.marginPct}%</strong> (gross profit {fmtCents(v!.gpCents!)})</div>
             : <div className="text-amber-700">Margin is incomplete: {e.missingSkus.length ? `${e.missingSkus.length} SKU(s) have no cost` : ""}{e.missingSkus.length && e.unresolvedPackages.length ? " and " : ""}{e.unresolvedPackages.length ? `${e.unresolvedPackages.length} package(s) are not mapped to Cin7 SKUs` : ""}. A partial total is never shown as the margin.</div>}
         </div>
       )}
@@ -211,6 +233,8 @@ export function CostPanel({ quoteId, reload, unsaved, previewDraft }: { quoteId:
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const inFlight = useRef(false); // a ref, not state: a same-tick double click must not run the action twice
   const [manual, setManual] = useState<{ sku: string; rand: string; reason: string } | null>(null);
 
   // The estimate follows the UNSAVED edits (read-only server preview, same builders); an answer to an older request never overwrites a newer one.
@@ -230,19 +254,27 @@ export function CostPanel({ quoteId, reload, unsaved, previewDraft }: { quoteId:
     const t = setTimeout(load, 800);
     return () => clearTimeout(t);
   }, [previewDraft, load]);
-  const run = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: string) => {
-    setBusy(true); setError(null); setNote(null);
-    const r = await fn(); setBusy(false);
-    if (!r.ok) { setError(r.error ?? "Failed"); return; }
-    setNote(done); setManual(null); load(); reload?.();
+  const run = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: string, label: string = OP.saveCostChange) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true); setBusyLabel(label); setError(null); setNote(null);
+    try {
+      const r = await fn();
+      if (!r.ok) { setError(r.error ?? "The cost change was not recorded. Nothing was changed; you can try again."); return; }
+      setNote(done); setManual(null); load(); reload?.();
+    } catch {
+      // The response was lost: the server may have recorded it. Re-read before suggesting anything.
+      setError("We could not confirm whether this was recorded. The estimate below has been re-read; check it before trying again.");
+      load();
+    } finally { inFlight.current = false; setBusy(false); setBusyLabel(null); }
   };
   return (
     <CostPanelBody
-      v={v} loading={!v && !error} error={error} note={note} busy={busy} manual={manual} unsaved={unsaved}
+      v={v} loading={!v && !error} error={error} note={note} busy={busy} busyLabel={busyLabel} manual={manual} unsaved={unsaved}
       onRetry={() => { setError(null); load(); }}
-      onCapture={(replace) => run(() => captureLatestCostsAction(quoteId, { replaceSelections: !!replace }), "Supplier prices read from Cin7 (read-only). Select a supplier where asked. The estimator's sign-off, if any, must be given again on the new costs.")}
-      onSelect={(sku, s, reason) => run(() => selectSupplierAction(quoteId, sku, s, reason), "Supplier selected and recorded.")}
-      onRecalculate={() => run(() => recalculateCostsAction(quoteId), "Costs recalculated under the current exchange rates.")}
+      onCapture={(replace) => run(() => captureLatestCostsAction(quoteId, { replaceSelections: !!replace }), "Supplier prices read from Cin7 (read-only). Select a supplier where asked. The estimator's sign-off, if any, must be given again on the new costs.", OP.fetchCin7Costs)}
+      onSelect={(sku, s, reason) => run(() => selectSupplierAction(quoteId, sku, s, reason), "Supplier selected and recorded.", OP.saveSupplier)}
+      onRecalculate={() => run(() => recalculateCostsAction(quoteId), "Costs recalculated under the current exchange rates.", OP.recalculateCosts)}
       onRecordFx={(c, r, s, a) => run(() => recordFxRateAction(c, r, s, a), "Exchange rate recorded. Recalculate to apply it to this estimate.")}
       onConfirmUnit={(reason) => run(() => confirmUnitBasisAction(quoteId, reason), "Recorded: supplier prices are per stock unit.")}
       onAcceptIncomplete={(reason) => run(() => acceptIncompleteCostsAction(quoteId, reason), "Exception recorded.")}

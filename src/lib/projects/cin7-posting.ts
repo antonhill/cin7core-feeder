@@ -2,6 +2,8 @@
 // the server-side store injects the Cin7 port. Everything a posting is built from comes from the FROZEN APPROVED claim — progress is
 // never re-read or recalculated.
 import { createHash } from "node:crypto";
+import { STALE_PENDING_MS, isStalePending } from "./posting-staleness";
+export { STALE_PENDING_MS, isStalePending };
 
 export const POSTING_STATES = ["PENDING", "CREATED", "RECONCILED", "FAILED_CONFIRMED_NO_WRITE", "FAILED_UNCERTAIN"] as const;
 export type PostingState = (typeof POSTING_STATES)[number];
@@ -10,8 +12,6 @@ export type PostingDisplayState = PostingState | "NOT_SENT";
 
 /** The exact words a manager must confirm (checked server-side, not just shown). */
 export const POST_CONFIRMATION_TEXT = "Create a Cin7 invoice for this approved claim";
-/** A PENDING row older than this is presumed orphaned (the process died mid-call) and must be reconciled before anything else. */
-export const STALE_PENDING_MS = 5 * 60 * 1000;
 
 export const MESSAGES = {
   safeFailure: "Cin7 rejected the request. No invoice was created.",
@@ -185,8 +185,6 @@ export function lineDifferences(inv: ReadInvoice, expected: Array<{ sku: string;
   for (const k of got.keys()) if (!expected.some((e) => e.sku === k)) out.push(`unrequested product line ${k}`);
   return out;
 }
-
-export const isStalePending = (requestedAt: string, now: number = Date.now()): boolean => now - Date.parse(requestedAt) > STALE_PENDING_MS;
 
 /** Whether a manager may retry (re-send) a posting in this state. Only a CONFIRMED no-write failure — never CREATED/RECONCILED/PENDING/UNCERTAIN. */
 export const canRetry = (state: PostingDisplayState): boolean => state === "FAILED_CONFIRMED_NO_WRITE";

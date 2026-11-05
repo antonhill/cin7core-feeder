@@ -44,6 +44,7 @@ const view = (): ProjectView => ({
 const posting = (n: string, claimId: string, status: string) => ({ id: `po-${n}`, claim_id: claimId, posting_state: "RECONCILED", cin7_invoice_number: n, cin7_task_id: null, cin7_status: status, completed_at: null, reconciled_at: "2026-11-01T10:00:00Z" });
 
 beforeEach(() => {
+  vi.stubGlobal("localStorage", { getItem: (k: string) => (k === "nq-sale-show-all" ? "1" : null), setItem: () => {} }); // UX-006e: these tests drive the whole Sale form at once; the guided default shows one step at a time
   for (const k of Object.keys(h.responses)) delete h.responses[k];
   Object.assign(h.responses, {
     getProjectAction: { ok: true, data: view(), viewer: { canApprove: true, newquip: true } },

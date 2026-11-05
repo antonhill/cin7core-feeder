@@ -49,3 +49,13 @@ export async function exitDemoModeAction(): Promise<DemoActionResult> {
     return { ok: false, error: e instanceof Error ? e.message : "Unexpected error" };
   }
 }
+
+/** Whether the audited Presenter role switch is available to this session (server-evaluated gate; never trusts the browser). Used only to decide whether to offer "Continue as Rep". */
+export async function demoSwitchAvailableAction(): Promise<boolean> {
+  try {
+    const real = await requireCurrentOrg();
+    return demoGate(process.env as Record<string, string | undefined>, { orgId: real.orgId, email: real.email }).allowed;
+  } catch {
+    return false;
+  }
+}

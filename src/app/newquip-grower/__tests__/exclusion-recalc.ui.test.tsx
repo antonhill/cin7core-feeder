@@ -59,7 +59,7 @@ async function storedQuote() {
   await saveDraft(db as never, ORG, member, id, draft);
   return id;
 }
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); try { window.localStorage.clear(); } catch { /* the "Show all steps" preference must not leak between tests */ } });
 
 import * as ca from "../customer-actions";
 import * as da from "../delivery-actions";
@@ -85,13 +85,16 @@ function serialQueue(ms: number) {
   }
   return { log, spies };
 }
+// UX-006i2: the exclusions are the Rep's, in Stage 1 step 3 (Stage 2 has no Rep controls), and Stage 1 has no Totals panel. The figure under test is the sticky summary bar's quote total
+// (ex VAT): it is the live preview of the draft, the same number the Totals panel showed, without the transient "Recalculating" cue that sits beside it.
 const subtotal = () => {
-  const dt = screen.getByText("Subtotal (ex VAT)");
-  return dt.nextElementSibling!.textContent!;
+  const dd = screen.getByText("Quote total (ex VAT)").nextElementSibling!;
+  return dd.firstChild!.textContent!;
 };
 
 
-const box = (label: RegExp) => screen.getByLabelText(label) as HTMLInputElement;
+// UX-006i1: the quantity / reason inputs now carry real accessible names ("Quantity per room for <item>"), so the tick-boxes are selected by type.
+const box = (label: RegExp) => screen.getByLabelText(label, { selector: 'input[type="checkbox"]' }) as HTMLInputElement;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // Captured at import, before any test installs its request queue: the expected figure is computed OUTSIDE the queue under test, so it neither delays nor appears in it.
 const realPreview = actions.previewGrowerDraftAction;
@@ -107,23 +110,24 @@ const count = (log: string[], entry: string) => log.filter((l) => l === entry).l
  * preview). Wait - by what the queue observed, not by a delay - until both have been answered, then forget them.
  */
 async function settleInitialLoad(log: string[]) {
+  // UX-006i2: Stage 1 mounts neither the Scope nor the Cost panel (they are Stage 2, Estimator-only), so the initial load is the quote and the customer details.
   await waitFor(() => {
-    expect(count(log, "end getQuoteScopeAction")).toBeGreaterThanOrEqual(1);
-    expect(count(log, "end getQuoteCostEstimateAction")).toBeGreaterThanOrEqual(2); // the immediate request and the 800 ms one
+    expect(count(log, "end getQuoteCustomerAction")).toBeGreaterThanOrEqual(1);
+    expect(log.filter((l) => l.startsWith("start ")).length).toBe(log.filter((l) => l.startsWith("end ")).length); // nothing still in flight
   }, { timeout: 8000 });
-  expect(log.filter((l) => l.startsWith("start ")).length).toBe(log.filter((l) => l.startsWith("end ")).length); // nothing still in flight
   log.length = 0;
 }
 import { fmtZar } from "../fields";
 const digits = (t: string) => t.replace(/[^0-9]/g, "");
-async function open() {
+async function open(stage = "1") {
+  (globalThis as { __STAGE?: string }).__STAGE = stage;
   asRoles("REP", "ESTIMATOR");
   vi.mocked(canSeeCosts).mockResolvedValue(true);
   const id = await storedQuote();
   (globalThis as { __QID?: string }).__QID = id;
   const { default: Page } = await import("../[id]/page");
   render(createElement(Page));
-  await waitFor(() => expect(screen.getByText("Customer-driven exclusions")).toBeTruthy(), { timeout: 5000 });
+  await waitFor(() => expect(stage === "2" ? screen.getByText("Product mappings") : screen.getByLabelText(/Exclude CCM feeder/i)).toBeTruthy(), { timeout: 5000 });
   return id;
 }
 
@@ -186,10 +190,11 @@ describe("UAT-003 rendered page: the Exclude checkbox recalculates without Save"
 // UAT-025 on the quotation page: the result of Save draft is shown directly under the Save row (not in a banner at the top of a long page), a failure keeps the edits,
 // and a double-click saves once.
 describe("UAT-025 rendered page: Save draft reports beside its button", () => {
+  // UX-006i2: the exclusions are Stage 1 (the Rep's) and Stage 1's Save row now sits in the step toolbar, apart from the feedback. The "result right under the Save row" rule is therefore proven where that
+  // layout still holds: Stage 2 (the Estimator's own edit, a manual price reason), through the same saveRow / ActionFeedback.
   async function editReady() {
-    await open();
-    fireEvent.click(box(/Exclude CCM feeder/i));
-    fireEvent.change(screen.getAllByPlaceholderText("Reason (required)")[0], { target: { value: "Customer supplies their own feeders" } });
+    await open("2");
+    fireEvent.change(screen.getAllByLabelText("Reason", { selector: "input" })[0], { target: { value: "Supplier quote dated today" } });
     await waitFor(() => expect((screen.getByRole("button", { name: "Save draft" }) as HTMLButtonElement).disabled).toBe(false), { timeout: 8000 });
     return screen.getByRole("button", { name: "Save draft" }) as HTMLButtonElement;
   }
@@ -202,7 +207,9 @@ describe("UAT-025 rendered page: Save draft reports beside its button", () => {
     const ok = region("success")!;
     expect(ok.textContent).toMatch(/Draft saved/);
     expect(ok.getAttribute("role")).toBe("status");
-    expect(ok.parentElement!.previousElementSibling).toBe(save.parentElement); // directly under the row that holds the Save button
+    // UX-006 acceptance directive: Save now sits in the compact toolbar row beside Show all steps / Next incomplete (one row, not a separate block), so "directly under the row" is kept as: the result follows the Save button immediately in the page, before any step content.
+    expect(save.compareDocumentPosition(ok) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(ok.compareDocumentPosition(document.querySelector("[data-step-panel]")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   }, 30000);
 
   it("failure: an alert under the Save row with the server's reason, and the unsaved edits are untouched", async () => {
@@ -213,9 +220,10 @@ describe("UAT-025 rendered page: Save draft reports beside its button", () => {
     const bad = region("error")!;
     expect(bad.getAttribute("role")).toBe("alert");
     expect(bad.textContent).toMatch(/changed by someone else/);
-    expect(bad.parentElement!.previousElementSibling).toBe(save.parentElement);
+    expect(save.compareDocumentPosition(bad) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy(); // follows the Save button immediately (toolbar row), before the step content
+    expect(bad.compareDocumentPosition(document.querySelector("[data-step-panel]")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByText("Unsaved changes")).toBeTruthy(); // still dirty: nothing was lost
-    expect((screen.getAllByPlaceholderText("Reason (required)")[0] as HTMLInputElement).value).toBe("Customer supplies their own feeders");
+    expect((screen.getAllByLabelText("Reason", { selector: "input" })[0] as HTMLInputElement).value).toBe("Supplier quote dated today");
   }, 30000);
 
   it("a double-click on Save draft saves once", async () => {
@@ -233,6 +241,8 @@ describe("unsaved quotation protection", () => {
   it("an untouched quotation is not guarded; an edit is; Save releases it", async () => {
     serialQueue(150);
     await open();
+    await waitFor(() => expect(screen.getByText("All changes saved")).toBeTruthy(), { timeout: 8000 }); // let the page settle first (a slow CI runner reads the customer details after the first paint)
+    await sleep(300);
     expect(unload()).toBe(false);
     fireEvent.click(box(/Exclude CCM feeder/i));
     expect(unload()).toBe(true);
@@ -250,7 +260,7 @@ describe("D3-C Solution Builder: visible selected / excluded states and a stable
     await open();
     const bar = screen.getByTestId("quote-summary-bar");
     expect(within(bar).getByText("Quote total (ex VAT)")).toBeTruthy();
-    expect(within(bar).getByText("Gross margin")).toBeTruthy(); // the viewer can see commercials
+    expect(within(bar).getByText(/^(Gross|Indicative) margin/)).toBeTruthy(); // the viewer can see commercials (UX-006i2: the label reads "Indicative margin (price-list basis)" while project costs are incomplete, as in this fixture)
     expect(within(bar).queryByText(/unsaved edits/)).toBeNull();
     fireEvent.click(box(/Exclude CCM feeder/i));
     expect(within(bar).getByText("Preview of unsaved edits")).toBeTruthy();
@@ -273,7 +283,7 @@ describe("D3-C Solution Builder: visible selected / excluded states and a stable
     (globalThis as { __QID?: string }).__QID = id;
     const { default: Page } = await import("../[id]/page");
     render(createElement(Page));
-    await waitFor(() => expect(screen.getByText("Selections")).toBeTruthy(), { timeout: 5000 });
+    await waitFor(() => expect(screen.getByText("Equipment selections")).toBeTruthy(), { timeout: 5000 });
     const controller = box(/Thomas-CL1 controller/).closest("label")!;
     expect(controller.textContent).toMatch(/Included/); // the stored draft ticks the controller
     const silo = box(/Silo weighing/).closest("label")!;
@@ -309,18 +319,17 @@ describe("D3-C Solution Builder: visible selected / excluded states and a stable
       render(createElement(Page));
       await waitFor(() => expect(screen.getByTestId("quote-summary-bar")).toBeTruthy(), { timeout: 8000 });
       await sleep(300);
-      expect(within(screen.getByTestId("quote-summary-bar")).queryByText("Gross margin")).toBeNull();
+      expect(within(screen.getByTestId("quote-summary-bar")).queryByText(/^(Gross|Indicative) margin/)).toBeNull();
       cleanup();
     }
   }, 60000);
   it("margin is shown on the working stages but hidden on the customer-facing quotation stage", async () => {
     await open();
-    expect(within(screen.getByTestId("quote-summary-bar")).getByText("Gross margin")).toBeTruthy();
+    expect(within(screen.getByTestId("quote-summary-bar")).getByText(/^(Gross|Indicative) margin/)).toBeTruthy();
     cleanup();
-    (globalThis as { __STAGE?: string }).__STAGE = "4";
-    await open().catch(() => undefined);
+    await open("4").catch(() => undefined);
     await waitFor(() => expect(screen.getByTestId("quote-summary-bar")).toBeTruthy(), { timeout: 8000 });
-    expect(within(screen.getByTestId("quote-summary-bar")).queryByText("Gross margin")).toBeNull();
+    expect(within(screen.getByTestId("quote-summary-bar")).queryByText(/^(Gross|Indicative) margin/)).toBeNull();
   }, 30000);
   describe("Manager: why Final approval is disabled", () => {
     async function openAsManager(signoff: "none" | "stale" | "current") {
@@ -350,7 +359,9 @@ describe("D3-C Solution Builder: visible selected / excluded states and a stable
     it("current sign-off but unsaved edits: says to save or discard first, and approval is disabled until then", async () => {
       await openAsManager("current");
       expect(screen.queryByText(/Save or discard your edits first/)).toBeNull();
-      expect(approve().disabled).toBe(false);
+      // UX-006 corrections: the UI now mirrors checkApproval (it requires READY). This fixture's quotation is not READY, so Approve is disabled from the start, with the reason; the unsaved-edits rule below is unchanged.
+      expect(approve().disabled).toBe(true);
+      expect(screen.getByTestId("approve-not-ready").textContent).toMatch(/Approval is disabled: the quotation is not ready/);
       const nav = (n: number) => fireEvent.click(document.querySelector(`[data-stage="${n}"]`) as HTMLElement);
       nav(1);
       fireEvent.click(await screen.findByLabelText(/Silo weighing/)); // an unsaved edit

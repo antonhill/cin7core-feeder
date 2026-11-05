@@ -29,6 +29,7 @@
     "src/app/approvals/role-actions.ts",
     "src/app/audit/actions.ts",
     "src/app/demo-mode/actions.ts",
+    "src/app/presenter/actions.ts",
     "src/app/health/actions.ts",
     "src/app/import/actions.ts",
     "src/app/migrate/actions.ts",

@@ -14,6 +14,8 @@ import { fieldValue, snapshotIssues } from "./customer-snapshot";
 import { assertNoInternalLeak, buildCustomerDocumentModel, type CustomerDocumentModel } from "./customer-document";
 import { cleanProfile, missingProfileFields, type CompanyProfile } from "./company-profile";
 import { renderCustomerPdf } from "./customer-pdf";
+import { applyDemoTerms } from "./demo-terms";
+import { isPocQuote } from "./poc-presentation";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 export const DOCUMENT_BUCKET = "newquip-quote-documents";
@@ -96,7 +98,7 @@ export async function issueQuotationDocument(
   if (accepted.error && !missing(accepted.error.message)) throw new Error(accepted.error.message);
   if ((accepted.data ?? []).length > 0) throw new Error("The customer has accepted this quotation; the accepted document is final and cannot be replaced.");
   const existing = await listDocuments(db, orgId, quoteId);
-  const model = buildCustomerDocumentModel({ baseline: q.accepted_baseline, quoteRef: q.quote_ref, revision: q.revision, snapshot: snap.snapshot, profile: prof.profile, schedule, scheduleSource, issuedOn: deps.today() });
+  const model = buildCustomerDocumentModel({ baseline: q.accepted_baseline, quoteRef: q.quote_ref, revision: q.revision, snapshot: snap.snapshot, profile: applyDemoTerms(prof.profile, orgId, q.quote_ref, isPocQuote(q.draft)), schedule, scheduleSource, issuedOn: deps.today() });
   assertNoInternalLeak(model, q.accepted_baseline);
   const last = existing[0];
   if (last && last.baseline_hash === q.baseline_hash && stableOf(last.content) === stableOf(model) && last.customer_snapshot_id === snap.id && last.company_profile_id === prof.id) return { document: last, created: false };

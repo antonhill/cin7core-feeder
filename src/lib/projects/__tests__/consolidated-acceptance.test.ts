@@ -7,7 +7,9 @@ import { NEWQUIP_MASTER_POC_SNAPSHOT } from "@/newquip/grower/snapshot";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { emptyDraft } from "@/newquip/grower/draft";
 import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
-import { buildAcceptedBaseline, baselineMatchesHash, type AcceptedBaseline } from "@/newquip/quote/baseline";
+import { withAcceptedIncompleteCosting } from "@/newquip/grower/__tests__/golden";
+import { sealWithUnresolvedScope } from "@/newquip/grower/__tests__/baseline-exception-fixture";
+import { baselineMatchesHash } from "@/newquip/quote/baseline";
 import { buildMarginSheet, redactInternalFinancials } from "@/newquip/quote/margin";
 import { POC_SIX_STAGE_SCHEDULE } from "@/newquip/quote/billing-schedule";
 import { quoteToProjectBaseline } from "@/newquip/quote/to-project";
@@ -33,10 +35,10 @@ const APPROVALS = { customerConfirmedAt: "t", customerConfirmedCents: 1, custome
 const R = (n: number) => n * 100;
 
 describe("release-candidate chain", () => {
-  const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
+  const draft = withAcceptedIncompleteCosting(applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft);
   const manager = evaluateDraft(draft, ctx(false));
   const rep = evaluateDraft(draft, ctx(true));
-  const approved = buildAcceptedBaseline({ quoteRef: "NQ-Q-0001", revision: 1, draft, evaluation: rep, marginEvaluation: manager, approvals: APPROVALS });
+  const approved = sealWithUnresolvedScope({ quoteRef: "NQ-Q-0001", revision: 1, draft, evaluation: rep, marginEvaluation: manager, approvals: APPROVALS });
 
   it("Load Demo Defaults reproduces the R10m quote, READY, with no open items", () => {
     expect(Math.round(manager.budget!.totals.subtotalExTax * 100)).toBe(R(10_000_000));

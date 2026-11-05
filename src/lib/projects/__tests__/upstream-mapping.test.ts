@@ -10,11 +10,13 @@ import { NEWQUIP_MASTER_POC_SNAPSHOT } from "@/newquip/grower/snapshot";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { emptyDraft } from "@/newquip/grower/draft";
 import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
-import { buildAcceptedBaseline, baselineMatchesHash, commercialLinesOf } from "@/newquip/quote/baseline";
+import { withAcceptedIncompleteCosting } from "@/newquip/grower/__tests__/golden";
+import { sealWithUnresolvedScope } from "@/newquip/grower/__tests__/baseline-exception-fixture";
+import { baselineMatchesHash, commercialLinesOf } from "@/newquip/quote/baseline";
 import { buildPhysicalScope } from "@/newquip/quote/physical-scope";
 import { applyMappingLibrary, effectiveScope, scopeFromSnapshot, type LibraryMapping, type ScopeItem } from "../product-scope";
 import { libraryOf, listActiveMappings, saveMappingVersion } from "../package-mapping-store";
-import { describeScope, quoteScopeView } from "@/lib/newquip-quotes/scope-preview";
+import { quoteScopeView } from "@/lib/newquip-quotes/scope-preview";
 import { recoverLinkExistingSale } from "../cin7-sale-recovery-store";
 import { buildCreationPlan, externalIdFor, type SaleReadBack } from "../cin7-sale-creation";
 import { createSaleForProject } from "../cin7-sale-creation-store";
@@ -22,11 +24,11 @@ import { createSaleForProject } from "../cin7-sale-creation-store";
 vi.mock("server-only", () => ({}));
 
 const ctx = (withholdCost: boolean) => ({ priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost });
-const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
+const draft = withAcceptedIncompleteCosting(applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft);
 const ev = evaluateDraft(draft, ctx(true));
 const AT = "2026-10-29T08:00:00Z";
 const APPROVALS = { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "r", handoffBy: "r", estimatorSignoffBy: "e", estimatorSignoffAt: "t", managerApprovedBy: "m", managerApprovedAt: AT };
-const seal = (mappingLibrary?: ReadonlyMap<string, LibraryMapping>) => buildAcceptedBaseline({ quoteRef: "NQ-Q-0007", revision: 1, draft, evaluation: ev, marginEvaluation: evaluateDraft(draft, ctx(false)), approvals: APPROVALS, mappingLibrary });
+const seal = (mappingLibrary?: ReadonlyMap<string, LibraryMapping>) => sealWithUnresolvedScope({ quoteRef: "NQ-Q-0007", revision: 1, draft, evaluation: ev, marginEvaluation: evaluateDraft(draft, ctx(false)), approvals: APPROVALS }, mappingLibrary);
 
 /** A register as an OLD baseline would hold it: one M75 item resolved by a legacy mapping that marks a BOM component. */
 const describeScopeSource = (m: LibraryMapping): ScopeItem[] => [{ id: "flex_auger:UNMAPPED", sku: null, description: "M75", quantity: 1, unit: "each", productType: "FINISHED_GOOD", origin: { lineRef: "flex_auger:UNMAPPED", label: "M75", packageKey: null, section: null, source: "QUOTE" }, scope: "BASE", sellingUnitCents: null, mapping: { status: "UNMAPPED", reason: "x" },

@@ -12,7 +12,9 @@ import { Block } from "./LoadingSkeletons";
 import { ProjectWorkspace } from "./ProjectWorkspace";
 import { VariationProductPicker } from "./VariationProductPicker";
 import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
+import { commercialBillingFromSummary, commercialBillingText } from "@/lib/projects/commercial-billing-state";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
+import { variationNextStep } from "@/lib/projects/variation-next-step";
 import { amendVariationScheduleAction, getVariationBillingAction, saveVariationScheduleAction, startVariationBillingAction, type VariationBillingState } from "../variation-billing-actions";
 
 // Variation BILLING: each approved variation has its own percentage schedule (default one 100% stage) and, once a manager starts billing,
@@ -34,7 +36,7 @@ function saleLine(state: VariationBillingState, variationId: string, billingStar
  * The Cin7 reconciliation line: what is recorded against THIS variation's own billing project's invoices. Reconciliation (Toolbox's read-only check of a Cin7 invoice
  * against what was approved) is a different thing from approving a claim to be invoiced; this line speaks only about the former. A failed read is never "nothing to reconcile".
  */
-function reconciliationLine(state: VariationBillingState, variationId: string): string {
+function reconciliationLine(state: VariationBillingState, variationId: string, scope?: { contractCents: number; committedCents: number }): string {
   const r = state.reconciliationByVariation?.[variationId];
   if (!r) return state.reconciliationLookupFailed ? "unavailable (could not be loaded)" : "unavailable";
   const parts: string[] = [];
@@ -48,6 +50,8 @@ function reconciliationLine(state: VariationBillingState, variationId: string): 
   }
   if (r.uncertain > 0) parts.push(`${r.uncertain} ${r.uncertain === 1 ? "posting has" : "postings have"} an uncertain outcome and must be reconciled`);
   if (r.inProgress > 0) parts.push(`${r.inProgress} ${r.inProgress === 1 ? "posting is" : "postings are"} still being sent`);
+  // The same derivation the Overview and the report use: Commercial billing is Complete only when the approved amount is fully billed AND every invoice is reconciled. Physical fulfilment and payment play no part.
+  if (scope) parts.push(commercialBillingText(commercialBillingFromSummary(r, { approvedAmountCents: scope.contractCents, committedCents: scope.committedCents, billingStarted: true })));
   return parts.join("; ");
 }
 
@@ -153,6 +157,7 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
               <div className="min-w-0">
                 <PanelTitle><span className="inline-flex flex-wrap items-center gap-2">{v.code} – {v.title} <ScopeTag scope="VARIATION" /><Status tone={v.status === "APPROVED" ? "success" : "neutral"}>{statusText(v.status)}</Status></span></PanelTitle>
                 {v.description && <p className="mt-1 text-sm text-slate-600">{v.description}</p>}
+                <p className="mt-1 text-sm text-slate-700" data-testid={`next-${v.id}`}><span className="font-medium text-slate-900">Next: </span>{variationNextStep({ status: v.status, amountCents: v.amount_cents, isAdmin, billingLoaded: !!state, billingStarted: !!billingId, scheduleMissing: legacy, claimableCents: scope?.claimableCents, remainingCents: scope?.remainingCents })}</p>
                 {state && v.status === "APPROVED" && (
                   <p className="mt-1 text-sm text-slate-700">
                     <span className="text-slate-600">Cin7 Sale: </span>
@@ -161,7 +166,7 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
                 )}
                 {state && v.status === "APPROVED" && billingId && (
                   <p className="mt-0.5 text-sm text-slate-700" data-testid={`recon-${v.id}`}>
-                    <span className="text-slate-600">Cin7 reconciliation: </span>{reconciliationLine(state, v.id)}
+                    <span className="text-slate-600">Cin7 reconciliation: </span>{reconciliationLine(state, v.id, scope)}
                     <span className="text-slate-600"> (separate from approving a claim to invoice)</span>
                   </p>
                 )}

@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { PendingNotice } from "@/components/ui/action-feedback";
+import { OP } from "@/components/ui/operation-labels";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Status } from "@/components/ui/Status";
 import type { BadgeTone } from "@/components/ui/Badge";
@@ -22,8 +24,10 @@ const LABEL: Record<string, string> = { MAPPED: "Mapped", FROM_LIBRARY: "Reusabl
 export function ScopePanel({ quoteId, draft }: { quoteId: string; draft: QuoteDraft }) {
   const [view, setView] = useState<(QuoteScopeView & { canManageMappings: boolean }) | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [saveErr, setSaveErr] = useState<string | null>(null); // a failed SAVE is shown in place: the form, the picked products and the reason are kept
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false); // a ref, not state: a same-tick double click must save once
   const [open, setOpen] = useState<string | null>(null);
   const [picked, setPicked] = useState<PickedProduct[]>([]);
   const [reason, setReason] = useState("");
@@ -36,7 +40,7 @@ export function ScopePanel({ quoteId, draft }: { quoteId: string; draft: QuoteDr
   useEffect(() => { const t = setTimeout(load, 800); return () => clearTimeout(t); }, [load]);
 
   if (error) return <Panel><PanelTitle>Physical scope (internal)</PanelTitle><div className="mt-2"><Alert tone="warning">{error}</Alert></div></Panel>;
-  if (!view) return <Panel><PanelTitle>Physical scope (internal)</PanelTitle><p className="mt-2 text-sm text-slate-600">Loading…</p></Panel>;
+  if (!view) return <Panel><PanelTitle>Physical scope (internal)</PanelTitle><PendingNotice label={OP.loadScope} /></Panel>;
 
   const start = async (key: string) => {
     setOpen(key); setPicked([]); setReason(""); setHistory(null);
@@ -44,10 +48,14 @@ export function ScopePanel({ quoteId, draft }: { quoteId: string; draft: QuoteDr
     if (h.ok && h.data) setHistory(h.data.versions);
   };
   const save = async (key: string, unit: string) => {
-    setBusy(true);
-    const r = await saveReusableMappingAction(key, picked.map((p) => ({ sku: p.sku, factor: Number(p.quantity), unit, confirmQuantity: p.confirm })), reason);
-    setBusy(false);
-    if (r.ok && r.data) { setNote(`Saved ${key} v${r.data.version}. It applies to quotations from now on; approved quotations keep what they were sealed with.`); setOpen(null); load(); } else setError(r.error ?? "Could not save the mapping.");
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true); setSaveErr(null);
+    let r: Awaited<ReturnType<typeof saveReusableMappingAction>>;
+    try { r = await saveReusableMappingAction(key, picked.map((p) => ({ sku: p.sku, factor: Number(p.quantity), unit, confirmQuantity: p.confirm })), reason); }
+    catch { inFlight.current = false; setBusy(false); setSaveErr("We could not confirm whether the mapping was saved. Re-open this panel and check the mapping history before saving again."); return; }
+    inFlight.current = false; setBusy(false);
+    if (r.ok && r.data) { setNote(`Saved ${key} v${r.data.version}. It applies to quotations from now on; approved quotations keep what they were sealed with.`); setOpen(null); load(); } else setSaveErr(r.error ?? "The mapping was not saved. Nothing was changed; your selection is kept and you can try again.");
   };
 
   return (
@@ -57,6 +65,8 @@ export function ScopePanel({ quoteId, draft }: { quoteId: string; draft: QuoteDr
         {view.frozen ? <Status tone="neutral">Frozen at approval</Status> : view.unresolvedCount > 0 ? <Status tone="warning">{view.unresolvedCount} without a mapping</Status> : <Status tone="success">All mapped</Status>}
       </div>
       <p className="mt-1 text-xs text-slate-600">The Cin7 products this quotation needs, from the reusable package mappings. Customer prices and margins are unaffected. A missing mapping does not stop approval, but the Cin7 Sale cannot be created until it is resolved.</p>
+      {busy && <PendingNotice label={OP.saveMapping} />}
+      {saveErr && <div className="mt-2"><Alert tone="danger">{saveErr}</Alert></div>}
       {note && <div className="mt-2"><Alert tone="info">{note}</Alert></div>}
       {view.warnings.map((w) => <div key={w} className="mt-2"><Alert tone="warning">{w}</Alert></div>)}
       <ul className="mt-3 space-y-2 text-sm">
@@ -83,7 +93,7 @@ export function ScopePanel({ quoteId, draft }: { quoteId: string; draft: QuoteDr
                   </div>
                 </div>
               ) : <div className="mt-2"><Button size="sm" variant="secondary" onClick={() => start(i.packageKey)}>Map this package to Cin7 SKUs</Button></div>
-            ) : <p className="mt-1 text-xs text-slate-600">A manager can map this package.</p>)}
+            ) : <p className="mt-1 text-xs text-slate-600">An Estimator or Manager can map this package.</p>)}
           </li>
         ))}
         {view.items.length === 0 && <li className="text-slate-600">No physical products yet.</li>}
