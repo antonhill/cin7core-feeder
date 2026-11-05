@@ -16,7 +16,8 @@ import type { ConfirmationInput } from "@/lib/newquip-quotes/confirmation-contac
 
 const inputCls = "h-11 rounded-md border border-slate-300 bg-white px-2 text-sm";
 
-export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading, refreshKey, recorded, onConfirm, indicativeLines = 0 }: {
+export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading, otherBusy = false, refreshKey, recorded, onConfirm, indicativeLines = 0 }: {
+  /** UX-007: ANOTHER action is running - the send button waits (without a spinner of its own) so two actions cannot overlap. */ otherBusy?: boolean;
   /** > 0: the total is INDICATIVE while this many lines await the Estimator (the Rep confirms the current figure). */ indicativeLines?: number;
   quoteId: string; amountLabel: string | null; canAct: boolean; ready: boolean; loading: boolean; refreshKey: string; recorded: boolean; onConfirm: (c: ConfirmationInput) => void;
 }) {
@@ -65,7 +66,8 @@ export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading
   }
   const ackKey = `${amountLabel ?? ""}|${picked?.name ?? ""}|${picked?.email ?? ""}`;
   const blocked = !v.available ? null : !s ? "Select the Cin7 customer and quotation contact in step 1 (Customer & contact) first." : null;
-  const sendWhy = loading ? "Sending is in progress. Please wait."
+  const sendWhy = loading ? "Submitting to the Estimator is in progress. Please wait."
+    : otherBusy ? "Another action is in progress. Please wait."
     : !canAct ? "Only a Rep can record the price confirmation and send the quote to the Estimator."
     : !ready ? "The quotation must be complete (nothing outstanding) before the price can be confirmed."
     : !amountLabel ? "The quote total is not available yet, so there is no amount to confirm."
@@ -126,7 +128,7 @@ export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading
           </label>
         )}
         <div className="mt-3">
-          <Button className="min-h-11" loading={loading} aria-describedby={sendWhy ? "send-estimator-why" : undefined} disabled={!canAct || !ready || !amountLabel || !input || (v.available && !s) || ackFor !== ackKey} onClick={() => input && onConfirm(input)}>Submit to Estimator</Button>
+          <Button className="min-h-11" loading={loading} aria-describedby={sendWhy ? "send-estimator-why" : undefined} disabled={otherBusy || !canAct || !ready || !amountLabel || !input || (v.available && !s) || ackFor !== ackKey} onClick={() => input && onConfirm(input)}>Submit to Estimator</Button>
         </div>
         {!recorded && <div className="mt-1"><DisabledReason id="send-estimator-why">{sendWhy}</DisabledReason></div>}
       </div>

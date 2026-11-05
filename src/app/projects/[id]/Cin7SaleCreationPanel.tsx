@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useId, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import type { Reconciled } from "@/components/ui/action-feedback";
-import { Feedback, type RunFn } from "./feedback-context";
+import { Feedback, useIsPending, type RunFn } from "./feedback-context";
+import { OP } from "@/components/ui/operation-labels";
 import { DisabledReason } from "./DisabledReason";
 import { Status, statusText } from "@/components/ui/Status";
 import type { BadgeTone } from "@/components/ui/Badge";
@@ -32,6 +33,7 @@ import { getCin7ReferenceOptionsAction, type Cin7ReferenceOptions, createCin7Sal
 const TONE: Record<string, BadgeTone> = { PENDING: "warning", CREATED: "warning", RECONCILED: "success", FAILED_CONFIRMED_NO_WRITE: "warning", FAILED_UNCERTAIN: "danger" };
 
 export function Cin7SaleCreationPanel({ view, run, working, boot }: { view: ProjectView; run: RunFn; working: boolean; boot: Cin7SaleCreationStatus | null }) {
+  const creating = useIsPending("sale:create"), reconciling = useIsPending("sale:reconcile"); // UX-007: each button shows ITS OWN spinner
   const uid = useId(); // ids are unique per mounted workspace: several can be on one page (embedded per variation, hidden-but-mounted)
   const projectId = view.project.id;
   const [st, setSt] = useState<Cin7SaleCreationStatus | null>(boot); // the initial record arrives with the tab (one round trip for the whole Commercial tab)
@@ -98,6 +100,7 @@ export function Cin7SaleCreationPanel({ view, run, working, boot }: { view: Proj
       setChecking(false);
       return r;
     }, undefined, key, {
+      pending: key === "sale:create" ? OP.createSalesOrder : key === "sale:reconcile" ? OP.readBackCin7 : "Saving the scope decision…",
       success: (_v, res) => (res.data as { message?: string } | undefined)?.message ?? "Done.",
       exclusive: true, cin7: true,
       doneAfterReconcile: key === "sale:create" ? "The Sales Order request was recorded (its response was lost). Its state is shown below: reconcile to verify and link it." : undefined,
@@ -227,7 +230,7 @@ export function Cin7SaleCreationPanel({ view, run, working, boot }: { view: Proj
             {creation.cin7_sale_number && <span>Cin7 {creation.cin7_sale_number}</span>}</div>
           {creation.last_error_message && <Alert tone={creation.creation_state === "FAILED_UNCERTAIN" ? "danger" : "warning"}>{creation.last_error_message}</Alert>}
           {creation.creation_state !== "RECONCILED" && creation.creation_state !== "FAILED_CONFIRMED_NO_WRITE" && (
-            <Button size="sm" variant="secondary" disabled={working || !gates.isManager} aria-describedby={working || !gates.isManager ? `${uid}-sale-reconcile-reason` : undefined} onClick={() => after(() => reconcileCin7SaleCreationAction(projectId), "sale:reconcile")}>Reconcile with Cin7 (read-only)</Button>
+            <Button size="sm" variant="secondary" loading={reconciling} disabled={working || !gates.isManager} aria-describedby={working || !gates.isManager ? `${uid}-sale-reconcile-reason` : undefined} onClick={() => after(() => reconcileCin7SaleCreationAction(projectId), "sale:reconcile")}>Reconcile with Cin7 (read-only)</Button>
           )}
           {creation.creation_state !== "RECONCILED" && creation.creation_state !== "FAILED_CONFIRMED_NO_WRITE" && (working || !gates.isManager) && <DisabledReason id={`${uid}-sale-reconcile-reason`}>{!gates.isManager ? "Only a manager can reconcile the Sales Order with Cin7." : "Reconcile is disabled while another action is in progress."}</DisabledReason>}
           <Feedback k="sale:reconcile" />
@@ -295,7 +298,7 @@ export function Cin7SaleCreationPanel({ view, run, working, boot }: { view: Proj
               ))}
             </ul>
           )}
-          <Button className="min-h-11" disabled={!canCreate} aria-describedby={!canCreate && createReasons.length > 0 ? `${uid}-sale-create-reason` : undefined} onClick={() => after(() => createCin7SaleAction(projectId, { confirmation: CREATE_CONFIRMATION_TEXT, customerName: customer, location, revenueAccount: account, cin7TaxRule: taxRule }), "sale:create")}>Create Sales Order in Cin7</Button>
+          <Button className="min-h-11" loading={creating} disabled={!canCreate} aria-describedby={!canCreate && createReasons.length > 0 ? `${uid}-sale-create-reason` : undefined} onClick={() => after(() => createCin7SaleAction(projectId, { confirmation: CREATE_CONFIRMATION_TEXT, customerName: customer, location, revenueAccount: account, cin7TaxRule: taxRule }), "sale:create")}>Create Sales Order in Cin7</Button>
           {!canCreate && createReasons.length > 0 && <p id={`${uid}-sale-create-reason`} data-testid="disabled-reason" className="text-sm leading-snug text-slate-700">Create is disabled: {createReasons.join(" ")}</p>}
           <Feedback k="sale:create" />
         </div>)}

@@ -4,8 +4,11 @@ import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useId } from "react";
-import { ActionFeedback, useKeyedActions } from "@/components/ui/action-feedback";
-import { Skeleton } from "@/components/ui/Skeleton";
+import { ActionFeedback, useKeyedActions, type FeedbackState } from "@/components/ui/action-feedback";
+import { QuoteSkeleton } from "../QuoteSkeleton";
+import { announceNavigation } from "@/app/navigation-events";
+import { OP } from "@/components/ui/operation-labels";
+import { LongRunningStatus } from "@/components/ui/LongRunningStatus";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { SOLUTION_BUILDER_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
@@ -242,7 +245,7 @@ export default function QuoteEditorPage() {
     void (async () => {
       if (!(await demoSwitchAvailableAction().catch(() => false))) return;
       const r = await selectDemoIdentityAction("rep");
-      if (r.ok) window.location.replace(window.location.pathname); // same path (same quotation); opens at the Rep's next stage (customer quotation)
+      if (r.ok) { announceNavigation(); window.location.replace(window.location.pathname); } // same path (same quotation); opens at the Rep's next stage (customer quotation)
     })();
   }, [pocContinue]);
   useEffect(() => {
@@ -286,7 +289,7 @@ export default function QuoteEditorPage() {
     return (
       <main className={pageContainerClass("data")}>
         <ModuleHeader variant="workspace" module={SOLUTION_BUILDER_MODULE}>Grower quote</ModuleHeader>
-        {error ? <div className="mt-6"><Alert tone="danger">{error}</Alert></div> : <div role="status" aria-live="polite" aria-busy="true" data-testid="quote-loading"><p className="mt-6 text-sm text-slate-600">Loading the quotation…</p><Skeleton className="mt-4 h-14 w-full max-w-4xl" /><Skeleton className="mt-4 h-96 w-full" /></div>}
+        {error ? <div className="mt-6"><Alert tone="danger">{error}</Alert></div> : <QuoteSkeleton />}
       </main>
     );
   }
@@ -372,7 +375,12 @@ export default function QuoteEditorPage() {
    * Runs one quotation action (saving unsaved edits first) under `key`. `confirm` says, from a fresh read, whether the action took effect: after a lost
    * response the page checks that BEFORE suggesting a retry (and adopts the server's state if it did).
    */
-  function act(fn: () => Promise<{ ok: boolean; error?: string; data?: QuoteView }>, done: string, key = "page", confirm?: (v: QuoteView) => boolean, pin?: StageId) {
+  /** The feedback to show for a slot shared by several actions: the one that is pending, else the one that last reported. */
+  function firstActive(...keys: string[]): FeedbackState {
+    const all = keys.map((k) => acts.stateOf(k));
+    return all.find((x) => x.kind === "pending") ?? all.find((x) => x.kind !== "idle") ?? { kind: "idle" };
+  }
+  function act(fn: () => Promise<{ ok: boolean; error?: string; data?: QuoteView }>, done: string, key = "page", confirm?: (v: QuoteView) => boolean, pin?: StageId, pending: string = OP.saveQuotation) {
     void acts.run(key, async () => {
       if (dirty && !final) {
         const s = await saveGrowerDraftAction(id, draft!);
@@ -382,7 +390,7 @@ export default function QuoteEditorPage() {
       if (r.ok && r.data) { adopt(r.data, true); if (pin) setPicked(pin); }
       return r;
     }, {
-      pending: "Working… please wait",
+      pending,
       success: done,
       reconcile: async () => {
         const v = await getGrowerQuoteAction(id);
@@ -683,6 +691,7 @@ export default function QuoteEditorPage() {
 
       {error && <div className="mt-4"><Alert tone="danger">{error}</Alert></div>}
       <ActionFeedback state={acts.stateOf("page")} floating />
+      <LongRunningStatus label={acts.currentLabel} />
       {final && <div className="mt-4"><Alert tone="info">This quote is the manager-approved final. Its accepted baseline is frozen; any change after acceptance must be a Variation on the Project.</Alert></div>}
 
       <StageNav compact={stage <= 2} hideNext={stage === 2} stages={stagesView} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state, estimatorOpen: mappingOpen.length, signedOff: s2Base.signoff === "current" }} />
@@ -930,8 +939,8 @@ export default function QuoteEditorPage() {
                 <p className="text-sm text-slate-700 max-sm:hidden">Final step for the Rep. The Estimator reviews the costing next.</p>
                 {awaitingLines > 0 && <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950" data-testid="indicative-note">This total is indicative while {awaitingLines} line{awaitingLines === 1 ? "" : "s"} await{awaitingLines === 1 ? "s" : ""} the Estimator. If the Estimator&apos;s pricing changes it, the quotation returns to you to reconfirm the amount with the customer.</p>}
                 <div className="mt-3">
-                  <ConfirmationPanel quoteId={id} amountLabel={totalCents == null ? null : fmtCents(totalCents)} canAct={roles.has("rep") && q.state === "REP_DRAFT"} ready={repReady} indicativeLines={totalIndicative ? awaiting.lines : 0} loading={isWorking} refreshKey={`${q.revision}:${q.state}:${q.updated_at}`} recorded={false}
-                    onConfirm={(c) => act(() => sendGrowerQuoteToEstimatorAction(id, totalCents!, c), "Submitted to the Estimator: the customer's price confirmation is recorded and the Estimator has been notified.", "send", (v) => v.quote.state === "ESTIMATOR_REVIEW", 1)} />
+                  <ConfirmationPanel quoteId={id} amountLabel={totalCents == null ? null : fmtCents(totalCents)} canAct={roles.has("rep") && q.state === "REP_DRAFT"} ready={repReady} indicativeLines={totalIndicative ? awaiting.lines : 0} loading={acts.isPending("send")} otherBusy={isWorking && !acts.isPending("send")} refreshKey={`${q.revision}:${q.state}:${q.updated_at}`} recorded={false}
+                    onConfirm={(c) => act(() => sendGrowerQuoteToEstimatorAction(id, totalCents!, c), "Submitted to the Estimator: the customer's price confirmation is recorded and the Estimator has been notified.", "send", (v) => v.quote.state === "ESTIMATOR_REVIEW", 1, OP.submitToEstimator)} />
                 </div>
               </div>
             )}
@@ -1150,7 +1159,7 @@ export default function QuoteEditorPage() {
                 <>
                   {isEstimator ? (
                     <div>
-                      <Button loading={isWorking} className="min-h-11" aria-describedby={signoffBlockers.length ? "signoff-why" : "signoff-effect"} disabled={!roles.has("estimator") || rd.state !== "READY" || signoffNeedsReview || costingIncomplete || amountChange.changed} onClick={() => act(() => signOffGrowerQuoteAction(id), "Estimator sign-off recorded for this exact content.", "signoff", (v) => !!v.quote.estimator_signoff_hash && v.quote.estimator_signoff_hash === v.quote.draft_hash)}>Sign off for Manager approval</Button>
+                      <Button loading={acts.isPending("signoff")} className="min-h-11" aria-describedby={signoffBlockers.length ? "signoff-why" : "signoff-effect"} disabled={isWorking || !roles.has("estimator") || rd.state !== "READY" || signoffNeedsReview || costingIncomplete || amountChange.changed} onClick={() => act(() => signOffGrowerQuoteAction(id), "Estimator sign-off recorded for this exact content.", "signoff", (v) => !!v.quote.estimator_signoff_hash && v.quote.estimator_signoff_hash === v.quote.draft_hash, undefined, OP.signOff)}>Sign off for Manager approval</Button>
                       <p id="signoff-effect" className="mt-1 text-xs text-slate-700" data-testid="signoff-effect">Signs off this version for the Manager. Any later edit withdraws it.</p>
                       {signoffBlockers.length > 0 && <ul id="signoff-why" className="mt-1 list-disc space-y-0.5 pl-5 text-sm text-slate-700" data-testid="signoff-blockers">{signoffBlockers.map((b) => <li key={b}>{b}</li>)}</ul>}
                     </div>
@@ -1161,7 +1170,7 @@ export default function QuoteEditorPage() {
                       <p className="mt-1 text-sm text-slate-800" data-testid="return-next-owner">Next responsible role: <b>Rep</b>. The quotation comes back as a new revision and the Rep submits it again once the correction is made.</p>
                       <div className="mt-3 max-w-2xl"><TextField label="Return to rep — reason" value={returnReason} onChange={setReturnReason} hint="Say what the Rep must correct. It is recorded in the Approval history, where the Rep reads it." /></div>
                       <div className="mt-3">
-                        <Button variant="secondary" className="min-h-11" loading={isWorking} aria-describedby={returnWhy ? "return-rep-why" : undefined} disabled={!returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "signoff", (v) => v.quote.state === "REP_DRAFT")}>Return to rep</Button>
+                        <Button variant="secondary" className="min-h-11" loading={acts.isPending("return-rep")} aria-describedby={returnWhy ? "return-rep-why" : undefined} disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "return-rep", (v) => v.quote.state === "REP_DRAFT", undefined, OP.returnToRep)}>Return to rep</Button>
                       </div>
                       <div className="mt-1"><DisabledReason id="return-rep-why">{returnWhy}</DisabledReason></div>
                     </section>
@@ -1169,7 +1178,7 @@ export default function QuoteEditorPage() {
                 </>
               ))}
             </div>
-            <ActionFeedback state={acts.stateOf("signoff")} />
+            <ActionFeedback state={firstActive("signoff", "return-rep")} />
             <div className="mt-4 border-t border-slate-100 pt-3">
               <p className="mt-1 text-xs text-slate-600">The Estimator signs off for the Manager or returns the quote to the Rep. This is not the customer&apos;s formal acceptance, which comes after Manager approval.</p>
               {handoffFacts}
@@ -1231,17 +1240,17 @@ export default function QuoteEditorPage() {
                   {view.baselineException && !poc && <BaselineExceptionBlock view={view.baselineException} revision={q.revision} draftHash={q.draft_hash} pending={acts.isPending("approve")}
                     canDecide={!isWorking && roles.has("manager") && !!q.estimator_signoff_hash && q.estimator_signoff_hash === q.draft_hash && !dirty}
                     blockedWhy={!roles.has("manager") ? "Only a Manager can accept this exception." : !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash ? "Waiting for the Estimator's sign-off on the current quotation." : dirty ? "Save or discard your edits first." : isWorking ? "Another action is in progress. Please wait." : undefined}
-                    onApprove={(request) => act(() => approveGrowerQuoteAction(id, { baselineException: request }), "Approved with a recorded exception. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL")} />}
+                    onApprove={(request) => act(() => approveGrowerQuoteAction(id, { baselineException: request }), "Approved with a recorded exception. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL", undefined, OP.approveQuotation)} />}
                   <div className="flex flex-wrap items-center gap-3">
                     {poc ? (
                       <Button variant="primary" className="min-h-12 px-6 text-base" data-testid="poc-approve" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty}
-                        onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. Continuing as the Rep.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL")}>Approve &amp; Continue</Button>
+                        onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. Continuing as the Rep.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL", undefined, OP.approveQuotation)}>Approve &amp; Continue</Button>
                     ) : (<Button variant={bxRequired ? "secondary" : "primary"} className="min-h-11" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty || approveNotReady || bxRequired || bxBlocking.length > 0} aria-describedby={[approveDescribedBy, bxRequired && `${uid}-approve-bx`, bxBlocking.length > 0 && `${uid}-approve-map`].filter(Boolean).join(" ") || undefined}
-                      onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL")}>Manager: final approval</Button>)}
+                      onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL", undefined, OP.approveQuotation)}>Manager: final approval</Button>)}
                     {roles.has("manager") && (<>
-                      <Button variant="secondary" className="min-h-11" aria-describedby={returnWhy ? "return-mgr-why" : undefined} disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "approve", (v) => v.quote.state === "REP_DRAFT")}>Return to rep (reject)</Button>
+                      <Button variant="secondary" className="min-h-11" loading={acts.isPending("return-mgr")} aria-describedby={returnWhy ? "return-mgr-why" : undefined} disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "return-mgr", (v) => v.quote.state === "REP_DRAFT", undefined, OP.returnToRep)}>Return to rep (reject)</Button>
                       {q.estimator_signoff_hash && (
-                        <Button variant="secondary" className="min-h-11" aria-describedby={returnWhy ? "return-mgr-why" : undefined} disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToEstimatorAction(id, returnReason), "Returned to the estimator. Their sign-off is withdrawn and must be given again; the quote and its history are kept.", "approve", (v) => !v.quote.estimator_signoff_hash)}>Manager: return to estimator</Button>
+                        <Button variant="secondary" className="min-h-11" loading={acts.isPending("return-est")} aria-describedby={returnWhy ? "return-mgr-why" : undefined} disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToEstimatorAction(id, returnReason), "Returned to the estimator. Their sign-off is withdrawn and must be given again; the quote and its history are kept.", "return-est", (v) => !v.quote.estimator_signoff_hash, undefined, OP.returnToEstimator)}>Manager: return to estimator</Button>
                       )}
                     </>)}
                   </div>
@@ -1256,7 +1265,7 @@ export default function QuoteEditorPage() {
               {q.state === "REP_DRAFT" && <p className="text-sm text-slate-700">This quotation is with the Rep ({q.revision > 1 ? "returned as a new revision" : "not yet sent for review"}).</p>}
               {final && <Status tone="success">Manager approved — final</Status>}
             </div>
-            <ActionFeedback state={acts.stateOf("approve")} />
+            <ActionFeedback state={firstActive("approve", "return-mgr", "return-est")} />
           </Panel>
           <Panel>
             <PanelTitle>Approval history and decisions</PanelTitle>

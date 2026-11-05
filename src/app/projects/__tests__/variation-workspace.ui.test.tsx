@@ -301,11 +301,11 @@ describe("Variation workspace (P3)", () => {
       await openVariations();
       const r1 = await openWs("V001");
       fireEvent.click(await within(r1).findByRole("button", { name: /Reconcile with Cin7/ }));
-      await within(r1).findByText(/Working/);
+      await within(r1).findByText("Reading back from Cin7…");
       fireEvent.click(within(await record("V002")).getByRole("button", { name: "Open billing workspace" })); // collapses V001 while its action is pending
       const ws1 = document.getElementById("ws-v1") as HTMLElement;
       expect(ws1.className).toMatch(/hidden/);
-      expect(within(ws1).getByText(/Working/)).toBeTruthy();                 // still mounted, still pending
+      expect(within(ws1).getByText("Reading back from Cin7…")).toBeTruthy();                 // still mounted, still pending
       await act(async () => d.resolve({ ok: true, data: { message: "Reconciled: SO-00028 matches the plan and is now linked." } }));
       expect(within(ws1).getByText(/Reconciled: SO-00028 matches the plan/)).toBeTruthy(); // the outcome arrived in the collapsed workspace
       fireEvent.click(within(r1).getByRole("button", { name: "Open billing workspace" }));
