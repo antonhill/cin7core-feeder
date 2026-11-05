@@ -3,7 +3,7 @@ import { syncInstance, type PushScope, type SyncRunSummary } from "@/sync/run-sy
 import { logActivity, type ActivityActor } from "@/lib/activity-log";
 import { acquireSyncLock, releaseSyncLock, type SyncLockResult } from "@/lib/sync-lock";
 import { acquireSyncRouteLock, releaseSyncRouteLock } from "@/lib/sync-route-lock";
-import { scheduledPushAllowedInstanceIds } from "@/sync/scheduled-push-policy";
+import { MANUAL_PUSH_PROTECTED_MESSAGE, manualPushProtectedInstanceIds, scheduledPushAllowedInstanceIds } from "@/sync/scheduled-push-policy";
 
 export interface InstanceSyncOutcome {
   ok: boolean;
@@ -41,6 +41,8 @@ export interface InstanceSyncOutcome {
    * not a retry-later: nothing was read from or written to Cin7 for it. The instance stays connected for every other function.
    */
   skippedNotAuthorised?: boolean;
+  /** True when a signed-in user's push was refused because the instance is on CIN7_MANUAL_PUSH_PROTECTED_INSTANCE_IDS. `ok` is false and `error` says why. */
+  skippedProtected?: boolean;
 }
 
 // Instances used to sync one at a time here, which meant two genuinely
@@ -136,14 +138,30 @@ export async function syncOrgInstances(
 
   // Default-deny (see scheduled-push-policy.ts): the SCHEDULER is the machine actor ("system"), and it may push master data only to instances named in
   // CIN7_SCHEDULED_PUSH_INSTANCE_IDS. A connected (active) instance is not thereby authorised. A signed-in user's Import & Sync push passes a real actor
-  // and keeps its own gate (module access + write-eligible plan + AAL2), so it is not filtered here. Nothing is logged for a denied instance: the cron
-  // ticks every fifteen minutes and a row per instance per tick would bury the activity log - the denial is visible in the route's JSON instead.
+  // and keeps its own gate (module access + write-eligible plan + AAL2), so the scheduled allow-list is not applied to it. Nothing is logged for an
+  // instance the cron denies: it ticks every fifteen minutes and a row per instance per tick would bury the activity log - the denial is visible in the
+  // route's JSON instead.
   const scheduled = actor === "system";
   const allowedIds = scheduled ? scheduledPushAllowedInstanceIds() : null;
-  const allInstances = allowedIds ? connectedInstances.filter((i) => allowedIds.has(i.id)) : connectedInstances;
-  const notAuthorised: InstanceSyncOutcome[] = allowedIds
-    ? connectedInstances.filter((i) => !allowedIds.has(i.id)).map((i) => ({ ok: true, instanceId: i.id, orgId: i.org_id, skippedNotAuthorised: true }))
-    : [];
+  // A PROTECTED instance (CIN7_MANUAL_PUSH_PROTECTED_INSTANCE_IDS) receives no master-data push from ANY actor, scheduled or signed-in, until its id is
+  // removed from that list. It wins over the scheduled allow-list.
+  const protectedIds = manualPushProtectedInstanceIds();
+  const isRunnable = (i: { id: string }) => !protectedIds.has(i.id) && (!allowedIds || allowedIds.has(i.id));
+  const allInstances = connectedInstances.filter(isRunnable);
+  const notAuthorised: InstanceSyncOutcome[] = connectedInstances
+    .filter((i) => !isRunnable(i))
+    .map((i): InstanceSyncOutcome =>
+      protectedIds.has(i.id) && !scheduled
+        // A person asked for this push, so say plainly that it was refused (the Import page shows `error` on a failed outcome) rather than reporting success.
+        ? { ok: false, instanceId: i.id, orgId: i.org_id, error: MANUAL_PUSH_PROTECTED_MESSAGE, skippedProtected: true }
+        : { ok: true, instanceId: i.id, orgId: i.org_id, skippedNotAuthorised: true }
+    );
+  if (!scheduled) {
+    // A refused MANUAL push is rare and deliberate, so it is worth a record (unlike the 15-minute cron denial above).
+    for (const o of notAuthorised.filter((n) => n.skippedProtected)) {
+      await logActivity(db, { orgId: o.orgId, instanceId: o.instanceId, actor, action: "sync.push_blocked", summary: "Manual master-data push refused: instance is protected" });
+    }
+  }
 
   const runInstances = (list: typeof allInstances) =>
     mapWithConcurrency(list, MAX_CONCURRENT_INSTANCE_SYNCS, async (instance): Promise<InstanceSyncOutcome> => {

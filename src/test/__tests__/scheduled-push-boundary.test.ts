@@ -44,7 +44,7 @@ describe("scheduled master-data push cannot be reached around the default-deny g
     expect(src).toMatch(/const scheduled = actor === "system"/);
     expect(src).toMatch(/scheduledPushAllowedInstanceIds\(\)/);
     // the gate is applied before the route lock and before runInstances is first called
-    const gate = src.indexOf("const allInstances = allowedIds");
+    const gate = src.indexOf("const allInstances = connectedInstances.filter(isRunnable)");
     expect(gate).toBeGreaterThan(-1);
     expect(gate).toBeLessThan(src.indexOf("acquireSyncRouteLock(db"));
     expect(gate).toBeLessThan(src.indexOf("runInstances(allInstances)"));
@@ -75,5 +75,32 @@ describe("scheduled master-data push cannot be reached around the default-deny g
     // imports (not comments, which may legitimately mention the push): none of them reaches the push orchestration or the gate
     expect(src).not.toMatch(/from\s*"@\/sync\/(run-sync|sync-org|scheduled-push-policy)"/);
     expect(src).not.toMatch(/from\s*"@\/cin7\/(products|customers|suppliers)"/);
+  });
+
+  it("the super-admin diagnostics push checks instance protection before it loads credentials or writes", () => {
+    const src = read("src/app/settings/diagnostics/actions.ts");
+    const start = src.indexOf("export async function debugPushOneCustomerAndSupplier");
+    expect(start).toBeGreaterThan(-1);
+    const body = src.slice(start, src.indexOf("\nexport async function", start + 10));
+    const guard = body.indexOf("isManualPushProtected(instanceId)");
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(body.indexOf("loadInstanceCreds("));
+    expect(guard).toBeLessThan(body.indexOf("pushCustomer("));
+  });
+
+  it("sync-org applies the protected list to every actor, ahead of the lock and any push", () => {
+    const src = read("src/sync/sync-org.ts");
+    expect(src).toMatch(/manualPushProtectedInstanceIds\(\)/);
+    expect(src).toMatch(/!protectedIds\.has\(i\.id\) && \(!allowedIds \|\| allowedIds\.has\(i\.id\)\)/);
+  });
+
+  it("a Migrate pull stays read-only against Cin7 and records its source state after importing, never pushing", () => {
+    const pull = read("src/migrate/pull-instance.ts");
+    expect(pull.match(/stampPulledState\(/g)?.length).toBe(3);
+    expect(pull).not.toMatch(/\b(pushProduct|pushCustomer|pushSupplier|syncInstance|syncOrgInstances)\b/);
+    expect(pull).not.toMatch(/method:\s*"(POST|PUT|PATCH|DELETE)"/);
+    const stamp = read("src/migrate/stamp-pulled-state.ts");
+    expect(stamp).not.toMatch(/from\s*"@\/cin7\//);
+    expect(stamp).not.toMatch(/cin7Request/);
   });
 });

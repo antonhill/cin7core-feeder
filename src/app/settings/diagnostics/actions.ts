@@ -24,6 +24,7 @@ import { requireCurrentOrg } from "@/lib/current-org";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { requirePrivilegedSuperAdmin } from "@/lib/require-privileged";
 import { logActivity, type ActivityActor } from "@/lib/activity-log";
+import { MANUAL_PUSH_PROTECTED_MESSAGE, isManualPushProtected } from "@/sync/scheduled-push-policy";
 import { decrypt } from "@/cin7/crypto";
 import { CIN7_API_ORIGIN } from "@/cin7/api-origin";
 import { Cin7ApiError } from "@/cin7/http";
@@ -760,6 +761,8 @@ export async function debugPushOneCustomerAndSupplier(instanceId: string): Promi
   let actor: ActivityActor | undefined;
   try {
     await requirePrivilegedSuperAdmin("push a test customer/supplier to Cin7");
+    // A protected instance (CIN7_MANUAL_PUSH_PROTECTED_INSTANCE_IDS) takes no master-data push from any actor, a super-admin diagnostic included.
+    if (isManualPushProtected(instanceId)) return { ok: false, message: MANUAL_PUSH_PROTECTED_MESSAGE };
     const current = await requireCurrentOrg();
     orgId = current.orgId;
     actor = { userId: current.userId, email: current.email };

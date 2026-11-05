@@ -3,7 +3,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { syncOrgInstances } from "@/sync/sync-org";
 import { syncInstance } from "@/sync/run-sync";
 import { logActivity } from "@/lib/activity-log";
-import { SCHEDULED_PUSH_ALLOWLIST_ENV, isScheduledPushAllowed, scheduledPushAllowedInstanceIds } from "@/sync/scheduled-push-policy";
+import {
+  MANUAL_PUSH_PROTECTED_ENV,
+  MANUAL_PUSH_PROTECTED_MESSAGE,
+  SCHEDULED_PUSH_ALLOWLIST_ENV,
+  isManualPushProtected,
+  isScheduledPushAllowed,
+  manualPushProtectedInstanceIds,
+  scheduledPushAllowedInstanceIds,
+} from "@/sync/scheduled-push-policy";
 
 vi.mock("@/sync/run-sync", () => ({ syncInstance: vi.fn() }));
 vi.mock("@/lib/activity-log", () => ({ logActivity: vi.fn() }));
@@ -50,6 +58,7 @@ beforeEach(() => {
   vi.mocked(syncInstance).mockImplementation(async (_db, _org, instanceId) => summary(instanceId));
   vi.mocked(logActivity).mockReset();
   vi.stubEnv(SCHEDULED_PUSH_ALLOWLIST_ENV, "");
+  vi.stubEnv(MANUAL_PUSH_PROTECTED_ENV, "");
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -157,5 +166,69 @@ describe("a signed-in user's Import & Sync push is a different, separately gated
     expect(vi.mocked(syncInstance).mock.calls.map((c) => c[2])).toEqual([LBL.id]);
     expect(out[0].skippedNotAuthorised).toBeUndefined();
     expect(vi.mocked(logActivity).mock.calls[0][1]).toMatchObject({ actor, action: "sync.push", instanceId: LBL.id });
+  });
+});
+
+describe("manual-push protection: a narrow deny-list that binds EVERY actor", () => {
+  const PROTECT_BOTH = `${LBL.id},${I_LIGHT.id}`;
+  const user = { userId: "u1", email: "member@example.test" };
+
+  it.each([[undefined], [""], ["  "], [","]])("protects nothing when the list is %j", (raw) => {
+    expect(manualPushProtectedInstanceIds({ [MANUAL_PUSH_PROTECTED_ENV]: raw }).size).toBe(0);
+    for (const i of ALL) expect(isManualPushProtected(i.id, { [MANUAL_PUSH_PROTECTED_ENV]: raw })).toBe(false);
+  });
+
+  it("protects exactly the ids named, and a wildcard-looking value protects nothing rather than everything", () => {
+    const env = { [MANUAL_PUSH_PROTECTED_ENV]: PROTECT_BOTH };
+    expect(isManualPushProtected(LBL.id, env) && isManualPushProtected(I_LIGHT.id, env)).toBe(true);
+    for (const i of [NEWQUIP, SPARK_DEMO, CASA]) expect(isManualPushProtected(i.id, env)).toBe(false);
+    for (const v of ["*", "all", "true"]) expect(isManualPushProtected(LBL.id, { [MANUAL_PUSH_PROTECTED_ENV]: v })).toBe(false);
+  });
+
+  it("a signed-in user's push to LBL and I-Light is REFUSED with a plain error, takes no lock, calls nothing, and is recorded", async () => {
+    vi.stubEnv(MANUAL_PUSH_PROTECTED_ENV, PROTECT_BOTH);
+    const { db, rpc } = fakeDb(ALL);
+    const out = await syncOrgInstances(db, LBL.org, [LBL.id, I_LIGHT.id], {}, user, 260_000);
+    expect(syncInstance).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
+    expect(out).toHaveLength(2);
+    for (const o of out) expect(o).toMatchObject({ ok: false, skippedProtected: true, error: MANUAL_PUSH_PROTECTED_MESSAGE });
+    const logged = vi.mocked(logActivity).mock.calls.map((c) => c[1]);
+    expect(logged.map((l) => l.action)).toEqual(["sync.push_blocked", "sync.push_blocked"]);
+    expect(logged.every((l) => (l.actor as { userId: string }).userId === "u1")).toBe(true);
+  });
+
+  it("in one request, the protected instance is refused while an unprotected one is still pushed", async () => {
+    vi.stubEnv(MANUAL_PUSH_PROTECTED_ENV, LBL.id);
+    const { db } = fakeDb(ALL);
+    const out = await syncOrgInstances(db, undefined, [LBL.id, SPARK_DEMO.id], {}, user, 260_000);
+    expect(vi.mocked(syncInstance).mock.calls.map((c) => c[2])).toEqual([SPARK_DEMO.id]);
+    expect(out.find((o) => o.instanceId === LBL.id)).toMatchObject({ ok: false, skippedProtected: true });
+    expect(out.find((o) => o.instanceId === SPARK_DEMO.id)?.skippedProtected).toBeUndefined();
+  });
+
+  it("PROTECTED WINS over the scheduled allow-list: an id on both lists is not pushed by the cron", async () => {
+    vi.stubEnv(SCHEDULED_PUSH_ALLOWLIST_ENV, `${LBL.id},${SPARK_DEMO.id}`);
+    vi.stubEnv(MANUAL_PUSH_PROTECTED_ENV, LBL.id);
+    const { db } = fakeDb(ALL);
+    const out = await syncOrgInstances(db, LBL.org, undefined, {}, "system", 260_000);
+    expect(syncInstance).not.toHaveBeenCalled();
+    expect(out.find((o) => o.instanceId === LBL.id)).toMatchObject({ ok: true, skippedNotAuthorised: true });
+    expect(logActivity).not.toHaveBeenCalled(); // the 15-minute cron denial stays silent
+  });
+
+  it("removing an id from the list IS the authorisation: only the still-protected instance is refused", async () => {
+    vi.stubEnv(MANUAL_PUSH_PROTECTED_ENV, I_LIGHT.id);
+    const { db } = fakeDb(ALL);
+    const out = await syncOrgInstances(db, LBL.org, [LBL.id, I_LIGHT.id], {}, user, 260_000);
+    expect(vi.mocked(syncInstance).mock.calls.map((c) => c[2])).toEqual([LBL.id]);
+    expect(out.find((o) => o.instanceId === I_LIGHT.id)?.skippedProtected).toBe(true);
+  });
+
+  it("protection leaves the connection active: only selects are issued against cin7_instances", async () => {
+    vi.stubEnv(MANUAL_PUSH_PROTECTED_ENV, PROTECT_BOTH);
+    const { db, tables } = fakeDb(ALL);
+    await syncOrgInstances(db, LBL.org, [LBL.id, I_LIGHT.id], {}, user, 260_000);
+    expect(new Set(tables)).toEqual(new Set(["cin7_instances"]));
   });
 });
