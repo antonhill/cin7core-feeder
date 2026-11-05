@@ -3,6 +3,7 @@ import { syncInstance, type PushScope, type SyncRunSummary } from "@/sync/run-sy
 import { logActivity, type ActivityActor } from "@/lib/activity-log";
 import { acquireSyncLock, releaseSyncLock, type SyncLockResult } from "@/lib/sync-lock";
 import { acquireSyncRouteLock, releaseSyncRouteLock } from "@/lib/sync-route-lock";
+import { scheduledPushAllowedInstanceIds } from "@/sync/scheduled-push-policy";
 
 export interface InstanceSyncOutcome {
   ok: boolean;
@@ -35,6 +36,11 @@ export interface InstanceSyncOutcome {
    * retry) picks it up once free.
    */
   skippedLocked?: boolean;
+  /**
+   * True when the scheduler did not push this instance because it is not listed in CIN7_SCHEDULED_PUSH_INSTANCE_IDS (default-deny). Not a failure and
+   * not a retry-later: nothing was read from or written to Cin7 for it. The instance stays connected for every other function.
+   */
+  skippedNotAuthorised?: boolean;
 }
 
 // Instances used to sync one at a time here, which meant two genuinely
@@ -126,7 +132,18 @@ export async function syncOrgInstances(
   if (instanceIds?.length) query = query.in("id", instanceIds);
   const { data: instances, error } = await query;
   if (error) throw new Error(error.message);
-  const allInstances = (instances ?? []) as { id: string; org_id: string }[];
+  const connectedInstances = (instances ?? []) as { id: string; org_id: string }[];
+
+  // Default-deny (see scheduled-push-policy.ts): the SCHEDULER is the machine actor ("system"), and it may push master data only to instances named in
+  // CIN7_SCHEDULED_PUSH_INSTANCE_IDS. A connected (active) instance is not thereby authorised. A signed-in user's Import & Sync push passes a real actor
+  // and keeps its own gate (module access + write-eligible plan + AAL2), so it is not filtered here. Nothing is logged for a denied instance: the cron
+  // ticks every fifteen minutes and a row per instance per tick would bury the activity log - the denial is visible in the route's JSON instead.
+  const scheduled = actor === "system";
+  const allowedIds = scheduled ? scheduledPushAllowedInstanceIds() : null;
+  const allInstances = allowedIds ? connectedInstances.filter((i) => allowedIds.has(i.id)) : connectedInstances;
+  const notAuthorised: InstanceSyncOutcome[] = allowedIds
+    ? connectedInstances.filter((i) => !allowedIds.has(i.id)).map((i) => ({ ok: true, instanceId: i.id, orgId: i.org_id, skippedNotAuthorised: true }))
+    : [];
 
   const runInstances = (list: typeof allInstances) =>
     mapWithConcurrency(list, MAX_CONCURRENT_INSTANCE_SYNCS, async (instance): Promise<InstanceSyncOutcome> => {
@@ -185,14 +202,17 @@ export async function syncOrgInstances(
       }
     });
 
-  if (!orgId) return runInstances(allInstances);
+  if (!orgId) return [...(await runInstances(allInstances)), ...notAuthorised];
+
+  // Nothing authorised for this org: no route lock, no Cin7 credential load, no work.
+  if (allInstances.length === 0) return notAuthorised;
 
   const routeLock = await acquireSyncRouteLock(db, "sync", orgId);
   if (!routeLock.acquired) {
-    return allInstances.map((i) => ({ ok: true, instanceId: i.id, orgId: i.org_id, skippedLocked: true }));
+    return [...allInstances.map((i) => ({ ok: true, instanceId: i.id, orgId: i.org_id, skippedLocked: true })), ...notAuthorised];
   }
   try {
-    return await runInstances(allInstances);
+    return [...(await runInstances(allInstances)), ...notAuthorised];
   } finally {
     await releaseSyncRouteLock(db, "sync", orgId, routeLock.lockedAt);
   }
