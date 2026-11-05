@@ -43,8 +43,8 @@ describe("Diagnostics and Cin7 Instances are separate action capabilities", () =
     expect(instances.map((a) => a.name).sort()).toEqual(["deleteInstance", "listInstances", "testInstanceConnection", "upsertInstance"]);
   });
 
-  it("7. all 31 debug actions are exported from the Diagnostics surface", () => {
-    expect(diagnostics.filter((a) => a.name.startsWith("debug"))).toHaveLength(31);
+  it("7. all 32 debug actions are exported from the Diagnostics surface", () => {
+    expect(diagnostics.filter((a) => a.name.startsWith("debug"))).toHaveLength(32);
   });
 
   it("8. debugProbeUpdatedSinceFiltering is retained even though it has no caller", () => {
