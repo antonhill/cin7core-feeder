@@ -71,7 +71,7 @@ describe("claim approval near the bottom of a long Project page", () => {
     vi.mocked(actions.getProjectAction).mockImplementation((async () => ({ ok: true, data: view("APPROVED"), viewer })) as never);
 
     fireEvent.click(within(card).getByRole("button", { name: "Approve" }));
-    const pending = await within(card).findByText(/Working/);
+    const pending = await within(card).findByText("Approving claim…");
     expect(pending.closest("[role=status]")).not.toBeNull();
     expect((within(card).getByRole("button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(true);
 

@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { AppShell } from "./AppShell";
 import { DemoModeBar } from "./DemoModeBar";
+import { NavigationProgress } from "./NavigationProgress";
 import TourGuide from "./tour-guide";
 import { getCurrentUserInfo } from "@/actions/auth";
 import { clearImpersonatedOrgAction } from "@/actions/org-switch";
@@ -72,6 +73,7 @@ export default async function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="flex h-full min-h-screen flex-col md:flex-row">
+        <NavigationProgress />
         {(() => {
           // `relative` makes this scroll container the containing block for every absolutely positioned descendant (sr-only labels, icons, tooltips). Without it they are positioned against the page, escape this container's clip and extend the DOCUMENT's scrollable height, leaving a blank band of several screens under the content.
           const content = (

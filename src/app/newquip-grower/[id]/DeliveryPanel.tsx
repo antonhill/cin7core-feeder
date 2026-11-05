@@ -1,7 +1,9 @@
 "use client";
 
+import { PendingNotice } from "@/components/ui/action-feedback";
+import { OP } from "@/components/ui/operation-labels";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Status, statusText } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
@@ -36,7 +38,8 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section, steps }
   const [d, setD] = useState<DeliveryView | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null); // UX-007: the operation in flight, by its label (null when idle)
+  const inFlight = useRef(false);
   const [choice, setChoice] = useState<ScheduleChoice | undefined>(undefined);
   const [to, setTo] = useState(""); const [cc, setCc] = useState(""); const [message, setMessage] = useState(""); const [reviewed, setReviewed] = useState(false);
   const [key, setKey] = useState(newKey); const [altReason, setAltReason] = useState(""); const [resendOf, setResendOf] = useState<string | null>(null); const [resendReason, setResendReason] = useState("");
@@ -49,12 +52,16 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section, steps }
   }, [quoteId, onGate]);
   useEffect(() => { let live = true; void (async () => { if (live) await reload(); })(); return () => { live = false; }; }, [reload]);
 
-  const run = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: string) => {
-    setBusy(true); setErr(null); setNote(null);
-    try { const r = await fn(); if (r.ok) { setNote(done); await reload(); } else setErr(r.error ?? "Failed."); } finally { setBusy(false); }
+  const run = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: string, label: string, lost: string = "We could not confirm whether this completed. The latest status is shown below: check it before trying again.") => {
+    if (inFlight.current) return; // a second click in the same tick (before React re-renders) is a no-op: the guard is a ref, not state
+    inFlight.current = true;
+    setBusy(label); setErr(null); setNote(null);
+    try { const r = await fn(); if (r.ok) { setNote(done); await reload(); } else setErr(r.error ?? "The action failed. Nothing was changed."); }
+    catch { setErr(lost); try { await reload(); } catch { /* the message above already says the state is unconfirmed */ } }
+    finally { inFlight.current = false; setBusy(null); }
   };
 
-  if (!docs || !d) return <Panel><PanelTitle>{section === "quotation" ? "Issue and send the quotation" : "Customer response"}</PanelTitle><p className="mt-2 text-sm text-slate-600">{err ?? "Loading…"}</p></Panel>;
+  if (!docs || !d) return <Panel><PanelTitle>{section === "quotation" ? "Issue and send the quotation" : "Customer response"}</PanelTitle>{err ? <p className="mt-2 text-sm text-slate-600">{err}</p> : <PendingNotice label={section === "quotation" ? "Loading the quotation PDF and send history…" : OP.loadCustomerResponse} />}</Panel>;
   if (!docs.available || !d.available) return <Panel><PanelTitle>Customer quotation</PanelTitle><Alert tone="info">Sending a quotation to the customer becomes available once the database update for customer quotations (migration 0115) has been applied.</Alert></Panel>;
   const latest = docs.documents[0];
   const split = (s: string) => s.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean);
@@ -72,6 +79,7 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section, steps }
       <p className="mt-1 text-xs text-slate-600">Manager approval lets the quotation be issued. It is not the customer&apos;s acceptance: a Project for a new quotation needs the customer&apos;s recorded acceptance.</p>
       {err && <Alert tone="danger">{err}</Alert>}
       {note && <Alert tone="success">{note}</Alert>}
+      {busy && <PendingNotice label={busy} />}
 
       {section === "quotation" && (<>
       <Sec steps={steps} id="issue" number={1} title="Issue PDF">
@@ -91,7 +99,7 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section, steps }
         <div className="mt-3 space-y-2">
           {!d.requiresAcceptance ? null : <p className="text-xs text-slate-600">The billing schedule you choose here is printed on the quotation and is the one the Project will use once the customer accepts.</p>}
           {!latest && <ScheduleChooser contractCents={contractCents} onChange={setChoice} />}
-          <Button type="button" variant="secondary" loading={busy} disabled={!latest && !resolveScheduleChoice(choice).ok} onClick={() => void run(() => issueQuoteDocumentAction(quoteId, choice), latest ? "Checked: the PDF is current (a new version is created only if an input changed)." : "Quotation PDF generated.")}>
+          <Button type="button" variant="secondary" loading={busy === OP.generatePdf} disabled={busy !== null || (!latest && !resolveScheduleChoice(choice).ok)} onClick={() => void run(() => issueQuoteDocumentAction(quoteId, choice), latest ? "Checked: the PDF is current (a new version is created only if an input changed)." : "Quotation PDF generated.", OP.generatePdf)}>
             {latest ? "Re-check / issue a new version if inputs changed" : "Generate customer quotation PDF"}
           </Button>
         </div>
@@ -114,7 +122,7 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section, steps }
           {resendOf && <label className="flex flex-col gap-1 text-sm"><span className="font-medium text-slate-700">Reason for sending again</span><input className={`${inputCls} w-full`} value={resendReason} onChange={(e) => setResendReason(e.target.value)} /></label>}
           {altNeeded.length > 0 && <label className="flex flex-col gap-1 text-sm"><span className="font-medium text-amber-800">{altNeeded.join(", ")} {altNeeded.length === 1 ? "is" : "are"} not a Cin7 contact of this customer. Reason for approving {altNeeded.length === 1 ? "this address" : "these addresses"} (audited)</span><input className={`${inputCls} w-full`} value={altReason} onChange={(e) => setAltReason(e.target.value)} /></label>}
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} /> I have opened and reviewed the PDF, and these are the right recipients.</label>
-          <Button type="button" loading={busy} aria-describedby={sendWhy ? "send-customer-why" : undefined} disabled={!reviewed || split(to).length === 0 || (altNeeded.length > 0 && altReason.trim().length < 5) || (!!resendOf && resendReason.trim().length < 3)} onClick={() => void run(async () => {
+          <Button type="button" loading={busy === OP.sendCustomerEmail} aria-describedby={sendWhy ? "send-customer-why" : undefined} disabled={busy !== null || !reviewed || split(to).length === 0 || (altNeeded.length > 0 && altReason.trim().length < 5) || (!!resendOf && resendReason.trim().length < 3)} onClick={() => void run(async () => {
             const r = await sendQuoteToCustomerAction(quoteId, { documentId: latest.id, to: split(to), cc: split(cc), message, idempotencyKey: key, alternativeReason: altNeeded.length ? altReason : undefined, resendOfId: resendOf ?? undefined, resendReason: resendOf ? resendReason : undefined });
             if (r.ok && r.data) {
               setKey(newKey()); setResendOf(null); setResendReason(""); setReviewed(false);
@@ -123,7 +131,7 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section, steps }
               if (r.data.status === "SUPPRESSED") { await reload(); return { ok: false, error: "Not sent: no recipient is on the allowed list for this environment. It is recorded as SUPPRESSED in the history below." }; }
             }
             return r.ok && r.data ? { ok: true } : r;
-          }, "Sent: the email provider accepted it (this is not proof of inbox delivery). See the history below.")}>{resendOf ? "Send again" : "Send quotation to customer"}</Button>
+          }, "Sent: the email provider accepted it (this is not proof of inbox delivery). See the history below.", OP.sendCustomerEmail, "We could not confirm whether the email was sent. Check the send history below before sending again: it may already have gone.")}>{resendOf ? "Send again" : "Send quotation to customer"}</Button>
           <DisabledReason id="send-customer-why">{sendWhy}</DisabledReason>
         </div>
       ) : <p className="mt-2 text-sm text-slate-600">{d.status === "CUSTOMER_ACCEPTED" ? "The customer has accepted; nothing further to send." : "Issue the quotation PDF first. Only a Rep can send it."}</p>}
@@ -134,7 +142,7 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section, steps }
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span><Status tone={s.status === "ACCEPTED" ? "success" : s.status === "FAILED" ? "danger" : "warning"}>{statusText(s.status)}</Status> {SEND_LABEL[s.status]} · {formatSast(s.at)} · by {s.sentBy}</span>
                 <span className="flex gap-2">
-                  {s.status === "FAILED" && d.canSend && <Button type="button" variant="secondary" loading={busy} onClick={() => void run(() => retryQuoteSendAction(quoteId, s.id), "Retry recorded.")}>Retry</Button>}
+                  {s.status === "FAILED" && d.canSend && <Button type="button" variant="secondary" loading={busy === OP.retryCustomerEmail} disabled={busy !== null} onClick={() => void run(() => retryQuoteSendAction(quoteId, s.id), "Retry recorded.", OP.retryCustomerEmail, "We could not confirm whether the retry was sent. Check the send history below before retrying again.")}>Retry</Button>}
                   {s.status === "ACCEPTED" && d.canSend && <Button type="button" variant="secondary" onClick={() => { setResendOf(s.id); setKey(newKey()); setReviewed(false); }}>Send again…</Button>}
                 </span>
               </div>

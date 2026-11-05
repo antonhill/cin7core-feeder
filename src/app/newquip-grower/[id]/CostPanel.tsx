@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
+import { PendingNotice } from "@/components/ui/action-feedback";
+import { OP } from "@/components/ui/operation-labels";
 import { Status } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -27,7 +29,7 @@ import { deriveUnitStatus, type UnitException } from "./cost-unit-status";
 // The panel NEVER disappears: while loading it says so, and if the server refuses or fails it shows the reason with a retry.
 
 export interface CostPanelBodyProps {
-  v: QuoteCostView | null; loading: boolean; error: string | null; note: string | null; busy: boolean;
+  v: QuoteCostView | null; loading: boolean; error: string | null; note: string | null; busy: boolean; busyLabel?: string | null;
   /** The quotation has unsaved edits: this panel reflects the SAVED draft only. */
   unsaved?: boolean;
   manual: { sku: string; rand: string; reason: string } | null;
@@ -163,13 +165,14 @@ export function CostPanelBody(p: CostPanelBodyProps) {
       )}
       {p.unsaved && <div className="mt-2"><Alert tone="warning">Unsaved changes. This estimate is a live preview of your edits (nothing is saved). Capturing or selecting supplier prices works on the SAVED draft: save first.</Alert></div>}
       <p className="mt-1 text-xs text-slate-600">Internal. Latest Supplier Price from Cin7 for every supplier, in rand. This is separate from the workbook-basis margin above; the two are not combined. {v?.note ?? ""} A missing cost is never treated as zero, FixedCost and AverageCost are never substituted, and a manual estimate is always labelled as one.</p>
-      {p.loading && !v && !error && <p className="mt-2 text-sm text-slate-600">Loading the cost estimate…</p>}
+      {p.loading && !v && !error && <PendingNotice label={OP.loadCosts} />}
       {error && (
         <div className="mt-2 space-y-2">
           <Alert tone="danger">{friendlyCin7Error(error)}</Alert>
           <Button size="sm" className="min-h-11" variant="secondary" disabled={busy} onClick={p.onRetry}>Try again</Button>
         </div>
       )}
+      {p.busyLabel && <PendingNotice label={p.busyLabel} />}
       {note && <div className="mt-2"><Alert tone="success">{note}</Alert></div>}
       {stale && (
         <div className="mt-2 flex flex-wrap items-center gap-2"><Alert tone="warning">An exchange rate or declaration has changed since these costs were captured.</Alert>{p.onRecalculate && <Button size="sm" className="min-h-11" variant="secondary" disabled={busy} onClick={p.onRecalculate}>Recalculate with current rates</Button>}</div>
@@ -230,6 +233,8 @@ export function CostPanel({ quoteId, reload, unsaved, previewDraft }: { quoteId:
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const inFlight = useRef(false); // a ref, not state: a same-tick double click must not run the action twice
   const [manual, setManual] = useState<{ sku: string; rand: string; reason: string } | null>(null);
 
   // The estimate follows the UNSAVED edits (read-only server preview, same builders); an answer to an older request never overwrites a newer one.
@@ -249,19 +254,27 @@ export function CostPanel({ quoteId, reload, unsaved, previewDraft }: { quoteId:
     const t = setTimeout(load, 800);
     return () => clearTimeout(t);
   }, [previewDraft, load]);
-  const run = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: string) => {
-    setBusy(true); setError(null); setNote(null);
-    const r = await fn(); setBusy(false);
-    if (!r.ok) { setError(r.error ?? "Failed"); return; }
-    setNote(done); setManual(null); load(); reload?.();
+  const run = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: string, label: string = OP.saveCostChange) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true); setBusyLabel(label); setError(null); setNote(null);
+    try {
+      const r = await fn();
+      if (!r.ok) { setError(r.error ?? "The cost change was not recorded. Nothing was changed; you can try again."); return; }
+      setNote(done); setManual(null); load(); reload?.();
+    } catch {
+      // The response was lost: the server may have recorded it. Re-read before suggesting anything.
+      setError("We could not confirm whether this was recorded. The estimate below has been re-read; check it before trying again.");
+      load();
+    } finally { inFlight.current = false; setBusy(false); setBusyLabel(null); }
   };
   return (
     <CostPanelBody
-      v={v} loading={!v && !error} error={error} note={note} busy={busy} manual={manual} unsaved={unsaved}
+      v={v} loading={!v && !error} error={error} note={note} busy={busy} busyLabel={busyLabel} manual={manual} unsaved={unsaved}
       onRetry={() => { setError(null); load(); }}
-      onCapture={(replace) => run(() => captureLatestCostsAction(quoteId, { replaceSelections: !!replace }), "Supplier prices read from Cin7 (read-only). Select a supplier where asked. The estimator's sign-off, if any, must be given again on the new costs.")}
-      onSelect={(sku, s, reason) => run(() => selectSupplierAction(quoteId, sku, s, reason), "Supplier selected and recorded.")}
-      onRecalculate={() => run(() => recalculateCostsAction(quoteId), "Costs recalculated under the current exchange rates.")}
+      onCapture={(replace) => run(() => captureLatestCostsAction(quoteId, { replaceSelections: !!replace }), "Supplier prices read from Cin7 (read-only). Select a supplier where asked. The estimator's sign-off, if any, must be given again on the new costs.", OP.fetchCin7Costs)}
+      onSelect={(sku, s, reason) => run(() => selectSupplierAction(quoteId, sku, s, reason), "Supplier selected and recorded.", OP.saveSupplier)}
+      onRecalculate={() => run(() => recalculateCostsAction(quoteId), "Costs recalculated under the current exchange rates.", OP.recalculateCosts)}
       onRecordFx={(c, r, s, a) => run(() => recordFxRateAction(c, r, s, a), "Exchange rate recorded. Recalculate to apply it to this estimate.")}
       onConfirmUnit={(reason) => run(() => confirmUnitBasisAction(quoteId, reason), "Recorded: supplier prices are per stock unit.")}
       onAcceptIncomplete={(reason) => run(() => acceptIncompleteCostsAction(quoteId, reason), "Exception recorded.")}

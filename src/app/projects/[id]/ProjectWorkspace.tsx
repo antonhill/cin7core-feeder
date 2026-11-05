@@ -8,6 +8,8 @@ import { useEffect, useId, useRef, useState, useTransition } from "react";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { PROJECTS_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
+import { OP } from "@/components/ui/operation-labels";
+import { LongRunningStatus } from "@/components/ui/LongRunningStatus";
 import { ActionFeedback, useKeyedActions, type Reconciled } from "@/components/ui/action-feedback";
 import { Status, statusText } from "@/components/ui/Status";
 import type { BadgeTone } from "@/components/ui/Badge";
@@ -152,6 +154,18 @@ function LegendDot({ className, label, value }: { className: string; label: stri
  * operate its progress, claims, Cin7 Sale and invoices there, without navigating to the internal project): no page chrome, and no tabs that only
  * make sense on a top-level project. All permission checks still happen server-side in each action.
  */
+/** UX-007: the operation's name when a caller does not give one - by the action's key, never a generic "Working…". */
+function pendingFor(key: string): string {
+  if (key === "sale:create") return OP.createSalesOrder;
+  if (key === "sale:reconcile" || key.startsWith("post:")) return OP.readBackCin7;
+  if (key === "claim:new") return "Creating the claim draft…";
+  if (key.startsWith("claim:")) return "Updating the claim…";
+  if (key === "details") return "Saving project details…";
+  if (key === "deliveries") return "Saving the delivery…";
+  if (key === "variations") return "Saving the variation…";
+  return "Saving changes…";
+}
+
 export function ProjectWorkspace({ id, embedded = false }: { id: string; embedded?: boolean }) {
   const uid = useId();
   const busyId = (claimId: string): string => `${uid}-claim-busy-${claimId}`; // ids are unique per mounted workspace: several can be on one page (embedded per variation, hidden-but-mounted)
@@ -245,7 +259,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
     fn: () => Promise<{ ok: boolean; error?: string; data?: unknown }>,
     done?: string,
     key = "page",
-    opts: { success?: (view: ProjectView | null, res: { data?: unknown }) => string; confirm?: (view: ProjectView) => boolean; reconcile?: () => Promise<Reconciled>; doneAfterReconcile?: string; exclusive?: boolean; cin7?: boolean } = {},
+    opts: { pending?: string; success?: (view: ProjectView | null, res: { data?: unknown }) => string; confirm?: (view: ProjectView) => boolean; reconcile?: () => Promise<Reconciled>; doneAfterReconcile?: string; exclusive?: boolean; cin7?: boolean } = {},
   ): Promise<boolean> {
     return acts.run(key, async () => {
       const res = await fn();
@@ -254,7 +268,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
       const v = await reloadView();
       return { ...res, view: v };
     }, {
-      pending: "Working… please wait",
+      pending: opts.pending ?? pendingFor(key),
       success: (r) => (opts.success ? opts.success(r.view, r) : done ?? "Done."),
       // A panel can supply its own re-read (its state is not in this view). Otherwise: re-read the project. A failed read is "unreadable"; a good read
       // that has no way to tell whether this action took effect is "unknown" (the fresh state is on the page).
@@ -315,6 +329,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
         <div className="mt-6"><Alert tone="info">This is the internal billing scope of a variation, not a separate project: its contract is part of the original project&apos;s revised contract. <Link className="underline" href={`/projects/${view.project.parent_project_id}`}>Open the project</Link>.</Alert></div>
       )}
       <ActionFeedback state={acts.stateOf("page")} floating />
+      <LongRunningStatus label={acts.currentLabel} />
       {c.uncertainClaimBlocking && (
         <div className="mt-6">
           <Alert tone="warning">A claim has an uncertain Cin7 outcome. Its value stays reserved and billing of its stages is blocked until it is reconciled.</Alert>{tab !== "claims" && <button type="button" className="mt-1 inline-flex min-h-11 items-center text-sm font-medium text-indigo-700 underline" onClick={() => goTab("claims")}>Open the Commercial / Claims tab</button>}
@@ -584,12 +599,12 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                     <div className="mt-2">
                       {/* Every disabled claim button below is disabled for ONE reason that can be seen from here: another action is running. (Approval by another role has its own text, plan.waitingText.) */}
                       <div className="flex flex-wrap items-center gap-1">
-                            {plan.submit && <Button size="sm" variant="secondary" onClick={() => run(() => submitClaimForApprovalAction(id, cl.id), "Claim submitted for approval.", claimKey, { success: (v) => `${cl.claim_number} submitted for approval.${statusNote(v, cl.id)}`, confirm: (v) => ["READY_FOR_APPROVAL", ...APPROVED_OR_LATER].includes(claimStatus(v, cl.id) ?? "") })} loading={acts.isPending(claimKey)} disabled={isWorking} aria-describedby={isWorking ? busyId(cl.id) : undefined}>Submit</Button>}
+                            {plan.submit && <Button size="sm" variant="secondary" onClick={() => run(() => submitClaimForApprovalAction(id, cl.id), "Claim submitted for approval.", claimKey, { pending: "Submitting claim for approval…", success: (v) => `${cl.claim_number} submitted for approval.${statusNote(v, cl.id)}`, confirm: (v) => ["READY_FOR_APPROVAL", ...APPROVED_OR_LATER].includes(claimStatus(v, cl.id) ?? "") })} loading={acts.isPending(claimKey)} disabled={isWorking} aria-describedby={isWorking ? busyId(cl.id) : undefined}>Submit</Button>}
                             {plan.openInApprovals && cl.approval && <Link href={`/approvals/${cl.approval.requestId}`} className="inline-flex h-8 items-center rounded-md border border-indigo-200 bg-indigo-50 px-3 text-xs font-medium text-indigo-800 hover:bg-indigo-100">Open in Approvals</Link>}
-                            {plan.approveHere && <Button size="sm" onClick={() => run(() => approveClaimAction(id, cl.id), "Claim approved — value reserved. Nothing was sent to Cin7.", claimKey, { success: (v) => `${cl.claim_number} approved — value reserved. Nothing was sent to Cin7.${statusNote(v, cl.id)}`, confirm: (v) => APPROVED_OR_LATER.includes(claimStatus(v, cl.id) ?? ""), exclusive: true })} loading={acts.isPending(claimKey)} disabled={isWorking} aria-describedby={isWorking ? busyId(cl.id) : undefined}>Approve</Button>}
+                            {plan.approveHere && <Button size="sm" onClick={() => run(() => approveClaimAction(id, cl.id), "Claim approved — value reserved. Nothing was sent to Cin7.", claimKey, { pending: "Approving claim…", success: (v) => `${cl.claim_number} approved — value reserved. Nothing was sent to Cin7.${statusNote(v, cl.id)}`, confirm: (v) => APPROVED_OR_LATER.includes(claimStatus(v, cl.id) ?? ""), exclusive: true })} loading={acts.isPending(claimKey)} disabled={isWorking} aria-describedby={isWorking ? busyId(cl.id) : undefined}>Approve</Button>}
                             {plan.waitingText && <span className="self-center text-xs text-slate-600" data-testid="claim-waiting">{plan.waitingText}</span>}
-                            {plan.recalculate && <Button size="sm" variant="secondary" onClick={() => run(() => recalculateStaleDraftAction(id, cl.id), "Recalculated: a new draft was created and the old one superseded.", claimKey, { confirm: (v) => v.claims.some((x) => x.supersedes_claim_id === cl.id) })} disabled={isWorking} aria-describedby={isWorking ? busyId(cl.id) : undefined}>Recalculate</Button>}
-                            {plan.cancel && <Button size="sm" variant="ghost" onClick={() => run(() => cancelDraftClaimAction(id, cl.id), cl.status === "READY_FOR_APPROVAL" ? "Claim withdrawn." : "Claim cancelled.", claimKey, { confirm: (v) => claimStatus(v, cl.id) === "CANCELLED_BEFORE_WRITE", exclusive: true })} disabled={isWorking} aria-describedby={isWorking ? busyId(cl.id) : undefined}>{plan.cancelLabel}</Button>}
+                            {plan.recalculate && <Button size="sm" variant="secondary" onClick={() => run(() => recalculateStaleDraftAction(id, cl.id), "Recalculated: a new draft was created and the old one superseded.", claimKey, { pending: "Recalculating claim draft…", confirm: (v) => v.claims.some((x) => x.supersedes_claim_id === cl.id) })} disabled={isWorking} aria-describedby={isWorking ? busyId(cl.id) : undefined}>Recalculate</Button>}
+                            {plan.cancel && <Button size="sm" variant="ghost" onClick={() => run(() => cancelDraftClaimAction(id, cl.id), cl.status === "READY_FOR_APPROVAL" ? "Claim withdrawn." : "Claim cancelled.", claimKey, { pending: "Withdrawing claim…", confirm: (v) => claimStatus(v, cl.id) === "CANCELLED_BEFORE_WRITE", exclusive: true })} disabled={isWorking} aria-describedby={isWorking ? busyId(cl.id) : undefined}>{plan.cancelLabel}</Button>}
                           </div>
                       {isWorking && (plan.submit || plan.approveHere || plan.recalculate || plan.cancel) && <DisabledReason id={busyId(cl.id)} className="mt-1">These buttons are disabled because another action is in progress. They come back when it finishes.</DisabledReason>}
                       <Feedback k={claimKey} errorAction={cl.approval && SOD_REFUSAL.test(acts.stateOf(claimKey).kind === "error" ? (acts.stateOf(claimKey) as { message: string }).message : "") ? <Link href={`/approvals/${cl.approval.requestId}`} className="font-medium underline">Open this claim in Approvals to decide it with a written override</Link> : undefined} />

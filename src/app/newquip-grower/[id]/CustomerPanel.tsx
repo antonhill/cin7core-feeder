@@ -1,5 +1,6 @@
 "use client";
 
+import { OP } from "@/components/ui/operation-labels";
 import { useEffect, useRef, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Spinner } from "@/app/Spinner";
@@ -29,6 +30,7 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts, onQuoteCha
   const [err, setErr] = useState<string | null>(null);
   // What the server is doing right now (null = idle). Every button that waits on the server shows it: a click is never silent.
   const [label, setLabel] = useState<string | null>(null);
+  const inFlight = useRef(false);
   const busy = label !== null;
   const [searched, setSearched] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -62,14 +64,16 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts, onQuoteCha
     return () => { live = false; };
   }, [quoteId]);
 
-  const run = async (fn: () => Promise<{ ok: boolean; error?: string; data?: QuoteCustomerView }>, what = "Saving…") => {
+  const run = async (fn: () => Promise<{ ok: boolean; error?: string; data?: QuoteCustomerView }>, what: string = OP.saveCustomer) => {
+    if (inFlight.current) return; // same-tick double click: the guard is a ref, not state
+    inFlight.current = true;
     setLabel(what); setErr(null); setNotice(null); setEffectNote(null);
-    try { const r = await fn(); if (r.ok && r.data) { setV(r.data); setDiff(null); const e = r.data.effect; if (e && (e.confirmationCleared || e.signoffCleared || e.returnedToRep || e.approvalSyncError)) { setEffectNote(effectText(e)); onQuoteChanged?.(); } } else setErr(r.error ?? "Failed."); } catch { setErr("Something went wrong. Please try again."); } finally { setLabel(null); setPicking(null); }
+    try { const r = await fn(); if (r.ok && r.data) { setV(r.data); setDiff(null); const e = r.data.effect; if (e && (e.confirmationCleared || e.signoffCleared || e.returnedToRep || e.approvalSyncError)) { setEffectNote(effectText(e)); onQuoteChanged?.(); } } else setErr(r.error ?? "The customer was not changed. Nothing was saved; you can try again."); } catch { setErr("We could not confirm whether this was saved. Reload the page and check the customer shown before trying again."); } finally { inFlight.current = false; setLabel(null); setPicking(null); }
   };
   // The search panel always opens and closes EMPTY: no stale query, results or "no customers found" message.
   const resetSearch = () => { setQ(""); setHits([]); setSearched(null); };
   const search = async () => {
-    setErr(null); setLabel("Searching Cin7 customers…"); setHits([]); setSearched(null);
+    setErr(null); setLabel(OP.searchCustomers); setHits([]); setSearched(null);
     try { const r = await searchQuoteCustomersForQuoteAction(q); if (r.ok) { setHits(r.data ?? []); setSearched(q.trim()); } else setErr(r.error ?? "Search failed."); }
     catch { setErr("Search failed. Please try again."); } finally { setLabel(null); }
   };

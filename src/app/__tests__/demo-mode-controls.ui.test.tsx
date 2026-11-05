@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -33,5 +33,46 @@ describe("Presenter role bar never leaves the quotation being presented", () => 
     fireEvent.click(screen.getByRole("button", { name: "Manager" }));
     expect(await screen.findByText(/switched off/)).toBeTruthy();
     expect(replace).not.toHaveBeenCalled();
+  });
+});
+
+describe("UX-007: role switch feedback", () => {
+  it("names the switch in flight, announces the navigation, and a double click switches once", async () => {
+    let done: (v: { ok: boolean }) => void = () => {};
+    select.mockImplementation(() => new Promise((r) => { done = r; }));
+    at(Q27);
+    render(createElement(DemoModeControls, { state }));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Estimator" })); fireEvent.click(screen.getByRole("button", { name: "Estimator" })); }); // both in ONE tick
+    expect(screen.getByTestId("demo-switch-status").textContent).toMatch(/Switching to Estimator…/);
+    expect(select).toHaveBeenCalledTimes(1);
+    expect((screen.getByRole("button", { name: "Manager" }) as HTMLButtonElement).disabled).toBe(true);
+    done({ ok: true });
+    await waitFor(() => expect(replace).toHaveBeenCalledWith(Q27));
+  });
+  it("a thrown switch says nothing changed and re-enables the buttons", async () => {
+    select.mockRejectedValue(new Error("network"));
+    at(Q27);
+    render(createElement(DemoModeControls, { state }));
+    fireEvent.click(screen.getByRole("button", { name: "Rep" }));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/nothing was changed/i);
+    expect((screen.getByRole("button", { name: "Rep" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(replace).not.toHaveBeenCalled();
+  });
+});
+
+describe("UX-007: a slow role switch says it is still waiting", () => {
+  it("adds real elapsed seconds after ~2s and never claims success", async () => {
+    vi.useFakeTimers();
+    try {
+      select.mockImplementation(() => new Promise(() => {}));
+      at(Q27);
+      render(createElement(DemoModeControls, { state }));
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Manager" })); });
+      expect(screen.queryByTestId("demo-switch-slow")).toBeNull();
+      await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+      expect(screen.getByTestId("demo-switch-slow").textContent).toMatch(/still waiting \(\d+s\)/);
+      expect(screen.getByTestId("demo-switch-status").textContent).toMatch(/Switching to Manager…/);
+      expect(replace).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
   });
 });
