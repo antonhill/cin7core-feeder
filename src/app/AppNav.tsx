@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { signOutAction } from "@/actions/auth";
 import { uploadCurrentOrgLogo } from "@/actions/org-logo";
 import { triggerSalesSyncAction } from "@/app/reports/actions";
-import { buildNavLinks, isNavLinkActive, BillingIcon, ShieldIcon, DiagnosticsIcon, TeamIcon, NotificationsIcon, SyncIcon, SignOutIcon } from "@/app/module-nav";
+import { buildNavItems, isNavLinkActive, type ModuleConfig, type NavItem, BillingIcon, ShieldIcon, DiagnosticsIcon, TeamIcon, NotificationsIcon, SyncIcon, SignOutIcon } from "@/app/module-nav";
 import { OrgSwitcher } from "@/app/OrgSwitcher";
 import { ActiveOrgSwitcher } from "@/app/ActiveOrgSwitcher";
 import { Spinner } from "@/app/Spinner";
@@ -130,6 +130,52 @@ export type AppNavProps = {
   hasMultipleOrgs: boolean;
 };
 
+function NavLinkRow({ link, pathname, nested = false }: { link: ModuleConfig; pathname: string; nested?: boolean }) {
+  const active = isNavLinkActive(pathname, link.href);
+  const Icon = link.Icon;
+  return (
+    <Link
+      href={link.href}
+      className={`group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${nested ? "md:pl-3 lg:pl-6" : ""} ${
+        active ? "bg-primary text-white shadow-sm" : "text-sidebar-text hover:bg-sidebar-bg-raised/60 hover:text-sidebar-text-active"
+      }`}
+    >
+      <span className={`flex shrink-0 items-center justify-center rounded-lg bg-sidebar-bg-raised opacity-95 transition-transform group-hover:scale-105 group-hover:opacity-100 ${nested ? "h-8 w-8" : "h-9 w-9"}`}>
+        <Icon className="h-5 w-5 shrink-0" />
+      </span>
+      <span className={`md:sr-only lg:not-sr-only ${active ? "font-semibold" : ""}`}>{link.label}</span>
+    </Link>
+  );
+}
+
+/** The NewQuip group: its modules are nested under one collapsible heading, open whenever one of them is the current page. */
+function NavGroup({ item, pathname }: { item: Extract<NavItem, { kind: "group" }>; pathname: string }) {
+  const hasActive = item.children.some((c) => isNavLinkActive(pathname, c.href));
+  const [openChoice, setOpenChoice] = useState<boolean | null>(null);
+  const open = openChoice ?? hasActive;
+  const Icon = item.Icon;
+  return (
+    <div className="flex flex-col gap-0.5">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls="nav-group-newquip"
+        onClick={() => setOpenChoice(!open)}
+        className={`group flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm font-semibold transition-colors ${hasActive ? "text-sidebar-text-active" : "text-sidebar-text hover:bg-sidebar-bg-raised/60 hover:text-sidebar-text-active"}`}
+      >
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sidebar-bg-raised opacity-95"><Icon className="h-5 w-5 shrink-0" /></span>
+        <span className="flex-1 md:sr-only lg:not-sr-only">{item.label}</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={`h-4 w-4 shrink-0 transition-transform md:hidden lg:block ${open ? "rotate-90" : ""}`} aria-hidden><path d="M9 6l6 6-6 6" /></svg>
+      </button>
+      {open && (
+        <div id="nav-group-newquip" className="flex flex-col gap-0.5">
+          {item.children.map((c) => <NavLinkRow key={c.href} link={c} pathname={pathname} nested />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AppNav({
   userEmail,
   isSuperAdmin,
@@ -213,7 +259,7 @@ export function AppNav({
   if (isNavHiddenPath(pathname)) return null;
 
   // Admin isn't an org-toggleable module — it's a cross-org super-admin tool, not something a client org's own visibility settings apply to.
-  const links = buildNavLinks(orgId, disabledModules, isSuperAdmin);
+  const items = buildNavItems(orgId, disabledModules, isSuperAdmin);
 
   /** Below `md`, the drawer is a full-page overlay — following a link should close it, same as an explicit close-button press. Static (md+) sidebar navigation is unaffected since `onRequestClose` is only wired below `md`. */
   function handleNavClick(e: React.MouseEvent<HTMLElement>) {
@@ -276,25 +322,9 @@ export function AppNav({
       )}
 
       <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-3 py-4">
-        {links.map((link) => {
-          const active = isNavLinkActive(pathname, link.href);
-          const Icon = link.Icon;
-          return (
-            <Link
-              key={link.href}
-              href={link.href}
-              className={`group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                /* A solid indigo fill (not just a lighter navy tint) makes the active module unmistakable at a glance — direction Option B. Deliberately not a full pill: "compact operational," not bubbly. */
-                active ? "bg-primary text-white shadow-sm" : "text-sidebar-text hover:bg-sidebar-bg-raised/60 hover:text-sidebar-text-active"
-              }`}
-            >
-              {/* Every module icon now carries its own color (see module-nav.tsx's SELF_COLORED_ICON_BADGE) — link.gradient is the same neutral value for all of them, which read as a stark white square against this sidebar's dark background (confirmed live 2026-07-11). This chip's own background is deliberately unchanged by the active state above: it stays on its native dark-sidebar chip color rather than sitting directly against the new indigo fill, which is what keeps every icon's own color readable regardless of which one is active. */}
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sidebar-bg-raised opacity-95 transition-transform group-hover:scale-105 group-hover:opacity-100">
-                <Icon className="h-5 w-5 shrink-0" />
-              </span>
-              <span className={`md:sr-only lg:not-sr-only ${active ? "font-semibold" : ""}`}>{link.label}</span>
-            </Link>
-          );
+        {items.map((item) => {
+          if (item.kind === "group") return <NavGroup key={item.label} item={item} pathname={pathname} />;
+          return <NavLinkRow key={item.link.href} link={item.link} pathname={pathname} />;
         })}
       </div>
 

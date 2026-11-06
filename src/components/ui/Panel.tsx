@@ -18,5 +18,5 @@ export function Panel({ children, className = "" }: { children: React.ReactNode;
 
 /** A panel's own section label — functional (it names the group beneath it), not a decorative eyebrow over a separate heading. */
 export function PanelTitle({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <p className={`text-xs font-semibold uppercase tracking-wide text-slate-500 ${className}`}>{children}</p>;
+  return <p className={`text-xs font-semibold uppercase tracking-wide text-slate-700 ${className}`}>{children}</p>;
 }

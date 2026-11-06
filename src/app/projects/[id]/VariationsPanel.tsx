@@ -1,21 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
-import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { Status, statusText } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { Panel, PanelTitle } from "@/components/ui/Panel";
+import { DisabledReason } from "./DisabledReason";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
 import { NEGATIVE_VARIATION_UNSUPPORTED, isNegativeAmountInput } from "@/lib/projects/variations";
-import { VariationBillingPanel } from "./VariationBillingPanel";
-import { approveVariationAction, raiseVariationAction, rejectVariationAction, repriceVariationAction } from "../actions";
+import { ConsolidatedReportPanel } from "./ConsolidatedReportPanel";
+import { BUSY, VariationBillingPanel } from "./VariationBillingPanel";
+import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
+import { ApprovalHistory } from "@/components/ApprovalHistory";
+import { approveVariationAction, raiseVariationAction, rejectVariationAction, repriceVariationAction, submitVariationForApprovalAction } from "../actions";
 
 // Project VARIATIONS — the only way scope/value changes after acceptance. Generic: nothing here knows about NewQuip.
 // original_contract is never edited; only APPROVED variations move the REVISED contract value. Cin7 is represented, never written.
 
-const TONE: Record<string, BadgeTone> = { DRAFT: "neutral", APPROVED: "success", REJECTED: "danger" };
 type Run = (fn: () => Promise<{ ok: boolean; error?: string }>, done?: string) => Promise<boolean>;
 
 export function VariationsPanel({ view, isAdmin, run, working }: { view: ProjectView; isAdmin: boolean; run: Run; working: boolean }) {
@@ -27,91 +29,118 @@ export function VariationsPanel({ view, isAdmin, run, working }: { view: Project
   const [estCost, setEstCost] = useState("");
   const [reason, setReason] = useState<Record<string, string>>({});
   const [price, setPrice] = useState<Record<string, string>>({});
+  const uid = useId();
+  const raiseWhy = working ? BUSY : !title.trim() && !amount.trim() ? "Enter a title and a price to raise a draft." : !title.trim() ? "Enter a title to raise a draft." : !amount.trim() ? "Enter a price to raise a draft." : undefined;
+
+  // Unsaved-work guard. Dirty = a form that is currently available differs from its empty/saved starting value: the raise form (project ACTIVE) has any typed field,
+  // a DRAFT variation's re-price differs from its current price, or (managers) a DRAFT variation has a typed reject reason. Cancelling, clearing, or a successful
+  // raise / re-price / reject returns each to its starting value and releases the guard; decided variations and read-only states never guard.
+  const raiseDirty = view.project.status === "ACTIVE" && [title, description, amount, estCost].some((x) => x.trim() !== "");
+  const draftVariations = view.variations.filter((v) => v.status === "DRAFT");
+  const repriceDirty = draftVariations.some((v) => { const p = (price[v.id] ?? "").trim(); return p !== "" && p !== (v.amount_cents / 100).toString(); });
+  const rejectDirty = isAdmin && draftVariations.some((v) => (reason[v.id] ?? "").trim() !== "");
+  useUnsavedGuard(raiseDirty || repriceDirty || rejectDirty);
+
+  /** The decision controls (or who decided and why) shown INSIDE each variation's record. */
+  const decisionOf = (v: ProjectView["variations"][number]) => {
+    const rid = `${v.id}-reprice-why`, bid = `${v.id}-busy`, xid = `${v.id}-reject-why`;
+    const noPrice = !(price[v.id] ?? "").trim(), noReason = !(reason[v.id] ?? "").trim();
+    return (
+    <div>
+      {v.status === "DRAFT" ? (
+        <div className="space-y-2">
+        <div className="flex flex-wrap items-end gap-2">
+          <Input label="Re-price (R)" value={price[v.id] ?? ""} onChange={(e) => setPrice({ ...price, [v.id]: e.target.value })} placeholder={(v.amount_cents / 100).toString()} />
+          <Button size="sm" variant="secondary" disabled={working || noPrice} aria-describedby={working ? bid : noPrice ? rid : undefined} onClick={async () => { if (await run(() => repriceVariationAction(projectId, v.id, price[v.id]), `Re-priced ${v.code}.`)) setPrice((m) => ({ ...m, [v.id]: "" })); }}>Re-price</Button>
+          <Button size="sm" variant="secondary" disabled={working} aria-describedby={working ? bid : undefined} onClick={() => run(() => submitVariationForApprovalAction(projectId, v.id), `Submitted ${v.code} for manager approval. It cannot be edited while it is pending.`)}>Submit for approval</Button>
+          {isAdmin ? (
+            <>
+              <Button size="sm" disabled={working} aria-describedby={working ? bid : undefined} onClick={() => run(() => approveVariationAction(projectId, v.id), `Approved ${v.code}. The revised contract value now includes it; the original is unchanged.`)}>Approve</Button>
+              <Input label="Reject reason" value={reason[v.id] ?? ""} onChange={(e) => setReason({ ...reason, [v.id]: e.target.value })} />
+              <Button size="sm" variant="destructive" disabled={working || noReason} aria-describedby={working ? bid : noReason ? xid : undefined} onClick={async () => { if (await run(() => rejectVariationAction(projectId, v.id, reason[v.id]), `Rejected ${v.code}.`)) setReason((m) => ({ ...m, [v.id]: "" })); }}>Reject</Button>
+            </>
+          ) : <span className="text-sm text-slate-600">Manager approval required</span>}
+        </div>
+        {working ? <p id={bid} className="text-sm text-slate-700">{BUSY}</p> : (
+          <>
+            {noPrice && <p id={rid} className="text-sm text-slate-700">Enter a new price to re-price.</p>}
+            {isAdmin && noReason && <p id={xid} className="text-sm text-slate-700">Enter a reason to reject.</p>}
+          </>
+        )}
+        </div>
+      ) : (
+        <span className="text-xs text-slate-600">{v.decided_by_email} · {v.decision_reason ?? "approved"}</span>
+      )}
+      <div className="mt-1"><ApprovalHistory docType="VARIATION" docId={v.id} label="Approval history" /></div>
+    </div>
+    );
+  };
+  const rejected = view.variations.filter((v) => v.status === "REJECTED");
 
   return (
-    <div className="mt-6 space-y-6">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        {[["Original contract value", c.originalContractCents, "Never changes"], ["Approved variations", c.approvedVariationsCents, "Draft and rejected variations count for nothing"], ["Revised contract value", c.revisedContractCents, "Original + approved variations"]].map(([k, v, hint]) => (
-          <div key={k as string} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{k as string}</p>
-            <p className="mt-2 whitespace-nowrap text-2xl font-bold tabular-nums text-slate-900">{formatCents(v as number)}</p>
-            <p className="mt-1 text-xs text-slate-500">{hint as string}</p>
-          </div>
-        ))}
-      </div>
+    <div className="mt-6 space-y-5">
+      <section aria-label="Variations and the contract value (ex VAT)">
+        <dl className="grid grid-cols-1 gap-x-8 gap-y-3 rounded-xl border border-slate-200 bg-white px-5 py-4 sm:grid-cols-3">
+          {([["Original contract value", c.originalContractCents, "Never changes"], ["Approved variations", c.approvedVariationsCents, "Draft and rejected variations count for nothing"], ["Revised contract value", c.revisedContractCents, "Original + approved variations"]] as const).map(([k, n, hint]) => (
+            <div key={k}>
+              <dt className="text-xs font-semibold uppercase tracking-wider text-slate-600">{k}</dt>
+              <dd className="mt-1 whitespace-nowrap text-lg font-bold tabular-nums text-slate-900">{formatCents(n)}</dd>
+              <p className="text-xs text-slate-600">{hint}</p>
+            </div>
+          ))}
+        </dl>
+        <p className="mt-1 text-xs text-slate-600">Post-acceptance material scope changes are always Variations. The estimator raises and prices; the manager approves or rejects. A decision is final.</p>
+      </section>
 
-      <Panel>
-        <PanelTitle>Variations</PanelTitle>
-        <p className="mt-2 text-xs text-slate-500">Post-acceptance material scope changes are always Variations. The estimator raises and prices; the manager approves or rejects. A decision is final.</p>
-        {view.variations.length === 0 ? (
-          <p className="mt-4 text-sm text-slate-600">No variations yet.</p>
-        ) : (
-          <div className="mt-4 overflow-x-auto">
-            <Table>
-              <THead><TR><TH>Code</TH><TH>Title</TH><TH>Status</TH><TH align="right">Amount (ex VAT)</TH><TH>Raised / priced by</TH><TH>Decision</TH></TR></THead>
-              <TBody>
-                {view.variations.map((v) => (
-                  <TR key={v.id}>
-                    <TD className="font-mono">{v.code}</TD>
-                    <TD><div className="font-medium text-slate-900">{v.title}</div>{v.description && <div className="text-xs text-slate-500">{v.description}</div>}</TD>
-                    <TD><Badge tone={TONE[v.status] ?? "neutral"}>{v.status}</Badge></TD>
-                    <TD align="right" className="whitespace-nowrap tabular-nums">{formatCents(v.amount_cents)}</TD>
-                    <TD className="text-xs text-slate-600">{v.raised_by_email}{v.priced_by_email && v.priced_by_email !== v.raised_by_email ? ` / ${v.priced_by_email}` : ""}</TD>
-                    <TD>
-                      {v.status === "DRAFT" ? (
-                        <div className="flex flex-wrap items-end gap-2">
-                          <Input label="Re-price (R)" value={price[v.id] ?? ""} onChange={(e) => setPrice({ ...price, [v.id]: e.target.value })} placeholder={(v.amount_cents / 100).toString()} />
-                          <Button size="sm" variant="secondary" disabled={working || !(price[v.id] ?? "").trim()} onClick={() => run(() => repriceVariationAction(projectId, v.id, price[v.id]), `Re-priced ${v.code}.`)}>Re-price</Button>
-                          {isAdmin ? (
-                            <>
-                              <Button size="sm" disabled={working} onClick={() => run(() => approveVariationAction(projectId, v.id), `Approved ${v.code}. The revised contract value now includes it; the original is unchanged.`)}>Approve</Button>
-                              <Input label="Reject reason" value={reason[v.id] ?? ""} onChange={(e) => setReason({ ...reason, [v.id]: e.target.value })} />
-                              <Button size="sm" variant="destructive" disabled={working || !(reason[v.id] ?? "").trim()} onClick={() => run(() => rejectVariationAction(projectId, v.id, reason[v.id]), `Rejected ${v.code}.`)}>Reject</Button>
-                            </>
-                          ) : <span className="text-xs text-slate-500">Manager approval required</span>}
-                        </div>
-                      ) : (
-                        <span className="text-xs text-slate-600">{v.decided_by_email} · {v.decision_reason ?? "approved"}</span>
-                      )}
-                    </TD>
-                  </TR>
-                ))}
-              </TBody>
-            </Table>
-          </div>
-        )}
-      </Panel>
+      {view.variations.length === 0 && <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-600">No variations yet.</p>}
+
+      <VariationBillingPanel view={view} isAdmin={isAdmin} run={run} working={working} renderDecision={decisionOf} />
+
+      {rejected.length > 0 && (
+        <section aria-label="Rejected variations" className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm">
+          <p className="font-medium text-slate-900">Rejected ({rejected.length})</p>
+          <ul className="mt-1 space-y-1 text-slate-600">
+            {rejected.map((v) => <li key={v.id}><span className="font-mono">{v.code}</span> {v.title} · {formatCents(v.amount_cents)} ex VAT · {v.decided_by_email ?? "—"}{v.decision_reason ? ` · ${v.decision_reason}` : ""}<div className="mt-0.5"><ApprovalHistory docType="VARIATION" docId={v.id} label="Approval history" /></div></li>)}
+          </ul>
+        </section>
+      )}
 
       {view.project.status === "ACTIVE" && (
-        <Panel>
-          <PanelTitle>Raise a variation</PanelTitle>
+        <details className="rounded-xl border border-slate-200 bg-white px-5 py-3" open={view.variations.length === 0}>
+          <summary className="cursor-pointer py-1.5 text-sm font-semibold text-slate-900">Raise a variation</summary>
           <div className="mt-4 grid gap-4 md:grid-cols-[1fr_2fr_1fr_1fr_auto] md:items-end">
             <Input label="Title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="V001 – Additional Ventilation" />
             <Input label="Scope / description" value={description} onChange={(e) => setDescription(e.target.value)} />
             <Input label="Price (R, ex VAT)" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="480000" />
             {isAdmin ? <Input label="Est. cost (R, internal)" value={estCost} onChange={(e) => setEstCost(e.target.value)} placeholder="optional" /> : <span />}
-            <Button disabled={working || !title.trim() || !amount.trim()} onClick={async () => { if (await run(() => raiseVariationAction(projectId, title, description, amount, estCost), "Variation raised as a DRAFT — the contract value is unchanged until a manager approves it.")) { setTitle(""); setDescription(""); setAmount(""); setEstCost(""); } }}>Raise draft</Button>
+            <Button disabled={working || !title.trim() || !amount.trim()} aria-describedby={raiseWhy ? `${uid}-raise-why` : undefined} onClick={async () => { if (await run(() => raiseVariationAction(projectId, title, description, amount, estCost), "Variation raised as a DRAFT — the contract value is unchanged until a manager approves it.")) { setTitle(""); setDescription(""); setAmount(""); setEstCost(""); } }}>Raise draft</Button>
           </div>
+          {raiseWhy && <DisabledReason id={`${uid}-raise-why`} className="mt-2">{raiseWhy}</DisabledReason>}
           {isNegativeAmountInput(amount) && <div className="mt-3"><Alert tone="warning">{NEGATIVE_VARIATION_UNSUPPORTED}</Alert></div>}
-        </Panel>
+        </details>
       )}
 
-      <VariationBillingPanel view={view} isAdmin={isAdmin} run={run} working={working} />
+      <details className="rounded-xl border border-slate-200 bg-white px-5 py-3">
+        <summary className="cursor-pointer py-1.5 text-sm font-semibold text-slate-900">Consolidated report: invoices by scope, and physical products from Cin7</summary>
+        <div className="mt-3"><ConsolidatedReportPanel view={view} /></div>
+      </details>
 
-      <Panel>
-        <PanelTitle>Cin7 representation — NOT SENT TO CIN7</PanelTitle>
+      <details className="rounded-xl border border-slate-200 bg-white px-5 py-3">
+        <summary className="cursor-pointer py-1.5 text-sm font-semibold text-slate-900">Cin7 planning view (placeholder references, nothing is sent)</summary>
+        <div className="mt-3">
         <Alert tone="info">POC only. The intended Cin7 documents are shown for understanding; nothing is created, updated or sent. Production may raise separate Cin7 invoices per commitment under the same Project.</Alert>
         <div className="mt-4 overflow-x-auto">
           <Table>
             <THead><TR><TH>Commitment</TH><TH>Cin7 sale (placeholder)</TH><TH>State</TH><TH align="right">Value (ex VAT)</TH></TR></THead>
             <TBody>
               {view.cin7Representation.map((r) => (
-                <TR key={r.saleRef}><TD>{r.label}</TD><TD className="font-mono">{r.saleRef}</TD><TD><Badge tone="warning">{r.state}</Badge></TD><TD align="right" className="whitespace-nowrap tabular-nums">{formatCents(r.valueCents)}</TD></TR>
+                <TR key={r.saleRef}><TD>{r.label}</TD><TD className="font-mono">{r.saleRef}</TD><TD><Status tone="warning">{statusText(r.state)}</Status></TD><TD align="right" className="whitespace-nowrap tabular-nums">{formatCents(r.valueCents)}</TD></TR>
               ))}
             </TBody>
           </Table>
         </div>
-      </Panel>
+        </div>
+      </details>
     </div>
   );
 }

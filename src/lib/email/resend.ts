@@ -6,6 +6,10 @@ export interface SendEmailInput {
   cc?: string[];
   subject: string;
   text: string;
+  /** Optional HTML alternative (the plain-text `text` is always sent as the fallback). */
+  html?: string;
+  /** Optional file attachments (e.g. a quotation PDF). */
+  attachments?: { filename: string; content: Buffer }[];
 }
 
 export interface SendEmailResult {
@@ -38,10 +42,20 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
       cc: input.cc?.length ? input.cc : undefined,
       subject: input.subject,
       text: input.text,
+      html: input.html,
+      attachments: input.attachments?.length ? input.attachments : undefined,
     });
     if (result.error) return { ok: false, error: result.error.message };
     return { ok: true, messageId: result.data?.id };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
+}
+
+/** Whether outbound email can be attempted at all. Reports presence only: never a key, and the sender is shown by domain. */
+export function emailConfigStatus(): { configured: boolean; missing: string[]; senderDomain: string | null } {
+  const missing = [!process.env.RESEND_API_KEY ? "RESEND_API_KEY" : null, !process.env.RESEND_FROM_EMAIL ? "RESEND_FROM_EMAIL" : null].filter((x): x is string => !!x);
+  const from = process.env.RESEND_FROM_EMAIL ?? "";
+  const domain = from.includes("@") ? from.split("@").pop()!.replace(/>.*/, "").trim() : null;
+  return { configured: missing.length === 0, missing, senderDomain: domain };
 }

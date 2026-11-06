@@ -1,7 +1,8 @@
 import type { ApprovedCommercialBaseline, BaselineLine, SuggestedStage } from "@/lib/projects/baseline";
-import { POC_STAGE_SPLIT_BPS } from "../grower/final-feedback";
 import type { AcceptedBaseline } from "./baseline";
 import { buildPhysicalScope } from "./physical-scope";
+import { splitContractBySchedule, type ScheduleStageTemplate } from "./billing-schedule";
+import type { ScheduleSource } from "./project-template";
 
 // NewQuip Quote-to-Project ADAPTER. The NewQuip domain may know about its scope and stages; the generic Projects engine must
 // not. This is the only place the two meet: it turns an ACCEPTED baseline into the engine's generic ApprovedCommercialBaseline.
@@ -10,26 +11,20 @@ import { buildPhysicalScope } from "./physical-scope";
 /** Which stage a baseline line's scope belongs to (visibility only — allocations never drive billing). */
 const STAGE_BY_ITEM: Record<string, string> = { delivery: "Delivery", installation: "Installation", concrete_slat_delivery: "Delivery" };
 
-/** Splits the contract across the six confirmed stages; the last stage absorbs any rounding so the schedule balances exactly. */
-export function splitContractIntoStages(contractCents: number): SuggestedStage[] {
-  let allocated = 0;
-  return POC_STAGE_SPLIT_BPS.map((s, i) => {
-    const isLast = i === POC_STAGE_SPLIT_BPS.length - 1;
-    const valueCents = isLast ? contractCents - allocated : Math.floor((contractCents * s.bps) / 10_000);
-    allocated += valueCents;
-    return { name: s.name, description: s.description, valueCents };
-  });
+/** New NewQuip projects default to the confirmed 40/55/5 standard schedule (see billing-schedule.ts); a schedule may be supplied. */
+export function splitContractIntoStages(contractCents: number, schedule?: readonly ScheduleStageTemplate[]): SuggestedStage[] {
+  return splitContractBySchedule(contractCents, schedule);
 }
 
-export function quoteToProjectBaseline(b: AcceptedBaseline, baselineHash: string, quoteId: string): ApprovedCommercialBaseline {
+export function quoteToProjectBaseline(b: AcceptedBaseline, baselineHash: string, quoteId: string, schedule?: readonly ScheduleStageTemplate[], scheduleSource?: ScheduleSource): ApprovedCommercialBaseline {
   const lines: BaselineLine[] = [
     ...b.commercial.lines.map((l) => ({
       lineRef: l.itemKey, sku: l.sku, description: l.label, quantity: l.quantity, salesValueCents: l.revenueCents,
-      estimatedCostCents: null, suggestedStageName: STAGE_BY_ITEM[l.itemKey] ?? "Manufacturing",
+      estimatedCostCents: null, suggestedStageName: STAGE_BY_ITEM[l.itemKey] ?? "Delivery",
     })),
     ...b.commercial.charges.map((c) => ({
       lineRef: c.key, sku: null, description: c.label, quantity: 1, salesValueCents: c.amountCents,
-      estimatedCostCents: null, suggestedStageName: STAGE_BY_ITEM[c.key] ?? "Manufacturing",
+      estimatedCostCents: null, suggestedStageName: STAGE_BY_ITEM[c.key] ?? "Delivery",
     })),
   ];
   return {
@@ -43,7 +38,7 @@ export function quoteToProjectBaseline(b: AcceptedBaseline, baselineHash: string
     taxInclusive: b.commercial.taxInclusive,
     salesperson: b.approvals.handoffBy,
     lines,
-    suggestedStages: splitContractIntoStages(b.contractCents),
+    suggestedStages: splitContractIntoStages(b.contractCents, schedule),
     // Inherited, never re-entered: the sealed scope, or - for a baseline sealed before it existed - the identical rebuild from its sealed lines.
     physicalScope: structuredClone(b.physicalScope ?? buildPhysicalScope(b.commercial.lines)),
     provenance: {
@@ -57,6 +52,8 @@ export function quoteToProjectBaseline(b: AcceptedBaseline, baselineHash: string
       priceSource: b.pricing.source.label,
       approvedBy: b.approvals.managerApprovedBy,
       approvedAt: b.approvals.managerApprovedAt,
+      // Where the stages came from (a template version is recorded by id + version; the stages themselves are the project's own frozen copy).
+      ...(scheduleSource ? { billingSchedule: scheduleSource } : {}),
     },
   };
 }

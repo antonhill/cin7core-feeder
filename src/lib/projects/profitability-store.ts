@@ -7,6 +7,7 @@ import { loadProjectView } from "./project-store";
 import { loadConsolidatedProject } from "./variation-billing-store";
 import { listPostings, loadSaleLink } from "./cin7-posting-store";
 import type { PhysicalPort } from "./physical-store";
+import { indicativeScopeCost, loadNonStockTotals } from "./project-costs-store";
 import { buildProfitability, type ProfitabilityReport, type ScopeInput } from "./profitability";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
@@ -31,11 +32,13 @@ export async function loadProfitability(
 
     const link = await loadSaleLink(db, input.orgId, s.projectId).catch(() => null);
     let cogsCents: number | null = null;
+    let invoiceLineCostCents: number | null = null;
     let deliveryComplete: boolean | null = null;
     if (link) {
       try {
         const sale = await portFor(link.instance_id).readSale(link.cin7_sale_id);
         cogsCents = sale.cogsCents;
+        invoiceLineCostCents = sale.invoiceLineCostCents ?? null;
         const rows = buildPhysicalStatus({ ordered: sale.ordered, invoices: sale.invoices, fulfilments: sale.fulfilments, stock: {}, assemblies: [] }).rows;
         deliveryComplete = rows.length === 0 ? null : rows.every((r) => r.remaining !== null) ? rows.every((r) => (r.remaining as number) <= 0) : null;
       } catch { /* left unknown: surfaces as COGS_NOT_READ and keeps the actual margin withheld */ }
@@ -48,7 +51,9 @@ export async function loadProfitability(
       mismatchedPostings: postings.filter((p) => p.last_error_code === "AMOUNT_MISMATCH").length,
       estimatedCostCents: s.scope === "BASE" ? input.base.estimatedCostCents : variation?.estimated_cost_cents ?? null,
       uncostedSellingCents: s.scope === "BASE" ? input.base.uncostedSellingCents : 0,
-      saleNumber: link?.cin7_sale_number ?? null, cogsCents, deliveryComplete,
+      saleNumber: link?.cin7_sale_number ?? null, cogsCents, invoiceLineCostCents, deliveryComplete,
+      indicativeCostCents: await indicativeScopeCost(db, input.orgId, s.projectId),
+      nonStock: await loadNonStockTotals(db, input.orgId, s.projectId),
     });
   }
   return buildProfitability(scopes, (input.now ?? new Date()).toISOString());

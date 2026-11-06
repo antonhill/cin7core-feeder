@@ -1,5 +1,6 @@
 import { requireCurrentOrg, type CurrentOrg } from "@/lib/current-org";
 import { createServiceRoleClient } from "@/supabase/server";
+import { assertNoDemoImpersonation } from "@/lib/demo-mode/context";
 
 /**
  * Throws unless the current session's user is an owner/admin of their own
@@ -12,6 +13,7 @@ import { createServiceRoleClient } from "@/supabase/server";
  * the app, and this feature's one extra read isn't worth that blast radius.
  */
 export async function requireOrgAdmin(action = "manage team members"): Promise<CurrentOrg> {
+  await assertNoDemoImpersonation(`This administrative action (${action})`); // Demo Mode: the scoped NewQuip actions use the effective user's own tier instead
   const current = await requireCurrentOrg();
 
   const db = createServiceRoleClient();

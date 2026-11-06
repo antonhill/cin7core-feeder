@@ -276,6 +276,39 @@ async function specialAccountExists(
   return false;
 }
 
+/** A Chart of Accounts entry as Cin7 reports it (read-only). Fields Cin7 does not return are null, never guessed. */
+export interface Cin7Account {
+  code: string;
+  name: string;
+  type: string | null;
+  accountClass: string | null;
+  /** Cin7's special-account designation (e.g. "Accounts receivable"); such accounts are not ordinary posting targets. */
+  systemAccount: string | null;
+  active: boolean;
+}
+
+/** Every account in the Chart of Accounts (`GET /ref/account`, paged, read-only). Writes nothing; Cin7 documents that accounts must not be auto-created. */
+export async function fetchAllAccounts(creds: Cin7Credentials): Promise<Cin7Account[]> {
+  const pageSize = 100;
+  const all: Cin7Account[] = [];
+  for (let page = 1; ; page++) {
+    const response = await cin7Request<{ AccountsList?: Array<Record<string, unknown>> }>(creds, REF_ACCOUNT_PATH, { query: { Page: page, Limit: pageSize } });
+    const entries = response.AccountsList ?? [];
+    for (const e of entries) {
+      const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
+      const code = str(e.Code); const name = str(e.Name);
+      if (!code || !name) continue;
+      const status = str(e.Status); const isActive = typeof e.IsActive === "boolean" ? e.IsActive : null;
+      all.push({
+        code, name, type: str(e.Type), accountClass: str(e.Class), systemAccount: str(e.SystemAccount),
+        active: isActive !== null ? isActive : status ? !/inactive|archiv|delet/i.test(status) : true,
+      });
+    }
+    if (entries.length < pageSize) break;
+  }
+  return all;
+}
+
 export function payableAccountExists(creds: Cin7Credentials, codeOrName: string, cache: Map<string, boolean>): Promise<boolean> {
   return specialAccountExists(creds, codeOrName, "Accounts payable", cache);
 }

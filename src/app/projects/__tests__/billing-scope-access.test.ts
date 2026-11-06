@@ -12,6 +12,7 @@ import * as cin7Actions from "../cin7-actions";
 import * as physicalActions from "../physical-actions";
 import * as billingActions from "../variation-billing-actions";
 import { NEWQUIP_POC_ORG_IDS } from "@/newquip/access";
+const REC = { saleId: "x", customerName: "c", location: "l", revenueAccount: "200", cin7TaxRule: "t", reason: "a reason that is long enough" };
 
 const ORG = NEWQUIP_POC_ORG_IDS[0];
 let db: FakeDb;
@@ -58,7 +59,7 @@ describe("ordinary users", () => {
     ["cancelDraft", () => actions.cancelDraftClaimAction(scope, "c")],
     ["recalculateStale", () => actions.recalculateStaleDraftAction(scope, "c")],
     ["cin7 status", () => cin7Actions.getCin7PostingStatusAction(scope)],
-    ["cin7 link", () => cin7Actions.linkCin7SaleAction(scope, "x", "200")],
+    ["cin7 link", () => cin7Actions.recoverLinkCin7SaleAction(scope, REC)],
     ["cin7 post", () => cin7Actions.postClaimToCin7Action(scope, "c", "x")],
     ["cin7 reconcile", () => cin7Actions.reconcileClaimPostingAction(scope, "c")],
     ["sale creation status", () => cin7Actions.getCin7SaleCreationStatusAction(scope)],
@@ -105,5 +106,95 @@ describe("opening commitments", () => {
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/cannot carry opening commitments/);
     expect(db.rows("project_opening_commitments")).toHaveLength(0);
+  });
+});
+
+describe("Cin7 Sale number on the variation billing state (read only, org-scoped)", () => {
+  beforeEach(() => { asMember(); });
+  const link = (org: string, project: string, num: string | null) => db.rows("project_cin7_sale_links").push({ org_id: org, project_id: project, cin7_sale_id: `s-${project}`, cin7_sale_number: num });
+  it("returns the stored number against the variation's own billing project, and nothing for the base project's Sale", async () => {
+    link(ORG, scope, "SO-V1"); link(ORG, parent, "SO-BASE");
+    const r = await billingActions.getVariationBillingAction(parent);
+    const vid = Object.keys(r.data!.billingProjectByVariation)[0];
+    expect(r.data!.saleNumberByVariation).toEqual({ [vid]: "SO-V1" });
+    expect(r.data!.saleLookupFailed).toBe(false);
+  });
+  it("reports a link with no stored number as null (linked, number not recorded), and no link as absent", async () => {
+    let r = await billingActions.getVariationBillingAction(parent);
+    expect(r.data!.saleNumberByVariation).toEqual({});
+    link(ORG, scope, null);
+    r = await billingActions.getVariationBillingAction(parent);
+    const vid = Object.keys(r.data!.billingProjectByVariation)[0];
+    expect(r.data!.saleNumberByVariation).toEqual({ [vid]: null });
+  });
+  it("never returns another organisation's Sale for the same project id", async () => {
+    link("other-org", scope, "SO-OTHER");
+    const r = await billingActions.getVariationBillingAction(parent);
+    expect(r.data!.saleNumberByVariation).toEqual({});
+  });
+  it("a failing Sale lookup does NOT fail the billing state: it is flagged, logged and no number is shown", async () => {
+    const real = db.from.bind(db);
+    (db as unknown as { from: (t: string) => unknown }).from = (t: string) => { if (t === "project_cin7_sale_links") throw new Error("boom"); return real(t); };
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const r = await billingActions.getVariationBillingAction(parent);
+    expect(r.ok).toBe(true);
+    expect(r.data!.saleLookupFailed).toBe(true);
+    expect(r.data!.saleNumberByVariation).toEqual({});
+    expect(log).toHaveBeenCalled();
+    log.mockRestore();
+  });
+});
+
+describe("Cin7 reconciliation on the variation billing state (read only, org-scoped, own billing project only)", () => {
+  beforeEach(() => { asMember(); });
+  const post = (org: string, project: string, state: string, extra: Record<string, unknown> = {}) => db.rows("project_claim_cin7_postings").push({ org_id: org, project_id: project, claim_id: `c-${Math.random()}`, posting_state: state, requested_at: new Date().toISOString(), ...extra });
+  const vidOf = async () => { const r = await billingActions.getVariationBillingAction(parent); return { r, vid: Object.keys(r.data!.billingProjectByVariation)[0] }; };
+  it("counts the variation's own invoices by recorded state, separating created, reconciled and uncertain; a failed-no-write posting is not an invoice", async () => {
+    for (const st of ["RECONCILED", "RECONCILED", "CREATED", "PENDING", "FAILED_UNCERTAIN", "FAILED_CONFIRMED_NO_WRITE"]) post(ORG, scope, st);
+    const { r, vid } = await vidOf();
+    expect(r.data!.reconciliationByVariation).toEqual({ [vid]: { invoices: 3, reconciled: 2, awaiting: 1, mismatched: 0, uncertain: 1, inProgress: 1 } });
+    expect(r.data!.reconciliationLookupFailed).toBe(false);
+  });
+  it("a PENDING inside the in-flight window is 'in progress'; an old PENDING is uncertain; a CREATED with a recorded AMOUNT_MISMATCH is shown as a mismatch, not 'awaiting'", async () => {
+    post(ORG, scope, "PENDING"); post(ORG, scope, "PENDING", { requested_at: new Date(Date.now() - 3_600_000).toISOString() }); post(ORG, scope, "PENDING", { requested_at: null });
+    post(ORG, scope, "CREATED", { last_error_code: "AMOUNT_MISMATCH" }); post(ORG, scope, "CREATED");
+    const { r, vid } = await vidOf();
+    expect(r.data!.reconciliationByVariation[vid]).toEqual({ invoices: 2, reconciled: 0, awaiting: 1, mismatched: 1, uncertain: 2, inProgress: 1 });
+  });
+  it("reports zero counts (not an absent key) when the billing project has no postings", async () => {
+    const { r, vid } = await vidOf();
+    expect(r.data!.reconciliationByVariation).toEqual({ [vid]: { invoices: 0, reconciled: 0, awaiting: 0, mismatched: 0, uncertain: 0, inProgress: 0 } });
+  });
+  it("BASE/VARIATION isolation: the original project's postings never count toward the variation, and another organisation's never appear", async () => {
+    post(ORG, parent, "RECONCILED"); post("other-org", scope, "RECONCILED");
+    const { r, vid } = await vidOf();
+    expect(r.data!.reconciliationByVariation[vid].invoices).toBe(0);
+  });
+  it("a failing read does NOT fail the billing state or the Sale number: it is flagged and logged, and no status is invented", async () => {
+    post(ORG, scope, "RECONCILED");
+    const real = db.from.bind(db);
+    // only the new batched read (.in on project_id) fails; the other readers of this table (the consolidated project) keep working
+    const wrap = (o: object): object => new Proxy(o, { get: (target, k, recv) => {
+      if (k === "in") return () => { throw new Error("boom"); };
+      const v = Reflect.get(target, k, recv);
+      if (k === "then") return typeof v === "function" ? v.bind(target) : v; // the builders are thenable at every step: awaiting must reach the real one
+      return typeof v === "function" ? (...a: unknown[]) => { const r = v.apply(target, a); return r && typeof r === "object" ? wrap(r) : r; } : v;
+    } });
+    (db as unknown as { from: (t: string) => unknown }).from = (t: string) => (t === "project_claim_cin7_postings" ? wrap(real(t) as object) : real(t));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const r = await billingActions.getVariationBillingAction(parent);
+    expect(r.error).toBeUndefined();
+    expect(r.ok).toBe(true);
+    expect(r.data!.reconciliationLookupFailed).toBe(true);
+    expect(r.data!.reconciliationByVariation).toEqual({});
+    expect(r.data!.saleLookupFailed).toBe(false);
+    expect(log).toHaveBeenCalled();
+    log.mockRestore();
+  });
+  it("makes no Cin7 call and writes nothing", async () => {
+    post(ORG, scope, "CREATED");
+    const before = JSON.stringify(db.rows("project_claim_cin7_postings"));
+    await billingActions.getVariationBillingAction(parent);
+    expect(JSON.stringify(db.rows("project_claim_cin7_postings"))).toBe(before);
   });
 });

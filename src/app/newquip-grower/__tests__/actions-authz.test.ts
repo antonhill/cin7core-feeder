@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeDb } from "@/lib/projects/__tests__/fake-db";
+import { seedGoldenCatalogue } from "@/newquip/grower/__tests__/golden-catalogue";
 import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
@@ -40,6 +41,7 @@ async function quoteInReview(withSignoff: boolean): Promise<string> {
 
 beforeEach(() => {
   db = new FakeDb();
+  seedGoldenCatalogue(db as never, ORG);
   vi.clearAllMocks();
   vi.mocked(requireNewquipPocOrg).mockResolvedValue(SESSION as never);
   vi.mocked(requireModuleAccess).mockResolvedValue(SESSION as never);
@@ -54,7 +56,7 @@ describe("every NewQuip action authorises first", () => {
     ["getGrowerQuoteAction", () => actions.getGrowerQuoteAction("q")],
     ["previewGrowerDraftAction", () => actions.previewGrowerDraftAction(readyDraft())],
     ["saveGrowerDraftAction", () => actions.saveGrowerDraftAction("q", readyDraft())],
-    ["sendGrowerQuoteToEstimatorAction", () => actions.sendGrowerQuoteToEstimatorAction("q", 1, "x")],
+    ["sendGrowerQuoteToEstimatorAction", () => actions.sendGrowerQuoteToEstimatorAction("q", 1, { source: "QUOTATION_CONTACT" })],
     ["returnGrowerQuoteToRepAction", () => actions.returnGrowerQuoteToRepAction("q", "x")],
     ["signOffGrowerQuoteAction", () => actions.signOffGrowerQuoteAction("q")],
     ["approveGrowerQuoteAction", () => actions.approveGrowerQuoteAction("q")],

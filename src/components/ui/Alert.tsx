@@ -1,6 +1,6 @@
 export type AlertTone = "info" | "success" | "warning" | "danger";
 
-const TONE_CLASSES: Record<AlertTone, string> = {
+export const TONE_CLASSES: Record<AlertTone, string> = {
   info: "border-info-border bg-info-subtle text-sky-900",
   success: "border-success-border bg-success-subtle text-emerald-900",
   warning: "border-warning-border bg-warning-subtle text-amber-900",

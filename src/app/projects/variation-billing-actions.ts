@@ -11,7 +11,10 @@ import { logActivity } from "@/lib/activity-log";
 import { createServiceRoleClient } from "@/supabase/server";
 import { PROJECTS_MODULE } from "@/app/module-nav";
 import { assertNewquipOrg } from "@/lib/projects/newquip-gate";
-import { amendVariationSchedule, createVariationBillingProject, listVariationStages, loadConsolidatedProject, saveDraftSchedule, type ConsolidatedProject } from "@/lib/projects/variation-billing-store";
+import type { ConsolidatedCommercial } from "@/lib/projects/consolidated-report";
+import { amendVariationSchedule, createVariationBillingProject, loadConsolidatedCommercial, listVariationStages, loadConsolidatedProject, loadReconciliationByProject, reconciliationByVariation, loadSaleNumbersByProject, saleNumbersByVariation, saveDraftSchedule, type ConsolidatedProject } from "@/lib/projects/variation-billing-store";
+import type { ReconciliationSummary } from "@/lib/projects/variation-billing-store";
+import { resolveVariationProducts, searchCatalogue, type CatalogueResult } from "@/lib/projects/catalogue-search";
 import { callerIsOrgAdmin } from "@/lib/projects/scope-access";
 import { scheduleFromPercents } from "@/lib/projects/variation-schedule";
 
@@ -24,6 +27,14 @@ export interface VariationBillingState {
   consolidated: ConsolidatedProject;
   schedules: Record<string, Array<{ name: string; bps: number }>>;
   billingProjectByVariation: Record<string, string>;
+  /** variation id -> the Cin7 Sale number already stored for its billing project; absent when none is linked. Read from stored links only. */
+  saleNumberByVariation: Record<string, string | null>;
+  /** True when the Sale-number lookup itself failed: the panel must then say the number is unavailable, never that no Sale exists. */
+  saleLookupFailed?: boolean;
+  /** variation id -> the reconciliation state recorded against ITS OWN billing project's Cin7 invoices (read-only; separate from claim approval). Absent when billing has not started. */
+  reconciliationByVariation: Record<string, ReconciliationSummary>;
+  /** True when that read failed: the panel must say the state is unavailable, never "nothing to reconcile". */
+  reconciliationLookupFailed?: boolean;
 }
 export interface SchedulePercentRow { name: string; percent: string }
 
@@ -44,7 +55,26 @@ export async function getVariationBillingAction(projectId: string): Promise<Vari
       const vid = consolidated.base.variations.find((v) => v.code === s.variationCode)?.id;
       if (s.scope === "VARIATION" && vid) billingProjectByVariation[vid] = s.projectId;
     }
-    return { ok: true, data: { consolidated: { ...consolidated, closureBlockers: admin ? consolidated.closureBlockers : [] }, schedules, billingProjectByVariation } };
+    // The Sale number is a convenience read: if it cannot be loaded the billing state (and its decision controls) must still load, but the panel is told so and says
+    // "unavailable" rather than "not created yet".
+    let saleNumberByVariation: Record<string, string | null> = {};
+    let saleLookupFailed = false;
+    try {
+      saleNumberByVariation = saleNumbersByVariation(billingProjectByVariation, await loadSaleNumbersByProject(db, orgId, Object.values(billingProjectByVariation)));
+    } catch (e) {
+      saleLookupFailed = true;
+      console.error("variation billing: Cin7 Sale number lookup failed", message(e));
+    }
+    // Same rule for the reconciliation state: a failed read must not break the page or pose as "nothing to reconcile".
+    let reconciliation: VariationBillingState["reconciliationByVariation"] = {};
+    let reconciliationLookupFailed = false;
+    try {
+      reconciliation = reconciliationByVariation(billingProjectByVariation, await loadReconciliationByProject(db, orgId, Object.values(billingProjectByVariation)));
+    } catch (e) {
+      reconciliationLookupFailed = true;
+      console.error("variation billing: invoice reconciliation lookup failed", message(e));
+    }
+    return { ok: true, data: { consolidated: { ...consolidated, closureBlockers: admin ? consolidated.closureBlockers : [] }, schedules, billingProjectByVariation, saleNumberByVariation, saleLookupFailed, reconciliationByVariation: reconciliation, reconciliationLookupFailed } };
   } catch (e) {
     return { ok: false, error: message(e) };
   }
@@ -69,9 +99,36 @@ export async function startVariationBillingAction(projectId: string, variationId
     assertNewquipOrg(orgId);
     await requireOrgAdmin("start variation billing");
     const db = createServiceRoleClient();
-    const r = await createVariationBillingProject(db, { isManager: true }, email ?? "unknown", { orgId, projectId, variationId, products });
-    if (r.created) await logActivity(db, { orgId, actor: { userId, email }, action: "projects.variation_billing_started", summary: "Started billing for an approved variation (separate billing project; no Cin7 write)", detail: { projectId, variationId, billingProjectId: r.billingProjectId, skus: products.map((p) => p.sku) } });
+    // Each pick is verified against the synced Cin7 catalogue and described from it (never from the browser); none = service-only.
+    const verified = await resolveVariationProducts(db, orgId, products.map((p) => ({ sku: p.sku, quantity: p.quantity })));
+    const r = await createVariationBillingProject(db, { isManager: true }, email ?? "unknown", { orgId, projectId, variationId, products: verified });
+    if (r.created) await logActivity(db, { orgId, actor: { userId, email }, action: "projects.variation_billing_started", summary: "Started billing for an approved variation (separate billing project; no Cin7 write)", detail: { projectId, variationId, billingProjectId: r.billingProjectId, skus: verified.map((p) => p.sku), serviceOnly: verified.length === 0 } });
     return { ok: true, data: r };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+/** Read-only (no Cin7 call): contract, claims and Cin7 invoices of the original project and every variation, each counted once. */
+export async function getConsolidatedCommercialAction(projectId: string): Promise<VariationBillingResult<ConsolidatedCommercial>> {
+  try {
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    assertNewquipOrg(orgId);
+    const db = createServiceRoleClient();
+    const r = await loadConsolidatedCommercial(db, orgId, projectId);
+    return r ? { ok: true, data: r } : { ok: false, error: "Project not found." };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+/** Search the synced Cin7 catalogue by SKU or description (read-only, org-scoped, NewQuip only). Stock is shown, never required. */
+export async function searchVariationProductsAction(query: string): Promise<VariationBillingResult<CatalogueResult>> {
+  try {
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    assertNewquipOrg(orgId);
+    await requireOrgAdmin("search products for a variation");
+    return { ok: true, data: await searchCatalogue(createServiceRoleClient(), orgId, query) };
   } catch (e) {
     return { ok: false, error: message(e) };
   }

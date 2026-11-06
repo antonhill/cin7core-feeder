@@ -5,7 +5,7 @@ import { join } from "node:path";
 // Terminology guard: "remaining" is contract − invoiced/committed, NOT contract − earned. The label must say so,
 // everywhere the metric appears, and the three progress concepts must stay separate in the UI.
 const read = (rel: string) => readFileSync(join(__dirname, "..", rel), "utf8");
-const detail = read("[id]/page.tsx");
+const detail = read("[id]/ProjectWorkspace.tsx");
 const list = read("page.tsx");
 
 describe("Projects terminology", () => {
@@ -33,7 +33,7 @@ describe("Projects terminology", () => {
   it("privileged controls wait for a resolved permission (loading | member | admin) and fail closed", () => {
     expect(detail).toContain('type ViewerPermission = "loading" | "member" | "admin"');
     expect(detail).toContain('useState<ViewerPermission>("loading")');
-    expect(detail).toContain('r.ok && r.data?.canApprove ? "admin" : "member"');
+    expect(detail).toContain('res.ok && res.viewer?.canApprove ? "admin" : "member"'); // the viewer's permissions arrive with the project; no result => member
     expect(detail).toContain('perm === "admin"');
     expect(detail).toContain('perm === "member"');
     expect(detail).not.toContain("canApprove}"); // no boolean default that could flash admin controls

@@ -2,8 +2,8 @@
 // Used by every Cin7-writing Server Action.
 //
 //  * OFF unless NEWQUIP_CIN7_WRITES_ENABLED is exactly the string "true" (any other value, including "TRUE", "1", "yes", is OFF).
-//  * ALWAYS OFF on Production (VERCEL_ENV === "production") whatever the variable says: Production writes stay disabled until the owner
-//    changes this code in a reviewed release, not by flipping a variable.
+//  * ON ONLY on a Vercel PREVIEW deployment (VERCEL_ENV === "preview"). Production, a local run (`next dev`/`next start`), a test runner or an unset/unknown value are
+//    ALWAYS OFF whatever the variable says: writes in Production stay disabled until the owner changes this code in a reviewed release, not by flipping a variable.
 //  * ALWAYS OFF unless the deployment is wired to the required Supabase project (below). A Preview that inherited the wrong database
 //    cannot write to Cin7 even if the flag is on. Fails closed: an unreadable or missing URL is a mismatch.
 
@@ -28,7 +28,7 @@ export function supabaseWiring(env: Record<string, string | undefined>): Supabas
 }
 
 export function cin7WritesEnabled(env: Record<string, string | undefined>): boolean {
-  if (env.VERCEL_ENV === "production") return false;
+  if (env.VERCEL_ENV !== "preview") return false;   // Preview only: Production, local and unknown environments never write
   if (!supabaseWiring(env).ok) return false;
   return env.NEWQUIP_CIN7_WRITES_ENABLED === "true";
 }

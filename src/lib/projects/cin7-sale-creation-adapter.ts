@@ -9,6 +9,7 @@ import { fetchCustomerDefaults } from "@/cin7/customers";
 import { fetchAllProductAvailability, type Cin7ProductAvailabilityEntry } from "@/cin7/product-availability";
 import { createAdvancedSale, customerExists, findSaleByExternalIdForCustomer, resolveProductIds } from "@/cin7/sale-order-write";
 import type { SaleCreationPort } from "./cin7-sale-creation-store";
+import { readBackFulfilments } from "./cin7-fulfilment-readback";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 const cents = (n: unknown): number | null => {
@@ -48,11 +49,12 @@ export function buildSaleCreationPort(db: Db, orgId: string, instanceId: string)
     },
     async readSale(saleId) {
       const s = await fetchSaleDetail(await creds(), saleId);
+      const fulfilments = readBackFulfilments(s.Fulfilments);
       return {
         id: s.ID, type: s.Type ?? null, orderStatus: s.Order?.Status ?? null, customer: s.Customer ?? null, externalId: s.ExternalID ?? null, taxRule: s.TaxRule ?? null,
         lines: (s.Order?.Lines ?? []).map((l) => ({ sku: l.SKU ?? null, quantity: l.Quantity === undefined || !Number.isFinite(Number(l.Quantity)) ? null : Number(l.Quantity), priceCents: cents(l.Price) })),
         charges: (s.Order?.AdditionalCharges ?? []).map((c) => ({ description: c.Description ?? null, priceCents: cents(c.Total ?? c.Price), taxCents: cents(c.Tax) })),
-        invoiceCount: (s.Invoices ?? []).length, fulfilmentCount: (s.Fulfilments ?? []).length,
+        invoiceCount: (s.Invoices ?? []).length, fulfilmentCount: fulfilments.length, fulfilments,
       };
     },
     async findByExternalId(customer, externalId, sinceIso) { return findSaleByExternalIdForCustomer(await creds(), customer, externalId, sinceIso); },

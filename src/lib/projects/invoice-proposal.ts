@@ -35,6 +35,11 @@ export interface ProposalInput {
   reserved: Record<string, number>;
   /** SKUs in the approved scope that are not on the Sale's order (reported, never invoiced). */
   scopeSkus: string[];
+  /**
+   * DELIVERY-ALLOCATION rule: when present, the claim is for ONE planned delivery and this is the per-SKU quantity allocated to it and not yet
+   * invoiced against it. Eligibility then follows the allocation (even while goods are still loading), not the shipped quantity.
+   */
+  allocated?: Record<string, number>;
 }
 
 export type LineStatus = "PROPOSED" | "NOTHING_ELIGIBLE" | "EXCLUDED" | "UNKNOWN";
@@ -70,6 +75,7 @@ export function proposeInvoice(i: ProposalInput): InvoiceProposal {
   const notes: string[] = [];
   const subtotalCents = i.claimLines.reduce((n, l) => n + l.amountCents, 0);
   const taxCents = i.claimLines.reduce((n, l) => n + l.taxCents, 0);
+  if (i.allocated && dispatchRuleApplies) notes.push("Products are proposed from the delivery allocation (not from shipment); shipment is reconciled separately from Cin7.");
   if (!dispatchRuleApplies) notes.push(`${kinds.join(" / ") || "This"} claim: no physical product lines are proposed by default (commercial charge only).`);
 
   const lines: ProposedLine[] = i.orderLines.map((o) => {
@@ -90,6 +96,14 @@ export function proposeInvoice(i: ProposalInput): InvoiceProposal {
     if (o.ordered === null) { status = "UNKNOWN"; reasons.push("The ordered quantity on the Cin7 Sale is unreadable."); }
     else if (invoiced === null) { status = "UNKNOWN"; reasons.push("A previous invoice's product lines are unreadable, so the invoiced quantity cannot be proven."); }
     else if (!dispatchRuleApplies) { status = "EXCLUDED"; eligible = 0; reasons.push("Commercial-only claim (deposit / service): physical lines are not proposed by default."); }
+    else if (i.allocated) {
+      // Allocation rule: shipped is irrelevant (it is shown, never used). Capped by what the Sale still allows, so nothing is invoiced twice.
+      const alloc = i.allocated[o.sku] ?? 0;
+      eligible = Math.max(0, Math.min(alloc, o.ordered - invoiced - reserved));
+      if (alloc === 0) reasons.push("Nothing is allocated to this delivery for this SKU.");
+      if (alloc > 0 && eligible < alloc) reasons.push(`Only ${eligible} of the ${alloc} allocated can still be invoiced on the Sale (ordered ${o.ordered}, invoiced ${invoiced}, reserved ${reserved}).`);
+      status = eligible > 0 ? "PROPOSED" : "NOTHING_ELIGIBLE";
+    }
     else if (shipped === null) { status = "UNKNOWN"; reasons.push("Shipment evidence is unreadable, so nothing is proposed."); }
     else {
       eligible = Math.max(0, Math.min(shipped, o.ordered) - invoiced - reserved);

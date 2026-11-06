@@ -10,8 +10,11 @@ import { NEGATIVE_VARIATION_UNSUPPORTED } from "./variations";
 import { variationScope } from "./product-scope";
 import { loadProjectView } from "./project-store";
 import { listPostings } from "./cin7-posting-store";
+import { isStalePending } from "./cin7-posting";
 import { loadCreation } from "./cin7-sale-creation-store";
 import type { ProjectView } from "./project-view";
+import { assertNotPendingApproval } from "@/lib/approvals/pending-guard";
+import { buildConsolidatedCommercial, type ConsolidatedCommercial, type ReportScopeInput } from "./consolidated-report";
 import { scheduleToStages, validateVariationSchedule, type ScheduleStageInput } from "./variation-schedule";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
@@ -43,6 +46,7 @@ export async function saveDraftSchedule(db: Db, orgId: string, projectId: string
   if (!check.ok) fail(check.error);
   const v = await loadVariation(db, orgId, projectId, variationId);
   if (v.status !== "DRAFT") fail(`A ${v.status} variation's schedule is frozen. Use a controlled amendment.`);
+  await assertNotPendingApproval(db, orgId, "VARIATION", variationId);
   const del = await db.from("project_variation_stages").delete().eq("org_id", orgId).eq("variation_id", variationId);
   if (del.error) fail(`replace schedule: ${del.error.message}`);
   const ins = await db.from("project_variation_stages").insert(stages.map((s, i) => ({ org_id: orgId, variation_id: variationId, sort_order: i + 1, name: s.name.trim(), bps: s.bps }))).select("id");
@@ -222,5 +226,103 @@ export async function closureBlockers(db: Db, orgId: string, projectId: string):
     for (const u of await unresolvedItems(db, orgId, k.id)) out.push(`${k.project_reference}: ${u}`);
   }
   if (self.billing_scope === "VARIATION") out.push(...(await unresolvedItems(db, orgId, projectId)));
+  return out;
+}
+
+// ── consolidated COMMERCIAL report (READ-ONLY; no Cin7 call) ─────────────────
+
+
+/** Contract, claims and Cin7 invoices of the BASE scope and every variation, each counted once. Reads only Supabase. */
+export async function loadConsolidatedCommercial(db: Db, orgId: string, projectId: string): Promise<ConsolidatedCommercial | null> {
+  const c = await loadConsolidatedProject(db, orgId, projectId);
+  if (!c) return null;
+  const byVar = new Map(c.base.variations.map((v) => [v.code, v]));
+  const inputs: ReportScopeInput[] = [];
+  for (const s of c.scopes) {
+    const view = s.scope === "BASE" ? c.base : await loadProjectView(db, orgId, s.projectId);
+    const postings = await listPostings(db, orgId, s.projectId);
+    const live = postings.filter((p) => p.posting_state === "CREATED" || p.posting_state === "RECONCILED");
+    const numberByClaim = new Map(live.map((p) => [p.claim_id, p.cin7_invoice_number]));
+    inputs.push({
+      scope: s.scope, label: s.scope === "BASE" ? "Original contract" : `${s.variationCode} variation`, projectId: s.projectId,
+      contractCents: s.contractCents, claimableCents: s.claimableCents, billingStarted: true,
+      claims: (view?.claims ?? []).map((cl) => ({ claimNumber: cl.claim_number, status: cl.status, subtotalCents: cl.subtotal_cents, totalCents: cl.total_cents, invoiceNumber: numberByClaim.get(cl.id) ?? null })),
+      invoices: live.map((p) => ({ invoiceNumber: p.cin7_invoice_number, amountExVatCents: p.amount_ex_vat_cents, totalCents: p.total_cents, state: p.posting_state })),
+    });
+  }
+  // Approved variations whose billing has not started are part of the revised contract but have no billing project to report from.
+  for (const u of c.unbilledApprovedVariations) {
+    inputs.push({ scope: "VARIATION", label: `${u.code} variation`, projectId: `unbilled:${u.id}`, contractCents: byVar.get(u.code)?.amount_cents ?? u.amountCents, claimableCents: 0, claims: [], invoices: [], billingStarted: false });
+  }
+  return buildConsolidatedCommercial(inputs);
+}
+
+/**
+ * The Cin7 Sale number already stored against each given billing project (project_cin7_sale_links.cin7_sale_number). READ ONLY: no Cin7 call, no write.
+ * Org-scoped, and only the projects asked for are read. A project WITH a link has a key: its value is the stored number, or null when the link carries no number.
+ * A project with no link has no key. A number is never inferred.
+ */
+export async function loadSaleNumbersByProject(db: Db, orgId: string, projectIds: readonly string[]): Promise<Record<string, string | null>> {
+  if (projectIds.length === 0) return {};
+  const r = await db.from("project_cin7_sale_links").select("project_id, cin7_sale_number").eq("org_id", orgId).in("project_id", [...projectIds]);
+  if (r.error) fail(`load Cin7 Sale numbers: ${r.error.message}`);
+  const out: Record<string, string | null> = {};
+  for (const row of (r.data ?? []) as Array<{ project_id: string; cin7_sale_number: string | null }>) out[row.project_id] = row.cin7_sale_number || null;
+  return out;
+}
+
+/** variation id -> Sale number (or null: linked, number not recorded), joining each variation's own billing project to that project's link. A variation whose project has no link is absent. */
+export function saleNumbersByVariation(billingProjectByVariation: Record<string, string>, numberByProject: Record<string, string | null>): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  for (const [variationId, projectId] of Object.entries(billingProjectByVariation)) if (projectId in numberByProject) out[variationId] = numberByProject[projectId];
+  return out;
+}
+
+/** What the compact variation summary says about Cin7 reconciliation, counted from the variation's OWN billing project's invoice postings. */
+export interface ReconciliationSummary {
+  /** Cin7 invoices that exist (posting CREATED or RECONCILED). */
+  invoices: number;
+  /** Of those, the ones Toolbox has reconciled against Cin7. */
+  reconciled: number;
+  /** Invoices that exist, have not been reconciled, and have no recorded mismatch (CREATED). */
+  awaiting: number;
+  /** Invoices whose last reconciliation recorded an amount mismatch (CREATED with AMOUNT_MISMATCH): the evidence is shown, never reduced to "awaiting". */
+  mismatched: number;
+  /** Postings whose outcome is not known (FAILED_UNCERTAIN, or a PENDING older than the stale window): they may have created an invoice and must be reconciled. */
+  uncertain: number;
+  /** Postings still within the normal in-flight window (PENDING, not stale): a post is running; nothing to act on yet. */
+  inProgress: number;
+}
+export interface PostingStateRow { posting_state: string; last_error_code?: string | null; requested_at?: string | null }
+
+/** Pure: counts one project's postings. FAILED_CONFIRMED_NO_WRITE counts for nothing (no invoice exists). A PENDING without a readable time is treated as uncertain, never as in progress. */
+export function summariseReconciliation(rows: readonly PostingStateRow[], now: number = Date.now()): ReconciliationSummary {
+  const of = (st: string) => rows.filter((r) => r.posting_state === st);
+  const created = of("CREATED");
+  const mismatched = created.filter((r) => r.last_error_code === "AMOUNT_MISMATCH").length;
+  const pending = of("PENDING");
+  const fresh = pending.filter((r) => !!r.requested_at && Number.isFinite(Date.parse(r.requested_at)) && !isStalePending(r.requested_at, now)).length;
+  const reconciled = of("RECONCILED").length;
+  return { invoices: reconciled + created.length, reconciled, awaiting: created.length - mismatched, mismatched, uncertain: of("FAILED_UNCERTAIN").length + pending.length - fresh, inProgress: fresh };
+}
+
+/**
+ * The reconciliation state already recorded against each given billing project's invoice postings (project_claim_cin7_postings). READ ONLY: no Cin7 call,
+ * no write, no inference. Org-scoped, and only the projects asked for are read (the caller passes VARIATION billing projects, never the BASE project). Every
+ * requested project has a key (zero counts when it has no postings). Any read error throws: a status is never guessed.
+ */
+export async function loadReconciliationByProject(db: Db, orgId: string, projectIds: readonly string[]): Promise<Record<string, ReconciliationSummary>> {
+  if (projectIds.length === 0) return {};
+  const r = await db.from("project_claim_cin7_postings").select("project_id, posting_state, last_error_code, requested_at").eq("org_id", orgId).in("project_id", [...projectIds]);
+  if (r.error) fail(`load invoice reconciliation: ${r.error.message}`);
+  const rows: Record<string, PostingStateRow[]> = Object.fromEntries(projectIds.map((id) => [id, []]));
+  for (const row of (r.data ?? []) as Array<PostingStateRow & { project_id: string }>) rows[row.project_id]?.push(row);
+  return Object.fromEntries(Object.entries(rows).map(([id, st]) => [id, summariseReconciliation(st)]));
+}
+
+/** variation id -> its billing project's reconciliation summary. A variation whose billing project was not read is absent. */
+export function reconciliationByVariation(billingProjectByVariation: Record<string, string>, byProject: Record<string, ReconciliationSummary>): Record<string, ReconciliationSummary> {
+  const out: Record<string, ReconciliationSummary> = {};
+  for (const [variationId, projectId] of Object.entries(billingProjectByVariation)) if (projectId in byProject) out[variationId] = byProject[projectId];
   return out;
 }

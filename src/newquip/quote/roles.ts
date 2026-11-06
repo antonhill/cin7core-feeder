@@ -18,6 +18,8 @@ export function rolesFor(tier: OrgTier): ReadonlySet<QuoteRole> {
 
 export const PHYSICAL_PROGRESS_ROLES: readonly QuoteRole[] = ["rep", "estimator"];
 export const COMMERCIAL_APPROVAL_ROLES: readonly QuoteRole[] = ["manager"];
+/** Creating a Project from an accepted quotation hands it to delivery and billing: Manager authority only (a plain Rep/Estimator member cannot). */
+export const PROJECT_CREATE_ROLES: readonly QuoteRole[] = ["manager"];
 export const VARIATION_PREPARE_ROLES: readonly QuoteRole[] = ["estimator", "manager"];
 export const VARIATION_APPROVE_ROLES: readonly QuoteRole[] = ["manager"];
 

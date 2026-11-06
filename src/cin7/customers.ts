@@ -200,6 +200,18 @@ export async function fetchCustomerDefaults(creds: Cin7Credentials, name: string
 }
 
 /**
+ * READ-ONLY (GET /customer): ONE customer's full record - ID, Name, DisplayName, Currency, PaymentTerm, TaxNumber and the nested Addresses[] / Contacts[] (see section 10 of
+ * docs/cin7-api-findings.md) - by exact, case-insensitive Name. Null when there is no match; throws when the name is ambiguous. Used for NewQuip quotation customer snapshots.
+ */
+export async function fetchCustomerRecordByName(creds: Cin7Credentials, name: string): Promise<Record<string, unknown> | null> {
+  const response = await cin7Request<{ CustomerList?: Record<string, unknown>[] }>(creds, "/customer", { query: { Name: name, page: 1, limit: 10 } });
+  const target = name.trim().toLowerCase();
+  const matches = (response.CustomerList ?? []).filter((c) => String(c.Name ?? "").trim().toLowerCase() === target);
+  if (matches.length > 1) throw new Error("More than one Cin7 customer has that exact name; resolve the duplicate in Cin7 first.");
+  return matches[0] ?? null;
+}
+
+/**
  * Fetches every customer in this Cin7 instance (with nested Addresses[]/
  * Contacts[], per §10 in docs/cin7-api-findings.md) for a live full-fidelity
  * pull — same page-until-short-page pagination as fetchAllProductsWithBom in

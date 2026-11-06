@@ -1,4 +1,5 @@
 import { computeLine, computeQuote, type QuoteLineInput, type QuoteResult } from "@/lib/quote-margin";
+import { isOptionalItemKey } from "./types";
 import type { FeederVariant, GeneratedLine, GrowerItemKey, PenningPigSize } from "./types";
 import { estimatorPricedFor, feederSkuFor, manualLinesFor, packageFor, recommendedSkuFor, type PackageComponent } from "./commercial";
 import { PENNING_RATE_PER_RM } from "./workbook-price-source";
@@ -85,6 +86,9 @@ export type BudgetState = "awaiting_pricing" | "partial" | "complete";
 export interface EstimatorResolution {
   unitPriceExVat: number;
   reason: string;
+  /** Server-stamped provenance (who/when this manual quotation price was entered or last changed). */
+  by?: string;
+  at?: string;
 }
 
 export interface BudgetQuote {
@@ -214,7 +218,7 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
     /** The line could not be priced the normal way: a valid estimator resolution rescues it (visibly), otherwise it blocks. */
     const fail = (line: Omit<BridgeLine, "pricedBy">, blocker: string): void => {
       if (validResolution(resolution)) {
-        bridge.push({ ...priceByPerson(g, resolution.unitPriceExVat, "estimator_resolution", `POC MANUAL PRICE OVERRIDE (${line.reason}) — reason: ${resolution.reason.trim()}`, line.sku), components: line.components });
+        bridge.push({ ...priceByPerson(g, resolution.unitPriceExVat, "estimator_resolution", `MANUAL QUOTATION PRICE - exceptional, not from the approved price source (${line.reason}) - reason: ${resolution.reason.trim()}`, line.sku), components: line.components });
         return;
       }
       bridge.push({ ...line, pricedBy: null });
@@ -281,8 +285,8 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
     // ---- SINGLE SKU ----
     const expected = expectedSkuFor(g.itemKey, opts.feederVariant);
     const confirmed = opts.confirmedMappings?.[g.itemKey] ?? null;
-    // pvc_door has no recommended SKU: the estimator's confirmed choice is the SKU. Everything else must be the expected one.
-    const sku = g.itemKey === "pvc_door" ? confirmed : confirmed && confirmed === expected ? confirmed : null;
+    // pvc_door and the optional additional elements have no recommended SKU: the estimator's confirmed Cin7 choice IS the SKU. Everything else must be the expected one.
+    const sku = g.itemKey === "pvc_door" || isOptionalItemKey(g.itemKey) ? confirmed : confirmed && confirmed === expected ? confirmed : null;
     if (!sku) {
       fail({ ...emptyLine(g), status: "unmapped", reason: confirmed && expected ? `Confirmed ${confirmed} does not match the expected ${expected}.` : "Product mapping not yet confirmed." }, `${g.label}: product mapping ${expected ? `to ${expected} ` : ""}not confirmed`);
       continue;

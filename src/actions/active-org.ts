@@ -1,5 +1,6 @@
 "use server";
 
+import { assertNoDemoImpersonation } from "@/lib/demo-mode/context";
 import { cookies } from "next/headers";
 import { createSessionClient } from "@/supabase/server-session";
 import { createServiceRoleClient } from "@/supabase/server";
@@ -62,6 +63,7 @@ export interface SetActiveOrgResult {
  */
 export async function setActiveOrgAction(orgId: string): Promise<SetActiveOrgResult> {
   try {
+    await assertNoDemoImpersonation("Switching organisation"); // Demo Mode: the effective identity is scoped to the NewQuip test organisation
     const supabase = await createSessionClient();
     const {
       data: { user },

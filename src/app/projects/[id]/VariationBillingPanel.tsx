@@ -1,13 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Alert } from "@/components/ui/Alert";
-import { Badge } from "@/components/ui/Badge";
+import { ScopeTag, Status, statusText } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
+import { Block } from "./LoadingSkeletons";
+import { ProjectWorkspace } from "./ProjectWorkspace";
+import { VariationProductPicker } from "./VariationProductPicker";
+import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
 import { amendVariationScheduleAction, getVariationBillingAction, saveVariationScheduleAction, startVariationBillingAction, type VariationBillingState } from "../variation-billing-actions";
 
@@ -16,11 +20,46 @@ import { amendVariationScheduleAction, getVariationBillingAction, saveVariationS
 type Run = (fn: () => Promise<{ ok: boolean; error?: string }>, done?: string) => Promise<boolean>;
 type Row = { name: string; percent: string };
 
+/** The Cin7 Sale line: a stored number, or an honest account of why there is none. A failed lookup is never reported as "no Sale". */
+function saleLine(state: VariationBillingState, variationId: string, billingStarted: boolean) {
+  const n = state.saleNumberByVariation?.[variationId];
+  if (n) return <span className="font-mono font-medium text-slate-900">{n}</span>;
+  if (!billingStarted) return <span className="text-slate-600">billing not started</span>; // no billing project means there is nothing to look up: a failed lookup is irrelevant
+  if (state.saleLookupFailed) return <span className="text-slate-600">number unavailable (could not be loaded)</span>;
+  if (n === null) return <span className="text-slate-600">linked, number not recorded</span>;
+  return <span className="text-slate-600">not created yet</span>;
+}
+
+/**
+ * The Cin7 reconciliation line: what is recorded against THIS variation's own billing project's invoices. Reconciliation (Toolbox's read-only check of a Cin7 invoice
+ * against what was approved) is a different thing from approving a claim to be invoiced; this line speaks only about the former. A failed read is never "nothing to reconcile".
+ */
+function reconciliationLine(state: VariationBillingState, variationId: string): string {
+  const r = state.reconciliationByVariation?.[variationId];
+  if (!r) return state.reconciliationLookupFailed ? "unavailable (could not be loaded)" : "unavailable";
+  const parts: string[] = [];
+  const open = r.uncertain > 0 || r.inProgress > 0; // an unresolved posting may still turn out to be an invoice: never say "nothing to reconcile" then
+  if (r.invoices === 0) { if (!open) parts.push("no Cin7 invoice yet, nothing to reconcile"); else parts.push("no confirmed Cin7 invoice yet"); }
+  else if (r.awaiting === 0 && r.mismatched === 0) parts.push(r.invoices === 1 ? "the Cin7 invoice is reconciled" : `all ${r.invoices} Cin7 invoices are reconciled`);
+  else {
+    parts.push(`${r.reconciled} of ${r.invoices} Cin7 ${r.invoices === 1 ? "invoice" : "invoices"} reconciled`);
+    if (r.awaiting > 0) parts.push(`${r.awaiting} awaiting reconciliation`);
+    if (r.mismatched > 0) parts.push(`${r.mismatched} with a recorded amount mismatch`);
+  }
+  if (r.uncertain > 0) parts.push(`${r.uncertain} ${r.uncertain === 1 ? "posting has" : "postings have"} an uncertain outcome and must be reconciled`);
+  if (r.inProgress > 0) parts.push(`${r.inProgress} ${r.inProgress === 1 ? "posting is" : "postings are"} still being sent`);
+  return parts.join("; ");
+}
+
 const pct = (bps: number) => (bps / 100).toFixed(2).replace(/\.00$/, "");
 const rowsOf = (s: Array<{ name: string; bps: number }> | undefined): Row[] => (s && s.length ? s.map((x) => ({ name: x.name, percent: pct(x.bps) })) : [{ name: "Variation", percent: "100" }]);
+/** Shown beside every control that is disabled only because a server action is running. */
+export const BUSY = "Another action is in progress.";
+/** Rows as the server would see them (trimmed names, numeric percents), so "50.0" or " Deposit " equals the saved "50" / "Deposit". */
+const normRows = (rows: Row[]) => rows.map((x) => ({ name: x.name.trim(), percent: Number(x.percent.trim()) }));
 const totalOf = (rows: Row[]) => Math.round(rows.reduce((n, r) => n + (Number(r.percent) || 0), 0) * 100) / 100;
 
-export function VariationBillingPanel({ view, isAdmin, run, working }: { view: ProjectView; isAdmin: boolean; run: Run; working: boolean }) {
+export function VariationBillingPanel({ view, isAdmin, run, working, renderDecision }: { view: ProjectView; isAdmin: boolean; run: Run; working: boolean; renderDecision?: (v: ProjectView["variations"][number]) => React.ReactNode }) {
   const projectId = view.project.id;
   const [state, setState] = useState<VariationBillingState | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -29,31 +68,199 @@ export function VariationBillingPanel({ view, isAdmin, run, working }: { view: P
   const [prods, setProds] = useState<Record<string, Array<{ sku: string; description: string; quantity: string }>>>({});
 
   const [version, setVersion] = useState(0);
+  const verRef = useRef(0);
+  const bump = () => { verRef.current += 1; setVersion(verRef.current); };
+  // Per variation, after a successful save/amend: "reloading" = the reloaded schedule has not arrived (typed rows stay on screen and the controls are blocked);
+  // "unrefreshed" = the reload failed (typed rows are kept, honestly labelled, until a later reload succeeds). `gen` is the fetch generation that will resolve a marker:
+  // only a fetch started AFTER the save (generation >= gen) may clear it, so an older in-flight fetch can never clear a newer save's marker.
+  type Phase = { st: "reloading" | "unrefreshed"; gen: number };
+  const phaseRef = useRef<Record<string, Phase>>({});
+  const [phase, setPhaseState] = useState<Record<string, Phase>>({});
+  const setPhase = useCallback((next: Record<string, Phase>) => { phaseRef.current = next; setPhaseState(next); }, []);
+  const [openId, setOpenId] = useState<string | null>(null); // the ONE variation whose detailed workspace is expanded; nothing is expanded until asked
+  const [everOpened, setEverOpened] = useState<Record<string, boolean>>({}); // a hidden workspace stays mounted so an action in flight in it is never lost
   const variationKey = view.variations.map((v) => `${v.id}:${v.status}`).join(",");
   useEffect(() => {
+    if (view.variations.length === 0) { if (Object.keys(phaseRef.current).length) setPhase({}); return; } // nothing to bill: no read, and no marker may outlive it
     let live = true;
-    void getVariationBillingAction(projectId).then((r) => {
-      if (!live) return;
-      if (r.ok && r.data) { setState(r.data); setError(null); } else setError(r.error ?? "Could not load variation billing.");
-    });
+    const gen = version;
+    void getVariationBillingAction(projectId)
+      .catch((e: unknown) => ({ ok: false as const, error: e instanceof Error ? e.message : "Could not load variation billing.", data: undefined }))
+      .then((r) => {
+        if (!live) return; // superseded: the newer fetch owns every marker at or beyond its generation
+        const ok = !!(r.ok && r.data);
+        if (ok && r.data) { setState(r.data); setError(null); } else setError(r.error ?? "Could not load variation billing.");
+        const cur = phaseRef.current;
+        const next: Record<string, Phase> = {};
+        const dropIds: string[] = [];
+        for (const [id, ph] of Object.entries(cur)) {
+          if (ph.gen > gen) next[id] = ph; // saved after this fetch started: not covered by it
+          else if (ok) dropIds.push(id); // reloaded schedule arrived: typed rows are discarded
+          else next[id] = { st: "unrefreshed", gen: ph.gen }; // reload failed: keep the typed rows, say so, unblock
+        }
+        if (Object.keys(cur).length) setPhase(next);
+        if (dropIds.length) setEdit((m) => Object.fromEntries(Object.entries(m).filter(([k]) => !dropIds.includes(k))));
+      });
     return () => { live = false; };
-  }, [projectId, variationKey, version]);
+  }, [projectId, variationKey, version, view.variations.length, setPhase]);
 
-  const act = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: string) => { if (await run(fn, done)) setVersion((n) => n + 1); };
-  if (error) return <Alert tone="danger">{error}</Alert>;
-  if (!state) return <p className="text-sm text-slate-500">Loading variation billing…</p>;
-  const c = state.consolidated;
+  const act = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: string, savedId?: string): Promise<boolean> => {
+    const ok = await run(fn, done);
+    if (ok) {
+      verRef.current += 1;
+      if (savedId) setPhase({ ...phaseRef.current, [savedId]: { st: "reloading", gen: verRef.current } });
+      setVersion(verRef.current);
+    }
+    return ok;
+  };
+  const c = state?.consolidated;
   const variations = view.variations.filter((v) => v.status !== "REJECTED");
 
+  // Unsaved-work guard. Dirty = an EDITABLE schedule whose rows differ from the saved schedule, or a typed amendment reason. Read-only (locked) schedules never guard;
+  // a successful save makes the reloaded schedule equal the rows, a successful amendment also clears the reason, so the guard releases.
+  const scheduleDirty = !!state && variations.some((v) => {
+    const locked = (v.status === "APPROVED" && !isAdmin) || (!!state.billingProjectByVariation[v.id] && v.status === "APPROVED");
+    if (locked) return false;
+    const rowsChanged = edit[v.id] !== undefined && JSON.stringify(normRows(edit[v.id])) !== JSON.stringify(normRows(rowsOf(state.schedules[v.id])));
+    return rowsChanged || (v.status !== "DRAFT" && (reason[v.id] ?? "").trim() !== "");
+  });
+  useUnsavedGuard(scheduleDirty);
+  if (view.variations.length === 0) return null; // the Variations tab says so itself
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
+      {state && error && (
+        <Alert tone="warning">The billing figures could not be refreshed ({error}); what is shown may be out of date.<span className="ml-2"><Button size="sm" variant="secondary" onClick={bump}>Try again</Button></span></Alert>
+      )}
+
+      {variations.length === 0 ? null : variations.map((v) => {
+        const sched = state?.schedules[v.id];
+        const rows = edit[v.id] ?? rowsOf(sched);
+        const total = totalOf(rows);
+        const billingId = state?.billingProjectByVariation[v.id];
+        const legacy = !!state && v.status === "APPROVED" && (!sched || sched.length === 0);
+        const scope = billingId && c ? c.scopes.find((x) => x.projectId === billingId) : undefined;
+        const wsOpen = openId === v.id; // ONE detailed workspace is expanded at a time, and only on request (one workspace's reads, not every variation's)
+        const canToggle = !!state && v.status === "APPROVED" && !!billingId && isAdmin;
+        const stagesLocked = (v.status === "APPROVED" && !isAdmin) || (!!billingId && v.status === "APPROVED");
+        const reasonText = reason[v.id] ?? "";
+        const reloadingNow = phase[v.id]?.st === "reloading";
+        const busy = working || reloadingNow; // also busy while this variation's reloaded schedule is outstanding: its typed rows are still shown, and a second Save must not resubmit stale rows
+        const sid = (k: string) => `${k}-${v.id}`;
+        return (
+          <section key={v.id} aria-label={`${v.code} variation`} className="rounded-lg border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] sm:p-6">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <PanelTitle><span className="inline-flex flex-wrap items-center gap-2">{v.code} – {v.title} <ScopeTag scope="VARIATION" /><Status tone={v.status === "APPROVED" ? "success" : "neutral"}>{statusText(v.status)}</Status></span></PanelTitle>
+                {v.description && <p className="mt-1 text-sm text-slate-600">{v.description}</p>}
+                {state && v.status === "APPROVED" && (
+                  <p className="mt-1 text-sm text-slate-700">
+                    <span className="text-slate-600">Cin7 Sale: </span>
+                    {saleLine(state, v.id, !!billingId)}
+                  </p>
+                )}
+                {state && v.status === "APPROVED" && billingId && (
+                  <p className="mt-0.5 text-sm text-slate-700" data-testid={`recon-${v.id}`}>
+                    <span className="text-slate-600">Cin7 reconciliation: </span>{reconciliationLine(state, v.id)}
+                    <span className="text-slate-600"> (separate from approving a claim to invoice)</span>
+                  </p>
+                )}
+              </div>
+              <div className="flex flex-col items-end gap-2 text-right">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">{v.status === "APPROVED" ? "Approved value (ex VAT)" : "Proposed value (ex VAT)"}</p>
+                  <p className="whitespace-nowrap text-xl font-bold tabular-nums text-slate-900">{formatCents(v.amount_cents)}</p>
+                </div>
+                {canToggle && (
+                  <Button size="sm" variant="secondary" aria-expanded={wsOpen} aria-controls={`ws-${v.id}`} onClick={() => { if (wsOpen) setOpenId(null); else { setOpenId(v.id); setEverOpened((e) => ({ ...e, [v.id]: true })); } }}>{wsOpen ? "Hide billing workspace" : "Open billing workspace"}</Button>
+                )}
+              </div>
+            </div>
+            {legacy && <div className="mt-3"><Alert tone="warning">This variation was approved before billing schedules existed. A manager must set its schedule (an audited amendment) before billing can start. Nothing is created automatically.</Alert></div>}
+            {!state ? (
+              error
+                ? <div className="mt-3"><Alert tone="warning">The billing figures for this variation could not be loaded ({error}). The decision controls below still work.</Alert><div className="mt-2"><Button size="sm" variant="secondary" onClick={bump}>Try again</Button></div></div>
+                : <div role="status" aria-busy="true" className="mt-3"><p className="text-sm text-slate-600">Loading the billing position…</p><Block className="mt-2 h-12 w-full" /></div>
+            ) : scope ? (
+              <div className="mt-3 border-t border-slate-200 pt-3">
+              <p className="text-xs text-slate-600">Billing position of this variation only, ex VAT</p>
+              <dl className="mt-1 grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4" aria-label={`${v.code} billing position (ex VAT)`}>
+                {([["Earned", scope.earnedCents], ["Billed / committed", scope.committedCents], ["Claimable now", scope.claimableCents], ["Remaining", scope.remainingCents]] as const).map(([k, n]) => (
+                  <div key={k}><dt className="text-xs text-slate-600">{k}</dt><dd className="font-semibold tabular-nums text-slate-900">{formatCents(n)}</dd></div>
+                ))}
+              </dl>
+              </div>
+            ) : <p className="mt-3 text-sm text-slate-600">{v.status === "APPROVED" ? "Billing has not started for this variation." : "Counts for nothing until a manager approves it."}</p>}
+            <div className="mt-3">{renderDecision ? renderDecision(v) : null}</div>
+            {state && v.status === "APPROVED" && (
+              <div className="mt-4">
+                {billingId ? (
+                  isAdmin ? null : <span className="text-sm text-slate-600">Billing for {v.code} is active; a manager operates it.</span>
+                ) : isAdmin ? (
+                  <div className="space-y-2">
+                    <details>
+                      <summary className="cursor-pointer py-1.5 text-sm font-medium text-slate-800">Products in this variation (picked once from Cin7; the Sale and invoices inherit them)</summary>
+                      <div className="mt-2"><VariationProductPicker picked={prods[v.id] ?? []} onChange={(next) => setProds({ ...prods, [v.id]: next })} disabled={working} /></div>
+                    </details>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button disabled={working || legacy} aria-describedby={legacy ? sid("start-why") : working ? sid("start-busy") : undefined} onClick={() => act(() => startVariationBillingAction(projectId, v.id, (prods[v.id] ?? []).map((p) => ({ sku: p.sku, description: p.description, quantity: Number(p.quantity) }))), `Started billing for ${v.code}. Create its Cin7 Sale below.`)}>Start variation billing</Button>
+                      {legacy ? <p id={sid("start-why")} className="text-sm text-slate-700">Set the billing schedule first (this variation was approved before schedules existed).</p>
+                        : working ? <p id={sid("start-busy")} className="text-sm text-slate-700">{BUSY}</p> : null}
+                    </div>
+                  </div>
+                ) : <span className="text-xs text-slate-600">A manager starts variation billing.</span>}
+              </div>
+            )}
+            {state && <details className="mt-4 border-t border-slate-200 pt-1" open={legacy}>
+              <summary className="cursor-pointer py-1.5 text-sm font-medium text-slate-800">Billing schedule</summary>
+            <p className="mt-1 text-xs text-slate-600">{v.status === "APPROVED" ? "Approved" : "Proposed"} value {formatCents(v.amount_cents)} ex VAT. Percentages are applied to this value in whole cents (largest remainder), so the stages always sum to it exactly.</p>
+            <div className="mt-3 space-y-2">
+              {rows.map((r, i) => (
+                <div key={i} className="flex flex-wrap items-end gap-2">
+                  <Input label="Stage" value={r.name} disabled={stagesLocked || reloadingNow} onChange={(e) => setEdit({ ...edit, [v.id]: rows.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} />
+                  <Input label="%" value={r.percent} disabled={stagesLocked || reloadingNow} onChange={(e) => setEdit({ ...edit, [v.id]: rows.map((x, j) => (j === i ? { ...x, percent: e.target.value } : x)) })} />
+                </div>
+              ))}
+              <p className={`text-sm ${total === 100 ? "text-slate-600" : "font-semibold text-red-700"}`}>Total {total}% {total === 100 ? "" : "- must be exactly 100%"}</p>
+              {stagesLocked && !billingId && <p className="text-xs text-slate-600">Only a manager can change an approved variation&apos;s schedule.</p>}
+              {(v.status === "DRAFT" || (isAdmin && !billingId)) && (
+                <div className="space-y-2">
+                <div className="flex flex-wrap items-end gap-2">
+                  <Button size="sm" variant="secondary" disabled={busy} aria-describedby={busy ? sid("sched-busy") : undefined} onClick={() => setEdit({ ...edit, [v.id]: [...rows, { name: "", percent: "" }] })}>Add stage</Button>
+                  {rows.length > 1 && <Button size="sm" variant="secondary" disabled={busy} aria-describedby={busy ? sid("sched-busy") : undefined} onClick={() => setEdit({ ...edit, [v.id]: rows.slice(0, -1) })}>Remove last</Button>}
+                  {v.status === "DRAFT" ? (
+                    <Button size="sm" disabled={busy || total !== 100} aria-describedby={busy ? sid("sched-busy") : total !== 100 ? sid("sched-total") : undefined} onClick={async () => { if (await act(() => saveVariationScheduleAction(projectId, v.id, rows), `Saved the ${v.code} billing schedule.`, v.id)) { /* typed rows stay on screen until the reloaded schedule arrives */ } }}>Save schedule</Button>
+                  ) : (
+                    <>
+                      <Input label="Reason for amendment" value={reasonText} onChange={(e) => setReason({ ...reason, [v.id]: e.target.value })} />
+                      <Button size="sm" disabled={busy || total !== 100 || !reasonText.trim()} aria-describedby={busy ? sid("sched-busy") : total !== 100 ? sid("sched-total") : !reasonText.trim() ? sid("sched-reason") : undefined} onClick={async () => { if (await act(() => amendVariationScheduleAction(projectId, v.id, rows, reason[v.id]), `Amended the ${v.code} schedule (audited).`, v.id)) setReason((m) => ({ ...m, [v.id]: "" })); }}>Amend schedule</Button>
+                    </>
+                  )}
+                </div>
+                <div role="status" aria-live="polite">{busy && <p id={sid("sched-busy")} className="text-sm text-slate-700">{reloadingNow ? "Saved. Reloading the schedule - these controls come back when it arrives." : BUSY}</p>}</div>
+                {phase[v.id]?.st === "unrefreshed" && <p role="status" className="text-sm text-amber-800">Saved. The latest schedule could not be reloaded, so the rows shown are the ones you saved. <Button size="sm" variant="secondary" onClick={bump}>Try again</Button></p>}
+                {busy ? null
+                  : total !== 100 ? <p id={sid("sched-total")} className="text-sm text-slate-700">Total must be exactly 100% to {v.status === "DRAFT" ? "save" : "amend"} the schedule.</p>
+                  : v.status !== "DRAFT" && !reasonText.trim() ? <p id={sid("sched-reason")} className="text-sm text-slate-700">Enter a reason to amend.</p> : null}
+                </div>
+              )}
+              {v.status === "APPROVED" && billingId && <p className="text-xs text-slate-600">Billing has started. The schedule can no longer be amended once the billing project has claims or progress; the database refuses.</p>}
+            </div>
+            </details>}
+            {canToggle && (wsOpen || everOpened[v.id]) && <div id={`ws-${v.id}`} className={wsOpen ? "mt-4 border-t border-slate-200 pt-2" : "hidden"}><ProjectWorkspace key={billingId} id={billingId!} embedded /></div>}
+          </section>
+        );
+      })}
+
+      {state && c && (() => { const cc = c; return (
+        <>
       <Panel>
         <PanelTitle>Consolidated billing (base + variations)</PanelTitle>
         <div className="mt-4 overflow-x-auto">
           <Table>
             <THead><TR><TH>Scope</TH><TH align="right">Contract</TH><TH align="right">Earned</TH><TH align="right">Billed / committed</TH><TH align="right">Claimable now</TH><TH align="right">Remaining</TH></TR></THead>
             <TBody>
-              {c.scopes.map((s) => (
+              {cc.scopes.map((s) => (
                 <TR key={s.projectId}>
                   <TD>{s.scope === "BASE" ? "Original contract" : isAdmin ? <Link className="underline" href={`/projects/${s.projectId}`}>{s.variationCode} billing</Link> : `${s.variationCode} variation`}</TD>
                   <TD align="right" className="whitespace-nowrap tabular-nums">{formatCents(s.contractCents)}</TD>
@@ -65,82 +272,22 @@ export function VariationBillingPanel({ view, isAdmin, run, working }: { view: P
               ))}
               <TR>
                 <TD className="font-semibold">Total (billable)</TD>
-                {[c.totals.contractCents, c.totals.earnedCents, c.totals.committedCents, c.totals.claimableCents, c.totals.remainingCents].map((n, i) => <TD key={i} align="right" className="whitespace-nowrap font-semibold tabular-nums">{formatCents(n)}</TD>)}
+                {[cc.totals.contractCents, cc.totals.earnedCents, cc.totals.committedCents, cc.totals.claimableCents, cc.totals.remainingCents].map((n, i) => <TD key={i} align="right" className="whitespace-nowrap font-semibold tabular-nums">{formatCents(n)}</TD>)}
               </TR>
             </TBody>
           </Table>
         </div>
-        {c.unbilledApprovedVariations.length > 0 && (
-          <Alert tone="warning">Approved but not yet billable (no billing started): {c.unbilledApprovedVariations.map((v) => `${v.code} ${formatCents(v.amountCents)}`).join(", ")}. They are in the revised contract value but not in the billable totals above.</Alert>
+        {cc.unbilledApprovedVariations.length > 0 && (
+          <Alert tone="warning">Approved but not yet billable (no billing started): {cc.unbilledApprovedVariations.map((v) => `${v.code} ${formatCents(v.amountCents)}`).join(", ")}. They are in the revised contract value but not in the billable totals above.</Alert>
         )}
       </Panel>
 
-      {isAdmin && c.closureBlockers.length > 0 && (
-        <Alert tone="info">This project cannot be completed or closed yet: {c.closureBlockers.join("; ")}.</Alert>
+      {isAdmin && cc.closureBlockers.length > 0 && (
+        <Alert tone="info">This project cannot be completed or closed yet: {cc.closureBlockers.join("; ")}.</Alert>
       )}
       <Alert tone="info">Negative variations (credits, omissions, cancellations) are not supported: Toolbox never creates a credit note or a negative Sale. Handle a reduction in scope manually in Cin7.</Alert>
-
-      {variations.length === 0 ? <p className="text-sm text-slate-600">No variations to bill.</p> : variations.map((v) => {
-        const sched = state.schedules[v.id];
-        const rows = edit[v.id] ?? rowsOf(sched);
-        const total = totalOf(rows);
-        const billingId = state.billingProjectByVariation[v.id];
-        const legacy = v.status === "APPROVED" && (!sched || sched.length === 0);
-        return (
-          <Panel key={v.id}>
-            <PanelTitle>{v.code} – {v.title} <Badge tone={v.status === "APPROVED" ? "success" : "neutral"}>{v.status}</Badge></PanelTitle>
-            <p className="mt-1 text-xs text-slate-500">Approved value {formatCents(v.amount_cents)} ex VAT. Percentages are applied to this value in whole cents (largest remainder), so the stages always sum to it exactly.</p>
-            {legacy && <Alert tone="warning">This variation was approved before billing schedules existed. A manager must set its schedule (an audited amendment) before billing can start. Nothing is created automatically.</Alert>}
-            <div className="mt-3 space-y-2">
-              {rows.map((r, i) => (
-                <div key={i} className="flex flex-wrap items-end gap-2">
-                  <Input label="Stage" value={r.name} disabled={v.status === "APPROVED" && !isAdmin || !!billingId && v.status === "APPROVED"} onChange={(e) => setEdit({ ...edit, [v.id]: rows.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} />
-                  <Input label="%" value={r.percent} disabled={v.status === "APPROVED" && !isAdmin || !!billingId && v.status === "APPROVED"} onChange={(e) => setEdit({ ...edit, [v.id]: rows.map((x, j) => (j === i ? { ...x, percent: e.target.value } : x)) })} />
-                </div>
-              ))}
-              <p className={`text-sm ${total === 100 ? "text-slate-600" : "font-semibold text-red-700"}`}>Total {total}% {total === 100 ? "" : "- must be exactly 100%"}</p>
-              {(v.status === "DRAFT" || (isAdmin && !billingId)) && (
-                <div className="flex flex-wrap items-end gap-2">
-                  <Button size="sm" variant="secondary" disabled={working} onClick={() => setEdit({ ...edit, [v.id]: [...rows, { name: "", percent: "" }] })}>Add stage</Button>
-                  {rows.length > 1 && <Button size="sm" variant="secondary" disabled={working} onClick={() => setEdit({ ...edit, [v.id]: rows.slice(0, -1) })}>Remove last</Button>}
-                  {v.status === "DRAFT" ? (
-                    <Button size="sm" disabled={working || total !== 100} onClick={() => act(() => saveVariationScheduleAction(projectId, v.id, rows), `Saved the ${v.code} billing schedule.`)}>Save schedule</Button>
-                  ) : (
-                    <>
-                      <Input label="Reason for amendment" value={reason[v.id] ?? ""} onChange={(e) => setReason({ ...reason, [v.id]: e.target.value })} />
-                      <Button size="sm" disabled={working || total !== 100 || !(reason[v.id] ?? "").trim()} onClick={() => act(() => amendVariationScheduleAction(projectId, v.id, rows, reason[v.id]), `Amended the ${v.code} schedule (audited).`)}>Amend schedule</Button>
-                    </>
-                  )}
-                </div>
-              )}
-              {v.status === "APPROVED" && billingId && <p className="text-xs text-slate-500">Billing has started. The schedule can no longer be amended once the billing project has claims or progress; the database refuses.</p>}
-            </div>
-            {v.status === "APPROVED" && (
-              <div className="mt-4">
-                {billingId ? (
-                  isAdmin ? <Link className="text-sm underline" href={`/projects/${billingId}`}>Open the {v.code} billing scope (claims, progress, Cin7 Sale link)</Link> : <span className="text-sm text-slate-600">Billing for {v.code} is active; a manager operates it.</span>
-                ) : isAdmin ? (
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium text-slate-800">Products in this variation (entered once; the Sale and invoices inherit them)</p>
-                    {(prods[v.id] ?? []).map((p, i) => (
-                      <div key={i} className="flex flex-wrap items-end gap-2">
-                        <Input label="Cin7 SKU" value={p.sku} onChange={(e) => setProds({ ...prods, [v.id]: (prods[v.id] ?? []).map((x, j) => (j === i ? { ...x, sku: e.target.value } : x)) })} />
-                        <Input label="Description" value={p.description} onChange={(e) => setProds({ ...prods, [v.id]: (prods[v.id] ?? []).map((x, j) => (j === i ? { ...x, description: e.target.value } : x)) })} />
-                        <Input label="Quantity" value={p.quantity} onChange={(e) => setProds({ ...prods, [v.id]: (prods[v.id] ?? []).map((x, j) => (j === i ? { ...x, quantity: e.target.value } : x)) })} />
-                        <Button size="sm" variant="secondary" onClick={() => setProds({ ...prods, [v.id]: (prods[v.id] ?? []).filter((_, j) => j !== i) })}>Remove</Button>
-                      </div>
-                    ))}
-                    <div className="flex flex-wrap gap-2">
-                      <Button size="sm" variant="secondary" disabled={working} onClick={() => setProds({ ...prods, [v.id]: [...(prods[v.id] ?? []), { sku: "", description: "", quantity: "1" }] })}>Add product</Button>
-                      <Button disabled={working || legacy} onClick={() => act(() => startVariationBillingAction(projectId, v.id, (prods[v.id] ?? []).map((p) => ({ sku: p.sku, description: p.description, quantity: Number(p.quantity) }))), `Started billing for ${v.code}. Create or link its Cin7 Sale from the billing scope.`)}>Start variation billing</Button>
-                    </div>
-                  </div>
-                ) : <span className="text-xs text-slate-500">A manager starts variation billing.</span>}
-              </div>
-            )}
-          </Panel>
-        );
-      })}
+        </>
+      ); })()}
     </div>
   );
 }

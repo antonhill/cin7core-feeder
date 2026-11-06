@@ -58,14 +58,15 @@ describe("Cin7 HTTP gateway boundary", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("no file under the whole src/ tree other than cin7/http.ts calls fetch() directly (repo-wide widening), except two known-unrelated, reviewed non-Cin7 API calls", () => {
+  it("no file under the whole src/ tree other than cin7/http.ts calls fetch() directly (repo-wide widening), except three known-unrelated, reviewed non-Cin7 calls (two external APIs and one same-origin upload helper)", () => {
     const srcDir = join(__dirname, "..", "..");
     const httpTsPath = join(srcDir, "cin7", "http.ts");
     // Reviewed and confirmed unrelated to Cin7 — neither carries a Cin7Credentials
     // header, and both are independently network-bounded (fx.ts: a public FX-rate
     // API for a price-estimate widget; lemonsqueezy.ts: this app's own billing
     // provider's API, authenticated with LEMONSQUEEZY_API_KEY, never Cin7 creds).
-    const allowlist = new Set([join(srcDir, "lib", "fx.ts"), join(srcDir, "lib", "lemonsqueezy.ts")]);
+    // browser/same-origin-upload.ts: a browser helper that POSTs a multipart form to a "/api/..." route of this same app (evidence upload); it cannot target another origin and is not a Cin7 call.
+    const allowlist = new Set([join(srcDir, "lib", "fx.ts"), join(srcDir, "lib", "lemonsqueezy.ts"), join(srcDir, "lib", "browser", "same-origin-upload.ts")]);
     const offenders: { file: string; line: number }[] = [];
 
     for (const file of listTsFiles(srcDir)) {

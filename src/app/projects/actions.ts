@@ -8,6 +8,9 @@
 import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { logActivity } from "@/lib/activity-log";
+import { listOrgUsers } from "@/lib/approvals/role-store";
+import { validateProjectDetails } from "@/lib/projects/project-details";
+import { loadProjectDetails, updateProjectDetails } from "@/lib/projects/project-details-store";
 import { createServiceRoleClient } from "@/supabase/server";
 import { PROJECTS_MODULE } from "@/app/module-nav";
 import { isNewquipPocOrg } from "@/newquip/access";
@@ -27,8 +30,10 @@ import {
   submitClaimForApproval,
 } from "@/lib/projects/project-store";
 import { approveVariation, raiseVariation, rejectVariation, repriceVariation } from "@/lib/projects/variation-store";
+import { approvalsAvailable, decideDocument, legacyCtx, submitForApproval, withdrawPendingFor } from "@/lib/approvals/approval-store";
 import { redactVariationCosts } from "@/lib/projects/variations";
 import { randsToCents } from "@/lib/projects/claim-engine";
+import { assertSelectionHonoured, parsePartialAmounts, requireExplicitSelection } from "@/lib/projects/claim-selection";
 import { BillingScopeAccessError, guardBillingScope } from "@/lib/projects/scope-access";
 import { NEGATIVE_VARIATION_UNSUPPORTED, isNegativeAmountInput } from "@/lib/projects/variations";
 import { isCustomerFacingProject, type ProjectView } from "@/lib/projects/project-view";
@@ -40,6 +45,8 @@ export interface ActionResult<T> {
   data?: T;
   /** Set when the caller asked for an internal billing scope they may not open: the project to show instead. */
   redirectTo?: string;
+  /** getProjectAction only: DISPLAY permissions of the caller, returned with the project so the page needs no second round trip. Every mutating action re-checks on the server. */
+  viewer?: { canApprove: boolean; newquip: boolean };
 }
 
 export interface ClaimPreviewResult {
@@ -75,7 +82,8 @@ export async function getProjectAction(projectId: string): Promise<ActionResult<
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, admin);
     const view = await loadProjectView(createServiceRoleClient(), orgId, projectId);
     if (!view) return { ok: false, error: "Project not found." };
-    return { ok: true, data: redactVariationCosts(view, admin) };
+    // `admin` is the same owner/admin check getViewerPermissionsAction makes; `newquip` is the organisation rollout flag. Display only.
+    return { ok: true, data: redactVariationCosts(view, admin), viewer: { canApprove: admin, newquip: isNewquipPocOrg(orgId) } };
   } catch (e) {
     if (e instanceof BillingScopeAccessError) return { ok: false, error: e.message, ...(e.parentProjectId ? { redirectTo: e.parentProjectId } : {}) };
     return { ok: false, error: message(e) };
@@ -98,6 +106,39 @@ export async function getViewerPermissionsAction(): Promise<ActionResult<{ canAp
     } catch {
       return { ok: true, data: { canApprove: false, newquip } };
     }
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+/** Owner/admin only (display list for the Project details editor): the organisation's users a project manager can be chosen from. */
+export async function listProjectManagerOptionsAction(): Promise<ActionResult<string[]>> {
+  try {
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    await requireOrgAdmin("assign a project manager");
+    return { ok: true, data: (await listOrgUsers(createServiceRoleClient(), orgId)).map((u) => u.email) };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+/**
+ * Owner/admin only (the manager role). Sets the project manager, start date and target completion date AFTER the project exists (UAT-029). Validated against the
+ * organisation's own users and real dates; touches no other column - the approved quotation, contract value, tax and stages are the frozen baseline. Audited.
+ */
+export async function updateProjectDetailsAction(projectId: string, input: { projectManager: string | null; startDate: string | null; targetCompletionDate: string | null }): Promise<ActionResult<null>> {
+  try {
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    await requireOrgAdmin("edit project details");
+    const db = createServiceRoleClient();
+    await guardBillingScope(db, orgId, projectId, true);
+    const current = await loadProjectDetails(db, orgId, projectId);
+    if (!current) return { ok: false, error: "Project not found." };
+    const checked = validateProjectDetails(input, (await listOrgUsers(db, orgId)).map((u) => u.email), current.project_manager);
+    if (!checked.ok) return { ok: false, error: checked.error };
+    const { before, after } = await updateProjectDetails(db, orgId, projectId, checked.patch);
+    await logActivity(db, { orgId, actor: { userId, email }, action: "projects.details_updated", summary: "Updated a project's manager / start date / target completion date", detail: { projectId, before, after } });
+    return { ok: true, data: null };
   } catch (e) {
     return { ok: false, error: message(e) };
   }
@@ -144,11 +185,13 @@ export async function recordProgressAction(
 }
 
 /** Calculates a claim. READ-ONLY: writes nothing, no Cin7 call. */
-export async function previewClaimAction(projectId: string, selectedStageIds?: string[]): Promise<ActionResult<ClaimPreviewResult>> {
+export async function previewClaimAction(projectId: string, selectedStageIds?: string[], partialRands?: Record<string, string>): Promise<ActionResult<ClaimPreviewResult>> {
   try {
     const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, await isAdmin());
-    const p = await previewClaim(createServiceRoleClient(), orgId, projectId, selectedStageIds);
+    const chosen = requireExplicitSelection(selectedStageIds);
+    const p = await previewClaim(createServiceRoleClient(), orgId, projectId, chosen, undefined, { amountsCents: parsePartialAmounts(chosen, partialRands) });
+    assertSelectionHonoured(chosen, p.calc.lines);
     return { ok: true, data: { calc: p.calc, claimNumber: p.claimNumber, taxRateBps: p.taxRateBps } };
   } catch (e) {
     return { ok: false, error: message(e) };
@@ -156,12 +199,13 @@ export async function previewClaimAction(projectId: string, selectedStageIds?: s
 }
 
 /** Persists a DRAFT claim locally (reserves nothing). Idempotent for an identical open draft. */
-export async function createClaimDraftAction(projectId: string, selectedStageIds?: string[]): Promise<ActionResult<{ claimId: string; duplicate: boolean }>> {
+export async function createClaimDraftAction(projectId: string, selectedStageIds?: string[], partialRands?: Record<string, string>): Promise<ActionResult<{ claimId: string; duplicate: boolean }>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, await isAdmin());
     const db = createServiceRoleClient();
-    const r = await createClaimDraft(db, orgId, email ?? "unknown", projectId, selectedStageIds);
+    const chosen = requireExplicitSelection(selectedStageIds);
+    const r = await createClaimDraft(db, orgId, email ?? "unknown", projectId, chosen, undefined, { amountsCents: parsePartialAmounts(chosen, partialRands) });
     if (!r.duplicate) {
       await logActivity(db, { orgId, actor: { userId, email }, action: "projects.claim_drafted", summary: "Drafted a project progress claim (local only; no Cin7 write)", detail: { projectId, claimId: r.claimId } });
     }
@@ -173,9 +217,12 @@ export async function createClaimDraftAction(projectId: string, selectedStageIds
 
 export async function submitClaimForApprovalAction(projectId: string, claimId: string): Promise<ActionResult<null>> {
   try {
-    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, await isAdmin());
-    await submitClaimForApproval(createServiceRoleClient(), orgId, projectId, claimId);
+    const db = createServiceRoleClient();
+    await submitClaimForApproval(db, orgId, projectId, claimId);
+    // Record the submission (exact revision + digest) on the Approvals dashboard. A recording problem never loses the claim: approving it later re-submits.
+    if (await approvalsAvailable(db).catch(() => false)) await submitForApproval(db, legacyCtx(orgId, userId, email, await isAdmin()), "CLAIM", claimId).catch(() => undefined);
     return { ok: true, data: null };
   } catch (e) {
     return { ok: false, error: message(e) };
@@ -189,7 +236,8 @@ export async function approveClaimAction(projectId: string, claimId: string): Pr
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, await isAdmin());
     await requireOrgAdmin("approve a progress claim");
     const db = createServiceRoleClient();
-    await approveClaim(db, orgId, email ?? "unknown", projectId, claimId);
+    if (await approvalsAvailable(db)) await decideDocument(db, legacyCtx(orgId, userId, email, true), "CLAIM", claimId, "APPROVE"); // one approval path: separation of duties, digest, history
+    else await approveClaim(db, orgId, email ?? "unknown", projectId, claimId);
     await logActivity(db, { orgId, actor: { userId, email }, action: "projects.claim_approved", summary: "Approved a project progress claim (value reserved; no Cin7 write)", detail: { projectId, claimId } });
     return { ok: true, data: null };
   } catch (e) {
@@ -199,9 +247,10 @@ export async function approveClaimAction(projectId: string, claimId: string): Pr
 
 export async function cancelDraftClaimAction(projectId: string, claimId: string): Promise<ActionResult<null>> {
   try {
-    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, await isAdmin());
     await cancelDraftClaim(createServiceRoleClient(), orgId, projectId, claimId);
+    if (await approvalsAvailable(createServiceRoleClient()).catch(() => false)) await withdrawPendingFor(createServiceRoleClient(), legacyCtx(orgId, userId, email, await isAdmin()), "CLAIM", claimId, "The claim was cancelled by its preparer.").catch(() => undefined);
     return { ok: true, data: null };
   } catch (e) {
     return { ok: false, error: message(e) };
@@ -254,13 +303,30 @@ export async function repriceVariationAction(projectId: string, variationId: str
   }
 }
 
+/** Submits the variation's CURRENT content for manager approval (it cannot be edited while pending). */
+export async function submitVariationForApprovalAction(projectId: string, variationId: string): Promise<ActionResult<null>> {
+  try {
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    assertNewquipOrg(orgId);
+    const db = createServiceRoleClient();
+    if (!(await approvalsAvailable(db))) throw new Error("Approvals are not available (switched off, or the database migration is pending).");
+    const v = await db.from("project_variations").select("id").eq("org_id", orgId).eq("project_id", projectId).eq("id", variationId).maybeSingle();
+    if (!v.data) throw new Error("Variation not found in this project.");
+    await submitForApproval(db, legacyCtx(orgId, userId, email, await isAdmin()), "VARIATION", variationId);
+    return { ok: true, data: null };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
 export async function approveVariationAction(projectId: string, variationId: string): Promise<ActionResult<null>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
     assertNewquipOrg(orgId);
     await requireOrgAdmin("approve a variation");
     const db = createServiceRoleClient();
-    await approveVariation(db, orgId, email ?? "unknown", projectId, variationId);
+    if (await approvalsAvailable(db)) await decideDocument(db, legacyCtx(orgId, userId, email, true), "VARIATION", variationId, "APPROVE");
+    else await approveVariation(db, orgId, email ?? "unknown", projectId, variationId);
     await logActivity(db, { orgId, actor: { userId, email }, action: "projects.variation_approved", summary: "Approved a project variation (revised contract value increased; original unchanged; no Cin7 write)", detail: { projectId, variationId } });
     return { ok: true, data: null };
   } catch (e) {
@@ -274,7 +340,8 @@ export async function rejectVariationAction(projectId: string, variationId: stri
     assertNewquipOrg(orgId);
     await requireOrgAdmin("reject a variation");
     const db = createServiceRoleClient();
-    await rejectVariation(db, orgId, email ?? "unknown", projectId, variationId, reason);
+    if (await approvalsAvailable(db)) await decideDocument(db, legacyCtx(orgId, userId, email, true), "VARIATION", variationId, "REJECT", { reason });
+    else await rejectVariation(db, orgId, email ?? "unknown", projectId, variationId, reason);
     await logActivity(db, { orgId, actor: { userId, email }, action: "projects.variation_rejected", summary: "Rejected a project variation (no contract value change; no Cin7 write)", detail: { projectId, variationId } });
     return { ok: true, data: null };
   } catch (e) {

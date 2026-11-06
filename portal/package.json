@@ -1,0 +1,15 @@
+{
+  "name": "newquip-customer-portal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Public NewQuip customer quotation-response portal. Deployed as its OWN Vercel project (Root Directory = portal). It contains only the response page, its token-checked actions and the token-checked PDF route; it shares source (never routes) with the internal Toolbox through the '@/' alias.",
+  "scripts": {
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "16.4.3",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  }
+}

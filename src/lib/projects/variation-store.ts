@@ -1,4 +1,5 @@
 import "server-only";
+import { assertNotPendingApproval } from "@/lib/approvals/pending-guard";
 // Projects — Variation persistence. LOCAL ONLY: no Cin7, no fetch (pinned by no-cin7-write.test.ts). Every query is org-scoped.
 import type { createServiceRoleClient } from "@/supabase/server";
 import { defaultVariationSchedule } from "./variation-schedule";
@@ -36,6 +37,7 @@ export function validateEstimatedCost(c: number | null | undefined): void {
 /** Sets or clears a DRAFT variation's INTERNAL estimated cost. Approved/rejected variations are frozen (the database refuses too). */
 export async function setVariationEstimatedCost(db: Db, orgId: string, projectId: string, variationId: string, cents: number | null): Promise<void> {
   validateEstimatedCost(cents);
+  await assertNotPendingApproval(db, orgId, "VARIATION", variationId);
   const r = await db.from("project_variations").update({ estimated_cost_cents: cents }).eq("org_id", orgId).eq("project_id", projectId).eq("id", variationId).eq("status", "DRAFT").select("id");
   if (r.error) fail(r.error.message);
   if (!r.data || r.data.length === 0) fail("Only a DRAFT variation's estimated cost can be changed.");
@@ -67,6 +69,7 @@ export async function raiseVariation(
 /** Re-prices a DRAFT only. Approved/rejected variations are frozen (the database refuses too). */
 export async function repriceVariation(db: Db, orgId: string, email: string, projectId: string, variationId: string, amountCents: number): Promise<void> {
   validateAmount(amountCents);
+  await assertNotPendingApproval(db, orgId, "VARIATION", variationId);
   const r = await db.from("project_variations").update({ amount_cents: amountCents, priced_by_email: email })
     .eq("org_id", orgId).eq("project_id", projectId).eq("id", variationId).eq("status", "DRAFT").select("id");
   if (r.error) fail(r.error.message);

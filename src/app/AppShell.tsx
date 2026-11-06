@@ -3,6 +3,8 @@
 import { useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { AppNav, isNavHiddenPath, type AppNavProps } from "./AppNav";
+import { NewquipShell } from "./NewquipShell";
+import { isNewquipWorkspacePath, newquipWorkspaceLinks } from "./module-nav";
 
 /**
  * Owns the one piece of state a responsive shell needs that AppNav can't own
@@ -27,6 +29,17 @@ export function AppShell({ nav, children }: { nav: AppNavProps; children: React.
   // with their own full-page layout) — matching here means the mobile top
   // bar and backdrop never appear with no drawer behind them to open.
   if (isNavHiddenPath(pathname)) return <>{children}</>;
+
+  // NewQuip routes get their own workspace chrome instead of the Toolbox sidebar. Only for the NewQuip organisation with at least one NewQuip
+  // module visible; anyone else on these paths is redirected by the route layout, and keeps the Toolbox shell meanwhile.
+  const workspaceLinks = isNewquipWorkspacePath(pathname) ? newquipWorkspaceLinks(nav.orgId, nav.disabledModules, nav.isSuperAdmin) : [];
+  if (workspaceLinks.length > 0) {
+    return (
+      <NewquipShell links={workspaceLinks} orgName={nav.orgName} userEmail={nav.userEmail ?? ""}>
+        {children}
+      </NewquipShell>
+    );
+  }
 
   return (
     <>

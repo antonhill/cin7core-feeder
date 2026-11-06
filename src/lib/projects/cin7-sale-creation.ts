@@ -2,6 +2,7 @@
 // Cin7-free (no import from src/cin7): the server-side store injects the Cin7 port. Everything is derived from the project's FROZEN
 // stage schedule; no figure is recalculated from progress, cost or stock.
 import { createHash } from "node:crypto";
+import { fulfilmentActivity, type ReadBackFulfilment } from "./cin7-fulfilment-readback";
 
 export const CREATE_CONFIRMATION_TEXT = "Create a Cin7 Advanced Sale for this project";
 export const STALE_CREATION_PENDING_MS = 5 * 60 * 1000;
@@ -113,6 +114,8 @@ export interface SaleReadBack {
   charges: Array<{ description: string | null; priceCents: number | null; taxCents: number | null }>;
   invoiceCount: number;
   fulfilmentCount: number;
+  /** The facts of each fulfilment (cin7-fulfilment-readback.ts). Absent while fulfilmentCount > 0 means "could not be read", which is a failure. */
+  fulfilments?: ReadBackFulfilment[];
 }
 
 const rand = (c: number) => `R${(c / 100).toFixed(2)}`;
@@ -126,7 +129,16 @@ export function verifyCreatedSale(plan: CreationPlan, s: SaleReadBack): string[]
   if (s.externalId !== plan.externalId) d.push(`ExternalID is "${s.externalId ?? "missing"}" not "${plan.externalId}"`);
   if (s.taxRule !== plan.taxRule) d.push(`tax rule is "${s.taxRule ?? "unknown"}" not "${plan.taxRule}"`);
   if (s.invoiceCount !== 0) d.push(`${s.invoiceCount} invoice(s) already exist`);
-  if (s.fulfilmentCount !== 0) d.push(`${s.fulfilmentCount} fulfilment(s) already exist`);
+  if (s.fulfilmentCount !== 0) {
+    // Cin7 creates an EMPTY fulfilment container for a commercial-only Advanced Sale (no stock lines). That alone is not stock movement, so it may pass -
+    // but ONLY when the plan has no physical lines, the order has none, and every fulfilment reads as having no picked/packed/shipped stock, no shipment
+    // date and no linked invoice. The fulfilment's own status (FULFILLED for the empty container) is deliberately not used. Anything else - a Sale that
+    // should carry stock, unreadable data, any activity - keeps the original rejection.
+    const facts = s.fulfilments;
+    const mayBeEmpty = plan.lines.length === 0 && s.lines.length === 0 && facts !== undefined && facts.length === s.fulfilmentCount;
+    if (!mayBeEmpty) d.push(`${s.fulfilmentCount} fulfilment(s) already exist`);
+    else for (const f of facts) d.push(...fulfilmentActivity(f));
+  }
 
   const got = new Map<string, { qty: number; price: number | null }>();
   for (const l of s.lines) {
