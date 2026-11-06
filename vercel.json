@@ -32,5 +32,15 @@
       "path": "/api/notify-ship-by-changes",
       "schedule": "*/5 * * * *"
     }
-  ]
+  ],
+  "regions": [
+    "dub1"
+  ],
+  "functions": {
+    "src/app/api/sync*/route.ts": {
+      "regions": [
+        "iad1"
+      ]
+    }
+  }
 }
