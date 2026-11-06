@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NewQuip UX-006 guided workflows - design prototype</title>
+<style>
+/* Design prototype only (UX-006). Static, no network, illustrative data. Tokens mirror the NewQuip shell: slate surfaces, indigo action, 8px radius. */
+:root{--bg:#eef1f6;--card:#fff;--line:#e2e8f0;--ink:#0f172a;--ink2:#334155;--ink3:#475569;--acc:#4338ca;--acc-bg:#eef2ff;--ok:#047857;--ok-bg:#ecfdf5;--warn:#92400e;--warn-bg:#fffbeb;--bad:#b91c1c;--bad-bg:#fef2f2;--blk:#475569;--blk-bg:#f1f5f9;--r:8px}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{max-width:1920px;margin:0 auto;padding:16px}
+h1{font-size:18px;margin:0 0 2px}
+.note{font-size:12px;color:var(--ink3);margin:0 0 12px}
+.demo{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
+.demo button,.btn{font:inherit;border:1px solid #cbd5e1;background:#fff;color:var(--ink);border-radius:var(--r);padding:8px 12px;min-height:44px;cursor:pointer}
+.demo button[aria-pressed=true]{background:var(--acc);border-color:var(--acc);color:#fff}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+.btn:disabled,.btn[aria-disabled=true]{opacity:.55;cursor:not-allowed}
+:focus-visible{outline:3px solid #3730a3;outline-offset:2px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+.sum{display:flex;flex-wrap:wrap;gap:8px 24px;justify-content:space-between;align-items:center}
+.stages{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin:12px 0;padding:0;list-style:none}
+.stages li{border:1px solid var(--line);background:#fff;border-radius:var(--r);padding:8px 10px;font-size:12px;color:var(--ink3)}
+.stages li b{display:block;font-size:13px;color:var(--ink)}
+.stages li.on{border-color:var(--acc);box-shadow:0 0 0 2px var(--acc);background:var(--acc-bg)}
+.stages li.na{border-style:dashed;background:#f8fafc}
+/* step rail */
+.steps{display:flex;gap:4px;margin:0 0 12px;padding:6px;list-style:none;background:#fff;border:1px solid var(--line);border-radius:var(--r);overflow:auto}
+.steps button{display:flex;align-items:center;gap:8px;border:0;background:transparent;border-radius:6px;padding:8px 12px;min-height:44px;font:inherit;color:var(--ink2);cursor:pointer;white-space:nowrap;text-align:left}
+.steps button:hover{background:#f8fafc}
+.steps li[aria-current=step] button{background:var(--acc-bg);color:var(--acc);font-weight:600}
+.n{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;border:2px solid #94a3b8;font-size:12px;font-weight:700;flex:none}
+.done .n{background:var(--ok);border-color:var(--ok);color:#fff}
+.attn .n{border-color:var(--warn);color:var(--warn);background:var(--warn-bg)}
+[aria-current=step] .n{border-color:var(--acc);background:var(--acc);color:#fff}
+.st{font-size:11px;color:var(--ink3);display:block;font-weight:400}
+.mob-steps{display:none}.mob-stage{display:none}
+.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0}
+.chip{display:inline-flex;gap:6px;align-items:center;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:600;background:var(--blk-bg);color:var(--ink2)}
+.chip.ok{background:var(--ok-bg);color:var(--ok)}.chip.warn{background:var(--warn-bg);color:var(--warn)}.chip.bad{background:var(--bad-bg);color:var(--bad)}.chip.acc{background:var(--acc-bg);color:var(--acc)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+.f{display:grid;gap:4px;font-size:13px;margin:8px 0}
+.f input,.f select{font:inherit;border:1px solid #cbd5e1;border-radius:6px;padding:8px;min-height:44px;max-width:28rem;width:100%}
+.fields{display:grid;grid-template-columns:repeat(3,minmax(0,16rem));gap:0 16px}
+.lbl{font-size:11px;letter-spacing:.06em;text-transform:uppercase;font-weight:700;color:var(--ink2);margin:0 0 4px}
+.help{font-size:12px;color:var(--ink3)}
+.foot{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:16px;flex-wrap:wrap}
+.why{font-size:12px;color:var(--warn);margin:4px 0 0}
+.lane{display:grid;gap:8px;align-content:start}
+.lanes{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.stn{display:grid;grid-template-columns:auto 1fr auto;gap:4px 10px;align-items:center;border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;background:#fff}
+.stn .t{font-weight:600}.stn .d{grid-column:2/4;font-size:12px;color:var(--ink3)}
+.stn .need{grid-column:2/4;font-size:11px;color:var(--ink3);border-top:1px dashed var(--line);padding-top:4px}
+.stn a{color:var(--acc);font-weight:600;font-size:13px;text-decoration:underline;white-space:nowrap;display:inline-flex;align-items:center;min-height:44px;padding:0 8px;margin:-10px -8px -10px 0}
+.ic{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:800;border:2px solid currentColor}
+.s-ok{color:var(--ok)}.s-prog{color:var(--acc)}.s-attn{color:var(--warn)}.s-blk{color:var(--blk)}.s-none{color:#94a3b8}
+.hidden{display:none!important}
+.wz{display:grid;grid-template-columns:260px 1fr;gap:16px}
+.wz ol{margin:0;padding:0;list-style:none;display:grid;gap:4px}
+.wz li button{width:100%;display:flex;gap:8px;align-items:center;border:1px solid var(--line);background:#fff;border-radius:var(--r);padding:8px 10px;min-height:44px;font:inherit;cursor:pointer;text-align:left}
+.wz li[aria-current=step] button{border-color:var(--acc);background:var(--acc-bg);font-weight:600}
+.conf{display:flex;gap:8px;align-items:flex-start;margin:12px 0}
+.sr{position:absolute;left:-9999px}
+input[type=checkbox]{width:24px;height:24px;flex:none}
+label.help,label.conf{display:inline-flex;align-items:center;gap:8px;min-height:44px}
+@media (max-width:1100px){.stages{grid-template-columns:repeat(3,1fr)}.lanes{grid-template-columns:1fr}.grid2{grid-template-columns:1fr}.fields{grid-template-columns:repeat(2,minmax(0,16rem))}}
+@media (max-width:700px){
+ .wrap{padding:12px}.stages{grid-template-columns:repeat(2,1fr)}.fields{grid-template-columns:1fr}
+ .steps{display:none}.mob-steps{display:block}
+ .mob-steps summary{list-style:none;display:flex;justify-content:space-between;align-items:center;min-height:48px;padding:8px 12px;background:#fff;border:1px solid var(--line);border-radius:var(--r);font-weight:600;cursor:pointer}
+ .mob-steps ol{margin:4px 0 0;padding:0;list-style:none;background:#fff;border:1px solid var(--line);border-radius:var(--r)}
+ .mob-steps ol button{width:100%;display:flex;gap:8px;align-items:center;border:0;background:transparent;padding:10px 12px;min-height:48px;font:inherit;text-align:left}
+ .foot.stick{position:sticky;bottom:0;background:var(--bg);padding:8px 0;border-top:1px solid var(--line);display:grid;grid-template-columns:1fr 2fr;gap:8px}.foot.stick .help{display:none}.foot.stick .btn{min-height:48px}
+ .stages{display:none}.mob-stage{display:block}
+ .wz{grid-template-columns:1fr}.wz nav{display:none}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>UX-006 guided workflows - interactive design prototype</h1>
+<p class="note">Design proposal only. Illustrative data; nothing here is wired to the app, Cin7 or Xero. Resize the window (or use the narrow preview) to see laptop, tablet and mobile behaviour. Statuses are always icon + text, never colour alone.</p>
+<div class="demo" role="group" aria-label="Choose a design to explore">
+ <button aria-pressed="true" data-v="builder">1. Solution Builder: step rail (Stage 1)</button>
+ <button aria-pressed="false" data-v="builder2">1b. Stage 2 steps (Rep vs Estimator)</button>
+ <button aria-pressed="false" data-v="journey">2. Project Journey</button>
+ <button aria-pressed="false" data-v="sale">3. Cin7 Sale guided steps</button>
+</div>
+
+<!-- ===================== SOLUTION BUILDER ===================== -->
+<section id="v-builder" aria-label="Solution Builder stage 1">
+ <div class="card sum"><div><span class="chip">DRAFT</span> </div>
+  <dl style="display:flex;gap:24px;margin:0"><div><dt class="help">QUOTE TOTAL (EX VAT)</dt><dd style="margin:0;font-size:22px;font-weight:700">R 10 000 000,00</dd></div><div><dt class="help">GROSS MARGIN</dt><dd style="margin:0;font-weight:600;font-size:17px">23,7%</dd></div></dl></div>
+ <ol class="stages" aria-label="Quotation stages (unchanged)"><li class="on" aria-current="step"><b>1 Configuration</b>In progress</li><li><b>2 Costing &amp; Estimator Review</b>Not started</li><li><b>3 Manager Approval</b>Not started</li><li class="na"><b>4 Customer Quotation</b>Not yet available</li><li class="na"><b>5 Customer Acceptance</b>Not yet available</li><li class="na"><b>6 Project Handover</b>Not yet available</li></ol>
+
+ <details class="mob-steps mob-stage"><summary><span>Stage 1 of 6 · Configuration</span><span aria-hidden="true">▾</span></summary><ol><li><button type="button">1 Configuration · In progress</button></li><li><button type="button">2 Costing &amp; Estimator Review · Not started</button></li><li><button type="button">3 Manager Approval · Not started</button></li><li><button type="button" disabled>4 Customer Quotation · Not yet available</button></li><li><button type="button" disabled>5 Customer Acceptance · Not yet available</button></li><li><button type="button" disabled>6 Project Handover · Not yet available</button></li></ol></details>
+ <div class="bar"><span class="chip ok" id="savestate" role="status" aria-live="polite">All changes saved</span>
+  <span style="flex:1"></span>
+  <button class="btn" id="nextinc">Next incomplete step</button>
+  <label class="help"><input type="checkbox" id="showall"> Show all steps (remembered)</label>
+  <button class="btn" id="save" disabled>Save draft</button></div>
+
+ <ol class="steps" id="rail" aria-label="Stage 1 steps"></ol>
+ <details class="mob-steps"><summary><span id="mtitle">Step 1 of 5 · Customer</span><span aria-hidden="true">▾</span></summary><ol id="mrail"></ol></details>
+
+ <div id="panels"></div>
+ <div class="foot stick"><button class="btn" id="back">← Back</button><span class="help" id="saveline">Saved with the customer selection</span><button class="btn primary" id="next">Next: Contact &amp; site →</button></div>
+</section>
+
+<!-- ===================== STAGE 2 ===================== -->
+<section id="v-builder2" class="hidden" aria-label="Solution Builder stage 2">
+ <div class="demo" role="group" aria-label="Role"><button aria-pressed="true" data-role="rep">View as Rep</button><button aria-pressed="false" data-role="est">View as Estimator</button></div>
+ <div class="bar"><b>Stage 2 · Step <span id="s2cur">1</span> of <span id="s2tot">3</span></b><span class="chip acc" id="s2prog"></span><span style="flex:1"></span><button class="btn" disabled>Save draft</button></div>
+ <ol class="steps" id="rail2" aria-label="Stage 2 steps"></ol>
+ <div class="card" id="s2body"></div>
+ <div class="foot"><button class="btn" id="s2back">← Back</button><span class="help">Steps never block navigation. Only the existing action buttons are gated, with their existing reasons.</span><button class="btn primary" id="s2next">Next →</button></div>
+</section>
+
+<!-- ===================== PROJECT JOURNEY ===================== -->
+<section id="v-journey" class="hidden" aria-label="Project Journey">
+ <div class="card"><div class="sum"><div><b>Project journey</b> <span class="help">Parallel workflows. No step waits for another unless a real dependency is shown.</span></div><span class="chip ok">Project ACTIVE</span></div>
+ <p class="help" style="margin:8px 0 0">Status key: <span class="s-ok">✓ Completed</span> · <span class="s-prog">◐ In progress</span> · <span class="s-attn">! Needs attention</span> · <span class="s-blk">⊘ Blocked</span> · <span class="s-none">○ Not started / not read yet</span></p></div>
+ <div class="card" style="margin-top:12px"><p class="lbl">Setup</p>
+  <div class="lanes">
+   <div class="stn"><span class="ic s-prog" aria-hidden="true">◐</span><span class="t">Project details <span class="sr">In progress</span></span><a href="#" data-go>Open details</a><span class="d">1 of 3 set (manager, start, target). Informational; nothing is blocked.</span></div>
+   <div class="stn"><span class="ic s-ok" aria-hidden="true">✓</span><span class="t">Billing schedule <span class="sr">Completed</span></span><a href="#" data-go>Open Stages</a><span class="d">Schedule balances to the contract value.</span></div>
+   <div class="stn"><span class="ic s-none" aria-hidden="true">○</span><span class="t">Opening commitments <span class="sr">Not started</span></span><a href="#" data-go>Open commitments</a><span class="d">Optional. Locks once the first claim exists.</span></div>
+  </div></div>
+ <div class="lanes" style="margin-top:12px">
+  <div class="card lane"><p class="lbl">Commercial lane</p>
+   <div class="stn"><span class="ic s-prog" aria-hidden="true">◐</span><span class="t">Cin7 Sale <span class="sr">In progress</span></span><a href="#" data-go>Open Sale setup</a><span class="d">2 scope items unmapped.</span><span class="need">Needs: scope items resolved (manager, writes on)</span></div>
+   <div class="stn"><span class="ic s-prog" aria-hidden="true">◐</span><span class="t">Stage progress <span class="sr">In progress</span></span><a href="#" data-go>Open Stages</a><span class="d">1 of 4 stages commercially approved.</span></div>
+   <div class="stn"><span class="ic s-attn" aria-hidden="true">!</span><span class="t">Progress claims <span class="sr">Needs attention</span></span><a href="#" data-go>Open Claims</a><span class="d">1 claim needs your action (ready for approval).</span></div>
+   <div class="stn"><span class="ic s-blk" aria-hidden="true">⊘</span><span class="t">Post to Cin7 <span class="sr">Blocked</span></span><a href="#" data-go>See why</a><span class="d">Blocked: no linked Cin7 Sale yet.</span><span class="need">Needs: linked Sale + approved claim</span></div>
+   <div class="stn"><span class="ic s-none" aria-hidden="true">○</span><span class="t">Invoice status <span class="sr">Not read yet</span></span><a href="#" data-go>Verify invoices</a><span class="d">Last recorded only. Read from Cin7 on request.</span></div>
+  </div>
+  <div class="card lane"><p class="lbl">Physical lane (independent of invoicing)</p>
+   <div class="stn"><span class="ic s-prog" aria-hidden="true">◐</span><span class="t">Deliveries <span class="sr">In progress</span></span><a href="#" data-go>Open Deliveries</a><span class="d">1 planned, 1 dispatched.</span></div>
+   <div class="stn"><span class="ic s-none" aria-hidden="true">○</span><span class="t">Fulfilment (Cin7 stock) <span class="sr">Not read yet</span></span><a href="#" data-go>Read fulfilment</a><span class="d">Unknown until read. Never shown as zero.</span></div>
+   <div class="stn"><span class="ic s-none" aria-hidden="true">○</span><span class="t">Procurement targets <span class="sr">Not read yet</span></span><a href="#" data-go>Read targets</a><span class="d">Live Cin7 read, on request.</span></div>
+   <div class="stn"><span class="ic s-none" aria-hidden="true">○</span><span class="t">Milestone confirmations <span class="sr">Not started</span></span><a href="#" data-go>Record confirmation</a><span class="d">Evidence only. Does not release claimable value.</span></div>
+  </div>
+  <div class="card lane"><p class="lbl">Variation lane (per approved variation)</p>
+   <div class="stn"><span class="ic s-prog" aria-hidden="true">◐</span><span class="t">V001 · approved <span class="sr">In progress</span></span><a href="#" data-go>Open V001<<span class="d">Billing workspace open. Sale SO-1042.</span></div>
+   <div class="stn"><span class="ic s-attn" aria-hidden="true">!</span><span class="t">V002 · approved <span class="sr">Needs attention</span></span><a href="#" data-go>Start V002 billing</a><span class="d">Approved, no billing project yet.</span></div>
+   <div class="stn"><span class="ic s-none" aria-hidden="true">○</span><span class="t">V003 · draft <span class="sr">Not started</span></span><a href="#" data-go>Submit V003</a><span class="d">Next: price it, then submit for approval.</span></div>
+  </div>
+ </div>
+ <p class="help" style="margin:12px 0 0">No project completion state exists yet, so the journey has no completion step. Closure would be a separate owner decision.</p>
+</section>
+
+<!-- ===================== CIN7 SALE WIZARD ===================== -->
+<section id="v-sale" class="hidden" aria-label="Create Cin7 Sale guided steps">
+ <div class="card"><b>Create Cin7 Sales Order</b> <span class="help">Reuses the existing panel, actions and gates. The wizard only orders and explains them.</span>
+ <div class="wz" style="margin-top:12px">
+  <nav aria-label="Sale creation steps"><ol id="wzrail"></ol></nav>
+  <details class="mob-steps"><summary><span id="wzm">Step 1 of 4</span><span aria-hidden="true">▾</span></summary><ol id="wzmrail"></ol></details>
+  <div id="wzbody"></div>
+ </div>
+ <div class="foot stick"><button class="btn" id="wzback">← Back</button><span class="help" id="wzwhy"></span><button class="btn primary" id="wznext">Next →</button></div></div>
+</section>
+</div>
+
+<script>
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+/* ---------- view switch ---------- */
+$$('.demo [data-v]').forEach(b=>b.onclick=()=>{$$('.demo [data-v]').forEach(x=>x.setAttribute('aria-pressed',x===b));['builder','builder2','journey','sale'].forEach(v=>$('#v-'+v).classList.toggle('hidden',v!==b.dataset.v))});
+$$('[data-go]').forEach(a=>a.onclick=e=>e.preventDefault());
+/* ---------- Stage 1 step rail ---------- */
+const S1=[
+ {n:'Customer',st:()=>S.cust?'done':'todo',body:()=>`<p class="lbl">Customer</p><p class="help">Search Cin7 and pick the customer. Saved immediately as a snapshot (not part of Save draft).</p>
+   <div class="f"><label for="c1">Customer (Cin7 search)</label><input id="c1" placeholder="Type 2+ characters" value="${S.cust}"></div>
+   <button class="btn" id="pick">Select "Topigs Norsvin SA"</button>
+   <p class="why" id="cw" ${S.cust?'hidden':''}>Not selected: needed before sending to the Estimator (Stage 2 handoff). The quotation can still be drafted with a typed name.</p>`},
+ {n:'Contact & site',st:()=>S.site?'done':'todo',body:()=>`<p class="lbl">Contact &amp; site</p><p class="help">Contact is optional here and defaults to the customer's primary contact. Site is a text name; there is no separate site confirmation.</p>
+   <div class="fields"><div class="f"><label>Quotation contact</label><select><option>Primary contact (default)</option><option>Add another contact…</option></select></div><div class="f"><label for="site">Site / project name</label><input id="site" value="${S.site}" data-d></div><div class="f"><label>Pricing basis</label><select data-d><option>Project - landed cost + 20%</option></select></div></div>`},
+ {n:'Room inputs',st:()=>S.room?'done':'attn',body:()=>`<p class="lbl">Room inputs - describe ONE room</p>
+   <div class="fields"><div class="f"><label>Length (m)</label><input value="49.5" data-d></div><div class="f"><label>Width (m)</label><input value="14.43" data-d></div><div class="f"><label>Number of rooms</label><input value="12" data-d></div><div class="f"><label>Total pens</label><input value="20" data-d></div><div class="f"><label>Hospital pens</label><input value="2" data-d></div><div class="f"><label>Pigs per room</label><input value="600" data-d></div></div>
+   <p class="help">Room floor area: <b>714.285 m²</b> · minimum lights per room = 29. Per-room line quantities are set in Stage 2, Lines.</p>`},
+ {n:'Equipment & options',st:()=>'done',body:()=>`<p class="lbl">Equipment &amp; options</p>
+   <div class="fields"><div class="f"><label>CCM feeder variant</label><select data-d><option>Standard - PNQ082</option></select></div><div class="f"><label>Penning pig size</label><select data-d><option>Select…</option></select></div><div class="f"><label>Penning running metres</label><input value="20" data-d></div></div>
+   <p class="lbl" style="margin-top:12px">Ventilation (optional)</p><label class="conf"><input type="checkbox" data-d checked> Thomas-CL1 controller</label>`},
+ {n:'Review',st:()=>'todo',body:()=>`<p class="lbl">Review</p><p class="help">Read-only summary of the live preview. Nothing new is validated or saved here.</p>
+   <ul style="margin:8px 0;padding-left:18px"><li>Customer: ${S.cust||'<b class=why>not selected in Cin7</b>'}</li><li>Site: ${S.site||'<b class=why>missing</b>'}</li><li>Room inputs: valid</li><li>Penning pig size: <b class=why>not selected (needed for pricing)</b></li></ul>
+   <p class="help">Quote is DRAFT until these are complete. Costing, mappings and quantities continue in Stage 2.</p><button class="btn primary">Continue to Stage 2: Costing &amp; Estimator Review →</button>`}];
+const S={cust:'',site:'',room:true,i:0,dirty:false};
+const icon=s=>s==='done'?'✓':s==='attn'?'!':'';
+function render1(){
+ const all=$('#showall').checked;
+ const mk=(host,btnCls)=>{host.innerHTML='';S1.forEach((s,i)=>{const st=s.st(),li=document.createElement('li');if(i===S.i&&!all)li.setAttribute('aria-current','step');li.className=st;
+  li.innerHTML=`<button type="button"><span class="n" aria-hidden="true">${st==='done'?'✓':st==='attn'?'!':i+1}</span><span>${s.n}<span class="st">${st==='done'?'Complete':st==='attn'?'Needs attention':'Not complete'}</span></span></button>`;
+  li.firstChild.onclick=()=>{S.i=i;render1();$('#panels h2')?.focus()};host.appendChild(li)})};
+ mk($('#rail'));mk($('#mrail'));
+ const done=S1.filter(s=>s.st()==='done').length;
+
+ $('#mtitle').textContent=`Step ${S.i+1} of 5 · ${S1[S.i].n} · ${done} complete`;
+ const list=all?S1.map((s,i)=>i):[S.i];
+ $('#panels').innerHTML=list.map(i=>`<div class="card" style="margin-bottom:12px" role="region" aria-labelledby="h${i}"><h2 id="h${i}" tabindex="-1" class="sr">Step ${i+1}: ${S1[i].n}</h2>${S1[i].body()}</div>`).join('');
+ $('#back').disabled=S.i===0||all;$('#next').disabled=all;
+ $('#next').textContent=S.i<4?`Next: ${S1[S.i+1].n} →`:'Stage 1 complete';$('#next').disabled=S.i===4||all;
+ $('#saveline').textContent=S.i===0?'Customer is saved on selection':'Edits here are saved with Save draft';
+ $('#pick')&&($('#pick').onclick=()=>{S.cust='Topigs Norsvin SA';render1()});
+ $$('#panels [data-d]').forEach(e=>e.oninput=markDirty);
+ $('#site')&&($('#site').oninput=e=>{S.site=e.target.value;markDirty();$('#rail li:nth-child(2)').className=S.site?'done':'todo'});
+}
+$('#back').onclick=()=>{S.i=Math.max(0,S.i-1);render1();$('#panels h2').focus()};
+$('#next').onclick=()=>{S.i=Math.min(4,S.i+1);render1();$('#panels h2').focus()};
+function markDirty(){S.dirty=true;const e=$('#savestate');e.className='chip warn';e.textContent='Unsaved changes (draft fields)';$('#save').disabled=false}
+try{$('#showall').checked=localStorage.getItem('nq-showall')==='1'}catch(e){}
+$('#showall').onchange=()=>{try{localStorage.setItem('nq-showall',$('#showall').checked?'1':'0')}catch(e){}render1()};
+$('#nextinc').onclick=()=>{const k=S1.findIndex(s=>s.st()!=='done');if(k>=0){S.i=k;render1();$('#panels h2')?.focus()}};
+$('#save').onclick=()=>{S.dirty=false;const e=$('#savestate');e.className='chip ok';e.textContent='All changes saved';$('#save').disabled=true};
+render1();
+/* ---------- Stage 2 ---------- */
+const S2={role:'rep',i:0};
+const s2steps=()=>[{n:'Lines & mappings',st:'attn',d:'Readiness reasons, line quantities, product mappings.'},
+ {n:'Charges, exclusions & prices',st:'todo',d:'Delivery, installation, M75, assumptions, manual prices, customer exclusions.'},
+ ...(S2.role==='est'?[{n:'Cost & margin',st:'todo',d:'Scope, supplier cost capture, totals, margin overrides. Commercial viewers only.'}]:[]),
+ {n:'Handoff',st:'todo',d:S2.role==='rep'?'Confirm the pre-approval amount and send to the Estimator. Rep only.':'Estimator: sign off or return to the Rep with a reason.'}];
+function render2(){const st=s2steps();S2.i=Math.min(S2.i,st.length-1);
+ $('#rail2').innerHTML=st.map((s,i)=>`<li class="${s.st}" ${i===S2.i?'aria-current="step"':''}><button type="button" data-i="${i}"><span class="n" aria-hidden="true">${s.st==='attn'?'!':i+1}</span><span>${s.n}<span class="st">${s.st==='attn'?'Needs attention':'Not done'}</span></span></button></li>`).join('');
+ $$('#rail2 button').forEach(b=>b.onclick=()=>{S2.i=+b.dataset.i;render2()});
+ $('#s2cur').textContent=S2.i+1;$('#s2tot').textContent=st.length;$('#s2prog').textContent=(S2.role==='rep'?'Cost & margin step hidden for your role':'All steps visible');
+ $('#s2body').innerHTML=`<p class="lbl">${st[S2.i].n}</p><p class="help">${st[S2.i].d}</p><p class="help">The existing panels for this step render here unchanged, including their disabled reasons. They stay mounted when hidden, so no extra requests are made.</p>`+(st[S2.i].n==='Handoff'&&S2.role==='rep'?'<button class="btn" disabled>Record confirmation &amp; send to Estimator</button><p class="why">Disabled: quote is not READY (2 mapping items outstanding).</p>':'');
+ $('#s2back').disabled=S2.i===0;$('#s2next').disabled=S2.i===st.length-1}
+$$('[data-role]').forEach(b=>b.onclick=()=>{$$('[data-role]').forEach(x=>x.setAttribute('aria-pressed',x===b));S2.role=b.dataset.role;render2()});
+$('#s2back').onclick=()=>{S2.i--;render2()};$('#s2next').onclick=()=>{S2.i++;render2()};render2();
+/* ---------- Cin7 Sale wizard ---------- */
+const W={i:0,res:false,ref:false,pre:false,ok:false};
+const WS=[{n:'Resolve scope',opt:0},{n:'Cin7 references',opt:0},{n:'Preflight check',opt:1},{n:'Confirm & create',opt:0}];
+const wst=i=>[W.res,W.ref,W.pre,false][i]?'done':'todo';
+function renderW(){
+ const mk=(h)=>{h.innerHTML=WS.map((s,i)=>`<li ${i===W.i?'aria-current="step"':''}><button type="button" data-i="${i}"><span class="n" aria-hidden="true">${wst(i)==='done'?'✓':i+1}</span><span>${s.n}${s.opt?' <span class="help">(optional)</span>':''}<span class="st">${wst(i)==='done'?'Done':'Not done'}</span></span></button></li>`).join('');$$('button',h).forEach(b=>b.onclick=()=>{W.i=+b.dataset.i;renderW()})};
+ mk($('#wzrail'));mk($('#wzmrail'));$('#wzm').textContent=`Step ${W.i+1} of 4 · ${WS[W.i].n}`;
+ const B=[`<p class="lbl">1 · Resolve scope</p><p class="help">2 scope items have no Cin7 product. Exclude (reason required) or map to a product.</p><div class="f"><label>Item "M75 feed distribution"</label><select><option>Map to product…</option><option>Exclude</option></select></div><label class="conf"><input type="checkbox" id="rs" ${W.res?'checked':''}> All items resolved (illustration)</label>`,
+ `<p class="lbl">2 · Cin7 references</p><div class="fields"><div class="f"><label>Cin7 customer name</label><input></div><div class="f"><label>Location</label><select><option>Main</option></select></div><div class="f"><label>Revenue account</label><select><option>200 Sales</option></select></div></div><label class="conf"><input type="checkbox" id="rf" ${W.ref?'checked':''}> References entered (illustration)</label>`,
+ `<p class="lbl">3 · Preflight check (optional)</p><p class="help">Read-only. Shows PASS / FAIL / MANUAL for the customer, location, account and tax rule before anything is written.</p><button class="btn" id="pf">Run preflight</button> <span class="chip ${W.pre?'ok':''}">${W.pre?'PASS':'Not run'}</span>`,
+ `<p class="lbl">4 · Confirm &amp; create</p><p class="help">Creates one Sales Order with one line per billing stage. This writes to Cin7.</p><label class="conf"><input type="checkbox" id="cf"> I confirm the Cin7 Sales Order should be created with the stages and amounts shown</label><ul class="help" style="padding-left:18px;margin:8px 0"><li>${W.res?"✓":"○"} Scope resolved (Step 1)</li><li>${W.ref?"✓":"○"} Cin7 references entered (Step 2)</li><li>○ Confirmation ticked</li></ul><button class="btn primary" id="cr" aria-disabled="true">Create Cin7 Sales Order</button><p class="why" id="cw2">Not ready: use the steps above to complete the unchecked items.</p>`];
+ $('#wzbody').innerHTML=`<div role="region" aria-live="polite">${B[W.i]}</div>`;
+ $('#rs')&&($('#rs').onchange=e=>{W.res=e.target.checked;renderW()});$('#rf')&&($('#rf').onchange=e=>{W.ref=e.target.checked;renderW()});$('#pf')&&($('#pf').onclick=()=>{W.pre=true;renderW()});
+ $('#cf')&&($('#cf').onchange=e=>{W.ok=e.target.checked;$('#cr').setAttribute('aria-disabled',String(!(W.res&&W.ref&&W.ok)))});
+ $('#wzback').disabled=W.i===0;$('#wznext').hidden=W.i===3;$('#wzwhy').textContent=W.i===3?'Writes only on the final button.':'Navigation never writes anything.';
+}
+$('#wzback').onclick=()=>{W.i--;renderW()};$('#wznext').onclick=()=>{W.i++;renderW()};renderW();
+</script>
+</body>
+</html>
