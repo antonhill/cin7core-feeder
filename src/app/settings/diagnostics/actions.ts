@@ -1042,7 +1042,7 @@ export async function debugProbePurchaseReceiptIntegrity(instanceId: string, ref
         for (const l of data ?? []) m.set((l.product_sku ?? "").trim() || "(no SKU)", (m.get((l.product_sku ?? "").trim() || "(no SKU)") ?? 0) + Number(l.quantity ?? 0));
         return m;
       };
-      const probe = await probePurchaseReceipts(creds, row.cin7_purchase_id, { ordered: sum(o.data), received: sum(r.data) });
+      const probe = await probePurchaseReceipts(creds, row.cin7_purchase_id, { ordered: sum(o.data), received: sum(r.data) }, row.order_number);
       results.push({
         ref,
         cache: {

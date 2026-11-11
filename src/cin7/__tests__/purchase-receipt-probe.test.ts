@@ -37,4 +37,28 @@ describe("probePurchaseReceipts", () => {
     const r = await probePurchaseReceipts(creds, "po2", null);
     expect(r.error).toBe("boom");
   });
+
+  it("simulates the sync's receipt PK: duplicate (CardID, SKU) lines would roll back the whole PO", async () => {
+    vi.mocked(cin7Request).mockImplementation(async () => ({
+      Order: { Lines: [{ SKU: "A", Quantity: 5 }, { SKU: "B", Quantity: 1 }] },
+      StockReceived: { Status: "AUTHORISED", Lines: [{ CardID: "card-12345678", SKU: "A", Quantity: 2 }, { CardID: "card-12345678", SKU: "A", Quantity: 3 }, { CardID: "card-12345678", SKU: "B", Quantity: 1 }] },
+    }));
+    const r = await probePurchaseReceipts(creds, "po3", null);
+    expect(r.parser).toMatchObject({ receiptRows: 3, wouldViolateReceiptPk: true, orderRows: 2 });
+    expect(r.parser?.duplicateReceiptKeys).toHaveLength(1);
+    expect(r.parser?.duplicateReceiptKeys[0]).toMatchObject({ count: 2, quantities: [2, 3] });
+    expect(r.sectionEvents?.StockReceived?.[0]).toMatchObject({ Status: "AUTHORISED" });
+  });
+
+  it("looks the PO up in /purchaseList (GET) and compares LastUpdatedDate with the latest detail date", async () => {
+    vi.mocked(cin7Request).mockImplementation(async (_c, path) => {
+      if (path === "/purchaseList") return { PurchaseList: [{ ID: "po4", LastUpdatedDate: "2026-07-02T10:00:00", Status: "RECEIVING", Supplier: "Hidden" }] };
+      return { Order: { Lines: [{ SKU: "A", Quantity: 1 }] }, StockReceived: { Lines: [{ CardID: "c1", SKU: "A", Quantity: 1, Date: "2026-07-01T00:00:00" }] } };
+    });
+    const r = await probePurchaseReceipts(creds, "po4", null, "PO-4");
+    expect(r.listEntry).toMatchObject({ LastUpdatedDate: "2026-07-02T10:00:00", Status: "RECEIVING" });
+    expect(r.listEntry).not.toHaveProperty("Supplier");
+    expect(r.lastUpdated).toMatchObject({ listCoversLatestDetailDate: true });
+    for (const call of vi.mocked(cin7Request).mock.calls) expect((call[2] as { method?: string } | undefined)?.method ?? "GET").toBe("GET");
+  });
 });
