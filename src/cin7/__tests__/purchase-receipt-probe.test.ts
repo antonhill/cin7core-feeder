@@ -46,6 +46,9 @@ describe("probePurchaseReceipts", () => {
     const r = await probePurchaseReceipts(creds, "po3", null);
     expect(r.parser).toMatchObject({ receiptRows: 3, wouldViolateReceiptPk: true, orderRows: 2 });
     expect(r.parser?.duplicateReceiptKeys).toHaveLength(1);
+    expect(r.parser?.invalidDateReceiptRows).toBe(0);
+    expect(r.keyShapes?.StockReceived).toContain("Lines:array(3)");
+    expect(r.keyShapes?.Order).toContain("Lines:array(2)");
     expect(r.parser?.duplicateReceiptKeys[0]).toMatchObject({ count: 2, quantities: [2, 3] });
     expect(r.sectionEvents?.StockReceived?.[0]).toMatchObject({ Status: "AUTHORISED" });
   });

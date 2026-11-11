@@ -48,6 +48,17 @@ function safeScalars(obj: unknown): Scalars {
   return out;
 }
 
+/** Structure-only description of a response value (key names, array lengths, primitive types) — never values. */
+function shape(v: unknown, depth = 0): string {
+  if (v === null) return "null";
+  if (Array.isArray(v)) return `array(${v.length})` + (v.length > 0 && depth < 3 ? `<${shape(v[0], depth + 1)}>` : "");
+  if (typeof v === "object") {
+    if (depth >= 3) return "object";
+    return `{${Object.keys(v as Record<string, unknown>).sort().map((k) => `${k}:${shape((v as Record<string, unknown>)[k], depth + 1)}`).join(",")}}`;
+  }
+  return typeof v;
+}
+
 export interface ParserSimulation {
   receiptRows: number;
   /** (cardId|sku) keys occurring more than once — each would violate purchase_receipt_lines' PK (org, instance, card_id, product_sku) and roll back the whole PO. */
@@ -56,6 +67,8 @@ export interface ParserSimulation {
   orderRows: number;
   blankSkuReceiptRows: number;
   nonFiniteQuantityRows: number;
+  /** Receipt rows whose date would not be a valid Postgres date after the sync's toDateOnly(). */
+  invalidDateReceiptRows: number;
   error?: string;
 }
 
@@ -63,6 +76,8 @@ export interface PurchaseProbeResult {
   purchaseId: string;
   /** Top-level primitive fields with status/date/identity-like names. */
   scalars?: Scalars;
+  /** Structure of EVERY top-level key (names, array lengths, types) — shows whether line sections are truly absent or live under another key. */
+  keyShapes?: Record<string, string>;
   /** Per-section event/header primitives (e.g. StockReceived[].Status/Date), max 10 per section. */
   sectionEvents?: Record<string, Scalars[]>;
   /** Distinct per-line `Status` values by section, when lines carry one. */
@@ -150,6 +165,7 @@ export async function probePurchaseReceipts(
     const keyCount = new Map<string, number[]>();
     let blank = 0;
     let nonFinite = 0;
+    let badDate = 0;
     for (const l of parsed.receiptLines) {
       const sku = l.productSku.trim() || "(no SKU)";
       parserReceived.set(sku, (parserReceived.get(sku) ?? 0) + l.quantity);
@@ -157,6 +173,7 @@ export async function probePurchaseReceipts(
       keyCount.set(k, [...(keyCount.get(k) ?? []), l.quantity]);
       if (!l.productSku.trim()) blank += 1;
       if (!Number.isFinite(l.quantity)) nonFinite += 1;
+      if (l.receivedDate !== null && Number.isNaN(Date.parse(`${l.receivedDate}T00:00:00Z`))) badDate += 1;
     }
     const dups = [...keyCount.entries()].filter(([, q]) => q.length > 1).map(([key, quantities]) => ({ key: key.replace(/^[^|]{8}[^|]*/, (m) => m.slice(0, 8) + "…"), count: quantities.length, quantities }));
     parser = {
@@ -166,10 +183,11 @@ export async function probePurchaseReceipts(
       orderRows: parsed.orderLines.length,
       blankSkuReceiptRows: blank,
       nonFiniteQuantityRows: nonFinite,
+      invalidDateReceiptRows: badDate,
     };
   } catch (e) {
     parserReceived = new Map();
-    parser = { receiptRows: 0, duplicateReceiptKeys: [], wouldViolateReceiptPk: false, orderRows: 0, blankSkuReceiptRows: 0, nonFiniteQuantityRows: 0, error: (e instanceof Error ? e.message : "Unknown error").slice(0, 200) };
+    parser = { receiptRows: 0, duplicateReceiptKeys: [], wouldViolateReceiptPk: false, orderRows: 0, blankSkuReceiptRows: 0, nonFiniteQuantityRows: 0, invalidDateReceiptRows: 0, error: (e instanceof Error ? e.message : "Unknown error").slice(0, 200) };
   }
 
   // Section headers/events and per-line statuses — to find draft/unauthorised receiving structures.
@@ -249,5 +267,5 @@ export async function probePurchaseReceipts(
     if (!agree) diffs.push(d);
   }
 
-  return { purchaseId, scalars: safeScalars(response), sectionEvents, lineStatuses, parser, listEntry, listLookupError, lastUpdated, endpoint, topLevelKeys: Object.keys(response).sort(), sections: { ...sections, ...(orderLines.length ? { "Order.Lines": summarise(orderLines) } : {}) }, skuDiffs: diffs.slice(0, 15), skuCount: skus.size };
+  return { purchaseId, scalars: safeScalars(response), keyShapes: Object.fromEntries(Object.entries(response).map(([k, v]) => [k, shape(v).slice(0, 1500)])), sectionEvents, lineStatuses, parser, listEntry, listLookupError, lastUpdated, endpoint, topLevelKeys: Object.keys(response).sort(), sections: { ...sections, ...(orderLines.length ? { "Order.Lines": summarise(orderLines) } : {}) }, skuDiffs: diffs.slice(0, 15), skuCount: skus.size };
 }
