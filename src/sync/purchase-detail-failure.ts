@@ -1,10 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { logActivity } from "@/lib/activity-log";
+import { logActivity, DIAGNOSTIC_ACTION_PREFIX } from "@/lib/activity-log";
 import { Cin7ApiError } from "@/cin7/http";
 import { ReceiptLineConflictError } from "@/cin7/purchase-detail";
 
 /** Persisted via the existing activity_log (no migration). `diagnostic.` prefix keeps it distinguishable from the live-write audit actions. */
-export const PURCHASE_DETAIL_FAILURE_ACTION = "diagnostic.purchase_detail_sync_failed";
+export const PURCHASE_DETAIL_FAILURE_ACTION = `${DIAGNOSTIC_ACTION_PREFIX}purchase_detail_sync_failed`;
 
 /** A PO that keeps failing is recorded at most once per window, not once per sync cycle (~96/day). */
 export const FAILURE_LOG_WINDOW_HOURS = 24;
