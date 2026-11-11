@@ -697,8 +697,9 @@ describe("purchase detail refresh (0125 queue)", () => {
     const run = async () => {
       const { db, calls } = makeFakeDb({ queue: [q("p1", "relisted")], cachedOrderLines: [{ quantity: 10 }], cachedReceiptLines: [{ quantity: 4 }] });
       await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
-      const { p_fetched_at: _ignored, ...rest } = rpcCalls(calls, "replace_purchase_detail_guarded")[0].args[0] as Record<string, unknown>;
-      return rest;
+      const sent = { ...(rpcCalls(calls, "replace_purchase_detail_guarded")[0].args[0] as Record<string, unknown>) };
+      delete sent.p_fetched_at; // the fetch-start timestamp legitimately differs between runs
+      return sent;
     };
     expect(await run()).toEqual(await run());
   });
