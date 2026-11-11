@@ -28,13 +28,15 @@ export class ReceiptLineConflictError extends Error {
 }
 
 /**
- * purchase_receipt_lines is keyed (org, instance, card_id, product_sku)
- * (migration 0025). Cin7 can return several lines with the same CardID and
- * SKU in one receiving batch (confirmed live: PO-14939 had four, 21+20+106+233
- * = 380); inserting them raised a duplicate-key error that rolled the whole PO
- * back, leaving it permanently unsynced. This sums the quantities of lines that
- * share the key — the table (and every report) already holds one total per card
- * and SKU — and only when every stored field agrees. Otherwise it throws
+ * purchase_receipt_lines is keyed (org, instance, purchase, card_id, product_sku)
+ * since migration 0124 (originally (org, instance, card_id, product_sku), 0025 —
+ * which collided ACROSS purchase orders when Cin7 returned the nil CardID).
+ * Within one PO the key is still unique: Cin7 can return several lines with the
+ * same CardID and SKU in one receiving batch (confirmed live: PO-14939 had four,
+ * 21+20+106+233 = 380), and inserting them raises a duplicate-key error that
+ * rolls the whole PO back. This sums the quantities of lines that share the key
+ * — the table (and every report) already holds one total per card and SKU — and
+ * only when every stored field agrees. Otherwise it throws
  * ReceiptLineConflictError rather than dropping a date/location. First-seen
  * order is preserved; a non-empty product name is kept from the first line.
  */
