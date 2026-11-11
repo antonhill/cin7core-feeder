@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildPoQuantityRows,
+  computeTrustedTotals,
+  qualityGroup,
   classifyLine,
   isDetailPossiblyStale,
   summariseInstanceSync,
@@ -68,7 +70,7 @@ describe("buildPoQuantityRows", () => {
   });
 
   it("reports not received when there are order lines and no receipts (detail synced)", () => {
-    const [r] = buildPoQuantityRows({ purchases: [po()], orderLines: [ol("A", 4)], receiptLines: [], instanceNames: names });
+    const [r] = buildPoQuantityRows({ purchases: [po({ combined_receiving_status: "NOT RECEIVED" })], orderLines: [ol("A", 4)], receiptLines: [], instanceNames: names });
     expect(r).toMatchObject({ ordered: 4, received: 0, outstanding: 4, lineStatus: "not_received", dataQuality: "ok" });
   });
 
@@ -126,6 +128,57 @@ describe("buildPoQuantityRows", () => {
     expect(r.sku).toBe("(no SKU)");
     expect(r.received).toBe(0.3);
     expect(r.lineStatus).toBe("fully_received");
+  });
+});
+
+describe("receipt suspect detection and trusted totals", () => {
+  it("marks FULLY RECEIVED POs whose cached receipts are below ordered as suspect", () => {
+    const [r] = buildPoQuantityRows({
+      purchases: [po({ combined_receiving_status: "FULLY RECEIVED" })],
+      orderLines: [ol("A", 10)],
+      receiptLines: [rl("A", 6)],
+      instanceNames: names,
+    });
+    expect(r.dataQuality).toBe("receipt_suspect");
+    expect(r.dataQualityNote).toMatch(/FULLY RECEIVED/);
+  });
+
+  it("marks FULLY RECEIVED with zero cached receipts, PARTIALLY with none, and NOT RECEIVED with receipts as suspect", () => {
+    const mk = (crs: string, recv: number) =>
+      buildPoQuantityRows({ purchases: [po({ combined_receiving_status: crs })], orderLines: [ol("A", 10)], receiptLines: recv ? [rl("A", recv)] : [], instanceNames: names })[0].dataQuality;
+    expect(mk("FULLY RECEIVED", 0)).toBe("receipt_suspect");
+    expect(mk("PARTIALLY RECEIVED", 0)).toBe("receipt_suspect");
+    expect(mk("NOT RECEIVED", 3)).toBe("receipt_suspect");
+  });
+
+  it("does not flag consistent POs, drop-ships, or POs already flagged stale", () => {
+    const ok = buildPoQuantityRows({ purchases: [po({ combined_receiving_status: "FULLY RECEIVED" })], orderLines: [ol("A", 10)], receiptLines: [rl("A", 10)], instanceNames: names })[0];
+    const drop = buildPoQuantityRows({ purchases: [po({ combined_receiving_status: "FULLY RECEIVED", is_drop_ship: true })], orderLines: [ol("A", 10)], receiptLines: [], instanceNames: names })[0];
+    const stale = buildPoQuantityRows({ purchases: [po({ combined_receiving_status: "FULLY RECEIVED", updated_at: "2026-07-01T00:00:00Z" })], orderLines: [ol("A", 10)], receiptLines: [rl("A", 1)], instanceNames: names })[0];
+    expect([ok.dataQuality, drop.dataQuality, stale.dataQuality]).toEqual(["ok", "ok", "possibly_stale"]);
+  });
+
+  it("trusted totals sum Complete rows only and count excluded POs by group", () => {
+    const rows = buildPoQuantityRows({
+      purchases: [
+        po({ cin7_purchase_id: "good", combined_receiving_status: "PARTIALLY RECEIVED" }),
+        po({ cin7_purchase_id: "sus", combined_receiving_status: "FULLY RECEIVED" }),
+        po({ cin7_purchase_id: "stale", updated_at: "2026-07-01T00:00:00Z" }),
+        po({ cin7_purchase_id: "inc", detail_synced_at: null }),
+      ],
+      orderLines: [ol("A", 10, "good"), ol("A", 10, "sus"), ol("A", 10, "stale")],
+      receiptLines: [rl("A", 4, "good"), rl("A", 2, "sus"), rl("A", 3, "stale")],
+      instanceNames: names,
+    });
+    expect(computeTrustedTotals(rows)).toEqual({
+      trustedPoCount: 1,
+      trustedRowCount: 1,
+      ordered: 10,
+      received: 4,
+      outstanding: 6,
+      excludedPoCount: { incomplete: 1, stale: 1, suspect: 1 },
+    });
+    expect(qualityGroup("no_lines_cached")).toBe("incomplete");
   });
 });
 

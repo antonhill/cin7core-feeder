@@ -17,6 +17,7 @@ const HEADER = [
   "Not On Order",
   "Drop Ship",
   "Data Quality",
+  "Data Quality Note",
   "Detail Last Synced",
 ];
 
@@ -45,6 +46,7 @@ export function buildPoQuantitySheet(rows: PoQuantityRow[]): SheetExport {
       r.notOnOrder ? "Yes" : "",
       r.isDropShip ? "Yes" : "",
       DATA_QUALITY_LABEL[r.dataQuality],
+      r.dataQualityNote ?? "",
       r.detailSyncedAt ?? "",
     ]);
   }

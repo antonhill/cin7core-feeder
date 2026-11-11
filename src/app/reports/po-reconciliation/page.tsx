@@ -9,7 +9,8 @@ import {
   BACKFILL_MONTHS,
   DATA_QUALITY_LABEL,
   LINE_STATUS_LABEL,
-  type DataQuality,
+  computeTrustedTotals,
+  qualityGroup,
   type LineStatus,
   type PoQuantityRow,
 } from "@/reports/po-quantity-comparison";
@@ -153,9 +154,7 @@ export default function PoQuantityComparisonPage() {
         if (supplier && r.supplierName !== supplier) return false;
         if (poStatus && r.poStatus !== poStatus) return false;
         if (lineStatus && r.lineStatus !== lineStatus) return false;
-        if (quality === "incomplete" && r.dataQuality !== "detail_not_synced" && r.dataQuality !== "no_lines_cached") return false;
-        if (quality === "stale" && r.dataQuality !== "possibly_stale") return false;
-        if (quality === "ok" && r.dataQuality !== "ok") return false;
+        if (quality && qualityGroup(r.dataQuality) !== quality) return false;
         if (!matchesSearch(poSearch, r.orderNumber)) return false;
         return matchesSearch(search, r.sku, r.productName);
       }),
@@ -172,8 +171,12 @@ export default function PoQuantityComparisonPage() {
   }, [filteredRows, sortColumn, sortDirection]);
 
   const visibleRows = showAll ? sortedRows : sortedRows.slice(0, ROW_CAP);
-  const incompletePoCount = new Set(rows.filter((r) => r.dataQuality === "detail_not_synced" || r.dataQuality === "no_lines_cached").map((r) => `${r.instanceId}|${r.cin7PurchaseId}`)).size;
-  const stalePoCount = new Set(rows.filter((r) => r.dataQuality === "possibly_stale").map((r) => `${r.instanceId}|${r.cin7PurchaseId}`)).size;
+  // Scope: the POs returned by the instance + date selection above (NOT the all-time per-instance sync table).
+  const selection = computeTrustedTotals(rows);
+  const incompletePoCount = selection.excludedPoCount.incomplete;
+  const stalePoCount = selection.excludedPoCount.stale;
+  const suspectPoCount = selection.excludedPoCount.suspect;
+  const trusted = computeTrustedTotals(sortedRows);
   const backfillCutoff = monthsAgoIso(BACKFILL_MONTHS);
 
   function handleExport() {
@@ -244,14 +247,20 @@ export default function PoQuantityComparisonPage() {
               </Alert>
               {incompletePoCount > 0 && (
                 <Alert tone="danger">
-                  {incompletePoCount} PO{incompletePoCount === 1 ? "" : "s"} have no usable line detail yet (detail not synced, still failing,
+                  Incomplete — {incompletePoCount} PO{incompletePoCount === 1 ? "" : "s"} in this selection have no usable line detail yet (detail not synced, still failing,
                   or no lines cached). They are listed with blank quantities — not zero — and must not be read as &ldquo;nothing received&rdquo;.
                 </Alert>
               )}
               {stalePoCount > 0 && (
                 <Alert tone="warning">
-                  {stalePoCount} PO{stalePoCount === 1 ? "" : "s"} changed in Cin7 after their quantities were last fetched, so received
-                  quantities may be out of date until the next detail refresh.
+                  Potentially stale — {stalePoCount} PO{stalePoCount === 1 ? "" : "s"} in this selection (that have cached lines) changed in Cin7 after
+                  their quantities were last fetched, so received quantities may be out of date. The regular sync does not refresh these.
+                </Alert>
+              )}
+              {suspectPoCount > 0 && (
+                <Alert tone="danger">
+                  Suspect — {suspectPoCount} PO{suspectPoCount === 1 ? "" : "s"} in this selection have cached receipts that contradict Cin7&rsquo;s own
+                  receiving status (e.g. FULLY RECEIVED but received below ordered), so receipt lines may be missing. Not included in trusted totals.
                 </Alert>
               )}
               {report.excludedNoOrderDate > 0 && (
@@ -266,9 +275,9 @@ export default function PoQuantityComparisonPage() {
                 <thead className="bg-slate-50">
                   <tr className="border-b-2 border-slate-300 text-slate-600">
                     <th className="py-2 pr-4">Instance</th>
-                    <th className="py-2 pr-4 text-right">POs cached</th>
-                    <th className="py-2 pr-4 text-right">Detail pending</th>
-                    <th className="py-2 pr-4 text-right">Possibly stale</th>
+                    <th className="py-2 pr-4 text-right">POs cached (all time)</th>
+                    <th className="py-2 pr-4 text-right">Detail pending (all time)</th>
+                    <th className="py-2 pr-4 text-right" title="All cached POs for the instance, including POs with no lines and POs outside the date selection">Potentially stale (all time, incl. no-line POs)</th>
                     <th className="py-2 pr-4">PO list last synced</th>
                     <th className="py-2 pr-4">Latest detail sync</th>
                     <th className="py-2 pr-4">Approx. cached from</th>
@@ -319,12 +328,27 @@ export default function PoQuantityComparisonPage() {
               </Select>
               <Select label="Data quality" value={quality} onChange={(e) => setQuality(e.target.value)}>
                 <option value="">All</option>
-                <option value="ok">OK only</option>
-                <option value="stale">Possibly stale</option>
-                <option value="incomplete">Incomplete (no detail)</option>
+                <option value="complete">Complete</option>
+                <option value="stale">Potentially stale</option>
+                <option value="incomplete">Incomplete (no usable lines)</option>
+                <option value="suspect">Suspect (receipts vs Cin7 status)</option>
               </Select>
               <SearchInput value={poSearch} onChange={setPoSearch} placeholder="PO number" />
               <SearchInput value={search} onChange={setSearch} placeholder="SKU or description" />
+            </div>
+
+            <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+              <p className="font-semibold text-slate-900">Trusted totals — Complete POs only (current filters)</p>
+              <p className="mt-1 tabular-nums text-slate-700">
+                {trusted.trustedPoCount} PO{trusted.trustedPoCount === 1 ? "" : "s"} · Ordered {trusted.ordered.toLocaleString()} · Received{" "}
+                {trusted.received.toLocaleString()} · Outstanding {trusted.outstanding.toLocaleString()}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                Excluded and never summed: {trusted.excludedPoCount.incomplete} incomplete, {trusted.excludedPoCount.stale} potentially stale,{" "}
+                {trusted.excludedPoCount.suspect} suspect PO{trusted.excludedPoCount.suspect === 1 ? "" : "s"}. Quantities are unit counts across SKUs
+                (no unit-of-measure data is cached). Partially received POs cannot be checked for missing receipt lines, so Complete means
+                &ldquo;no contradiction detected&rdquo;, not &ldquo;verified&rdquo;.
+              </p>
             </div>
 
             <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
@@ -397,9 +421,9 @@ export default function PoQuantityComparisonPage() {
                             {r.notOnOrder && <Badge tone="danger">Not on PO</Badge>}
                             {r.isDropShip && <Badge tone="neutral">Drop-ship</Badge>}
                             {r.dataQuality !== "ok" && (
-                              <Badge tone={(r.dataQuality === "possibly_stale" ? "warning" : "danger") as BadgeTone}>
-                                {DATA_QUALITY_LABEL[r.dataQuality as DataQuality]}
-                              </Badge>
+                              <span title={r.dataQualityNote ?? undefined}>
+                                <Badge tone={(r.dataQuality === "possibly_stale" ? "warning" : "danger") as BadgeTone}>{DATA_QUALITY_LABEL[r.dataQuality]}</Badge>
+                              </span>
                             )}
                           </div>
                         </td>

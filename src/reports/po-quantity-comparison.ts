@@ -23,7 +23,23 @@
 
 export type LineStatus = "fully_received" | "partially_received" | "not_received" | "over_received";
 
-export type DataQuality = "ok" | "detail_not_synced" | "no_lines_cached" | "possibly_stale";
+export type DataQuality = "ok" | "detail_not_synced" | "no_lines_cached" | "possibly_stale" | "receipt_suspect";
+
+/** The four states shown to users: Complete, Incomplete (no usable lines), Potentially stale, Suspect (cached receipts contradict Cin7's own receiving status). Only Complete rows feed trusted totals. */
+export type QualityGroup = "complete" | "incomplete" | "stale" | "suspect";
+
+export function qualityGroup(q: DataQuality): QualityGroup {
+  switch (q) {
+    case "ok":
+      return "complete";
+    case "possibly_stale":
+      return "stale";
+    case "receipt_suspect":
+      return "suspect";
+    default:
+      return "incomplete";
+  }
+}
 
 export interface PurchaseHeader {
   instance_id: string;
@@ -80,6 +96,8 @@ export interface PoQuantityRow {
   /** Received against a SKU that is not on the PO at all (ordered 0). */
   notOnOrder: boolean;
   dataQuality: DataQuality;
+  /** Why the row is not Complete (null when it is). */
+  dataQualityNote: string | null;
   detailSyncedAt: string | null;
 }
 
@@ -139,6 +157,7 @@ function placeholderRow(h: PurchaseHeader, instanceName: string, quality: DataQu
     lineStatus: null,
     notOnOrder: false,
     dataQuality: quality,
+    dataQualityNote: quality === "detail_not_synced" ? "PO detail has not synced (never fetched or failing)." : "PO detail synced but no order or receipt lines are cached.",
     detailSyncedAt: h.detail_synced_at,
   };
 }
@@ -147,6 +166,61 @@ function placeholderRow(h: PurchaseHeader, instanceName: string, quality: DataQu
 export function isDetailPossiblyStale(h: Pick<PurchaseHeader, "detail_synced_at" | "updated_at">): boolean {
   if (!h.detail_synced_at || !h.updated_at) return false;
   return new Date(h.updated_at).getTime() - new Date(h.detail_synced_at).getTime() > 1000;
+}
+
+/**
+ * Cin7's own CombinedReceivingStatus is an independent signal. When the cached
+ * quantities contradict it the cached receipts cannot be trusted (e.g. receipt
+ * lines lost at ingest). Does NOT catch under-counts on genuinely partial POs.
+ */
+export function receiptSuspectReason(receivingStatus: string | null, skus: { ordered: number; received: number }[]): string | null {
+  const totalReceived = round(skus.reduce((n, a) => n + a.received, 0));
+  if (receivingStatus === "FULLY RECEIVED" && skus.some((a) => round(a.received) < round(a.ordered))) {
+    return "Cin7 says FULLY RECEIVED but cached receipts are below the ordered quantity — receipt lines may be missing.";
+  }
+  if (receivingStatus === "PARTIALLY RECEIVED" && totalReceived === 0) {
+    return "Cin7 says PARTIALLY RECEIVED but no receipts are cached — receipt lines may be missing.";
+  }
+  if (receivingStatus === "NOT RECEIVED" && totalReceived > 0) {
+    return "Cin7 says NOT RECEIVED but receipts are cached — the cached PO data is inconsistent.";
+  }
+  return null;
+}
+
+export interface TrustedTotals {
+  trustedPoCount: number;
+  trustedRowCount: number;
+  ordered: number;
+  received: number;
+  outstanding: number;
+  excludedPoCount: { incomplete: number; stale: number; suspect: number };
+}
+
+/** Totals over Complete rows ONLY. Incomplete / potentially stale / suspect POs are counted but never summed. */
+export function computeTrustedTotals(rows: PoQuantityRow[]): TrustedTotals {
+  const trusted = new Set<string>();
+  const ex = { incomplete: new Set<string>(), stale: new Set<string>(), suspect: new Set<string>() };
+  let ordered = 0;
+  let received = 0;
+  let trustedRowCount = 0;
+  for (const r of rows) {
+    const po = `${r.instanceId}|${r.cin7PurchaseId}`;
+    const g = qualityGroup(r.dataQuality);
+    if (g === "complete") {
+      trusted.add(po);
+      trustedRowCount += 1;
+      ordered += r.ordered ?? 0;
+      received += r.received ?? 0;
+    } else ex[g].add(po);
+  }
+  return {
+    trustedPoCount: trusted.size,
+    trustedRowCount,
+    ordered: round(ordered),
+    received: round(received),
+    outstanding: round(ordered - received),
+    excludedPoCount: { incomplete: ex.incomplete.size, stale: ex.stale.size, suspect: ex.suspect.size },
+  };
 }
 
 export function buildPoQuantityRows(input: {
@@ -209,7 +283,18 @@ export function buildPoQuantityRows(input: {
       a.name = a.name ?? r.product_name;
     }
 
-    const quality: DataQuality = isDetailPossiblyStale(h) ? "possibly_stale" : "ok";
+    let quality: DataQuality = "ok";
+    let note: string | null = null;
+    if (isDetailPossiblyStale(h)) {
+      quality = "possibly_stale";
+      note = "PO changed in Cin7 after its quantities were last fetched; received quantities may be out of date.";
+    } else if (!h.is_drop_ship) {
+      const suspectReason = receiptSuspectReason(h.combined_receiving_status, [...bySku.values()]);
+      if (suspectReason) {
+        quality = "receipt_suspect";
+        note = suspectReason;
+      }
+    }
     for (const [sku, a] of [...bySku.entries()].sort((x, y) => x[0].localeCompare(y[0]))) {
       const ordered = round(a.ordered);
       const received = round(a.received);
@@ -233,6 +318,7 @@ export function buildPoQuantityRows(input: {
         lineStatus: classifyLine(ordered, received),
         notOnOrder: a.orderedLines === 0 && received !== 0,
         dataQuality: quality,
+        dataQualityNote: note,
         detailSyncedAt: h.detail_synced_at,
       });
     }
@@ -296,8 +382,16 @@ export const LINE_STATUS_LABEL: Record<LineStatus, string> = {
 };
 
 export const DATA_QUALITY_LABEL: Record<DataQuality, string> = {
-  ok: "OK",
+  ok: "Complete",
   detail_not_synced: "Incomplete — detail not synced",
   no_lines_cached: "Incomplete — no lines cached",
-  possibly_stale: "Possibly stale",
+  possibly_stale: "Potentially stale",
+  receipt_suspect: "Suspect — receipts don't match Cin7 status",
+};
+
+export const QUALITY_GROUP_LABEL: Record<QualityGroup, string> = {
+  complete: "Complete",
+  incomplete: "Incomplete",
+  stale: "Potentially stale",
+  suspect: "Suspect",
 };
