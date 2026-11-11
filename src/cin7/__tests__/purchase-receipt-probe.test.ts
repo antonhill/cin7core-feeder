@@ -7,7 +7,9 @@ vi.mock("@/cin7/http", async (importOriginal) => {
   return { ...actual, cin7Request: vi.fn() };
 });
 const creds = { accountId: "a", applicationKey: "k", baseUrl: "https://example.test" };
-beforeEach(() => vi.mocked(cin7Request).mockReset());
+beforeEach(() => {
+  vi.mocked(cin7Request).mockReset();
+});
 
 /** Advanced purchase whose receipts live in StockReceived (PutAway empty): the parser stores nothing, the probe must show the gap. */
 describe("probePurchaseReceipts", () => {
