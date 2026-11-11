@@ -28,6 +28,7 @@ import { MANUAL_PUSH_PROTECTED_MESSAGE, isManualPushProtected } from "@/sync/sch
 import { decrypt } from "@/cin7/crypto";
 import { CIN7_API_ORIGIN } from "@/cin7/api-origin";
 import { Cin7ApiError } from "@/cin7/http";
+import { auditListEntries, auditOnePurchase, fetchPurchaseListPages, mergeCounters, emptyCounters, type CachedHeader, type CachedTotals } from "@/cin7/purchase-freshness-audit";
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import {
@@ -996,6 +997,148 @@ export async function debugCheckSaleStatuses(instanceId: string): Promise<TestCo
     const creds = await loadInstanceCreds(instanceId);
     const result = await checkSaleStatuses(creds);
     return { ok: true, message: JSON.stringify(result, null, 2) };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+
+const AUDIT_VERSION = "freshness-audit-v1";
+
+function auditStamp() {
+  return { auditVersion: AUDIT_VERSION, deployedSha: (process.env.VERCEL_GIT_COMMIT_SHA ?? "unknown").slice(0, 7) };
+}
+
+async function loadAllPurchaseHeaders(db: ReturnType<typeof createServiceRoleClient>, orgId: string, instanceId: string) {
+  const out: { cin7_purchase_id: string; order_number: string | null; status: string | null; combined_receiving_status: string | null; source: string | null; updated_at: string | null; detail_synced_at: string | null }[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db
+      .from("purchases")
+      .select("cin7_purchase_id, order_number, status, combined_receiving_status, source, updated_at, detail_synced_at")
+      .eq("org_id", orgId)
+      .eq("instance_id", instanceId)
+      .order("cin7_purchase_id")
+      .range(from, from + 999);
+    if (error) throw new Error(error.message);
+    out.push(...((data ?? []) as typeof out));
+    if ((data ?? []).length < 1000) break;
+  }
+  return out;
+}
+
+/**
+ * Diagnostic only, READ-ONLY (Cin7 GETs + cache SELECTs): Issue #206 source CENSUS. Fetches the live detail of a
+ * bounded batch of cached purchases (max 40 per call, strictly sequential through the shared Cin7 rate limiter,
+ * 110s wall-clock cap) and compares ordered/received totals with the cache. Cohorts:
+ *   fresh_open — open POs never relisted since their detail was fetched (the silent-risk population)
+ *   stale_open — open POs relisted after their detail was fetched
+ *   all_open   — both
+ * Any difference in fresh_open proves receiving can change without Toolbox ever seeing a relist.
+ */
+export async function debugAuditPurchaseFreshnessCensus(instanceId: string, cohort: string, offset: number, limit: number): Promise<TestConnectionResult> {
+  try {
+    await requirePrivilegedSuperAdmin("run Cin7 diagnostics (purchase freshness census)");
+    const creds = await loadInstanceCreds(instanceId);
+    const { orgId } = await requireOrgAdmin("run Cin7 instance diagnostics");
+    const db = createServiceRoleClient();
+    const startedAt = Date.now();
+    const take = Math.min(Math.max(Math.trunc(limit) || 20, 1), 40);
+    const from = Math.max(Math.trunc(offset) || 0, 0);
+
+    const headers = await loadAllPurchaseHeaders(db, orgId, instanceId);
+    const isOpen = (h: { combined_receiving_status: string | null }) => h.combined_receiving_status === "NOT RECEIVED" || h.combined_receiving_status === "PARTIALLY RECEIVED";
+    const relisted = (h: { updated_at: string | null; detail_synced_at: string | null }) => Boolean(h.updated_at && h.detail_synced_at && Date.parse(h.updated_at) - Date.parse(h.detail_synced_at) > 1000);
+    const inCohort = headers
+      .filter((h) => h.detail_synced_at && h.status !== "VOIDED" && isOpen(h))
+      .filter((h) => (cohort === "fresh_open" ? !relisted(h) : cohort === "stale_open" ? relisted(h) : cohort === "all_open"))
+      .sort((a, b) => a.cin7_purchase_id.localeCompare(b.cin7_purchase_id));
+    const batch = inCohort.slice(from, from + take);
+
+    const rows = [];
+    for (const h of batch) {
+      if (Date.now() - startedAt > 110_000) break;
+      const [o, r] = await Promise.all([
+        db.from("purchase_order_lines").select("quantity").eq("org_id", orgId).eq("instance_id", instanceId).eq("cin7_purchase_id", h.cin7_purchase_id),
+        db.from("purchase_receipt_lines").select("quantity").eq("org_id", orgId).eq("instance_id", instanceId).eq("cin7_purchase_id", h.cin7_purchase_id),
+      ]);
+      const sum = (d: { quantity: number | string | null }[] | null) => (d ?? []).reduce((n, x) => n + (Number(x.quantity ?? 0) || 0), 0);
+      const cached: CachedTotals = { orderLines: o.data?.length ?? 0, orderQty: sum(o.data), receiptRows: r.data?.length ?? 0, receiptQty: sum(r.data) };
+      rows.push(await auditOnePurchase(creds, { purchaseId: h.cin7_purchase_id, orderNumber: h.order_number, source: h.source, receivingStatus: h.combined_receiving_status, detailSyncedAt: h.detail_synced_at }, cached));
+    }
+    const differing = rows.filter((x) => x.differs);
+    const errored = rows.filter((x) => x.error);
+    return {
+      ok: true,
+      message: JSON.stringify(
+        {
+          ...auditStamp(),
+          cohort,
+          totalInCohort: inCohort.length,
+          offset: from,
+          processed: rows.length,
+          nextOffset: from + rows.length < inCohort.length ? from + rows.length : null,
+          unchanged: rows.length - differing.length - errored.length,
+          differing: differing.length,
+          errored: errored.length,
+          noCardIdLines: rows.reduce((n, x) => n + x.live.droppedNoCardIdLines, 0),
+          noCardIdQty: rows.reduce((n, x) => n + x.live.droppedNoCardIdQty, 0),
+          elapsedSeconds: Math.round((Date.now() - startedAt) / 100) / 10,
+          differingRows: differing,
+          erroredRows: errored.map((x) => ({ orderNumber: x.orderNumber, error: x.error })),
+        },
+        null,
+        2
+      ),
+    };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Diagnostic only, READ-ONLY: Issue #206 LIST RECONCILIATION. Pages the WHOLE /purchaseList (no UpdatedSince; max
+ * 30 pages = 3,000 entries per call, sequential through the shared rate limiter) and reconciles it with the cache:
+ * voided-in-source-but-cached-as-active, missing from cache, status drift, whether LastUpdatedDate reaches the
+ * latest cached RECEIVING date (actual receipt dates only), and POs changed at the source after our detail fetch
+ * that Toolbox never relisted. Run repeatedly with the returned nextPage and add the counters.
+ */
+export async function debugAuditPurchaseListReconciliation(instanceId: string, fromPage: number, pages: number): Promise<TestConnectionResult> {
+  try {
+    await requirePrivilegedSuperAdmin("run Cin7 diagnostics (purchase list reconciliation)");
+    const creds = await loadInstanceCreds(instanceId);
+    const { orgId } = await requireOrgAdmin("run Cin7 instance diagnostics");
+    const db = createServiceRoleClient();
+    const startedAt = Date.now();
+    const first = Math.max(Math.trunc(fromPage) || 1, 1);
+    const count = Math.min(Math.max(Math.trunc(pages) || 10, 1), 30);
+
+    const { entries, nextPage } = await fetchPurchaseListPages(creds, first, count);
+    const ids = entries.map((e) => e.ID);
+    const cachedById = new Map<string, CachedHeader>();
+    for (let i = 0; i < ids.length; i += 100) {
+      const chunk = ids.slice(i, i + 100);
+      const [h, r] = await Promise.all([
+        db.from("purchases").select("cin7_purchase_id, status, combined_receiving_status, updated_at, detail_synced_at").eq("org_id", orgId).eq("instance_id", instanceId).in("cin7_purchase_id", chunk),
+        db.from("purchase_receipt_lines").select("cin7_purchase_id, received_date").eq("org_id", orgId).eq("instance_id", instanceId).in("cin7_purchase_id", chunk),
+      ]);
+      if (h.error) throw new Error(h.error.message);
+      const latest = new Map<string, string>();
+      for (const row of (r.data ?? []) as { cin7_purchase_id: string; received_date: string | null }[]) {
+        if (row.received_date && (!latest.has(row.cin7_purchase_id) || row.received_date > latest.get(row.cin7_purchase_id)!)) latest.set(row.cin7_purchase_id, row.received_date);
+      }
+      for (const row of (h.data ?? []) as Omit<CachedHeader, "latest_received_date">[]) cachedById.set(row.cin7_purchase_id, { ...row, latest_received_date: latest.get(row.cin7_purchase_id) ?? null });
+    }
+    const counters = mergeCounters(emptyCounters(), auditListEntries(entries, cachedById));
+
+    let cachedTotal: number | undefined;
+    if (first === 1) {
+      const { count: total } = await db.from("purchases").select("*", { count: "exact", head: true }).eq("org_id", orgId).eq("instance_id", instanceId);
+      cachedTotal = total ?? undefined;
+    }
+    return {
+      ok: true,
+      message: JSON.stringify({ ...auditStamp(), fromPage: first, pagesRequested: count, nextPage, cachedPurchasesInInstance: cachedTotal, elapsedSeconds: Math.round((Date.now() - startedAt) / 100) / 10, counters }, null, 2),
+    };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
   }

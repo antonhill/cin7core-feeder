@@ -199,10 +199,38 @@ function placeholderNote(quality: DataQuality, failure?: { at: string; message: 
   return "PO detail synced but no order or receipt lines are cached. Verify the PO in Cin7.";
 }
 
-/** True when the PO was re-listed in Cin7 after its detail was last fetched (1s tolerance for same-run ordering). */
-export function isDetailPossiblyStale(h: Pick<PurchaseHeader, "detail_synced_at" | "updated_at">): boolean {
-  if (!h.detail_synced_at || !h.updated_at) return false;
-  return new Date(h.updated_at).getTime() - new Date(h.detail_synced_at).getTime() > 1000;
+/**
+ * An open PO (NOT / PARTIALLY RECEIVED) whose detail has not been re-verified within this many hours is shown
+ * as potentially stale even if Cin7 never relisted it: Cin7's LastUpdatedDate is not proven to move on
+ * receipt-only changes, and the sync re-verifies open POs on a 24h TTL, so anything older than 3× that has
+ * missed its refresh. Closed POs are only stale when relisted after their last fetch.
+ */
+export const OPEN_PO_MAX_DETAIL_AGE_HOURS = 72;
+
+export type StaleReason = "relisted" | "open_unverified";
+
+export function isOpenReceivingStatus(status: string | null | undefined): boolean {
+  return status === "NOT RECEIVED" || status === "PARTIALLY RECEIVED";
+}
+
+/** Why the cached detail may be out of date, or null. Relisted-after-fetch has a 1s tolerance for same-run ordering. */
+export function staleReason(
+  h: Pick<PurchaseHeader, "detail_synced_at" | "updated_at" | "combined_receiving_status">,
+  now: Date = new Date()
+): StaleReason | null {
+  if (!h.detail_synced_at) return null;
+  const synced = new Date(h.detail_synced_at).getTime();
+  if (h.updated_at && new Date(h.updated_at).getTime() - synced > 1000) return "relisted";
+  if (isOpenReceivingStatus(h.combined_receiving_status) && now.getTime() - synced > OPEN_PO_MAX_DETAIL_AGE_HOURS * 3600 * 1000) return "open_unverified";
+  return null;
+}
+
+/** True when the cached detail is potentially stale (relisted after its last fetch, or an open PO not re-verified in 72h). */
+export function isDetailPossiblyStale(
+  h: Pick<PurchaseHeader, "detail_synced_at" | "updated_at" | "combined_receiving_status">,
+  now: Date = new Date()
+): boolean {
+  return staleReason(h, now) !== null;
 }
 
 /**
@@ -273,8 +301,11 @@ export function buildPoQuantityRows(input: {
   receiptLines: ReceiptLineInput[];
   instanceNames: Record<string, string>;
   syncFailures?: SyncFailureMap;
+  /** Injected clock for the open-PO age rule (defaults to the real time). */
+  now?: Date;
 }): PoQuantityRow[] {
   const { purchases, orderLines, receiptLines, instanceNames, syncFailures } = input;
+  const now = input.now ?? new Date();
 
   const ordersByPo = new Map<string, OrderLineInput[]>();
   for (const l of orderLines) {
@@ -330,9 +361,13 @@ export function buildPoQuantityRows(input: {
 
     let quality: DataQuality = "ok";
     let note: string | null = null;
-    if (isDetailPossiblyStale(h)) {
+    const reason = staleReason(h, now);
+    if (reason) {
       quality = "possibly_stale";
-      note = "PO changed in Cin7 after its quantities were last fetched; received quantities may be out of date.";
+      note =
+        reason === "relisted"
+          ? "PO changed in Cin7 after its quantities were last fetched; received quantities may be out of date until the next refresh."
+          : `Open PO whose quantities have not been re-verified against Cin7 for over ${OPEN_PO_MAX_DETAIL_AGE_HOURS} hours; received quantities may be out of date until the next refresh.`;
     } else if (!h.is_drop_ship) {
       const mismatchReason = receivingStatusMismatch(h.combined_receiving_status, [...bySku.values()]);
       if (mismatchReason) {
@@ -391,7 +426,9 @@ export function summariseInstanceSync(input: {
   listSyncedAt: Record<string, string | null>;
   instanceNames: Record<string, string>;
   instanceIds: string[];
+  now?: Date;
 }): InstanceSyncSummary[] {
+  const now = input.now ?? new Date();
   return input.instanceIds.map((instanceId) => {
     const mine = input.purchases.filter((p) => p.instance_id === instanceId);
     let lastDetail: string | null = null;
@@ -411,7 +448,7 @@ export function summariseInstanceSync(input: {
       instanceName: input.instanceNames[instanceId] ?? instanceId,
       poCount: mine.length,
       detailPending: mine.filter((p) => !p.detail_synced_at).length,
-      possiblyStale: mine.filter(isDetailPossiblyStale).length,
+      possiblyStale: mine.filter((p) => isDetailPossiblyStale(p, now)).length,
       lastListSyncedAt: input.listSyncedAt[instanceId] ?? null,
       lastDetailSyncedAt: lastDetail,
       approxCoverageFrom,

@@ -87,14 +87,23 @@ jobs:
       # run's own error) -- every file in supabase/tests/ is a multi-
       # statement transactional script (begin; ... do $$ ... $$; ...
       # rollback;), so it needs a real psql connection instead.
-      - name: Install postgresql-client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      # The runner's apt mirror is intermittently unreachable (repeated "Temporary failure resolving
+      # archive.ubuntu.com" on 2026-11-11 failed this job before a single test ran). The SQL gate must not depend on
+      # apt: the local Supabase Postgres container started above already ships psql, so the SAME files are run through
+      # it, with the SAME ON_ERROR_STOP semantics and the SAME fail-the-job behaviour. Two guards keep the gate honest:
+      # the DB container must be found, and every test file must actually have run.
       - name: Run the RLS/security regression SQL test suite
         run: |
           set -e
-          eval "$(supabase status -o env | sed 's/^/export /')"
+          DB_CONTAINER="$(docker ps --filter "name=supabase_db_" --format '{{.Names}}' | head -n1)"
+          if [ -z "$DB_CONTAINER" ]; then echo "::error::local Supabase DB container not found"; exit 1; fi
+          expected=$(ls supabase/tests/*.test.sql | wc -l)
+          ran=0
           for f in supabase/tests/*.test.sql; do
             echo "::group::$f"
-            psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$f"
+            docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 < "$f"
+            ran=$((ran + 1))
             echo "::endgroup::"
           done
+          if [ "$expected" -eq 0 ] || [ "$ran" -ne "$expected" ]; then echo "::error::ran $ran of $expected SQL test files"; exit 1; fi
+          echo "All $ran SQL test files passed."

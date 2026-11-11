@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { fetchPurchaseDetail, aggregateReceiptLines, ReceiptLineConflictError, type PurchaseReceiptLine } from "@/cin7/purchase-detail";
+import { fetchPurchaseDetail, aggregateReceiptLines, ReceiptLineConflictError, PurchaseDetailStructureError, type PurchaseReceiptLine } from "@/cin7/purchase-detail";
 import { cin7Request, Cin7ApiError } from "@/cin7/http";
 
 vi.mock("@/cin7/http", async (importOriginal) => {
@@ -195,5 +195,61 @@ describe("aggregateReceiptLines — duplicate (CardID, SKU) collision", () => {
     });
     await expect(fetchPurchaseDetail(creds, "po-x")).rejects.toBeInstanceOf(ReceiptLineConflictError);
     expect(cin7Request).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe("fetchPurchaseDetail — freshness additions", () => {
+  it("uses the cached source as a hint: an Advanced PO costs ONE call (no classic-first round trip)", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ ID: "po", Order: { Lines: [{ SKU: "A", Quantity: 5 }] }, PutAway: [{ Lines: [{ CardID: "c1", SKU: "A", Quantity: 5, Date: "2026-11-01T00:00:00" }] }] });
+    const r = await fetchPurchaseDetail(creds, "po", { sourceHint: "advanced-purchase" });
+    expect(r.source).toBe("advanced-purchase");
+    expect(vi.mocked(cin7Request)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(cin7Request).mock.calls[0][1]).toBe("/advanced-purchase");
+  });
+
+  it("falls back to the standard path when the hinted endpoint errors (e.g. the PO is no longer Advanced)", async () => {
+    vi.mocked(cin7Request)
+      .mockRejectedValueOnce(new Cin7ApiError(400, "wrong kind", false))
+      .mockResolvedValueOnce({ ID: "po", Order: { Lines: [] }, StockReceived: { Lines: [] } });
+    const r = await fetchPurchaseDetail(creds, "po", { sourceHint: "advanced-purchase" });
+    expect(r.source).toBe("purchase");
+    expect(vi.mocked(cin7Request).mock.calls.map((c) => c[1])).toEqual(["/advanced-purchase", "/purchase"]);
+  });
+
+  it("does NOT mask a structure/conflict verdict on the hinted response with a second call", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({});
+    await expect(fetchPurchaseDetail(creds, "po", { sourceHint: "advanced-purchase" })).rejects.toBeInstanceOf(PurchaseDetailStructureError);
+    expect(vi.mocked(cin7Request)).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([[null], [undefined], ["a string"], [[]], [{}], [{ Unrelated: 1 }]])("rejects an unusable response (%j) instead of treating it as 'no lines'", async (bad) => {
+    vi.mocked(cin7Request).mockResolvedValueOnce(bad);
+    await expect(fetchPurchaseDetail(creds, "po")).rejects.toBeInstanceOf(PurchaseDetailStructureError);
+  });
+
+  it("still accepts a Service Purchase with no line sections at all (does not regress the 'No product lines' POs)", async () => {
+    vi.mocked(cin7Request)
+      .mockRejectedValueOnce(new Cin7ApiError(400, "This is an Advanced Purchase order. Please use AdvancedPurchase endpoint", false))
+      .mockResolvedValueOnce({ ID: "po", OrderNumber: "PO-11631", Status: "COMPLETED" });
+    const r = await fetchPurchaseDetail(creds, "po");
+    expect(r).toMatchObject({ source: "advanced-purchase", orderLines: [], receiptLines: [], receiptSectionPresent: false });
+  });
+
+  it("reports whether the receipt section was present (empty is not the same as absent)", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ ID: "po", Order: { Lines: [] }, StockReceived: { Lines: [] } });
+    expect((await fetchPurchaseDetail(creds, "po")).receiptSectionPresent).toBe(true);
+    vi.mocked(cin7Request).mockResolvedValueOnce({ ID: "po", Order: { Lines: [] } });
+    expect((await fetchPurchaseDetail(creds, "po")).receiptSectionPresent).toBe(false);
+  });
+
+  it("counts (without persisting) receipt lines that have no CardID — instrumentation only", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({
+      ID: "po",
+      StockReceived: { Lines: [{ CardID: "c1", SKU: "A", Quantity: 3 }, { SKU: "A", Quantity: 4 }, { SKU: "B", Quantity: 2.5 }] },
+    });
+    const r = await fetchPurchaseDetail(creds, "po");
+    expect(r.droppedReceiptLines).toEqual({ count: 2, quantity: 6.5 });
+    expect(r.receiptLines.map((l) => l.quantity)).toEqual([3]); // persistence behaviour unchanged
   });
 });
