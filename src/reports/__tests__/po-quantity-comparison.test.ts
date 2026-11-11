@@ -131,24 +131,25 @@ describe("buildPoQuantityRows", () => {
   });
 });
 
-describe("receipt suspect detection and trusted totals", () => {
-  it("marks FULLY RECEIVED POs whose cached receipts are below ordered as suspect", () => {
+describe("receiving-status mismatch detection and trusted totals", () => {
+  it("marks FULLY RECEIVED POs whose cached receipts are below ordered as needs-review", () => {
     const [r] = buildPoQuantityRows({
       purchases: [po({ combined_receiving_status: "FULLY RECEIVED" })],
       orderLines: [ol("A", 10)],
       receiptLines: [rl("A", 6)],
       instanceNames: names,
     });
-    expect(r.dataQuality).toBe("receipt_suspect");
+    expect(r.dataQuality).toBe("status_mismatch");
     expect(r.dataQualityNote).toMatch(/FULLY RECEIVED/);
+    expect(r.dataQualityNote).not.toMatch(/missing|defect/i);
   });
 
-  it("marks FULLY RECEIVED with zero cached receipts, PARTIALLY with none, and NOT RECEIVED with receipts as suspect", () => {
+  it("marks FULLY RECEIVED with zero cached receipts, PARTIALLY with none, and NOT RECEIVED with receipts as needs-review", () => {
     const mk = (crs: string, recv: number) =>
       buildPoQuantityRows({ purchases: [po({ combined_receiving_status: crs })], orderLines: [ol("A", 10)], receiptLines: recv ? [rl("A", recv)] : [], instanceNames: names })[0].dataQuality;
-    expect(mk("FULLY RECEIVED", 0)).toBe("receipt_suspect");
-    expect(mk("PARTIALLY RECEIVED", 0)).toBe("receipt_suspect");
-    expect(mk("NOT RECEIVED", 3)).toBe("receipt_suspect");
+    expect(mk("FULLY RECEIVED", 0)).toBe("status_mismatch");
+    expect(mk("PARTIALLY RECEIVED", 0)).toBe("status_mismatch");
+    expect(mk("NOT RECEIVED", 3)).toBe("status_mismatch");
   });
 
   it("does not flag consistent POs, drop-ships, or POs already flagged stale", () => {
@@ -176,7 +177,7 @@ describe("receipt suspect detection and trusted totals", () => {
       ordered: 10,
       received: 4,
       outstanding: 6,
-      excludedPoCount: { incomplete: 1, stale: 1, suspect: 1 },
+      excludedPoCount: { incomplete: 1, stale: 1, review: 1 },
     });
     expect(qualityGroup("no_lines_cached")).toBe("incomplete");
   });

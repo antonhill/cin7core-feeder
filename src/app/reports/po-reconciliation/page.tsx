@@ -175,7 +175,7 @@ export default function PoQuantityComparisonPage() {
   const selection = computeTrustedTotals(rows);
   const incompletePoCount = selection.excludedPoCount.incomplete;
   const stalePoCount = selection.excludedPoCount.stale;
-  const suspectPoCount = selection.excludedPoCount.suspect;
+  const reviewPoCount = selection.excludedPoCount.review;
   const trusted = computeTrustedTotals(sortedRows);
   const backfillCutoff = monthsAgoIso(BACKFILL_MONTHS);
 
@@ -257,10 +257,11 @@ export default function PoQuantityComparisonPage() {
                   their quantities were last fetched, so received quantities may be out of date. The regular sync does not refresh these.
                 </Alert>
               )}
-              {suspectPoCount > 0 && (
-                <Alert tone="danger">
-                  Suspect — {suspectPoCount} PO{suspectPoCount === 1 ? "" : "s"} in this selection have cached receipts that contradict Cin7&rsquo;s own
-                  receiving status (e.g. FULLY RECEIVED but received below ordered), so receipt lines may be missing. Not included in trusted totals.
+              {reviewPoCount > 0 && (
+                <Alert tone="warning">
+                  Needs review — {reviewPoCount} PO{reviewPoCount === 1 ? "" : "s"} in this selection where Cin7&rsquo;s receiving status and its received
+                  lines disagree (e.g. FULLY RECEIVED but received below ordered). This can be a Cin7 data inconsistency, not necessarily a Toolbox
+                  error — verify in Cin7. Shown, but not included in trusted totals.
                 </Alert>
               )}
               {report.excludedNoOrderDate > 0 && (
@@ -331,7 +332,7 @@ export default function PoQuantityComparisonPage() {
                 <option value="complete">Complete</option>
                 <option value="stale">Potentially stale</option>
                 <option value="incomplete">Incomplete (no usable lines)</option>
-                <option value="suspect">Suspect (receipts vs Cin7 status)</option>
+                <option value="review">Needs review (status vs received lines)</option>
               </Select>
               <SearchInput value={poSearch} onChange={setPoSearch} placeholder="PO number" />
               <SearchInput value={search} onChange={setSearch} placeholder="SKU or description" />
@@ -345,7 +346,7 @@ export default function PoQuantityComparisonPage() {
               </p>
               <p className="mt-1 text-xs text-slate-500">
                 Excluded and never summed: {trusted.excludedPoCount.incomplete} incomplete, {trusted.excludedPoCount.stale} potentially stale,{" "}
-                {trusted.excludedPoCount.suspect} suspect PO{trusted.excludedPoCount.suspect === 1 ? "" : "s"}. Quantities are unit counts across SKUs
+                {trusted.excludedPoCount.review} needs-review PO{trusted.excludedPoCount.review === 1 ? "" : "s"}. Quantities are unit counts across SKUs
                 (no unit-of-measure data is cached). Partially received POs cannot be checked for missing receipt lines, so Complete means
                 &ldquo;no contradiction detected&rdquo;, not &ldquo;verified&rdquo;.
               </p>
@@ -422,7 +423,7 @@ export default function PoQuantityComparisonPage() {
                             {r.isDropShip && <Badge tone="neutral">Drop-ship</Badge>}
                             {r.dataQuality !== "ok" && (
                               <span title={r.dataQualityNote ?? undefined}>
-                                <Badge tone={(r.dataQuality === "possibly_stale" ? "warning" : "danger") as BadgeTone}>{DATA_QUALITY_LABEL[r.dataQuality]}</Badge>
+                                <Badge tone={(r.dataQuality === "possibly_stale" || r.dataQuality === "status_mismatch" ? "warning" : "danger") as BadgeTone}>{DATA_QUALITY_LABEL[r.dataQuality]}</Badge>
                               </span>
                             )}
                           </div>

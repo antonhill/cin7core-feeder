@@ -23,10 +23,14 @@
 
 export type LineStatus = "fully_received" | "partially_received" | "not_received" | "over_received";
 
-export type DataQuality = "ok" | "detail_not_synced" | "no_lines_cached" | "possibly_stale" | "receipt_suspect";
+export type DataQuality = "ok" | "detail_not_synced" | "no_lines_cached" | "possibly_stale" | "status_mismatch";
 
-/** The four states shown to users: Complete, Incomplete (no usable lines), Potentially stale, Suspect (cached receipts contradict Cin7's own receiving status). Only Complete rows feed trusted totals. */
-export type QualityGroup = "complete" | "incomplete" | "stale" | "suspect";
+/**
+ * The four states shown to users. Complete; Incomplete (cache has no usable lines — a Toolbox data gap); Potentially stale (cache refresh
+ * pending — a Toolbox data gap); Needs review (Cin7's own receiving status disagrees with its received lines — the cache cannot tell whether
+ * that is a Cin7 source inconsistency or a cache discrepancy, so it is NOT labelled a Toolbox defect). Only Complete rows feed trusted totals.
+ */
+export type QualityGroup = "complete" | "incomplete" | "stale" | "review";
 
 export function qualityGroup(q: DataQuality): QualityGroup {
   switch (q) {
@@ -34,8 +38,8 @@ export function qualityGroup(q: DataQuality): QualityGroup {
       return "complete";
     case "possibly_stale":
       return "stale";
-    case "receipt_suspect":
-      return "suspect";
+    case "status_mismatch":
+      return "review";
     default:
       return "incomplete";
   }
@@ -170,19 +174,21 @@ export function isDetailPossiblyStale(h: Pick<PurchaseHeader, "detail_synced_at"
 
 /**
  * Cin7's own CombinedReceivingStatus is an independent signal. When the cached
- * quantities contradict it the cached receipts cannot be trusted (e.g. receipt
- * lines lost at ingest). Does NOT catch under-counts on genuinely partial POs.
+ * received lines disagree with it the PO needs review. Deliberately NOT called a
+ * defect: live checks showed Advanced POs whose Cin7 detail itself has fewer
+ * received lines than ordered while Cin7 says FULLY RECEIVED (a source
+ * inconsistency). The cache alone cannot tell that from a cache discrepancy.
  */
-export function receiptSuspectReason(receivingStatus: string | null, skus: { ordered: number; received: number }[]): string | null {
+export function receivingStatusMismatch(receivingStatus: string | null, skus: { ordered: number; received: number }[]): string | null {
   const totalReceived = round(skus.reduce((n, a) => n + a.received, 0));
   if (receivingStatus === "FULLY RECEIVED" && skus.some((a) => round(a.received) < round(a.ordered))) {
-    return "Cin7 says FULLY RECEIVED but cached receipts are below the ordered quantity — receipt lines may be missing.";
+    return "Cin7 shows FULLY RECEIVED but its received lines total less than ordered. Verify the PO in Cin7 — this may be a Cin7 data inconsistency or a Toolbox cache discrepancy.";
   }
   if (receivingStatus === "PARTIALLY RECEIVED" && totalReceived === 0) {
-    return "Cin7 says PARTIALLY RECEIVED but no receipts are cached — receipt lines may be missing.";
+    return "Cin7 shows PARTIALLY RECEIVED but no received lines are cached. Verify the PO in Cin7.";
   }
   if (receivingStatus === "NOT RECEIVED" && totalReceived > 0) {
-    return "Cin7 says NOT RECEIVED but receipts are cached — the cached PO data is inconsistent.";
+    return "Cin7 shows NOT RECEIVED but received lines are cached. Verify the PO in Cin7.";
   }
   return null;
 }
@@ -193,13 +199,13 @@ export interface TrustedTotals {
   ordered: number;
   received: number;
   outstanding: number;
-  excludedPoCount: { incomplete: number; stale: number; suspect: number };
+  excludedPoCount: { incomplete: number; stale: number; review: number };
 }
 
-/** Totals over Complete rows ONLY. Incomplete / potentially stale / suspect POs are counted but never summed. */
+/** Totals over Complete rows ONLY. Incomplete / potentially stale / needs-review POs are counted but never summed. */
 export function computeTrustedTotals(rows: PoQuantityRow[]): TrustedTotals {
   const trusted = new Set<string>();
-  const ex = { incomplete: new Set<string>(), stale: new Set<string>(), suspect: new Set<string>() };
+  const ex = { incomplete: new Set<string>(), stale: new Set<string>(), review: new Set<string>() };
   let ordered = 0;
   let received = 0;
   let trustedRowCount = 0;
@@ -219,7 +225,7 @@ export function computeTrustedTotals(rows: PoQuantityRow[]): TrustedTotals {
     ordered: round(ordered),
     received: round(received),
     outstanding: round(ordered - received),
-    excludedPoCount: { incomplete: ex.incomplete.size, stale: ex.stale.size, suspect: ex.suspect.size },
+    excludedPoCount: { incomplete: ex.incomplete.size, stale: ex.stale.size, review: ex.review.size },
   };
 }
 
@@ -289,10 +295,10 @@ export function buildPoQuantityRows(input: {
       quality = "possibly_stale";
       note = "PO changed in Cin7 after its quantities were last fetched; received quantities may be out of date.";
     } else if (!h.is_drop_ship) {
-      const suspectReason = receiptSuspectReason(h.combined_receiving_status, [...bySku.values()]);
-      if (suspectReason) {
-        quality = "receipt_suspect";
-        note = suspectReason;
+      const mismatchReason = receivingStatusMismatch(h.combined_receiving_status, [...bySku.values()]);
+      if (mismatchReason) {
+        quality = "status_mismatch";
+        note = mismatchReason;
       }
     }
     for (const [sku, a] of [...bySku.entries()].sort((x, y) => x[0].localeCompare(y[0]))) {
@@ -386,12 +392,12 @@ export const DATA_QUALITY_LABEL: Record<DataQuality, string> = {
   detail_not_synced: "Incomplete — detail not synced",
   no_lines_cached: "Incomplete — no lines cached",
   possibly_stale: "Potentially stale",
-  receipt_suspect: "Suspect — receipts don't match Cin7 status",
+  status_mismatch: "Needs review — Cin7 status vs received lines",
 };
 
 export const QUALITY_GROUP_LABEL: Record<QualityGroup, string> = {
   complete: "Complete",
   incomplete: "Incomplete",
   stale: "Potentially stale",
-  suspect: "Suspect",
+  review: "Needs review",
 };
