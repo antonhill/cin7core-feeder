@@ -10,34 +10,34 @@ vi.mock("@/cin7/http", async (importOriginal) => {
 const creds = { accountId: "a", applicationKey: "k", baseUrl: "https://example.test" };
 
 /**
- * CHARACTERISATION of two known receipt-ingest behaviours that affect the PO
- * Quantity Comparison report. These pin CURRENT behaviour (they are not
- * endorsements); a repair PR should change the assertions deliberately.
+ * CHARACTERISATION of receipt-ingest behaviours that matter to the PO Quantity
+ * Comparison report. They pin CURRENT behaviour (not endorsements); a repair PR
+ * should change the assertions deliberately.
  *
- * 1. purchase_receipt_lines' PK is (org, instance, card_id, product_sku)
- *    (migration 0025). If one receiving batch (CardID) holds two lines for
- *    the SAME SKU, the parser hands both through, and
- *    replace_purchase_detail's insert would violate the PK — rolling back the
- *    whole PO detail (it stays detail_synced_at = null, retried every run).
- *    The report therefore shows that PO as "incomplete", never wrong.
- * 2. Receipt lines without a CardID are dropped silently by the parser. That
- *    UNDER-COUNTS received quantity on an otherwise successfully synced PO,
- *    and the report cannot detect it.
+ * 1. (Fixed by #204) lines sharing a (CardID, SKU) within one PO are now summed
+ *    before the insert — see purchase-detail.test.ts.
+ * 2. Cin7 can return the NIL CardID (all zeros) on receipt lines. The parser
+ *    keeps it as an ordinary string, so such lines from DIFFERENT POs share the
+ *    key (nil, SKU). While purchase_receipt_lines is keyed without the PO, the
+ *    second PO to carry the same SKU on the nil card cannot be stored (confirmed
+ *    live: 10 Lights by Linea POs failing on purchase_receipt_lines_pkey).
+ * 3. Receipt lines without any CardID are dropped silently by the parser. That
+ *    UNDER-COUNTS received quantity on an otherwise successfully synced PO, and
+ *    the report cannot detect it.
  */
 describe("receipt ingest characterisation", () => {
-  it("emits two rows with the same (cardId, sku) key for a duplicate-SKU batch", async () => {
+  it("keeps a nil CardID as an ordinary key part (the cross-PO collision source), and still aggregates within the PO", async () => {
+    const nil = "00000000-0000-0000-0000-000000000000";
     vi.mocked(cin7Request).mockResolvedValueOnce({
       StockReceived: {
         Lines: [
-          { CardID: "card-1", SKU: "SKU-A", Name: "W", Quantity: 3, Date: "2026-01-30T00:00:00" },
-          { CardID: "card-1", SKU: "SKU-A", Name: "W", Quantity: 4, Date: "2026-01-30T00:00:00" },
+          { CardID: nil, SKU: "SKU-A", Name: "W", Quantity: 3, Date: "2026-01-30T00:00:00" },
+          { CardID: nil, SKU: "SKU-A", Name: "W", Quantity: 4, Date: "2026-01-30T00:00:00" },
         ],
       },
     });
-    const { receiptLines } = await fetchPurchaseDetail(creds, "po-dup");
-    const keys = receiptLines.map((l) => `${l.cardId}|${l.productSku}`);
-    expect(keys).toEqual(["card-1|SKU-A", "card-1|SKU-A"]);
-    expect(new Set(keys).size).toBeLessThan(keys.length); // would violate the 0025 primary key
+    const { receiptLines } = await fetchPurchaseDetail(creds, "po-nil");
+    expect(receiptLines).toEqual([expect.objectContaining({ cardId: nil, productSku: "SKU-A", quantity: 7 })]);
   });
 
   it("silently drops receipt lines that have no CardID", async () => {
