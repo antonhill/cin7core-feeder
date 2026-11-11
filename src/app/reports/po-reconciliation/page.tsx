@@ -10,12 +10,11 @@ import {
   DATA_QUALITY_LABEL,
   LINE_STATUS_LABEL,
   computeTrustedTotals,
-  qualityGroup,
   type LineStatus,
-  type PoQuantityRow,
 } from "@/reports/po-quantity-comparison";
-import { compareNullable, SortHeader, type SortDirection } from "../sortable-table";
-import { matchesSearch } from "../text-search";
+import { SortHeader } from "../sortable-table";
+import { applyPoView, type PoSortColumn, type PoSortDirection, type PoViewSpec } from "@/reports/po-quantity-view";
+import type { PoQuantityFilters } from "@/reports/po-quantity-query";
 import { SearchInput } from "../search-input";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
@@ -28,7 +27,7 @@ import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { EmptyState } from "@/components/ui/EmptyState";
 
-type SortColumn = "po" | "supplier" | "orderDate" | "poStatus" | "sku" | "ordered" | "received" | "outstanding" | "lineStatus";
+type SortColumn = PoSortColumn;
 
 const ROW_CAP = 500;
 
@@ -38,25 +37,6 @@ const LINE_TONE: Record<LineStatus, BadgeTone> = {
   not_received: "neutral",
   over_received: "danger",
 };
-
-function sortValue(r: PoQuantityRow, c: SortColumn): string | number | null {
-  switch (c) {
-    case "po":
-      return r.orderNumber;
-    case "supplier":
-      return r.supplierName;
-    case "orderDate":
-      return r.orderDate;
-    case "poStatus":
-      return r.poStatus;
-    case "sku":
-      return r.sku;
-    case "lineStatus":
-      return r.lineStatus ? LINE_STATUS_LABEL[r.lineStatus] : null;
-    default:
-      return r[c];
-  }
-}
 
 function fmtQty(v: number | null): string {
   return v === null ? "—" : v.toLocaleString();
@@ -91,6 +71,8 @@ export default function PoQuantityComparisonPage() {
   const [dateTo, setDateTo] = useState("");
 
   const [report, setReport] = useState<PoQuantityReport | null>(null);
+  /** The instance/date filters the CURRENT report was loaded with — the export must use these, not whatever the inputs say now. */
+  const [loadedFilters, setLoadedFilters] = useState<PoQuantityFilters | null>(null);
   const [reportError, setReportError] = useState<string | null>(null);
   const [isRunning, startRunTransition] = useTransition();
   const [isExporting, startExportTransition] = useTransition();
@@ -105,7 +87,7 @@ export default function PoQuantityComparisonPage() {
   const [showAll, setShowAll] = useState(false);
 
   const [sortColumn, setSortColumn] = useState<SortColumn>("orderDate");
-  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [sortDirection, setSortDirection] = useState<PoSortDirection>("desc");
 
   useEffect(() => {
     loadReportFilterOptionsAction().then((result) => {
@@ -131,15 +113,17 @@ export default function PoQuantityComparisonPage() {
     setReport(null);
     setShowAll(false);
     startRunTransition(async () => {
-      const result = await loadPoQuantityReportAction({
+      const filters: PoQuantityFilters = {
         instanceIds: instanceIds.length ? instanceIds : undefined,
         dateFrom: dateFrom || undefined,
         dateTo: dateTo || undefined,
-      });
+      };
+      const result = await loadPoQuantityReportAction(filters);
       if (!result.ok || !result.data) {
         setReportError(result.error ?? "Unknown error");
         return;
       }
+      setLoadedFilters(filters);
       setReport(result.data);
     });
   }
@@ -148,27 +132,12 @@ export default function PoQuantityComparisonPage() {
   const suppliers = useMemo(() => [...new Set(rows.map((r) => r.supplierName).filter((v): v is string => Boolean(v)))].sort(), [rows]);
   const poStatuses = useMemo(() => [...new Set(rows.map((r) => r.poStatus).filter((v): v is string => Boolean(v)))].sort(), [rows]);
 
-  const filteredRows = useMemo(
-    () =>
-      rows.filter((r) => {
-        if (supplier && r.supplierName !== supplier) return false;
-        if (poStatus && r.poStatus !== poStatus) return false;
-        if (lineStatus && r.lineStatus !== lineStatus) return false;
-        if (quality && qualityGroup(r.dataQuality) !== quality) return false;
-        if (!matchesSearch(poSearch, r.orderNumber)) return false;
-        return matchesSearch(search, r.sku, r.productName);
-      }),
-    [rows, supplier, poStatus, lineStatus, quality, poSearch, search]
+  const viewSpec: PoViewSpec = useMemo(
+    () => ({ supplier, poStatus, lineStatus, quality, poSearch, search, sortColumn, sortDirection }),
+    [supplier, poStatus, lineStatus, quality, poSearch, search, sortColumn, sortDirection]
   );
-
-  const sortedRows = useMemo(() => {
-    const copy = [...filteredRows];
-    copy.sort((a, b) => {
-      const cmp = compareNullable(sortValue(a, sortColumn), sortValue(b, sortColumn));
-      return sortDirection === "asc" ? cmp : -cmp;
-    });
-    return copy;
-  }, [filteredRows, sortColumn, sortDirection]);
+  const sortedRows = useMemo(() => applyPoView(rows, viewSpec), [rows, viewSpec]);
+  const filteredRows = sortedRows;
 
   const visibleRows = showAll ? sortedRows : sortedRows.slice(0, ROW_CAP);
   // Scope: the POs returned by the instance + date selection above (NOT the all-time per-instance sync table).
@@ -183,8 +152,9 @@ export default function PoQuantityComparisonPage() {
   function handleExport() {
     setExportError(null);
     startExportTransition(async () => {
-      // Export the full filtered+sorted set (not just the capped on-screen slice) so totals agree with the filters.
-      const result = await exportPoQuantityXlsxAction(sortedRows);
+      // Sends only the filters + view spec; the server rebuilds the same rows (a few hundred bytes, however many rows).
+      if (!loadedFilters) return;
+      const result = await exportPoQuantityXlsxAction({ filters: loadedFilters, view: viewSpec });
       if (!result.ok || !result.data) {
         setExportError(result.error ?? "Unknown error");
         return;

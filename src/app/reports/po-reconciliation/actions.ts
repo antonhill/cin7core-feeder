@@ -5,7 +5,7 @@ import { requireModuleAccess } from "@/lib/authorization";
 import { REPORTS_MODULE } from "@/app/module-nav";
 import { getPoQuantityReport, type PoQuantityFilters, type PoQuantityReport } from "@/reports/po-quantity-query";
 import { buildPoQuantitySheet } from "@/reports/po-quantity-export";
-import type { PoQuantityRow } from "@/reports/po-quantity-comparison";
+import { applyPoView, type PoViewSpec } from "@/reports/po-quantity-view";
 import { renderXlsxBase64 } from "@/reports/xlsx-writer";
 
 // "use server" file: async function exports ONLY (see CLAUDE.md) — types are erased and safe.
@@ -26,10 +26,18 @@ export async function loadPoQuantityReportAction(filters: PoQuantityFilters): Pr
   }
 }
 
-/** Renders the rows currently on screen (post filter/sort) — what you see is what you export. */
-export async function exportPoQuantityXlsxAction(rows: PoQuantityRow[]): Promise<PoQuantityActionResult<string>> {
+/**
+ * Exports exactly what the table shows. The browser sends only the instance/date filters and the view spec
+ * (filters + sort); the server reloads the report under the caller's own org and applies the same view — so the
+ * request stays tiny regardless of row count (posting the rows themselves exceeded the platform body limit at
+ * ~7k rows) and the data can never come from the client.
+ */
+export async function exportPoQuantityXlsxAction(input: { filters: PoQuantityFilters; view: PoViewSpec }): Promise<PoQuantityActionResult<string>> {
   try {
-    await requireModuleAccess(REPORTS_MODULE.href);
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
+    const db = createServiceRoleClient();
+    const report = await getPoQuantityReport(db, orgId, input.filters);
+    const rows = applyPoView(report.rows, input.view);
     return { ok: true, data: await renderXlsxBase64(buildPoQuantitySheet(rows), "PO Quantity Comparison") };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
