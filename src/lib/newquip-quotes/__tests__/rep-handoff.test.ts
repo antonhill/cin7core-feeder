@@ -71,6 +71,9 @@ describe("Rep handoff does not wait for Estimator-owned work", () => {
       if (t === "newquip_quotes") { const upd = b.update.bind(b); b.update = (...a: unknown[]) => { row.state = "ESTIMATOR_REVIEW"; return upd(...a); }; }
       return b;
     };
+    // ...and the same race on the atomic function path (migration 0123): the concurrent submit lands before the function takes its row lock
+    const realRpc = db.rpc.bind(db);
+    (db as unknown as { rpc: unknown }).rpc = (fn: string, a: Record<string, unknown>) => { if (fn === "newquip_handoff_with_snapshot") row.state = "ESTIMATOR_REVIEW"; return realRpc(fn, a); };
     expect(await err(send(id, cents(d)))).toMatch(/changed while sending/);
     expect(row.customer_confirmed_cents ?? null).toBeNull(); // the loser recorded nothing
   });

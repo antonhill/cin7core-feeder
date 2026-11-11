@@ -117,7 +117,7 @@ describe("mapping changes are authorised and normalised on the server", () => {
     const create = src.slice(src.indexOf("export async function createGrowerQuoteAction("), src.indexOf("export async function getGrowerQuoteAction("));
     expect(create).toMatch(/await sanitiseSubmittedDraft\(a, db, draft, undefined\)/);
     const save = src.slice(src.indexOf("export async function saveGrowerDraftAction("));
-    expect(save.slice(0, 900)).toMatch(/await sanitiseSubmittedDraft\(a, db, draft, prior\?\.draft\)/);
+    expect(save.slice(0, 1100)).toMatch(/await sanitiseSubmittedDraft\(a, db, draft, prior\?\.draft, /); // + the stored state/revision (NQ-008A change stamps)
   });
   it("estimator sign-off re-verifies EVERY mapped SKU against the catalogue before stamping (not only at draft save)", () => {
     const src = readFileSync(new URL("../../../lib/newquip-quotes/quote-store.ts", import.meta.url), "utf8");

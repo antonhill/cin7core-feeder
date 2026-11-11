@@ -28,6 +28,11 @@ export interface EstimatorState {
   physicalCosts?: Record<string, CostEntry>;
   /** SERVER-OWNED, like physicalCosts. The estimator's audited declarations behind the cost estimate: that supplier prices are per stock unit, and an authorised exception that lets an incomplete cost estimate be approved. */
   costBasis?: { unitBasis?: UnitBasis; incompleteAccepted?: { reason: string; by: string; at: string } };
+  /**
+   * SERVER-OWNED (NQ-008A). Who last changed each price-affecting input AFTER the quotation was handed to the Estimator, and when (see newquip/pricing/change-stamps.ts).
+   * Absent until such a change is made, so a quotation that has none hashes exactly as it always did. Whatever a client sends for it is ignored.
+   */
+  changeStamps?: Record<string, { by: string; at: string; rev: number }>;
   /** Free-text assumptions that travel with the quote and are frozen in the baseline. */
   assumptions: string;
 }

@@ -929,7 +929,10 @@ describe("UX-006 corrections: incompleteness is visible, the Estimator's items a
     cleanup();
     await open({ roles: ["REP"], ...SUBMITTED });
     expect(screen.queryByTestId("commercial-chip")).toBeNull();
-    expect(document.body.textContent).not.toMatch(/commercially ready|indicative/i);
+    // NQ-008A: the Rep now SEES that the price is indicative (the pricing-feedback note) - that is the point of the feature. What stays hidden is the Estimator's commercial-readiness
+    // and costing/margin wording: "commercially ready", "indicative margin", "amounts are indicative" (the cost viewers' chip) and the price-list margin basis.
+    expect(document.body.textContent).not.toMatch(/commercially ready|indicative margin|amounts are indicative|price-list basis/i);
+    expect(screen.getByTestId("pricing-feedback").textContent).toMatch(/Indicative price/);
   }, 60000);
 
   it("a SUBMITTED quotation with open Estimator items: Stage 2 opens at step 1, says they are the Estimator's by design, and keeps sign-off disabled with the reason; Return stays available", async () => {
