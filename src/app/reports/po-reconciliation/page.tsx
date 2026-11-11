@@ -232,7 +232,7 @@ export default function PoQuantityComparisonPage() {
               {stalePoCount > 0 && (
                 <Alert tone="warning">
                   Potentially stale — {stalePoCount} PO{stalePoCount === 1 ? "" : "s"} in this selection (that have cached lines) changed in Cin7 after
-                  their quantities were last fetched, so received quantities may be out of date. The regular sync does not refresh these.
+                  their quantities were last fetched, or are open POs not re-verified against Cin7 for over 72 hours, so received quantities may be out of date. The regular sync refreshes these in priority order (open POs first).
                 </Alert>
               )}
               {reviewPoCount > 0 && (

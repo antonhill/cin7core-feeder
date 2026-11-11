@@ -67,10 +67,38 @@ export interface PurchaseOrderLine {
   quantity: number;
 }
 
+/**
+ * The response is not a purchase detail at all (empty, non-object, or none of the fields every real
+ * response carries). Thrown BEFORE anything is persisted so an incomplete API answer can never
+ * replace a valid cached receipt set.
+ */
+export class PurchaseDetailStructureError extends Error {
+  constructor(reason: string) {
+    super(`Purchase detail response is not usable: ${reason}`);
+    this.name = "PurchaseDetailStructureError";
+  }
+}
+
+/** Deliberately lenient: Service Purchases legitimately have NO line sections, so this only rejects answers that are not a purchase detail at all. */
+function assertDetailStructure(response: unknown): asserts response is Record<string, unknown> {
+  if (!response || typeof response !== "object" || Array.isArray(response)) throw new PurchaseDetailStructureError("not an object");
+  const known = ["ID", "OrderNumber", "Status", "Order", "StockReceived", "PutAway"];
+  if (!known.some((k) => k in (response as Record<string, unknown>))) throw new PurchaseDetailStructureError("none of the expected purchase fields are present");
+}
+
+export interface FetchPurchaseDetailOptions {
+  /** The endpoint that served this PO last time (purchases.source) — tried first so an Advanced PO costs one call instead of two. Falls back to the standard classic-first path on any Cin7 API error. */
+  sourceHint?: string | null;
+}
+
 export interface PurchaseDetail {
   source: "purchase" | "advanced-purchase";
   receiptLines: PurchaseReceiptLine[];
   orderLines: PurchaseOrderLine[];
+  /** False when the response carried NO receipt section at all (StockReceived / PutAway absent) — distinct from "present but empty". Undefined on older mocks; treat as present. */
+  receiptSectionPresent?: boolean;
+  /** Receipt lines the parser could not key (no CardID) and therefore did not persist. Instrumentation only — their treatment is unchanged until a validated identity strategy exists. */
+  droppedReceiptLines?: { count: number; quantity: number };
   /** True when this purchase is a drop-shipment (RelatedDropShipSaleTask present — confirmed live 2026-07-09) — goods ship straight to the customer and never arrive in this warehouse, so it should never be treated as a source of "still coming" backorder stock regardless of RequiredBy. */
   isDropShip: boolean;
 }
@@ -93,6 +121,23 @@ function toReceiptLine(raw: Record<string, unknown>): PurchaseReceiptLine | null
     location: typeof raw.Location === "string" ? raw.Location : null,
     locationId: typeof raw.LocationID === "string" ? raw.LocationID : null,
   };
+}
+
+/** Maps raw receipt lines, aggregating duplicates, and counts (without persisting) the lines that have no CardID. */
+function parseReceiptLines(rawLines: Record<string, unknown>[]): { lines: PurchaseReceiptLine[]; dropped: { count: number; quantity: number } } {
+  const keyed: PurchaseReceiptLine[] = [];
+  let droppedCount = 0;
+  let droppedQty = 0;
+  for (const raw of rawLines) {
+    const line = toReceiptLine(raw);
+    if (line) keyed.push(line);
+    else {
+      droppedCount += 1;
+      const q = Number(raw.Quantity ?? 0);
+      droppedQty += Number.isFinite(q) ? q : 0;
+    }
+  }
+  return { lines: aggregateReceiptLines(keyed), dropped: { count: droppedCount, quantity: Math.round(droppedQty * 1e6) / 1e6 } };
 }
 
 function toOrderLine(raw: Record<string, unknown>): PurchaseOrderLine {
@@ -125,31 +170,57 @@ function extractOrderLinesAndDropShip(response: Record<string, unknown>): { orde
  * two real receiving dates had two distinct CardIDs), used here as the
  * table's row identity (see migration 0024_purchase_receipts.sql).
  */
-export async function fetchPurchaseDetail(creds: Cin7Credentials, purchaseId: string): Promise<PurchaseDetail> {
+function parseClassic(response: Record<string, unknown>): PurchaseDetail {
+  const stockReceived = response.StockReceived as Record<string, unknown> | undefined;
+  const rawLines = Array.isArray(stockReceived?.Lines) ? (stockReceived.Lines as Record<string, unknown>[]) : [];
+  const { lines, dropped } = parseReceiptLines(rawLines);
+  return {
+    source: "purchase",
+    receiptLines: lines,
+    receiptSectionPresent: "StockReceived" in response,
+    droppedReceiptLines: dropped,
+    ...extractOrderLinesAndDropShip(response),
+  };
+}
+
+function parseAdvanced(response: Record<string, unknown>): PurchaseDetail {
+  const putAway = Array.isArray(response.PutAway) ? (response.PutAway as Record<string, unknown>[]) : [];
+  const rawLines = putAway.flatMap((batch) => (Array.isArray(batch.Lines) ? (batch.Lines as Record<string, unknown>[]) : []));
+  const { lines, dropped } = parseReceiptLines(rawLines);
+  return {
+    source: "advanced-purchase",
+    receiptLines: lines,
+    receiptSectionPresent: "PutAway" in response,
+    droppedReceiptLines: dropped,
+    ...extractOrderLinesAndDropShip(response),
+  };
+}
+
+export async function fetchPurchaseDetail(creds: Cin7Credentials, purchaseId: string, options: FetchPurchaseDetailOptions = {}): Promise<PurchaseDetail> {
+  const query = { ID: purchaseId, CombineAdditionalCharges: "false" };
+
+  if (options.sourceHint === "advanced-purchase") {
+    try {
+      const response = await cin7Request<unknown>(creds, "/advanced-purchase", { query });
+      assertDetailStructure(response);
+      return parseAdvanced(response);
+    } catch (e) {
+      // Only a Cin7 API error means "maybe this isn't an Advanced PO any more / transient" — fall through to the standard path.
+      // A structure or conflict error is a real verdict about THIS response and must not be masked by a second call.
+      if (!(e instanceof Cin7ApiError)) throw e;
+    }
+  }
+
   try {
-    const response = await cin7Request<Record<string, unknown>>(creds, "/purchase", {
-      query: { ID: purchaseId, CombineAdditionalCharges: "false" },
-    });
-    const stockReceived = response.StockReceived as Record<string, unknown> | undefined;
-    const rawLines = Array.isArray(stockReceived?.Lines) ? (stockReceived.Lines as Record<string, unknown>[]) : [];
-    return {
-      source: "purchase",
-      receiptLines: aggregateReceiptLines(rawLines.map(toReceiptLine).filter((l): l is PurchaseReceiptLine => l !== null)),
-      ...extractOrderLinesAndDropShip(response),
-    };
+    const response = await cin7Request<unknown>(creds, "/purchase", { query });
+    assertDetailStructure(response);
+    return parseClassic(response);
   } catch (e) {
     const isAdvancedPurchaseOnly = e instanceof Cin7ApiError && /Advanced Purchase/i.test(e.message);
     if (!isAdvancedPurchaseOnly) throw e;
 
-    const response = await cin7Request<Record<string, unknown>>(creds, "/advanced-purchase", {
-      query: { ID: purchaseId, CombineAdditionalCharges: "false" },
-    });
-    const putAway = Array.isArray(response.PutAway) ? (response.PutAway as Record<string, unknown>[]) : [];
-    const rawLines = putAway.flatMap((batch) => (Array.isArray(batch.Lines) ? (batch.Lines as Record<string, unknown>[]) : []));
-    return {
-      source: "advanced-purchase",
-      receiptLines: aggregateReceiptLines(rawLines.map(toReceiptLine).filter((l): l is PurchaseReceiptLine => l !== null)),
-      ...extractOrderLinesAndDropShip(response),
-    };
+    const response = await cin7Request<unknown>(creds, "/advanced-purchase", { query });
+    assertDetailStructure(response);
+    return parseAdvanced(response);
   }
 }

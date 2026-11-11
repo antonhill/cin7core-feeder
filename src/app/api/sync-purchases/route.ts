@@ -36,7 +36,7 @@ export async function GET(req: Request) {
   try {
     assertInternalAuth(req);
     const db = createServiceRoleClient();
-    const results = await runCronRotation(db, "sync-purchases", (orgId) => syncOrgPurchases(db, orgId));
+    const results = await runCronRotation(db, "sync-purchases", (orgId, budgetMs) => syncOrgPurchases(db, orgId, undefined, budgetMs));
     return NextResponse.json({ results });
   } catch (e) {
     if (e instanceof UnauthorizedError) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

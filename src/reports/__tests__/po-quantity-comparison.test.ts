@@ -11,6 +11,8 @@ import {
 import { buildPoQuantitySheet } from "@/reports/po-quantity-export";
 
 const names = { i1: "Inst One", i2: "Inst Two" };
+/** Fixed clock: the default fixtures were detail-synced 2h before this, so the open-PO age rule does not fire unless a test says so. */
+const NOW = new Date("2026-06-01T12:00:00Z");
 
 function po(over: Partial<PurchaseHeader> = {}): PurchaseHeader {
   return {
@@ -42,7 +44,7 @@ describe("classifyLine", () => {
 
 describe("buildPoQuantityRows", () => {
   it("sums multiple partial receipts and never multiplies the ordered quantity", () => {
-    const rows = buildPoQuantityRows({
+    const rows = buildPoQuantityRows({ now: NOW,
       purchases: [po()],
       orderLines: [ol("A", 10)],
       receiptLines: [rl("A", 3), rl("A", 3), rl("A", 2)],
@@ -53,7 +55,7 @@ describe("buildPoQuantityRows", () => {
   });
 
   it("merges duplicate-SKU order lines per PO and reports how many were merged", () => {
-    const rows = buildPoQuantityRows({
+    const rows = buildPoQuantityRows({ now: NOW,
       purchases: [po()],
       orderLines: [ol("A", 5), ol("A", 7)],
       receiptLines: [rl("A", 12)],
@@ -64,24 +66,24 @@ describe("buildPoQuantityRows", () => {
   });
 
   it("shows over-receipt as a negative outstanding, not zero", () => {
-    const [r] = buildPoQuantityRows({ purchases: [po()], orderLines: [ol("A", 10)], receiptLines: [rl("A", 13)], instanceNames: names });
+    const [r] = buildPoQuantityRows({ now: NOW, purchases: [po()], orderLines: [ol("A", 10)], receiptLines: [rl("A", 13)], instanceNames: names });
     expect(r.outstanding).toBe(-3);
     expect(r.lineStatus).toBe("over_received");
   });
 
   it("reports not received when there are order lines and no receipts (detail synced)", () => {
-    const [r] = buildPoQuantityRows({ purchases: [po({ combined_receiving_status: "NOT RECEIVED" })], orderLines: [ol("A", 4)], receiptLines: [], instanceNames: names });
+    const [r] = buildPoQuantityRows({ now: NOW, purchases: [po({ combined_receiving_status: "NOT RECEIVED" })], orderLines: [ol("A", 4)], receiptLines: [], instanceNames: names });
     expect(r).toMatchObject({ ordered: 4, received: 0, outstanding: 4, lineStatus: "not_received", dataQuality: "ok" });
   });
 
   it("flags a receipt for a SKU that is not on the PO (blind receipt) as over-received + notOnOrder", () => {
-    const rows = buildPoQuantityRows({ purchases: [po()], orderLines: [ol("A", 4)], receiptLines: [rl("B", 2)], instanceNames: names });
+    const rows = buildPoQuantityRows({ now: NOW, purchases: [po()], orderLines: [ol("A", 4)], receiptLines: [rl("B", 2)], instanceNames: names });
     const b = rows.find((r) => r.sku === "B")!;
     expect(b).toMatchObject({ ordered: 0, received: 2, outstanding: -2, lineStatus: "over_received", notOnOrder: true });
   });
 
   it("treats a PO with unsynced detail as incomplete: null quantities, leftover lines ignored", () => {
-    const rows = buildPoQuantityRows({
+    const rows = buildPoQuantityRows({ now: NOW,
       purchases: [po({ detail_synced_at: null })],
       orderLines: [ol("A", 10)],
       receiptLines: [rl("A", 10)],
@@ -92,12 +94,12 @@ describe("buildPoQuantityRows", () => {
   });
 
   it("treats a synced PO with no cached lines as incomplete, not zero", () => {
-    const [r] = buildPoQuantityRows({ purchases: [po()], orderLines: [], receiptLines: [], instanceNames: names });
+    const [r] = buildPoQuantityRows({ now: NOW, purchases: [po()], orderLines: [], receiptLines: [], instanceNames: names });
     expect(r).toMatchObject({ dataQuality: "no_lines_cached", ordered: null, received: null });
   });
 
   it("flags a PO re-listed after its detail was fetched as possibly stale but still shows quantities", () => {
-    const [r] = buildPoQuantityRows({
+    const [r] = buildPoQuantityRows({ now: NOW,
       purchases: [po({ updated_at: "2026-06-02T00:00:00Z" })],
       orderLines: [ol("A", 10)],
       receiptLines: [rl("A", 5)],
@@ -107,11 +109,11 @@ describe("buildPoQuantityRows", () => {
   });
 
   it("does not flag same-run ordering within 1s as stale", () => {
-    expect(isDetailPossiblyStale({ detail_synced_at: "2026-06-01T10:00:00Z", updated_at: "2026-06-01T10:00:00.500Z" })).toBe(false);
+    expect(isDetailPossiblyStale({ detail_synced_at: "2026-06-01T10:00:00Z", updated_at: "2026-06-01T10:00:00.500Z", combined_receiving_status: "FULLY RECEIVED" }, NOW)).toBe(false);
   });
 
   it("keeps instances and POs separate even when ids and SKUs collide across instances", () => {
-    const rows = buildPoQuantityRows({
+    const rows = buildPoQuantityRows({ now: NOW,
       purchases: [po(), po({ instance_id: "i2" })],
       orderLines: [ol("A", 10, "p1", "i1"), ol("A", 99, "p1", "i2")],
       receiptLines: [rl("A", 1, "p1", "i1"), rl("A", 50, "p1", "i2")],
@@ -124,7 +126,7 @@ describe("buildPoQuantityRows", () => {
   });
 
   it("groups blank SKUs under an explicit label and avoids float noise", () => {
-    const [r] = buildPoQuantityRows({ purchases: [po()], orderLines: [ol(" ", 0.3)], receiptLines: [rl("", 0.1), rl("", 0.2)], instanceNames: names });
+    const [r] = buildPoQuantityRows({ now: NOW, purchases: [po()], orderLines: [ol(" ", 0.3)], receiptLines: [rl("", 0.1), rl("", 0.2)], instanceNames: names });
     expect(r.sku).toBe("(no SKU)");
     expect(r.received).toBe(0.3);
     expect(r.lineStatus).toBe("fully_received");
@@ -133,7 +135,7 @@ describe("buildPoQuantityRows", () => {
 
 describe("receiving-status mismatch detection and trusted totals", () => {
   it("marks FULLY RECEIVED POs whose cached receipts are below ordered as needs-review", () => {
-    const [r] = buildPoQuantityRows({
+    const [r] = buildPoQuantityRows({ now: NOW,
       purchases: [po({ combined_receiving_status: "FULLY RECEIVED" })],
       orderLines: [ol("A", 10)],
       receiptLines: [rl("A", 6)],
@@ -146,21 +148,21 @@ describe("receiving-status mismatch detection and trusted totals", () => {
 
   it("marks FULLY RECEIVED with zero cached receipts, PARTIALLY with none, and NOT RECEIVED with receipts as needs-review", () => {
     const mk = (crs: string, recv: number) =>
-      buildPoQuantityRows({ purchases: [po({ combined_receiving_status: crs })], orderLines: [ol("A", 10)], receiptLines: recv ? [rl("A", recv)] : [], instanceNames: names })[0].dataQuality;
+      buildPoQuantityRows({ now: NOW, purchases: [po({ combined_receiving_status: crs })], orderLines: [ol("A", 10)], receiptLines: recv ? [rl("A", recv)] : [], instanceNames: names })[0].dataQuality;
     expect(mk("FULLY RECEIVED", 0)).toBe("status_mismatch");
     expect(mk("PARTIALLY RECEIVED", 0)).toBe("status_mismatch");
     expect(mk("NOT RECEIVED", 3)).toBe("status_mismatch");
   });
 
   it("does not flag consistent POs, drop-ships, or POs already flagged stale", () => {
-    const ok = buildPoQuantityRows({ purchases: [po({ combined_receiving_status: "FULLY RECEIVED" })], orderLines: [ol("A", 10)], receiptLines: [rl("A", 10)], instanceNames: names })[0];
-    const drop = buildPoQuantityRows({ purchases: [po({ combined_receiving_status: "FULLY RECEIVED", is_drop_ship: true })], orderLines: [ol("A", 10)], receiptLines: [], instanceNames: names })[0];
-    const stale = buildPoQuantityRows({ purchases: [po({ combined_receiving_status: "FULLY RECEIVED", updated_at: "2026-07-01T00:00:00Z" })], orderLines: [ol("A", 10)], receiptLines: [rl("A", 1)], instanceNames: names })[0];
+    const ok = buildPoQuantityRows({ now: NOW, purchases: [po({ combined_receiving_status: "FULLY RECEIVED" })], orderLines: [ol("A", 10)], receiptLines: [rl("A", 10)], instanceNames: names })[0];
+    const drop = buildPoQuantityRows({ now: NOW, purchases: [po({ combined_receiving_status: "FULLY RECEIVED", is_drop_ship: true })], orderLines: [ol("A", 10)], receiptLines: [], instanceNames: names })[0];
+    const stale = buildPoQuantityRows({ now: NOW, purchases: [po({ combined_receiving_status: "FULLY RECEIVED", updated_at: "2026-07-01T00:00:00Z" })], orderLines: [ol("A", 10)], receiptLines: [rl("A", 1)], instanceNames: names })[0];
     expect([ok.dataQuality, drop.dataQuality, stale.dataQuality]).toEqual(["ok", "ok", "possibly_stale"]);
   });
 
   it("trusted totals sum Complete rows only and count excluded POs by group", () => {
-    const rows = buildPoQuantityRows({
+    const rows = buildPoQuantityRows({ now: NOW,
       purchases: [
         po({ cin7_purchase_id: "good", combined_receiving_status: "PARTIALLY RECEIVED" }),
         po({ cin7_purchase_id: "sus", combined_receiving_status: "FULLY RECEIVED" }),
@@ -188,7 +190,7 @@ describe("no product lines vs genuinely incomplete detail", () => {
   const svc = (over: Partial<PurchaseHeader> = {}) => po({ source: "advanced-purchase", combined_receiving_status: "NOT AVAILABLE", status: "COMPLETED", ...over });
 
   it("a synced ADVANCED PO with no lines, receiving NOT AVAILABLE and a finished status (Service Purchase with charges) is 'No product lines', not Incomplete", () => {
-    const [r] = buildPoQuantityRows({ purchases: [svc()], orderLines: [], receiptLines: [], instanceNames: names });
+    const [r] = buildPoQuantityRows({ now: NOW, purchases: [svc()], orderLines: [], receiptLines: [], instanceNames: names });
     expect(r.dataQuality).toBe("no_product_lines");
     expect(qualityGroup(r.dataQuality)).toBe("not_applicable");
     expect(r).toMatchObject({ ordered: null, received: null, outstanding: null });
@@ -202,23 +204,23 @@ describe("no product lines vs genuinely incomplete detail", () => {
     ["an unfinished ORDERING advanced PO", { status: "ORDERING" }],
     ["an advanced PO with a normal receiving status", { combined_receiving_status: "NOT RECEIVED" }],
   ])("%s with no lines stays Incomplete (no_lines_cached)", (_label, over) => {
-    const [r] = buildPoQuantityRows({ purchases: [svc(over as Partial<PurchaseHeader>)], orderLines: [], receiptLines: [], instanceNames: names });
+    const [r] = buildPoQuantityRows({ now: NOW, purchases: [svc(over as Partial<PurchaseHeader>)], orderLines: [], receiptLines: [], instanceNames: names });
     expect(r.dataQuality).toBe("no_lines_cached");
   });
 
   it("an advanced PO that HAS product lines is never 'No product lines'", () => {
-    const [r] = buildPoQuantityRows({ purchases: [svc()], orderLines: [ol("A", 2)], receiptLines: [], instanceNames: names });
+    const [r] = buildPoQuantityRows({ now: NOW, purchases: [svc()], orderLines: [ol("A", 2)], receiptLines: [], instanceNames: names });
     expect(r.dataQuality).not.toBe("no_product_lines");
     expect(r.sku).toBe("A");
   });
 
   it("an UNSYNCED PO is Incomplete even when it looks like a service purchase (never assumed)", () => {
-    const [r] = buildPoQuantityRows({ purchases: [svc({ detail_synced_at: null })], orderLines: [], receiptLines: [], instanceNames: names });
+    const [r] = buildPoQuantityRows({ now: NOW, purchases: [svc({ detail_synced_at: null })], orderLines: [], receiptLines: [], instanceNames: names });
     expect(r.dataQuality).toBe("detail_not_synced");
   });
 
   it("an unsynced PO shows the recorded sync-failure reason; without one it says no reason was recorded", () => {
-    const withFailure = buildPoQuantityRows({
+    const withFailure = buildPoQuantityRows({ now: NOW,
       purchases: [po({ detail_synced_at: null })],
       orderLines: [],
       receiptLines: [],
@@ -227,18 +229,55 @@ describe("no product lines vs genuinely incomplete detail", () => {
     })[0];
     expect(withFailure.dataQualityNote).toContain("2026-11-10");
     expect(withFailure.dataQualityNote).toContain("Duplicate key on purchase_receipt_lines_pkey");
-    const without = buildPoQuantityRows({ purchases: [po({ detail_synced_at: null })], orderLines: [], receiptLines: [], instanceNames: names })[0];
+    const without = buildPoQuantityRows({ now: NOW, purchases: [po({ detail_synced_at: null })], orderLines: [], receiptLines: [], instanceNames: names })[0];
     expect(without.dataQualityNote).toMatch(/without a recorded reason/);
   });
 
   it("no-product-line POs are counted separately and never as incomplete or trusted", () => {
-    const rows = buildPoQuantityRows({
+    const rows = buildPoQuantityRows({ now: NOW,
       purchases: [svc({ cin7_purchase_id: "svc" }), po({ cin7_purchase_id: "inc", detail_synced_at: null })],
       orderLines: [],
       receiptLines: [],
       instanceNames: names,
     });
     expect(computeTrustedTotals(rows)).toMatchObject({ trustedPoCount: 0, notApplicablePoCount: 1, excludedPoCount: { incomplete: 1, stale: 0, review: 0 } });
+  });
+});
+
+describe("open-PO freshness (not relisted, but not re-verified)", () => {
+  const aged = (crs: string, hoursOld: number, over: Partial<PurchaseHeader> = {}) => {
+    const synced = new Date(NOW.getTime() - hoursOld * 3600 * 1000).toISOString();
+    return po({ combined_receiving_status: crs, detail_synced_at: synced, updated_at: synced, ...over });
+  };
+
+  it("an OPEN PO not re-verified for over 72h is Potentially stale even though Cin7 never relisted it", () => {
+    for (const crs of ["NOT RECEIVED", "PARTIALLY RECEIVED"]) {
+      const [r] = buildPoQuantityRows({ now: NOW, purchases: [aged(crs, 100)], orderLines: [ol("A", 10)], receiptLines: crs === "PARTIALLY RECEIVED" ? [rl("A", 4)] : [], instanceNames: names });
+      expect(r.dataQuality).toBe("possibly_stale");
+      expect(r.dataQualityNote).toMatch(/not been re-verified/);
+    }
+  });
+
+  it("an open PO verified within 72h stays Complete, and the boundary is exactly 72h", () => {
+    const build = (h: number) => buildPoQuantityRows({ now: NOW, purchases: [aged("NOT RECEIVED", h)], orderLines: [ol("A", 10)], receiptLines: [], instanceNames: names })[0].dataQuality;
+    expect(build(71)).toBe("ok");
+    expect(build(72)).toBe("ok");
+    expect(build(73)).toBe("possibly_stale");
+  });
+
+  it("a CLOSED (fully received) PO is never aged into stale — only a relist makes it stale", () => {
+    const [r] = buildPoQuantityRows({ now: NOW, purchases: [aged("FULLY RECEIVED", 24 * 90)], orderLines: [ol("A", 10)], receiptLines: [rl("A", 10)], instanceNames: names });
+    expect(r.dataQuality).toBe("ok");
+    const [relisted] = buildPoQuantityRows({ now: NOW, purchases: [aged("FULLY RECEIVED", 24 * 90, { updated_at: NOW.toISOString() })], orderLines: [ol("A", 10)], receiptLines: [rl("A", 10)], instanceNames: names });
+    expect(relisted.dataQuality).toBe("possibly_stale");
+    expect(relisted.dataQualityNote).toMatch(/changed in Cin7/);
+  });
+
+  it("aged-open POs are excluded from trusted totals and counted as stale in the instance summary", () => {
+    const purchases = [aged("NOT RECEIVED", 100, { cin7_purchase_id: "old" }), aged("NOT RECEIVED", 1, { cin7_purchase_id: "fresh" })];
+    const rows = buildPoQuantityRows({ now: NOW, purchases, orderLines: [ol("A", 10, "old"), ol("A", 10, "fresh")], receiptLines: [], instanceNames: names });
+    expect(computeTrustedTotals(rows)).toMatchObject({ trustedPoCount: 1, ordered: 10, excludedPoCount: { stale: 1 } });
+    expect(summariseInstanceSync({ purchases, listSyncedAt: {}, instanceNames: names, instanceIds: ["i1"], now: NOW })[0].possiblyStale).toBe(1);
   });
 });
 
@@ -257,7 +296,7 @@ describe("summariseInstanceSync", () => {
 
 describe("buildPoQuantitySheet (export agrees with displayed rows)", () => {
   it("exports the same quantities, blanks for incomplete POs, and negative outstanding unchanged", () => {
-    const rows = buildPoQuantityRows({
+    const rows = buildPoQuantityRows({ now: NOW,
       purchases: [po(), po({ cin7_purchase_id: "p2", detail_synced_at: null })],
       orderLines: [ol("A", 10)],
       receiptLines: [rl("A", 13)],

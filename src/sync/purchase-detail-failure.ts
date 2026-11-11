@@ -6,6 +6,12 @@ import { ReceiptLineConflictError } from "@/cin7/purchase-detail";
 /** Persisted via the existing activity_log (no migration). `diagnostic.` prefix keeps it distinguishable from the live-write audit actions. */
 export const PURCHASE_DETAIL_FAILURE_ACTION = `${DIAGNOSTIC_ACTION_PREFIX}purchase_detail_sync_failed`;
 
+export const PURCHASE_REFRESH_REJECTED_ACTION = `${DIAGNOSTIC_ACTION_PREFIX}purchase_refresh_rejected`;
+/** A refresh found quantities different from the cache WITHOUT Cin7 having relisted the PO (evidence about LastUpdatedDate reliability). */
+export const PURCHASE_REFRESH_CHANGED_ACTION = `${DIAGNOSTIC_ACTION_PREFIX}purchase_refresh_changed_without_relist`;
+/** Receipt lines Cin7 returned with no CardID (not persisted — instrumentation only). */
+export const RECEIPT_LINES_WITHOUT_CARDID_ACTION = `${DIAGNOSTIC_ACTION_PREFIX}receipt_lines_without_cardid`;
+
 /** A PO that keeps failing is recorded at most once per window, not once per sync cycle (~96/day). */
 export const FAILURE_LOG_WINDOW_HOURS = 24;
 
@@ -69,4 +75,67 @@ export async function recordPurchaseDetailFailure(
     console.error("recordPurchaseDetailFailure: could not persist diagnostic:", e instanceof Error ? e.message : e);
   }
   return sanitised;
+}
+
+/**
+ * Generic throttled diagnostic row for one purchase (activity_log, `diagnostic.` prefix — hidden from the
+ * Cin7 write-audit view). At most one row per (action, purchase) per `windowHours`. Never throws.
+ */
+export async function recordPurchaseDiagnostic(
+  db: SupabaseClient,
+  input: {
+    orgId: string;
+    instanceId: string;
+    action: string;
+    purchaseId: string;
+    summary: string;
+    detail: Record<string, unknown>;
+    windowHours: number;
+  }
+): Promise<boolean> {
+  try {
+    const cutoff = new Date(Date.now() - input.windowHours * 3600 * 1000).toISOString();
+    const { data: recent, error } = await db
+      .from("activity_log")
+      .select("id")
+      .eq("org_id", input.orgId)
+      .eq("instance_id", input.instanceId)
+      .eq("action", input.action)
+      .eq("detail->>purchase_id", input.purchaseId)
+      .gte("created_at", cutoff)
+      .limit(1);
+    if (error || (recent && recent.length > 0)) return false;
+    await logActivity(db, {
+      orgId: input.orgId,
+      instanceId: input.instanceId,
+      actor: "system",
+      action: input.action,
+      summary: input.summary,
+      detail: { purchase_id: input.purchaseId, ...input.detail },
+    });
+    return true;
+  } catch (e) {
+    console.error(`recordPurchaseDiagnostic (${input.action}) failed:`, e instanceof Error ? e.message : e);
+    return false;
+  }
+}
+
+/** Purchase ids with a refresh-rejected diagnostic inside the window — skipped for a while so a permanently rejected PO cannot occupy the head of the queue forever. */
+export async function recentlyRejectedPurchaseIds(db: SupabaseClient, orgId: string, instanceId: string, purchaseIds: string[], windowHours: number): Promise<Set<string>> {
+  if (purchaseIds.length === 0) return new Set();
+  try {
+    const cutoff = new Date(Date.now() - windowHours * 3600 * 1000).toISOString();
+    const { data, error } = await db
+      .from("activity_log")
+      .select("detail")
+      .eq("org_id", orgId)
+      .eq("instance_id", instanceId)
+      .eq("action", PURCHASE_REFRESH_REJECTED_ACTION)
+      .gte("created_at", cutoff)
+      .in("detail->>purchase_id", purchaseIds);
+    if (error) return new Set();
+    return new Set(((data ?? []) as { detail: { purchase_id?: string } | null }[]).map((r) => r.detail?.purchase_id).filter((v): v is string => Boolean(v)));
+  } catch {
+    return new Set();
+  }
 }
