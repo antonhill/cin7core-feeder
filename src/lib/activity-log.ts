@@ -1,5 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+/** Prefix of non-write, internal diagnostic rows stored in activity_log; excluded from fetchActivityLog (the Cin7 write-audit view). */
+export const DIAGNOSTIC_ACTION_PREFIX = "diagnostic.";
+
 /** Who performed a write action — "system" covers the scheduled cron sync and any other non-interactive trigger, which has no session user. */
 export type ActivityActor = { userId: string; email: string | null } | "system";
 
@@ -51,6 +54,8 @@ export async function fetchActivityLog(db: SupabaseClient, orgId: string, limit 
     .from("activity_log")
     .select("id, instance_id, actor_email, action, summary, detail, created_at")
     .eq("org_id", orgId)
+    // Internal sync diagnostics (e.g. diagnostic.purchase_detail_sync_failed) share this table but are not Cin7 writes — keep them out of the write-audit view.
+    .not("action", "like", `${DIAGNOSTIC_ACTION_PREFIX}%`)
     .order("created_at", { ascending: false })
     .limit(limit);
   if (error) throw new Error(error.message);

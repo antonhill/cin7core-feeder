@@ -11,6 +11,53 @@ export interface PurchaseReceiptLine {
   locationId: string | null;
 }
 
+/**
+ * Two or more receipt lines share a (CardID, SKU) — the table's primary key —
+ * but disagree on a field the table stores (date/location), so summing them
+ * would silently discard information. The PO is failed visibly instead.
+ * Never carries field VALUES, only names.
+ */
+export class ReceiptLineConflictError extends Error {
+  constructor(
+    public readonly sku: string,
+    public readonly conflictingFields: string[]
+  ) {
+    super(`Conflicting duplicate receipt lines for SKU ${sku}: differing ${conflictingFields.join(", ")}`);
+    this.name = "ReceiptLineConflictError";
+  }
+}
+
+/**
+ * purchase_receipt_lines is keyed (org, instance, card_id, product_sku)
+ * (migration 0025). Cin7 can return several lines with the same CardID and
+ * SKU in one receiving batch (confirmed live: PO-14939 had four, 21+20+106+233
+ * = 380); inserting them raised a duplicate-key error that rolled the whole PO
+ * back, leaving it permanently unsynced. This sums the quantities of lines that
+ * share the key — the table (and every report) already holds one total per card
+ * and SKU — and only when every stored field agrees. Otherwise it throws
+ * ReceiptLineConflictError rather than dropping a date/location. First-seen
+ * order is preserved; a non-empty product name is kept from the first line.
+ */
+export function aggregateReceiptLines(lines: PurchaseReceiptLine[]): PurchaseReceiptLine[] {
+  const byKey = new Map<string, PurchaseReceiptLine>();
+  for (const line of lines) {
+    const key = `${line.cardId}|${line.productSku}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, { ...line });
+      continue;
+    }
+    const conflicts: string[] = [];
+    if (existing.receivedDate !== line.receivedDate) conflicts.push("receivedDate");
+    if (existing.location !== line.location) conflicts.push("location");
+    if (existing.locationId !== line.locationId) conflicts.push("locationId");
+    if (conflicts.length > 0) throw new ReceiptLineConflictError(line.productSku, conflicts);
+    existing.quantity = Math.round((existing.quantity + line.quantity) * 1e6) / 1e6;
+    if (!existing.productName && line.productName) existing.productName = line.productName;
+  }
+  return [...byKey.values()];
+}
+
 /** One ordered line — the "outstanding qty still coming" side of a backorder-ETA cross-reference, distinct from PurchaseReceiptLine's "already received" side. Confirmed live 2026-07-09 (surveyBackorderEtaFields) present identically under Order.Lines[] on both classic and Advanced-purchase responses, with no per-line date field at all — only the purchase-order-level RequiredBy (see PurchaseDetail.requiredBy) exists as an ETA. */
 export interface PurchaseOrderLine {
   productSku: string;
@@ -85,7 +132,7 @@ export async function fetchPurchaseDetail(creds: Cin7Credentials, purchaseId: st
     const rawLines = Array.isArray(stockReceived?.Lines) ? (stockReceived.Lines as Record<string, unknown>[]) : [];
     return {
       source: "purchase",
-      receiptLines: rawLines.map(toReceiptLine).filter((l): l is PurchaseReceiptLine => l !== null),
+      receiptLines: aggregateReceiptLines(rawLines.map(toReceiptLine).filter((l): l is PurchaseReceiptLine => l !== null)),
       ...extractOrderLinesAndDropShip(response),
     };
   } catch (e) {
@@ -99,7 +146,7 @@ export async function fetchPurchaseDetail(creds: Cin7Credentials, purchaseId: st
     const rawLines = putAway.flatMap((batch) => (Array.isArray(batch.Lines) ? (batch.Lines as Record<string, unknown>[]) : []));
     return {
       source: "advanced-purchase",
-      receiptLines: rawLines.map(toReceiptLine).filter((l): l is PurchaseReceiptLine => l !== null),
+      receiptLines: aggregateReceiptLines(rawLines.map(toReceiptLine).filter((l): l is PurchaseReceiptLine => l !== null)),
       ...extractOrderLinesAndDropShip(response),
     };
   }
