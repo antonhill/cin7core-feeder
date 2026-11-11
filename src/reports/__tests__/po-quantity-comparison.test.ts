@@ -273,6 +273,21 @@ describe("open-PO freshness (not relisted, but not re-verified)", () => {
     expect(relisted.dataQualityNote).toMatch(/changed in Cin7/);
   });
 
+  it("the Excel export agrees with the screen: an aged-open PO exports as Potentially stale with its note, and the Complete rows sum to the trusted totals", () => {
+    const purchases = [aged("NOT RECEIVED", 100, { cin7_purchase_id: "old" }), aged("PARTIALLY RECEIVED", 1, { cin7_purchase_id: "fresh" })];
+    const rows = buildPoQuantityRows({ now: NOW, purchases, orderLines: [ol("A", 10, "old"), ol("A", 10, "fresh")], receiptLines: [rl("A", 4, "fresh")], instanceNames: names });
+    const { data } = buildPoQuantitySheet(rows);
+    const h = data[0];
+    const get = (r: (string | number)[], col: string) => r[h.indexOf(col)];
+    const body = data.slice(1);
+    const oldRow = body.find((r) => get(r, "Qty Ordered") === 10 && get(r, "Data Quality") === "Potentially stale")!;
+    expect(String(get(oldRow, "Data Quality Note"))).toMatch(/not been re-verified/);
+    const complete = body.filter((r) => get(r, "Data Quality") === "Complete");
+    const totals = computeTrustedTotals(rows);
+    expect(complete.reduce((n, r) => n + Number(get(r, "Qty Ordered")), 0)).toBe(totals.ordered);
+    expect(complete.reduce((n, r) => n + Number(get(r, "Qty Received")), 0)).toBe(totals.received);
+  });
+
   it("aged-open POs are excluded from trusted totals and counted as stale in the instance summary", () => {
     const purchases = [aged("NOT RECEIVED", 100, { cin7_purchase_id: "old" }), aged("NOT RECEIVED", 1, { cin7_purchase_id: "fresh" })];
     const rows = buildPoQuantityRows({ now: NOW, purchases, orderLines: [ol("A", 10, "old"), ol("A", 10, "fresh")], receiptLines: [], instanceNames: names });
