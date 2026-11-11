@@ -7,6 +7,8 @@ import { ReceiptLineConflictError } from "@/cin7/purchase-detail";
 export const PURCHASE_DETAIL_FAILURE_ACTION = `${DIAGNOSTIC_ACTION_PREFIX}purchase_detail_sync_failed`;
 
 export const PURCHASE_REFRESH_REJECTED_ACTION = `${DIAGNOSTIC_ACTION_PREFIX}purchase_refresh_rejected`;
+/** A previously populated PO returned empty order lines: SUSPECTED void at source — never confirmed, never written as a status. */
+export const PURCHASE_LIKELY_VOIDED_ACTION = `${DIAGNOSTIC_ACTION_PREFIX}purchase_likely_voided_at_source`;
 /** A refresh found quantities different from the cache WITHOUT Cin7 having relisted the PO (evidence about LastUpdatedDate reliability). */
 export const PURCHASE_REFRESH_CHANGED_ACTION = `${DIAGNOSTIC_ACTION_PREFIX}purchase_refresh_changed_without_relist`;
 /** Receipt lines Cin7 returned with no CardID (not persisted — instrumentation only). */
@@ -91,10 +93,16 @@ export async function recordPurchaseDiagnostic(
     summary: string;
     detail: Record<string, unknown>;
     windowHours: number;
+    /**
+     * When set, an existing record only throttles a new one if it is NEWER than this instant. Used so a PO relisted
+     * after an earlier suspicion (new evidence) is recorded again instead of being swallowed by the throttle.
+     */
+    supersedeAfter?: string | null;
   }
 ): Promise<boolean> {
   try {
     const cutoff = new Date(Date.now() - input.windowHours * 3600 * 1000).toISOString();
+    const effectiveCutoff = input.supersedeAfter && input.supersedeAfter > cutoff ? input.supersedeAfter : cutoff;
     const { data: recent, error } = await db
       .from("activity_log")
       .select("id")
@@ -102,7 +110,7 @@ export async function recordPurchaseDiagnostic(
       .eq("instance_id", input.instanceId)
       .eq("action", input.action)
       .eq("detail->>purchase_id", input.purchaseId)
-      .gte("created_at", cutoff)
+      .gte("created_at", effectiveCutoff)
       .limit(1);
     if (error || (recent && recent.length > 0)) return false;
     await logActivity(db, {
@@ -120,22 +128,43 @@ export async function recordPurchaseDiagnostic(
   }
 }
 
-/** Purchase ids with a refresh-rejected diagnostic inside the window — skipped for a while so a permanently rejected PO cannot occupy the head of the queue forever. */
-export async function recentlyRejectedPurchaseIds(db: SupabaseClient, orgId: string, instanceId: string, purchaseIds: string[], windowHours: number): Promise<Set<string>> {
-  if (purchaseIds.length === 0) return new Set();
-  try {
-    const cutoff = new Date(Date.now() - windowHours * 3600 * 1000).toISOString();
-    const { data, error } = await db
-      .from("activity_log")
-      .select("detail")
-      .eq("org_id", orgId)
-      .eq("instance_id", instanceId)
-      .eq("action", PURCHASE_REFRESH_REJECTED_ACTION)
-      .gte("created_at", cutoff)
-      .in("detail->>purchase_id", purchaseIds);
-    if (error) return new Set();
-    return new Set(((data ?? []) as { detail: { purchase_id?: string } | null }[]).map((r) => r.detail?.purchase_id).filter((v): v is string => Boolean(v)));
-  } catch {
-    return new Set();
+/**
+ * Instance-wide lookups of recent refresh diagnostics (activity_log, scoped to this org + instance). Loaded BEFORE the
+ * queue is read so the queue limit can be widened by their sizes: suspected-void POs are open with the oldest detail,
+ * i.e. they sit at the head of the queue, and would otherwise starve everything behind them.
+ */
+export async function loadRefreshSkipMaps(
+  db: SupabaseClient,
+  orgId: string,
+  instanceId: string,
+  windows: { rejectedHours: number; suspectVoidHours: number }
+): Promise<{ rejected: Set<string>; suspectVoid: Map<string, string> }> {
+  const out = { rejected: new Set<string>(), suspectVoid: new Map<string, string>() };
+  const read = async (action: string, hours: number) => {
+    try {
+      const cutoff = new Date(Date.now() - hours * 3600 * 1000).toISOString();
+      const { data, error } = await db
+        .from("activity_log")
+        .select("detail, created_at")
+        .eq("org_id", orgId)
+        .eq("instance_id", instanceId)
+        .eq("action", action)
+        .gte("created_at", cutoff)
+        .order("created_at", { ascending: false })
+        .limit(2000);
+      if (error) return [] as { detail: { purchase_id?: string } | null; created_at: string }[];
+      return (data ?? []) as { detail: { purchase_id?: string } | null; created_at: string }[];
+    } catch {
+      return [];
+    }
+  };
+  for (const r of await read(PURCHASE_REFRESH_REJECTED_ACTION, windows.rejectedHours)) {
+    if (r.detail?.purchase_id) out.rejected.add(r.detail.purchase_id);
   }
+  for (const r of await read(PURCHASE_LIKELY_VOIDED_ACTION, windows.suspectVoidHours)) {
+    const id = r.detail?.purchase_id;
+    // newest first: keep the most recent suspicion per purchase
+    if (id && !out.suspectVoid.has(id)) out.suspectVoid.set(id, r.created_at);
+  }
+  return out;
 }

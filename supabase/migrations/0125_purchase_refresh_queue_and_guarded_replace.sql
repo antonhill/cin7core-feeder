@@ -31,7 +31,10 @@ returns table (
   order_number text,
   source text,
   combined_receiving_status text,
-  reason text
+  reason text,
+  -- When Toolbox last saw the PO relisted. The application compares it with a "suspected void" record so a longer
+  -- backoff can never hide a source-confirmed change (a relist after the suspicion bypasses it).
+  updated_at timestamptz
 )
 language sql
 stable
@@ -45,6 +48,7 @@ as $$
       p.combined_receiving_status,
       p.order_date,
       p.detail_synced_at,
+      p.updated_at,
       case
         when p.detail_synced_at is null then 'unsynced'
         when p.updated_at > p.detail_synced_at + interval '1 second' then 'relisted'
@@ -64,7 +68,7 @@ as $$
         )
       )
   )
-  select c.cin7_purchase_id, c.order_number, c.source, c.combined_receiving_status, c.reason
+  select c.cin7_purchase_id, c.order_number, c.source, c.combined_receiving_status, c.reason, c.updated_at
   from c
   order by
     -- tier 0: never synced (today's behaviour, first); tier 1: open POs (relisted or past TTL); tier 2: closed relisted

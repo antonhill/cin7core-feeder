@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assessRefresh, isMissingFunctionError, isRateLimitStop, loadPurchaseSyncConfig, receivingStatusImpliesReceipts } from "@/sync/purchase-refresh-policy";
+import { assessRefresh, isMissingFunctionError, isRateLimitStop, loadPurchaseSyncConfig, receivingStatusImpliesReceipts, shouldSkipSuspectVoid } from "@/sync/purchase-refresh-policy";
 import type { PurchaseDetail } from "@/cin7/purchase-detail";
 import { Cin7ApiError } from "@/cin7/http";
 
@@ -52,9 +52,34 @@ describe("assessRefresh", () => {
   });
 
   it("REJECTS vanished order lines, but never rejects when nothing was cached (first sync / Service Purchase)", () => {
-    expect(assessRefresh(cached(), detail({ orders: [] }), "NOT RECEIVED").reject?.code).toBe("order_lines_missing");
+    expect(assessRefresh(cached(), detail({ orders: [] }), "NOT RECEIVED").reject?.code).toBe("likely_voided_at_source");
     expect(assessRefresh(null, detail({ orders: [], receipts: [] }), "NOT AVAILABLE").reject).toBeNull();
     expect(assessRefresh(cached({ orderLines: 0, orderQty: 0, receiptRows: 0, receiptQty: 0 }), detail({ orders: [], receipts: [] }), "NOT AVAILABLE").reject).toBeNull();
+  });
+
+  it("the suspect-void rejection message calls it SUSPECTED and never claims VOIDED", () => {
+    const m = assessRefresh(cached(), detail({ orders: [] }), "NOT RECEIVED").reject?.message ?? "";
+    expect(m).toMatch(/suspected/i);
+    expect(m).toMatch(/NOT confirmed/);
+  });
+
+  it("shouldSkipSuspectVoid: skips only inside an unrefuted suspicion; relist-after, unsynced or no record never skip", () => {
+    const now = Date.now();
+    const iso = (h: number) => new Date(now - h * 3600_000).toISOString();
+    expect(shouldSkipSuspectVoid({ reason: "open_ttl", updated_at: iso(500) }, iso(30))).toBe(true);
+    expect(shouldSkipSuspectVoid({ reason: "relisted", updated_at: iso(40) }, iso(30))).toBe(true); // relisted BEFORE the suspicion
+    expect(shouldSkipSuspectVoid({ reason: "relisted", updated_at: iso(2) }, iso(30))).toBe(false); // relisted AFTER => bypass
+    expect(shouldSkipSuspectVoid({ reason: "unsynced", updated_at: iso(500) }, iso(30))).toBe(false);
+    expect(shouldSkipSuspectVoid({ reason: "open_ttl", updated_at: iso(500) }, undefined)).toBe(false);
+    expect(shouldSkipSuspectVoid({ reason: "open_ttl", updated_at: null }, iso(30))).toBe(true);
+    expect(shouldSkipSuspectVoid({ reason: "open_ttl", updated_at: iso(500) }, "not-a-date")).toBe(false);
+  });
+
+  it("loadPurchaseSyncConfig: suspectVoidBackoffHours defaults to 168h and is clamped/configurable", () => {
+    expect(loadPurchaseSyncConfig({}).suspectVoidBackoffHours).toBe(168);
+    expect(loadPurchaseSyncConfig({ PURCHASE_SUSPECT_VOID_BACKOFF_HOURS: "72" }).suspectVoidBackoffHours).toBe(72);
+    expect(loadPurchaseSyncConfig({ PURCHASE_SUSPECT_VOID_BACKOFF_HOURS: "1" }).suspectVoidBackoffHours).toBe(6);
+    expect(loadPurchaseSyncConfig({ PURCHASE_SUSPECT_VOID_BACKOFF_HOURS: "junk" }).suspectVoidBackoffHours).toBe(168);
   });
 
   it("treats float noise as unchanged", () => {
@@ -71,7 +96,7 @@ describe("assessRefresh", () => {
 
 describe("loadPurchaseSyncConfig", () => {
   it("defaults to a conservative reservation: 60 fetches/run, 24h TTL, 10 min overlap", () => {
-    expect(loadPurchaseSyncConfig({})).toEqual({ maxPerRun: 60, openTtlHours: 24, listOverlapMinutes: 10, safetyMs: 45_000 });
+    expect(loadPurchaseSyncConfig({})).toEqual({ maxPerRun: 60, openTtlHours: 24, listOverlapMinutes: 10, suspectVoidBackoffHours: 168, safetyMs: 45_000 });
   });
   it("is configurable but bounded, and ignores garbage", () => {
     expect(loadPurchaseSyncConfig({ PURCHASE_DETAIL_MAX_PER_RUN: "999", PURCHASE_OPEN_TTL_HOURS: "0", PURCHASE_LIST_OVERLAP_MINUTES: "-5" })).toMatchObject({ maxPerRun: 200, openTtlHours: 1, listOverlapMinutes: 0 });

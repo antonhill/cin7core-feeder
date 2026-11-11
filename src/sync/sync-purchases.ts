@@ -6,8 +6,9 @@ import type { Cin7Credentials } from "@/cin7/types";
 import {
   recordPurchaseDetailFailure,
   recordPurchaseDiagnostic,
-  recentlyRejectedPurchaseIds,
+  loadRefreshSkipMaps,
   PURCHASE_REFRESH_REJECTED_ACTION,
+  PURCHASE_LIKELY_VOIDED_ACTION,
   PURCHASE_REFRESH_CHANGED_ACTION,
   RECEIPT_LINES_WITHOUT_CARDID_ACTION,
 } from "@/sync/purchase-detail-failure";
@@ -15,6 +16,8 @@ import {
   assessRefresh,
   isMissingFunctionError,
   isRateLimitStop,
+  LIKELY_VOIDED_AT_SOURCE,
+  shouldSkipSuspectVoid,
   loadPurchaseSyncConfig,
   type CachedDetailTotals,
   type PurchaseSyncConfig,
@@ -216,21 +219,29 @@ async function syncPurchaseDetails(
 ): Promise<Pick<PurchasesSyncSummary, "detailSynced" | "detailFailed" | "errors" | "detailRefreshed" | "refreshChanged" | "refreshChangedWithoutRelist" | "refreshRejected" | "skippedNewer" | "stoppedEarly" | "queueReasons" | "legacyQueue">> {
   let queue: QueueRow[] = [];
   let legacyQueue = false;
+  // Loaded BEFORE the queue so the queue limit can be widened by the number of POs we are going to skip: suspected-void
+  // POs are open with the oldest detail (head of the queue) and would otherwise starve every PO behind them.
+  const skipMaps = await loadRefreshSkipMaps(db, orgId, instanceId, {
+    rejectedHours: REJECTED_SKIP_HOURS,
+    suspectVoidHours: cfg.suspectVoidBackoffHours,
+  });
   const { data: queued, error: queueError } = await db.rpc("purchase_refresh_queue", {
     p_org_id: orgId,
     p_instance_id: instanceId,
     p_open_ttl_hours: cfg.openTtlHours,
-    // Ask for a little more than we will process so recently-rejected POs can be skipped without starving the rest.
-    p_limit: cfg.maxPerRun + 40,
+    p_limit: cfg.maxPerRun + skipMaps.rejected.size + skipMaps.suspectVoid.size + 40,
   });
   if (queueError) {
     if (!isMissingFunctionError(queueError)) throw new Error(`purchase_refresh_queue: ${queueError.message}`);
     legacyQueue = true;
     queue = await loadLegacyQueue(db, orgId, instanceId);
   } else {
-    queue = (queued ?? []) as QueueRow[];
-    const skip = await recentlyRejectedPurchaseIds(db, orgId, instanceId, queue.map((q) => q.cin7_purchase_id), REJECTED_SKIP_HOURS);
-    if (skip.size > 0) queue = queue.filter((q) => !skip.has(q.cin7_purchase_id));
+    queue = ((queued ?? []) as QueueRow[]).filter(
+      (q) =>
+        !skipMaps.rejected.has(q.cin7_purchase_id) &&
+        // A relist / receiving-status change / first sync after the suspicion bypasses the backoff (shouldSkipSuspectVoid).
+        !shouldSkipSuspectVoid(q, skipMaps.suspectVoid.get(q.cin7_purchase_id))
+    );
   }
   queue = queue.slice(0, legacyQueue ? LEGACY_DETAIL_FETCH_BATCH_SIZE : cfg.maxPerRun);
 
@@ -274,14 +285,19 @@ async function syncPurchaseDetails(
       const verdict = assessRefresh(cached, detail, row.combined_receiving_status);
       if (verdict.reject) {
         rejected += 1;
+        const suspectVoid = verdict.reject.code === LIKELY_VOIDED_AT_SOURCE;
         await recordPurchaseDiagnostic(db, {
           orgId,
           instanceId,
-          action: PURCHASE_REFRESH_REJECTED_ACTION,
+          // Suspected void is its own code with its own long backoff; cached detail is preserved either way (nothing is
+          // replaced, no VOIDED status is inferred or written).
+          action: suspectVoid ? PURCHASE_LIKELY_VOIDED_ACTION : PURCHASE_REFRESH_REJECTED_ACTION,
           purchaseId: row.cin7_purchase_id,
           summary: `Purchase refresh refused for ${row.order_number ?? row.cin7_purchase_id}: ${verdict.reject.message}`,
           detail: { order_number: row.order_number, code: verdict.reject.code, reason: row.reason, cached, fresh: verdict.fresh },
-          windowHours: REJECTED_DIAG_WINDOW_HOURS,
+          windowHours: suspectVoid ? cfg.suspectVoidBackoffHours : REJECTED_DIAG_WINDOW_HOURS,
+          // New evidence (a relist after the last suspicion) is recorded again instead of being throttled away.
+          supersedeAfter: suspectVoid ? (row.updated_at ?? null) : null,
         });
         continue;
       }

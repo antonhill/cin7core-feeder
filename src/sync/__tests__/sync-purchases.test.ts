@@ -30,6 +30,8 @@ interface FakeDbOptions {
   cachedReceiptLines?: { quantity: number }[];
   /** purchase ids the rejected-skip lookup on activity_log should return. */
   rejectedPurchaseIds?: string[];
+  /** Existing suspected-void diagnostics (activity_log rows the backoff lookup should find). */
+  suspectVoidRows?: { purchase_id: string; created_at: string }[];
 }
 
 function makeFakeDb(opts: FakeDbOptions) {
@@ -112,12 +114,17 @@ function makeFakeDb(opts: FakeDbOptions) {
         return {
           select: (...args: unknown[]) => {
             calls.push({ table, op: "select", args });
-            // The rejected-skip lookup selects `detail`; the throttle lookup selects `id`.
-            const wantsDetail = args[0] === "detail";
-            return chain(table, () => ({
-              data: wantsDetail ? (opts.rejectedPurchaseIds ?? []).map((id) => ({ detail: { purchase_id: id } })) : (opts.recentFailureRows ?? []),
-              error: null,
-            }));
+            // The skip-map lookups select `detail, created_at` filtered by action; the throttle lookup selects `id`.
+            const wantsDetail = String(args[0]).startsWith("detail");
+            const startAt = calls.length;
+            return chain(table, () => {
+              const action = calls.slice(startAt).find((c) => c.table === "activity_log" && c.op === "eq" && c.args[0] === "action")?.args[1];
+              if (!wantsDetail) return { data: opts.recentFailureRows ?? [], error: null };
+              if (action === "diagnostic.purchase_likely_voided_at_source") {
+                return { data: (opts.suspectVoidRows ?? []).map((r) => ({ detail: { purchase_id: r.purchase_id }, created_at: r.created_at })), error: null };
+              }
+              return { data: (opts.rejectedPurchaseIds ?? []).map((id) => ({ detail: { purchase_id: id }, created_at: new Date().toISOString() })), error: null };
+            });
           },
           insert: (row: unknown) => {
             calls.push({ table, op: "insert", args: [row] });
@@ -413,7 +420,7 @@ describe("syncInstancePurchases — duplicate-receipt regression and failure dia
 
     const payload = (c: { calls: { table: string; op: string; args: unknown[] }[] }) => c.calls.find((x) => x.table === "__rpc__" && x.op === "replace_purchase_detail")?.args[0];
     expect(payload(second)).toEqual(payload(first));
-    expect(first.calls.some((c) => c.table === "activity_log")).toBe(false);
+    expect(first.calls.some((c) => c.table === "activity_log" && c.op === "insert")).toBe(false);
   });
 
   it("a failed detail sync is recorded as a sanitised, persistent diagnostic naming the PO — and does not abort the batch", async () => {
@@ -465,7 +472,7 @@ describe("syncInstancePurchases — duplicate-receipt regression and failure dia
 // Issue #206 / migration 0125: prioritised refresh queue, guards, budget and instrumentation.
 // ---------------------------------------------------------------------------------------------------------------
 describe("purchase detail refresh (0125 queue)", () => {
-  const cfg = { maxPerRun: 3, openTtlHours: 24, listOverlapMinutes: 0, safetyMs: 45_000 };
+  const cfg = { maxPerRun: 3, openTtlHours: 24, listOverlapMinutes: 0, suspectVoidBackoffHours: 168, safetyMs: 45_000 };
   const full = (over: Record<string, unknown> = {}) => ({
     source: "purchase" as const,
     isDropShip: false,
@@ -655,6 +662,125 @@ describe("purchase detail refresh (0125 queue)", () => {
     expect(fetched).toEqual(["ok1"]);
   });
 
+  describe("suspected void at source (empty order lines for a PO that has cached lines)", () => {
+    const hoursAgo = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
+    const empty = () => full({ orderLines: [], receiptLines: [] });
+    const cachedOpts = { cachedOrderLines: [{ quantity: 10 }], cachedReceiptLines: [] as { quantity: number }[] };
+    const insertOf = (calls: { table: string; op: string; args: unknown[] }[]) => calls.find((c) => c.table === "activity_log" && c.op === "insert")?.args[0] as Record<string, unknown>;
+
+    it("records LIKELY_VOIDED_AT_SOURCE, keeps ALL cached detail, writes no status, and never calls it confirmed", async () => {
+      vi.mocked(fetchPurchaseDetail).mockResolvedValue(empty());
+      const { db, calls } = makeFakeDb({ queue: [q("v1", "open_ttl", { combined_receiving_status: "NOT RECEIVED" })], ...cachedOpts });
+
+      const summary = await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+      expect(summary).toMatchObject({ detailSynced: 0, detailFailed: 0, refreshRejected: 1 });
+      const insert = insertOf(calls);
+      expect(insert).toMatchObject({ action: "diagnostic.purchase_likely_voided_at_source" });
+      expect((insert.detail as { code: string }).code).toBe("likely_voided_at_source");
+      expect(String(insert.summary)).toMatch(/suspected/i);
+      expect(String(insert.summary)).toMatch(/NOT confirmed/);
+      // data preservation: no replace of any kind, and no write to purchases (no VOIDED status inferred)
+      expect(rpcCalls(calls, "replace_purchase_detail_guarded")).toHaveLength(0);
+      expect(rpcCalls(calls, "replace_purchase_detail")).toHaveLength(0);
+      expect(calls.filter((c) => c.table === "purchases" && ["update", "upsert", "insert", "delete"].includes(c.op))).toHaveLength(0);
+      expect(JSON.stringify(calls)).not.toMatch(/"VOIDED"/);
+    });
+
+    it("a suspect-void PO is NOT re-fetched inside the (long) backoff, so it cannot waste calls or hog the queue", async () => {
+      vi.mocked(fetchPurchaseDetail).mockResolvedValue(full());
+      const { db, calls } = makeFakeDb({
+        queue: [q("v1", "open_ttl", { updated_at: hoursAgo(500) }), q("ok1", "open_ttl")],
+        suspectVoidRows: [{ purchase_id: "v1", created_at: hoursAgo(30) }], // 30h ago: far longer than the 6h generic skip, well inside 168h
+        ...cachedOpts,
+      });
+
+      await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+      expect(vi.mocked(fetchPurchaseDetail).mock.calls.map((c) => c[1])).toEqual(["ok1"]);
+      // the queue limit was widened by the skipped PO so it cannot starve the rest
+      expect(rpcCalls(calls, "purchase_refresh_queue")[0].args[0]).toMatchObject({ p_limit: cfg.maxPerRun + 1 + 40 });
+    });
+
+    it("the suspect-void lookup is tenant scoped and bounded by the configurable backoff window", async () => {
+      vi.mocked(fetchPurchaseDetail).mockResolvedValue(full());
+      const { db, calls } = makeFakeDb({ queue: [q("ok1", "open_ttl")], ...cachedOpts });
+
+      await syncInstancePurchases(db, "org1", "inst-1", { config: { ...cfg, suspectVoidBackoffHours: 72 } });
+
+      const log = calls.filter((c) => c.table === "activity_log");
+      expect(log.filter((c) => c.op === "eq").map((c) => c.args.join("="))).toEqual(
+        expect.arrayContaining(["org_id=org1", "instance_id=inst-1", "action=diagnostic.purchase_likely_voided_at_source"])
+      );
+      // one lookup is bounded by the configured 72h window (the other by the 6h rejected window)
+      const windows = log.filter((c) => c.op === "gte").map((c) => String(c.args[1]));
+      expect(windows.some((t) => t > hoursAgo(73) && t < hoursAgo(71))).toBe(true);
+    });
+
+    it("SOURCE-CONFIRMED CHANGE BYPASSES the backoff: Cin7 relisted the PO AFTER the suspicion, so it is re-fetched at once", async () => {
+      vi.mocked(fetchPurchaseDetail).mockResolvedValue(full());
+      const { db } = makeFakeDb({
+        queue: [q("v1", "relisted", { updated_at: hoursAgo(2) })],
+        suspectVoidRows: [{ purchase_id: "v1", created_at: hoursAgo(30) }],
+        ...cachedOpts,
+      });
+
+      const summary = await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+      expect(vi.mocked(fetchPurchaseDetail).mock.calls.map((c) => c[1])).toEqual(["v1"]);
+      expect(summary.detailSynced).toBe(1); // the real (restored) detail is applied
+    });
+
+    it("a receiving-status change (detail cleared => reason unsynced) also bypasses the backoff", async () => {
+      vi.mocked(fetchPurchaseDetail).mockResolvedValue(full());
+      const { db } = makeFakeDb({
+        queue: [q("v1", "unsynced", { updated_at: hoursAgo(500) })],
+        suspectVoidRows: [{ purchase_id: "v1", created_at: hoursAgo(30) }],
+        ...cachedOpts,
+      });
+
+      await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+      expect(vi.mocked(fetchPurchaseDetail).mock.calls.map((c) => c[1])).toEqual(["v1"]);
+    });
+
+    it("once the backoff has expired (no record inside the window) the PO is re-checked on the TTL again", async () => {
+      vi.mocked(fetchPurchaseDetail).mockResolvedValue(empty());
+      const { db } = makeFakeDb({ queue: [q("v1", "open_ttl")], suspectVoidRows: [], ...cachedOpts });
+
+      const summary = await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+      expect(vi.mocked(fetchPurchaseDetail)).toHaveBeenCalledTimes(1);
+      expect(summary.refreshRejected).toBe(1);
+    });
+
+    it("a relist AFTER an earlier suspicion that is STILL empty is recorded again (new evidence is not throttled away)", async () => {
+      vi.mocked(fetchPurchaseDetail).mockResolvedValue(empty());
+      const { db, calls } = makeFakeDb({
+        queue: [q("v1", "relisted", { updated_at: hoursAgo(2) })],
+        suspectVoidRows: [{ purchase_id: "v1", created_at: hoursAgo(30) }],
+        recentFailureRows: [], // throttle lookup finds nothing newer than the relist
+        ...cachedOpts,
+      });
+
+      await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+      expect(insertOf(calls)).toMatchObject({ action: "diagnostic.purchase_likely_voided_at_source" });
+      // the throttle lookup was bounded by the relist time (not just the window), proving the supersede rule is applied
+      const gte = calls.filter((c) => c.table === "activity_log" && c.op === "gte").map((c) => String(c.args[1]));
+      expect(gte.some((t) => t > hoursAgo(3))).toBe(true);
+    });
+
+    it("other rejection codes keep the original 6h skip and the original diagnostic (unchanged behaviour)", async () => {
+      vi.mocked(fetchPurchaseDetail).mockResolvedValue(full({ receiptLines: [] }));
+      const { db, calls } = makeFakeDb({ queue: [q("p1", "relisted")], cachedOrderLines: [{ quantity: 10 }], cachedReceiptLines: [{ quantity: 4 }] });
+
+      await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+      expect(insertOf(calls)).toMatchObject({ action: "diagnostic.purchase_refresh_rejected" });
+    });
+  });
+
   it("partial failure: one PO failing does not stop the others, and failures are persisted", async () => {
     vi.mocked(fetchPurchaseDetail).mockRejectedValueOnce(new Error("boom")).mockResolvedValue(full());
     const { db, calls } = makeFakeDb({ queue: [q("p1", "relisted"), q("p2", "relisted")], cachedOrderLines: [{ quantity: 10 }], cachedReceiptLines: [{ quantity: 4 }] });
@@ -706,7 +832,7 @@ describe("purchase detail refresh (0125 queue)", () => {
 });
 
 describe("purchase list phase — header status and pagination overlap", () => {
-  const cfg = { maxPerRun: 3, openTtlHours: 24, listOverlapMinutes: 10, safetyMs: 45_000 };
+  const cfg = { maxPerRun: 3, openTtlHours: 24, listOverlapMinutes: 10, suspectVoidBackoffHours: 168, safetyMs: 45_000 };
 
   it("detects a header Status change with an UNCHANGED receiving status, and keeps the cached detail (the relist queues the refresh)", async () => {
     vi.mocked(fetchAllPurchasesList).mockResolvedValue([{ ID: "po-1", Status: "COMPLETED", CombinedReceivingStatus: "FULLY RECEIVED" }]);

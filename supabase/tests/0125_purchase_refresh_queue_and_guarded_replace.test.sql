@@ -53,6 +53,11 @@ begin
     raise exception 'unexpected queue reasons: %', reasons;
   end if;
 
+  -- 1b. The queue reports each purchase's updated_at (the application uses it to let a relist bypass a suspect-void backoff).
+  select count(*) into n from purchase_refresh_queue(orgA, instA, 24, 60) q join purchases p on p.cin7_purchase_id = q.cin7_purchase_id and p.org_id = orgA
+    where q.updated_at is distinct from p.updated_at;
+  if n <> 0 then raise exception 'queue updated_at must equal purchases.updated_at (% mismatches)', n; end if;
+
   -- 2. A larger TTL drops the 30h/40h open rows; the limit is honoured; stable across calls.
   select count(*) into n from purchase_refresh_queue(orgA, instA, 48, 60) where reason = 'open_ttl';
   if n <> 0 then raise exception 'ttl 48h should exclude the 30h/40h open rows, got %', n; end if;
