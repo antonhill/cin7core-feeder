@@ -406,6 +406,7 @@ export default function PoQuantityComparisonPage() {
                               </span>
                             )}
                           </div>
+                          {r.dataQuality === "detail_not_synced" && r.dataQualityNote && <p className="mt-1 max-w-xs text-xs text-slate-500">{r.dataQualityNote}</p>}
                         </td>
                       </tr>
                     ))}
