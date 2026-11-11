@@ -178,8 +178,53 @@ describe("receiving-status mismatch detection and trusted totals", () => {
       received: 4,
       outstanding: 6,
       excludedPoCount: { incomplete: 1, stale: 1, review: 1 },
+      notApplicablePoCount: 0,
     });
     expect(qualityGroup("no_lines_cached")).toBe("incomplete");
+  });
+});
+
+describe("no product lines vs genuinely incomplete detail", () => {
+  it("a synced PO with no lines and receiving NOT AVAILABLE (Service Purchase with charges) is 'No product lines', not Incomplete", () => {
+    const [r] = buildPoQuantityRows({ purchases: [po({ combined_receiving_status: "NOT AVAILABLE" })], orderLines: [], receiptLines: [], instanceNames: names });
+    expect(r.dataQuality).toBe("no_product_lines");
+    expect(qualityGroup(r.dataQuality)).toBe("not_applicable");
+    expect(r).toMatchObject({ ordered: null, received: null, outstanding: null });
+    expect(r.dataQualityNote).toMatch(/Service Purchase/);
+  });
+
+  it("a synced PO with no lines but a normal receiving status stays Incomplete (no_lines_cached)", () => {
+    const [r] = buildPoQuantityRows({ purchases: [po({ combined_receiving_status: "NOT RECEIVED" })], orderLines: [], receiptLines: [], instanceNames: names });
+    expect(r.dataQuality).toBe("no_lines_cached");
+  });
+
+  it("an UNSYNCED PO is Incomplete even when its status is NOT AVAILABLE (never assumed to be a service purchase)", () => {
+    const [r] = buildPoQuantityRows({ purchases: [po({ combined_receiving_status: "NOT AVAILABLE", detail_synced_at: null })], orderLines: [], receiptLines: [], instanceNames: names });
+    expect(r.dataQuality).toBe("detail_not_synced");
+  });
+
+  it("an unsynced PO shows the recorded sync-failure reason; without one it says no reason was recorded", () => {
+    const withFailure = buildPoQuantityRows({
+      purchases: [po({ detail_synced_at: null })],
+      orderLines: [],
+      receiptLines: [],
+      instanceNames: names,
+      syncFailures: { "i1|p1": { at: "2026-11-10T10:00:00Z", message: "Duplicate key on purchase_receipt_lines_pkey" } },
+    })[0];
+    expect(withFailure.dataQualityNote).toContain("2026-11-10");
+    expect(withFailure.dataQualityNote).toContain("Duplicate key on purchase_receipt_lines_pkey");
+    const without = buildPoQuantityRows({ purchases: [po({ detail_synced_at: null })], orderLines: [], receiptLines: [], instanceNames: names })[0];
+    expect(without.dataQualityNote).toMatch(/without a recorded reason/);
+  });
+
+  it("no-product-line POs are counted separately and never as incomplete or trusted", () => {
+    const rows = buildPoQuantityRows({
+      purchases: [po({ cin7_purchase_id: "svc", combined_receiving_status: "NOT AVAILABLE" }), po({ cin7_purchase_id: "inc", detail_synced_at: null })],
+      orderLines: [],
+      receiptLines: [],
+      instanceNames: names,
+    });
+    expect(computeTrustedTotals(rows)).toMatchObject({ trustedPoCount: 0, notApplicablePoCount: 1, excludedPoCount: { incomplete: 1, stale: 0, review: 0 } });
   });
 });
 

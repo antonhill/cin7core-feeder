@@ -16,6 +16,8 @@ function fakeDb(tables: Record<string, Row[]>) {
         select: () => b,
         eq: (c: string, v: unknown) => (filters.push((r) => r[c] === v), b),
         in: (c: string, vs: unknown[]) => (filters.push((r) => vs.includes(r[c])), b),
+        gte: (c: string, v: string) => (filters.push((r) => String(r[c]) >= v), b),
+        limit: () => b,
         order: () => b,
         range: (f: number, t: number) => ((slice = [f, t]), b),
         then: (resolve: (v: { data: Row[]; error: null }) => unknown) => {
@@ -56,6 +58,23 @@ const tables = () => ({
   purchase_order_lines: [line("orgA", "a1", "p1", "X", 5), line("orgB", "b1", "p9", "Y", 77)],
   purchase_receipt_lines: [line("orgA", "a1", "p1", "X", 2), line("orgB", "b1", "p9", "Y", 77)],
   purchases_sync_state: [{ org_id: "orgA", instance_id: "a1", last_list_synced_at: "2026-07-01T00:00:00Z" }],
+});
+
+describe("getPoQuantityReport — recorded sync failures", () => {
+  it("shows the org's own recorded failure reason on an unsynced PO and ignores other orgs'/purchases' rows", async () => {
+    const t = tables();
+    t.purchases = [purchase("orgA", "a1", "p1", { detail_synced_at: null })];
+    (t as Record<string, Row[]>).activity_log = [
+      { org_id: "orgA", instance_id: "a1", action: "diagnostic.purchase_detail_sync_failed", created_at: new Date().toISOString(), detail: { purchase_id: "p1", message: "Duplicate key on purchase_receipt_lines_pkey" } },
+      { org_id: "orgB", instance_id: "b1", action: "diagnostic.purchase_detail_sync_failed", created_at: new Date().toISOString(), detail: { purchase_id: "p1", message: "OTHER TENANT" } },
+      { org_id: "orgA", instance_id: "a1", action: "sync.push", created_at: new Date().toISOString(), detail: { purchase_id: "p1", message: "WRONG ACTION" } },
+    ];
+    const { db } = fakeDb(t);
+    const r = await getPoQuantityReport(db, "orgA", {});
+    expect(r.rows[0].dataQuality).toBe("detail_not_synced");
+    expect(r.rows[0].dataQualityNote).toContain("Duplicate key on purchase_receipt_lines_pkey");
+    expect(r.rows[0].dataQualityNote).not.toMatch(/OTHER TENANT|WRONG ACTION/);
+  });
 });
 
 describe("getPoQuantityReport", () => {

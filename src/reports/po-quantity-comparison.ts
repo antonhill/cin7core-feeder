@@ -23,14 +23,14 @@
 
 export type LineStatus = "fully_received" | "partially_received" | "not_received" | "over_received";
 
-export type DataQuality = "ok" | "detail_not_synced" | "no_lines_cached" | "possibly_stale" | "status_mismatch";
+export type DataQuality = "ok" | "detail_not_synced" | "no_lines_cached" | "possibly_stale" | "status_mismatch" | "no_product_lines";
 
 /**
  * The four states shown to users. Complete; Incomplete (cache has no usable lines — a Toolbox data gap); Potentially stale (cache refresh
  * pending — a Toolbox data gap); Needs review (Cin7's own receiving status disagrees with its received lines — the cache cannot tell whether
  * that is a Cin7 source inconsistency or a cache discrepancy, so it is NOT labelled a Toolbox defect). Only Complete rows feed trusted totals.
  */
-export type QualityGroup = "complete" | "incomplete" | "stale" | "review";
+export type QualityGroup = "complete" | "incomplete" | "stale" | "review" | "not_applicable";
 
 export function qualityGroup(q: DataQuality): QualityGroup {
   switch (q) {
@@ -40,6 +40,8 @@ export function qualityGroup(q: DataQuality): QualityGroup {
       return "stale";
     case "status_mismatch":
       return "review";
+    case "no_product_lines":
+      return "not_applicable";
     default:
       return "incomplete";
   }
@@ -140,7 +142,10 @@ interface SkuAgg {
   received: number;
 }
 
-function placeholderRow(h: PurchaseHeader, instanceName: string, quality: DataQuality): PoQuantityRow {
+/** Latest recorded detail-sync failure for a PO (from the persisted sync diagnostics), keyed `${instanceId}|${purchaseId}`. */
+export type SyncFailureMap = Record<string, { at: string; message: string }>;
+
+function placeholderRow(h: PurchaseHeader, instanceName: string, quality: DataQuality, failure?: { at: string; message: string }): PoQuantityRow {
   return {
     key: `${poKey(h.instance_id, h.cin7_purchase_id)}|`,
     instanceId: h.instance_id,
@@ -161,9 +166,21 @@ function placeholderRow(h: PurchaseHeader, instanceName: string, quality: DataQu
     lineStatus: null,
     notOnOrder: false,
     dataQuality: quality,
-    dataQualityNote: quality === "detail_not_synced" ? "PO detail has not synced (never fetched or failing)." : "PO detail synced but no order or receipt lines are cached.",
+    dataQualityNote: placeholderNote(quality, failure),
     detailSyncedAt: h.detail_synced_at,
   };
+}
+
+function placeholderNote(quality: DataQuality, failure?: { at: string; message: string }): string {
+  if (quality === "detail_not_synced") {
+    return failure
+      ? `PO detail has not synced. Last recorded failure (${failure.at.slice(0, 10)}): ${failure.message}`
+      : "PO detail has not synced (never fetched, or failing without a recorded reason).";
+  }
+  if (quality === "no_product_lines") {
+    return "Cin7 reports receiving as NOT AVAILABLE and returned no product lines (e.g. a Service Purchase with additional charges). Nothing to compare — not a data gap.";
+  }
+  return "PO detail synced but no order or receipt lines are cached. Verify the PO in Cin7.";
 }
 
 /** True when the PO was re-listed in Cin7 after its detail was last fetched (1s tolerance for same-run ordering). */
@@ -200,12 +217,15 @@ export interface TrustedTotals {
   received: number;
   outstanding: number;
   excludedPoCount: { incomplete: number; stale: number; review: number };
+  /** POs with no product lines (service/charge-only): nothing to compare, reported separately — neither trusted nor a data problem. */
+  notApplicablePoCount: number;
 }
 
 /** Totals over Complete rows ONLY. Incomplete / potentially stale / needs-review POs are counted but never summed. */
 export function computeTrustedTotals(rows: PoQuantityRow[]): TrustedTotals {
   const trusted = new Set<string>();
   const ex = { incomplete: new Set<string>(), stale: new Set<string>(), review: new Set<string>() };
+  const notApplicable = new Set<string>();
   let ordered = 0;
   let received = 0;
   let trustedRowCount = 0;
@@ -217,7 +237,8 @@ export function computeTrustedTotals(rows: PoQuantityRow[]): TrustedTotals {
       trustedRowCount += 1;
       ordered += r.ordered ?? 0;
       received += r.received ?? 0;
-    } else ex[g].add(po);
+    } else if (g === "not_applicable") notApplicable.add(po);
+    else ex[g].add(po);
   }
   return {
     trustedPoCount: trusted.size,
@@ -226,6 +247,7 @@ export function computeTrustedTotals(rows: PoQuantityRow[]): TrustedTotals {
     received: round(received),
     outstanding: round(ordered - received),
     excludedPoCount: { incomplete: ex.incomplete.size, stale: ex.stale.size, review: ex.review.size },
+    notApplicablePoCount: notApplicable.size,
   };
 }
 
@@ -234,8 +256,9 @@ export function buildPoQuantityRows(input: {
   orderLines: OrderLineInput[];
   receiptLines: ReceiptLineInput[];
   instanceNames: Record<string, string>;
+  syncFailures?: SyncFailureMap;
 }): PoQuantityRow[] {
-  const { purchases, orderLines, receiptLines, instanceNames } = input;
+  const { purchases, orderLines, receiptLines, instanceNames, syncFailures } = input;
 
   const ordersByPo = new Map<string, OrderLineInput[]>();
   for (const l of orderLines) {
@@ -256,7 +279,7 @@ export function buildPoQuantityRows(input: {
   for (const h of purchases) {
     const instanceName = instanceNames[h.instance_id] ?? h.instance_id;
     if (!h.detail_synced_at) {
-      rows.push(placeholderRow(h, instanceName, "detail_not_synced"));
+      rows.push(placeholderRow(h, instanceName, "detail_not_synced", syncFailures?.[poKey(h.instance_id, h.cin7_purchase_id)]));
       continue;
     }
 
@@ -264,7 +287,8 @@ export function buildPoQuantityRows(input: {
     const orders = ordersByPo.get(k) ?? [];
     const receipts = receiptsByPo.get(k) ?? [];
     if (orders.length === 0 && receipts.length === 0) {
-      rows.push(placeholderRow(h, instanceName, "no_lines_cached"));
+      // A synced PO with no lines whose Cin7 receiving status is NOT AVAILABLE is a charge/service-only purchase, not a gap.
+      rows.push(placeholderRow(h, instanceName, h.combined_receiving_status === "NOT AVAILABLE" ? "no_product_lines" : "no_lines_cached"));
       continue;
     }
 
@@ -393,6 +417,7 @@ export const DATA_QUALITY_LABEL: Record<DataQuality, string> = {
   no_lines_cached: "Incomplete — no lines cached",
   possibly_stale: "Potentially stale",
   status_mismatch: "Needs review — Cin7 status vs received lines",
+  no_product_lines: "No product lines — receiving not applicable",
 };
 
 export const QUALITY_GROUP_LABEL: Record<QualityGroup, string> = {
@@ -400,4 +425,5 @@ export const QUALITY_GROUP_LABEL: Record<QualityGroup, string> = {
   incomplete: "Incomplete",
   stale: "Potentially stale",
   review: "Needs review",
+  not_applicable: "No product lines",
 };

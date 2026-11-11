@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   buildPoQuantityRows,
+  type SyncFailureMap,
   summariseInstanceSync,
   type InstanceSyncSummary,
   type OrderLineInput,
@@ -131,5 +132,30 @@ export async function getPoQuantityReport(db: SupabaseClient, orgId: string, fil
     receiptLines.push(...r);
   }
 
-  return { rows: buildPoQuantityRows({ purchases, orderLines, receiptLines, instanceNames }), sync, excludedNoOrderDate };
+  // Persisted failed-detail-sync diagnostics (written by the purchase sync) — lets an unsynced PO show WHY.
+  const syncFailures: SyncFailureMap = {};
+  const incompleteIds = new Set(purchases.filter((p) => !p.detail_synced_at).map((p) => `${p.instance_id}|${p.cin7_purchase_id}`));
+  if (incompleteIds.size > 0) {
+    const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+    const failRes = await db
+      .from("activity_log")
+      .select("instance_id, created_at, detail")
+      .eq("org_id", orgId)
+      .in("instance_id", instanceIds)
+      .eq("action", "diagnostic.purchase_detail_sync_failed")
+      .gte("created_at", cutoff)
+      .order("created_at", { ascending: false })
+      .limit(1000);
+    // A missing/failed diagnostics read must never break the report — the PO still shows as Incomplete.
+    if (!failRes.error) {
+      for (const r of (failRes.data ?? []) as { instance_id: string; created_at: string; detail: { purchase_id?: string; message?: string } | null }[]) {
+        const pid = r.detail?.purchase_id;
+        if (!pid) continue;
+        const key = `${r.instance_id}|${pid}`;
+        if (incompleteIds.has(key) && !syncFailures[key]) syncFailures[key] = { at: r.created_at, message: String(r.detail?.message ?? "").slice(0, 240) };
+      }
+    }
+  }
+
+  return { rows: buildPoQuantityRows({ purchases, orderLines, receiptLines, instanceNames, syncFailures }), sync, excludedNoOrderDate };
 }

@@ -176,6 +176,7 @@ export default function PoQuantityComparisonPage() {
   const incompletePoCount = selection.excludedPoCount.incomplete;
   const stalePoCount = selection.excludedPoCount.stale;
   const reviewPoCount = selection.excludedPoCount.review;
+  const noProductLinesPoCount = selection.notApplicablePoCount;
   const trusted = computeTrustedTotals(sortedRows);
   const backfillCutoff = monthsAgoIso(BACKFILL_MONTHS);
 
@@ -249,6 +250,13 @@ export default function PoQuantityComparisonPage() {
                 <Alert tone="danger">
                   Incomplete — {incompletePoCount} PO{incompletePoCount === 1 ? "" : "s"} in this selection have no usable line detail yet (detail not synced, still failing,
                   or no lines cached). They are listed with blank quantities — not zero — and must not be read as &ldquo;nothing received&rdquo;.
+                </Alert>
+              )}
+              {noProductLinesPoCount > 0 && (
+                <Alert tone="info">
+                  No product lines — {noProductLinesPoCount} PO{noProductLinesPoCount === 1 ? "" : "s"} in this selection are purchases with no product
+                  lines (receiving NOT AVAILABLE in Cin7, e.g. Service Purchases with additional charges). There is nothing to compare, so
+                  they are not counted as incomplete.
                 </Alert>
               )}
               {stalePoCount > 0 && (
@@ -332,6 +340,7 @@ export default function PoQuantityComparisonPage() {
                 <option value="complete">Complete</option>
                 <option value="stale">Potentially stale</option>
                 <option value="incomplete">Incomplete (no usable lines)</option>
+                <option value="not_applicable">No product lines (service / charge-only)</option>
                 <option value="review">Needs review (status vs received lines)</option>
               </Select>
               <SearchInput value={poSearch} onChange={setPoSearch} placeholder="PO number" />
@@ -423,7 +432,7 @@ export default function PoQuantityComparisonPage() {
                             {r.isDropShip && <Badge tone="neutral">Drop-ship</Badge>}
                             {r.dataQuality !== "ok" && (
                               <span title={r.dataQualityNote ?? undefined}>
-                                <Badge tone={(r.dataQuality === "possibly_stale" || r.dataQuality === "status_mismatch" ? "warning" : "danger") as BadgeTone}>{DATA_QUALITY_LABEL[r.dataQuality]}</Badge>
+                                <Badge tone={(r.dataQuality === "possibly_stale" || r.dataQuality === "status_mismatch" ? "warning" : r.dataQuality === "no_product_lines" ? "neutral" : "danger") as BadgeTone}>{DATA_QUALITY_LABEL[r.dataQuality]}</Badge>
                               </span>
                             )}
                           </div>
