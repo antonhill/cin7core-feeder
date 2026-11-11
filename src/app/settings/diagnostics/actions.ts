@@ -28,6 +28,7 @@ import { MANUAL_PUSH_PROTECTED_MESSAGE, isManualPushProtected } from "@/sync/sch
 import { decrypt } from "@/cin7/crypto";
 import { CIN7_API_ORIGIN } from "@/cin7/api-origin";
 import { Cin7ApiError } from "@/cin7/http";
+import { probePurchaseReceipts } from "@/cin7/purchase-receipt-probe";
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import {
@@ -996,6 +997,68 @@ export async function debugCheckSaleStatuses(instanceId: string): Promise<TestCo
     const creds = await loadInstanceCreds(instanceId);
     const result = await checkSaleStatuses(creds);
     return { ok: true, message: JSON.stringify(result, null, 2) };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Diagnostic only, READ-ONLY (GET + cache SELECT): PO Quantity Comparison
+ * receipt-integrity probe. For up to 15 purchases (matched by cached Cin7 id
+ * or order number, within THIS org+instance only) it fetches the live Cin7
+ * detail and compares every line-bearing section against what the sync parser
+ * stores and what the cache holds. Writes nothing anywhere.
+ */
+export async function debugProbePurchaseReceiptIntegrity(instanceId: string, refs: string[]): Promise<TestConnectionResult> {
+  try {
+    await requirePrivilegedSuperAdmin("run Cin7 diagnostics (probe purchase receipt integrity)");
+    const creds = await loadInstanceCreds(instanceId);
+    const { orgId } = await requireOrgAdmin("run Cin7 instance diagnostics");
+    const db = createServiceRoleClient();
+    const wanted = [...new Set(refs.map((r) => r.trim()).filter(Boolean))].slice(0, 15);
+    if (wanted.length === 0) return { ok: false, message: "Provide at least one PO number or Cin7 purchase id." };
+
+    const results: unknown[] = [];
+    for (const ref of wanted) {
+      const { data: rows, error } = await db
+        .from("purchases")
+        .select("cin7_purchase_id, order_number, status, combined_receiving_status, source, detail_synced_at, updated_at")
+        .eq("org_id", orgId)
+        .eq("instance_id", instanceId)
+        .or(`cin7_purchase_id.eq.${ref.replace(/[^A-Za-z0-9-]/g, "")},order_number.eq.${ref.replace(/[^A-Za-z0-9 _.-]/g, "")}`)
+        .limit(1);
+      if (error) throw new Error(error.message);
+      const row = rows?.[0];
+      if (!row) {
+        results.push({ ref, error: "not found in this instance's purchase cache" });
+        continue;
+      }
+      const [o, r] = await Promise.all([
+        db.from("purchase_order_lines").select("product_sku, quantity").eq("org_id", orgId).eq("instance_id", instanceId).eq("cin7_purchase_id", row.cin7_purchase_id),
+        db.from("purchase_receipt_lines").select("product_sku, quantity").eq("org_id", orgId).eq("instance_id", instanceId).eq("cin7_purchase_id", row.cin7_purchase_id),
+      ]);
+      const sum = (data: { product_sku: string | null; quantity: number | null }[] | null) => {
+        const m = new Map<string, number>();
+        for (const l of data ?? []) m.set((l.product_sku ?? "").trim() || "(no SKU)", (m.get((l.product_sku ?? "").trim() || "(no SKU)") ?? 0) + Number(l.quantity ?? 0));
+        return m;
+      };
+      const probe = await probePurchaseReceipts(creds, row.cin7_purchase_id, { ordered: sum(o.data), received: sum(r.data) });
+      results.push({
+        ref,
+        cache: {
+          orderNumber: row.order_number,
+          status: row.status,
+          receivingStatus: row.combined_receiving_status,
+          source: row.source,
+          detailSyncedAt: row.detail_synced_at,
+          updatedAt: row.updated_at,
+          cachedOrderLines: o.data?.length ?? 0,
+          cachedReceiptLines: r.data?.length ?? 0,
+        },
+        probe,
+      });
+    }
+    return { ok: true, message: JSON.stringify(results, null, 2) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
   }

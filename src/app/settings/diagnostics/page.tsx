@@ -20,6 +20,7 @@ import {
   debugSurveyProductionRun,
   debugSurveyProductionOrderStatuses,
   debugSurveyPurchaseDetailFields,
+  debugProbePurchaseReceiptIntegrity,
   debugSurveyProductAvailabilityFields,
   debugSurveyProductSupplierOptionsFields,
   debugFindProductSupplierOptionsExample,
@@ -54,6 +55,7 @@ export default function DiagnosticsPage() {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
+  const [probeRefs, setProbeRefs] = useState<Record<string, string>>({});
   const [refCheckNames, setRefCheckNames] = useState<Record<string, string>>({});
   const [accountCodes, setAccountCodes] = useState<Record<string, string>>({});
   const [productionBomSkus, setProductionBomSkus] = useState<Record<string, string>>({});
@@ -261,6 +263,15 @@ export default function DiagnosticsPage() {
     setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Surveying purchase detail fields (multiple calls)…" } }));
     startTransition(async () => {
       const result = await debugSurveyPurchaseDetailFields(instanceId);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
+  function handleProbePurchaseReceipts(instanceId: string) {
+    const refs = (probeRefs[instanceId] ?? "").split(/[\s,;]+/).filter(Boolean);
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Probing purchase receipts (read-only GETs)…" } }));
+    startTransition(async () => {
+      const result = await debugProbePurchaseReceiptIntegrity(instanceId, refs);
       setTestResults((prev) => ({ ...prev, [instanceId]: result }));
     });
   }
@@ -526,6 +537,18 @@ export default function DiagnosticsPage() {
               </Button>
             </div>
             <div className="mt-2 flex items-center gap-2">
+              <div className="flex flex-col gap-1">
+                <textarea
+                  aria-label="PO numbers or Cin7 purchase ids to probe (read-only)"
+                  placeholder="PO numbers / purchase ids, space or comma separated (max 15)"
+                  className="h-16 w-full rounded-md border border-slate-300 p-2 text-xs"
+                  value={probeRefs[inst.id] ?? ""}
+                  onChange={(e) => setProbeRefs((prev) => ({ ...prev, [inst.id]: e.target.value }))}
+                />
+                <Button variant="secondary" size="sm" onClick={() => handleProbePurchaseReceipts(inst.id)} disabled={isPending}>
+                  Probe PO receipt integrity (read-only)
+                </Button>
+              </div>
               <Button variant="secondary" size="sm" onClick={() => handleSurveyPurchaseDetailFields(inst.id)} disabled={isPending}>
                 Survey purchase detail fields (Inventory Movement Phase 1)
               </Button>
