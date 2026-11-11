@@ -7,7 +7,7 @@ import { fetchPurchaseDetail } from "@/cin7/purchase-detail";
 
 vi.mock("@/cin7/load-credentials", () => ({ loadCin7Credentials: vi.fn() }));
 vi.mock("@/cin7/purchases", () => ({ fetchAllPurchasesList: vi.fn() }));
-vi.mock("@/cin7/purchase-detail", () => ({ fetchPurchaseDetail: vi.fn() }));
+vi.mock("@/cin7/purchase-detail", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/cin7/purchase-detail")>()), fetchPurchaseDetail: vi.fn() }));
 
 const creds = { accountId: "a", applicationKey: "k", baseUrl: "https://example.test" };
 
@@ -16,6 +16,8 @@ interface FakeDbOptions {
   existingPurchases?: { cin7_purchase_id: string; combined_receiving_status: string | null; detail_synced_at: string | null }[];
   pendingPurchases?: { cin7_purchase_id: string }[];
   rpcError?: string;
+  /** Rows the throttle lookup on activity_log should find (already-logged failure within the window). */
+  recentFailureRows?: { id: string }[];
 }
 
 function makeFakeDb(opts: FakeDbOptions) {
@@ -45,6 +47,10 @@ function makeFakeDb(opts: FakeDbOptions) {
       },
       limit: (...args: unknown[]) => {
         calls.push({ table, op: "limit", args });
+        return obj;
+      },
+      gte: (...args: unknown[]) => {
+        calls.push({ table, op: "gte", args });
         return obj;
       },
       maybeSingle: async () => terminalResult(),
@@ -78,6 +84,18 @@ function makeFakeDb(opts: FakeDbOptions) {
           update: (patch: unknown) => {
             calls.push({ table, op: "update", args: [patch] });
             return chain(table, () => ({ error: null }));
+          },
+        };
+      }
+      if (table === "activity_log") {
+        return {
+          select: (...args: unknown[]) => {
+            calls.push({ table, op: "select", args });
+            return chain(table, () => ({ data: opts.recentFailureRows ?? [], error: null }));
+          },
+          insert: (row: unknown) => {
+            calls.push({ table, op: "insert", args: [row] });
+            return Promise.resolve({ error: null });
           },
         };
       }
@@ -325,5 +343,85 @@ describe("syncOrgPurchases", () => {
     expect(results).toHaveLength(2);
     expect(results[0].errors[0].error).toBe("Instance not found");
     expect(results[1].instanceId).toBe("inst-2");
+  });
+});
+
+describe("syncInstancePurchases — duplicate-receipt regression and failure diagnostics", () => {
+  const aggregatedDetail = {
+    source: "advanced-purchase" as const,
+    // What fetchPurchaseDetail now returns for PO-14939: the four 21/20/106/233 lines already collapsed to one key.
+    receiptLines: [{ cardId: "card-1", productSku: "LBLINSTALLATIONNONIP", productName: "Installation", quantity: 380, receivedDate: "2026-10-29", location: "Main", locationId: "loc-1" }],
+    orderLines: [{ productSku: "LBLINSTALLATIONNONIP", productName: "Installation", quantity: 380 }],
+    isDropShip: false,
+  };
+
+  it("PO-14939: sends one row per (card_id, product_sku) with the 380 total to the atomic replace", async () => {
+    vi.mocked(fetchPurchaseDetail).mockResolvedValueOnce(aggregatedDetail);
+    const { db, calls } = makeFakeDb({ existingPurchases: [], pendingPurchases: [{ cin7_purchase_id: "po-14939", order_number: "PO-14939" } as { cin7_purchase_id: string }] });
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1");
+
+    expect(summary).toMatchObject({ detailSynced: 1, detailFailed: 0 });
+    const args = calls.find((c) => c.table === "__rpc__")?.args[0] as { p_receipt_lines: { card_id: string; product_sku: string; quantity: number }[] };
+    const keys = args.p_receipt_lines.map((l) => `${l.card_id}|${l.product_sku}`);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(args.p_receipt_lines.reduce((n, l) => n + l.quantity, 0)).toBe(380);
+  });
+
+  it("repeated synchronisation sends the identical payload each time (replace is idempotent) and records no failures", async () => {
+    vi.mocked(fetchPurchaseDetail).mockResolvedValue(aggregatedDetail);
+    const first = makeFakeDb({ existingPurchases: [], pendingPurchases: [{ cin7_purchase_id: "po-14939" }] });
+    const second = makeFakeDb({ existingPurchases: [], pendingPurchases: [{ cin7_purchase_id: "po-14939" }] });
+
+    await syncInstancePurchases(first.db, "org1", "inst-1");
+    await syncInstancePurchases(second.db, "org1", "inst-1");
+
+    const payload = (c: { calls: { table: string; args: unknown[] }[] }) => c.calls.find((x) => x.table === "__rpc__")?.args[0];
+    expect(payload(second)).toEqual(payload(first));
+    expect(first.calls.some((c) => c.table === "activity_log")).toBe(false);
+  });
+
+  it("a failed detail sync is recorded as a sanitised, persistent diagnostic naming the PO — and does not abort the batch", async () => {
+    vi.mocked(fetchPurchaseDetail)
+      .mockResolvedValueOnce({ source: "purchase", receiptLines: [], orderLines: [], isDropShip: false })
+      .mockResolvedValueOnce({ source: "purchase", receiptLines: [], orderLines: [], isDropShip: false });
+    const { db, calls } = makeFakeDb({
+      existingPurchases: [],
+      pendingPurchases: [{ cin7_purchase_id: "po-14939", order_number: "PO-14939" } as { cin7_purchase_id: string }, { cin7_purchase_id: "po-2" }],
+      rpcError: 'duplicate key value violates unique constraint "purchase_receipt_lines_pkey" Key (org_id, instance_id, card_id, product_sku)=(11111111-2222-3333-4444-555555555555, x, y, z) already exists.',
+    });
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1");
+
+    expect(summary.detailFailed).toBe(2);
+    const insert = calls.find((c) => c.table === "activity_log" && c.op === "insert")?.args[0] as Record<string, unknown>;
+    expect(insert).toMatchObject({ org_id: "org1", instance_id: "inst-1", action: "diagnostic.purchase_detail_sync_failed" });
+    expect(String(insert.summary)).toContain("PO-14939");
+    expect(JSON.stringify(insert)).not.toMatch(/11111111-2222|card_id, product_sku/);
+    expect((insert.detail as Record<string, unknown>).code).toBe("duplicate_key");
+  });
+
+  it("does not re-record the same PO's failure inside the throttle window (no log spam every 15 minutes)", async () => {
+    vi.mocked(fetchPurchaseDetail).mockRejectedValueOnce(new Error("boom"));
+    const { db, calls } = makeFakeDb({ existingPurchases: [], pendingPurchases: [{ cin7_purchase_id: "po-1" }], recentFailureRows: [{ id: "already" }] });
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1");
+
+    expect(summary.detailFailed).toBe(1);
+    expect(calls.some((c) => c.table === "activity_log" && c.op === "insert")).toBe(false);
+  });
+
+  it("a failing diagnostic write never fails or aborts the sync", async () => {
+    vi.mocked(fetchPurchaseDetail).mockRejectedValueOnce(new Error("boom")).mockResolvedValueOnce({ source: "purchase", receiptLines: [], orderLines: [], isDropShip: false });
+    const { db } = makeFakeDb({ existingPurchases: [], pendingPurchases: [{ cin7_purchase_id: "po-1" }, { cin7_purchase_id: "po-2" }] });
+    const original = db.from.bind(db);
+    (db as unknown as { from: (t: string) => unknown }).from = (t: string) => {
+      if (t === "activity_log") throw new Error("activity_log down");
+      return original(t);
+    };
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1");
+
+    expect(summary).toMatchObject({ detailSynced: 1, detailFailed: 1 });
   });
 });

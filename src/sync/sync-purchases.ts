@@ -3,6 +3,7 @@ import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllPurchasesList } from "@/cin7/purchases";
 import { fetchPurchaseDetail } from "@/cin7/purchase-detail";
 import type { Cin7Credentials } from "@/cin7/types";
+import { recordPurchaseDetailFailure } from "@/sync/purchase-detail-failure";
 import { acquireSyncRouteLock, releaseSyncRouteLock } from "@/lib/sync-route-lock";
 
 // Rate-limited detail fetch is one (sometimes two, on the Advanced-purchase
@@ -141,7 +142,7 @@ async function syncPurchaseDetails(
 ): Promise<{ synced: number; failed: number; errors: { purchaseId: string; error: string }[] }> {
   const { data: pending } = await db
     .from("purchases")
-    .select("cin7_purchase_id")
+    .select("cin7_purchase_id, order_number")
     .eq("org_id", orgId)
     .eq("instance_id", instanceId)
     .is("detail_synced_at", null)
@@ -151,7 +152,7 @@ async function syncPurchaseDetails(
   let synced = 0;
   const errors: { purchaseId: string; error: string }[] = [];
 
-  for (const row of (pending ?? []) as { cin7_purchase_id: string }[]) {
+  for (const row of (pending ?? []) as { cin7_purchase_id: string; order_number?: string | null }[]) {
     try {
       const detail = await fetchPurchaseDetail(creds, row.cin7_purchase_id);
 
@@ -185,6 +186,8 @@ async function syncPurchaseDetails(
       synced++;
     } catch (e) {
       errors.push({ purchaseId: row.cin7_purchase_id, error: e instanceof Error ? e.message : "Unknown error" });
+      // Previously invisible: per-PO failures only lived in the cron response body (nine POs failed unseen for months).
+      await recordPurchaseDetailFailure(db, { orgId, instanceId, purchaseId: row.cin7_purchase_id, orderNumber: row.order_number ?? null, error: e });
     }
   }
 
