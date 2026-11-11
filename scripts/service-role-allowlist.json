@@ -44,6 +44,7 @@
     "src/app/reports/natas/actions.ts",
     "src/app/reports/order-fulfillment/actions.ts",
     "src/app/reports/picking-calendar/actions.ts",
+    "src/app/reports/po-reconciliation/actions.ts",
     "src/app/reports/production-tracking/actions.ts",
     "src/app/reports/reorder-report/actions.ts",
     "src/app/reports/shipping-calendar/actions.ts",
