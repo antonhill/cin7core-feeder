@@ -162,7 +162,10 @@ describe("ROUND 4: each lost-race refusal names the step it belongs to", () => {
       if (t !== "newquip_quotes") return b;
       return new Proxy(b, { get: (o, k) => (k === "update" ? () => { const chain: any = new Proxy({}, { get: (_x, m) => (m === "select" ? async () => ({ data: [], error: null }) : () => chain) }); return chain; } : (o as any)[k]) }); // eslint-disable-line @typescript-eslint/no-explicit-any
     };
-    return () => { (d as any).from = real; }; // eslint-disable-line @typescript-eslint/no-explicit-any
+    // migration 0123 present: the lost race on the atomic handoff function is a handoff_conflict (the same user-facing refusal)
+    const realRpc = (d as any).rpc.bind(d); // eslint-disable-line @typescript-eslint/no-explicit-any
+    (d as any).rpc = (fn: string, a: unknown) => (fn === "newquip_handoff_with_snapshot" && d.indicativeApplied ? Promise.resolve({ data: null, error: { message: "handoff_conflict: the quotation changed while sending" } }) : realRpc(fn, a)); // eslint-disable-line @typescript-eslint/no-explicit-any
+    return () => { (d as any).from = real; (d as any).rpc = realRpc; }; // eslint-disable-line @typescript-eslint/no-explicit-any
   };
   const err = async (p: Promise<unknown>) => { try { await p; } catch (e) { return (e as Error).message; } return undefined; };
   it("sending says 'while sending'; withdrawing a confirmation says 'while withdrawing the confirmation'; signing off says 'while signing off'; approving says 'during approval'", async () => {

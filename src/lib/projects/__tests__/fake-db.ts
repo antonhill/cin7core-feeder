@@ -14,6 +14,7 @@ const UNIQUE: Record<string, string[][]> = {
   project_delivery_allocations: [["delivery_id", "sku"]],
   project_claim_cin7_postings: [["claim_id"], ["org_id", "idempotency_key"], ["org_id", "memo"]],
   newquip_quote_customers: [["quote_id", "seq"]],
+  newquip_indicative_price_snapshots: [["quote_id", "seq"]],
   newquip_quote_documents: [["quote_id", "version"], ["storage_path"]],
   newquip_quote_sends: [["document_id", "idempotency_key"]],
   newquip_response_links: [["token_hash"]],
@@ -55,10 +56,39 @@ export class FakeDb {
   /** Records rpc() calls; a test may install a handler to emulate the database function. */
   rpcCalls: Array<{ fn: string; args: Row }> = [];
   rpcHandlers: Record<string, (args: Row) => { error: { message: string } | null }> = {};
-  rpc(fn: string, args: Row): Promise<{ data: null; error: { message: string } | null }> {
+  rpc(fn: string, args: Row): Promise<{ data: unknown; error: { message: string } | null }> {
     this.rpcCalls.push({ fn, args });
+    if (fn === "newquip_handoff_with_snapshot") return Promise.resolve(this.handoffWithSnapshot(args));
     const h = this.rpcHandlers[fn];
     return Promise.resolve({ data: null, error: h ? h(args).error : { message: `no handler for ${fn}` } });
+  }
+
+  /** Migration 0123 (indicative price snapshots + the atomic handoff function) is not applied unless a test says so: the function and table then read as absent, like a database that has not received it. */
+  indicativeApplied = false;
+  /** A test sets this to make the emulated function fail AFTER it would have inserted the snapshot, to prove the whole transaction rolls back (nothing is kept). */
+  failHandoffAfterInsert = false;
+  /** Emulates newquip_handoff_with_snapshot (migration 0123) as ONE transaction: check, insert the snapshot, move the quotation - or change nothing at all. */
+  private handoffWithSnapshot(a: Row): { data: unknown; error: { message: string } | null } {
+    if (!this.indicativeApplied) return { data: null, error: { message: "Could not find the function public.newquip_handoff_with_snapshot in the schema cache" } };
+    const quotes = this.rows("newquip_quotes");
+    const q = quotes.find((r) => r.id === a.p_quote && r.org_id === a.p_org);
+    if (!q) return { data: null, error: { message: "handoff_conflict: the quotation was not found" } };
+    if (q.state !== "REP_DRAFT" || q.draft_hash !== a.p_draft_hash) return { data: null, error: { message: "handoff_conflict: the quotation changed while sending" } };
+    const snaps = this.rows("newquip_indicative_price_snapshots");
+    const seq = Math.max(0, ...snaps.filter((r) => r.quote_id === a.p_quote && r.org_id === a.p_org).map((r) => Number(r.seq))) + 1;
+    const row: Row = {
+      id: `id-${++this.seq}`, created_at: this.ts(), org_id: a.p_org, quote_id: a.p_quote, seq, revision: q.revision, draft_hash: q.draft_hash,
+      ruleset_id: a.p_ruleset_id, ruleset_version: a.p_ruleset_version, price_source_id: a.p_price_source_id, price_source_fingerprint: a.p_price_source_fingerprint,
+      total_ex_vat_cents: a.p_total_cents, completeness: a.p_completeness, snapshot: structuredClone(a.p_snapshot), snapshot_hash: a.p_snapshot_hash, captured_by_email: a.p_captured_by,
+    };
+    if (this.failHandoffAfterInsert) return { data: null, error: { message: "simulated failure after the snapshot insert (rolled back)" } };
+    snaps.push(row);
+    this.writes.push({ table: "newquip_indicative_price_snapshots", op: "insert" });
+    Object.assign(q, {
+      state: "ESTIMATOR_REVIEW", customer_confirmed_cents: a.p_confirmed_cents, customer_confirmed_by: String(a.p_confirmed_by).trim(), customer_confirmed_at: this.ts(), handoff_by_email: a.p_handoff_by,
+      estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null,
+    });
+    return { data: row.id, error: null };
   }
 
   /** Emulates PostgREST's max-rows: a select with no .range() silently returns only this many rows (null = unlimited). */
@@ -97,6 +127,7 @@ export class FakeDb {
     const rolesOn = () => this.rolesApplied;
     const fxOn = () => this.fxApplied;
     const deliveryOn = () => this.deliveryApplied;
+    const indicativeOn = () => this.indicativeApplied;
     const portalOn = () => this.portalApplied;
     const notificationStatuses = () => this.notificationStatuses;
     function exec(): { data: unknown; error: { message: string } | null } {
@@ -108,6 +139,8 @@ export class FakeDb {
         const bad = (Array.isArray(payload) ? payload : [payload]).flatMap((p) => Object.keys(p)).find((k) => COLS_0117.includes(k));
         if (bad) return { data: null, error: { message: `column "${bad}" of relation "newquip_quote_responses" does not exist` } };
       }
+      if (table === "newquip_indicative_price_snapshots" && !indicativeOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
+      if (table === "newquip_indicative_price_snapshots" && (op === "update" || op === "delete")) return { data: null, error: { message: "newquip_indicative_price_snapshots: an indicative snapshot is an audit record and is never updated or deleted" } };
       if (IS_0115.test(table) && !deliveryOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
       if (/^(org_functional_role|approval_polic)/.test(table) && !rolesOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
       if (table.startsWith("approval_") && !approvals()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };

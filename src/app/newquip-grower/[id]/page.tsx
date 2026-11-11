@@ -54,6 +54,9 @@ import { currentStepId, deriveWizard, isPermitted, resolveEntryStep, toRailSteps
 import { costAckKey, deriveStage2Steps, type Stage2Input } from "@/newquip/quote/stage2-steps";
 import { commercialReadiness, confirmedAmountChange, deriveFinalReviewChecklist, deriveStage2Wizard, deriveStage3Wizard, estimatorWork, finalReviewBlockText, STAGE2_WIZARD_IDS, STAGE2_WIZARD_LABEL, type Stage2WizardId } from "@/newquip/quote/stage23-wizard";
 import { Disclosure, EstimatorResult, FinalReviewChecklist, OwnerTag, RepSubmittedSummary } from "./Stage23Panels";
+import { PricingFeedbackNote } from "./PricingFeedbackNote";
+import { pricingFeedback } from "@/newquip/pricing/pricing-feedback";
+import { IndicativeComparisonPanel } from "./IndicativeComparisonPanel";
 import { EstimatorReturnNotice, returnNoticeText } from "./ReturnNotice";
 import { ConfirmationPanel } from "./ConfirmationPanel";
 import { DeliveryPanel, type DeliveryGate } from "./DeliveryPanel";
@@ -689,6 +692,8 @@ export default function QuoteEditorPage() {
         </div>
       </div>
 
+      {q.state !== "MANAGER_APPROVED_FINAL" && stage <= 2 && !previewFailure && <PricingFeedbackNote feedback={pricingFeedback(budget, { canViewCommercials: !!view.viewer.canViewCommercials })} />}
+
       {error && <div className="mt-4"><Alert tone="danger">{error}</Alert></div>}
       <ActionFeedback state={acts.stateOf("page")} floating />
       <LongRunningStatus label={acts.currentLabel} />
@@ -759,6 +764,7 @@ export default function QuoteEditorPage() {
           </div>
           {amountChange.changed && q.state === "ESTIMATOR_REVIEW" && <div className="mt-2"><Alert tone="warning"><span data-testid="total-changed">{amountChange.text}</span></Alert></div>}
           {repSummary}
+          {canCommercials && view.indicativeComparison && <IndicativeComparisonPanel c={view.indicativeComparison} />}
           {req2No !== null && req2No > visible2.length && <p className="mt-3 text-sm text-slate-800" data-testid="step-unavailable">That step is not available to you, so the first step is shown.</p>}
           <StepRail dense oneLineNotes id="s2" ariaLabel="Costing and review steps" steps={railSteps2View} currentId={step2Id} onSelect={goStep2}
             moreActions={(

@@ -11,6 +11,9 @@ import { blankExclusions, previewDraftOf } from "@/newquip/grower/preview-draft"
 import { emptyDraft, type QuoteDraft } from "@/newquip/grower/draft";
 import { rolesFor } from "@/newquip/quote/roles";
 import { stampPriceResolutions } from "@/newquip/quote/price-resolution";
+import { stampChanges } from "@/newquip/pricing/change-stamps";
+import { compareToIndicative, type IndicativeComparison } from "@/newquip/pricing/comparison";
+import { allIndicativeSnapshots } from "@/lib/newquip-quotes/indicative-store";
 import { keepEstimatorOwnedFields } from "@/newquip/quote/draft-ownership";
 import { changedMappings, mappingsChanged, normaliseMappings } from "@/newquip/grower/mapping-integrity";
 import { verifyMappings } from "@/lib/newquip-quotes/mapping-check";
@@ -117,6 +120,8 @@ export interface QuoteView {
   returnInfo: ReturnInfo | null;
   /** Whether the Manager must accept a baseline exception to approve (Estimator-priced systems with no Cin7 SKU), and which items. Cost-entitled callers only (labels and pricing route, never a value). */
   baselineException?: BaselineExceptionView;
+  /** NQ-008A. The indicative price handed off versus the price now. Cost-entitled viewers only (never in a Rep payload); null when not applicable. */
+  indicativeComparison?: IndicativeComparison;
   /** SERVER-derived: true only for a quotation created in POC Presentation Mode on the NewQuip POC deployment. The page then leaves out cost / mapping diagnostics and exception forms (the server records them with the POC reason). */
   poc?: boolean;
 }
@@ -130,9 +135,25 @@ async function view(db: ReturnType<typeof createServiceRoleClient>, quote: Quote
     if (quote.state === "ESTIMATOR_REVIEW") { try { baselineException = await baselineExceptionOf(db, a.orgId, quote.draft, evaluationContext(true)); } catch { baselineException = undefined; } }
     try { const c = await costingOf(db, a.orgId, quote.draft, evaluationContext(true)); costing = { complete: c.complete, reason: c.reasons[0] ?? null, ...(c.acceptedIncomplete ? { acceptedIncomplete: c.acceptedIncomplete } : {}) }; } catch { costing = undefined; }
   }
+  const evaluation = redactEvaluationFinancials(evaluateDraft(quote.draft, evaluationContext(!canViewCommercials)), canViewCommercials);
+  const open = quote.state !== "MANAGER_APPROVED_FINAL";
+  let indicativeComparison: IndicativeComparison | undefined;
+  if (canViewCommercials && open && (quote.customer_confirmed_cents != null || quote.revision > 1)) {
+    try {
+      const snaps = await allIndicativeSnapshots(db, a.orgId, quote.id);
+      const last = snaps[snaps.length - 1] ?? null;
+      indicativeComparison = compareToIndicative({
+        snapshot: last?.snapshot ?? null, snapshotCapturedAt: last?.created_at ?? null, snapshotCapturedBy: last?.captured_by_email ?? null,
+        confirmedCents: quote.customer_confirmed_cents, confirmedAt: quote.customer_confirmed_at, confirmedBy: quote.handoff_by_email,
+        revision: last?.revision ?? quote.revision, draft: quote.draft, currentEvaluation: evaluation,
+        history: snaps.map((s) => ({ seq: s.seq, revision: s.revision, capturedAt: s.created_at, capturedBy: s.captured_by_email, totalCents: s.total_ex_vat_cents, completeness: s.completeness })),
+      });
+    } catch { indicativeComparison = undefined; }
+  }
   return {
     quote: redactInternalFinancials(quote, canViewCommercials),
-    evaluation: redactEvaluationFinancials(evaluateDraft(quote.draft, evaluationContext(!canViewCommercials)), canViewCommercials),
+    evaluation,
+    ...(indicativeComparison ? { indicativeComparison } : {}),
     viewer: { roles: [...a.roles], canViewCommercials, previewTools: process.env.VERCEL_ENV === "preview" },
     ...(isPocQuote(quote.draft) && pocPresentationEnabled(process.env as Record<string, string | undefined>, a.orgId) ? { poc: true } : {}),
     ...(costing ? { costing } : {}),
@@ -165,7 +186,7 @@ export async function listGrowerQuotesAction(): Promise<GrowerActionResult<Array
  * client-supplied draft (create AND save): optional-element product mappings (trimmed, authorised, verified against this organisation's active catalogue),
  * manual quotation prices (authorised, provenance stamped by the server) and the cost fields (stamped / server-owned). `prior` is the stored draft, if any.
  */
-async function sanitiseSubmittedDraft(a: Actor, db: ReturnType<typeof createServiceRoleClient>, draft: QuoteDraft, prior: QuoteDraft | undefined): Promise<QuoteDraft> {
+async function sanitiseSubmittedDraft(a: Actor, db: ReturnType<typeof createServiceRoleClient>, draft: QuoteDraft, prior: QuoteDraft | undefined, at?: { state: QuoteRecord["state"]; revision: number }): Promise<QuoteDraft> {
   // The live preview applies a ticked exclusion at once, so a blank reason must never be stored: saved figures would then differ from the previewed ones.
   if (blankExclusions(draft).length > 0) throw new Error("Give a reason for every exclusion before saving (it is shown to the customer and frozen at approval).");
   let d = normaliseMappings(draft);
@@ -177,7 +198,9 @@ async function sanitiseSubmittedDraft(a: Actor, db: ReturnType<typeof createServ
   d = { ...d, estimator: { ...d.estimator, priceResolutions: stampPriceResolutions(d.estimator.priceResolutions, prior?.estimator.priceResolutions, a.roles, a.email, nowIso) as QuoteDraft["estimator"]["priceResolutions"] } };
   const stamped = keepServerOwnedCostBasis(keepServerOwnedCosts(stampCostOverrides(d, prior?.estimator.costOverrides, a.canSeeCost, a.email, nowIso), prior?.estimator.physicalCosts), prior?.estimator.costBasis);
   // Last line of defence (field ownership): a caller without Estimator / Manager authority can never change an Estimator-owned field, whatever the checks above did.
-  return keepEstimatorOwnedFields(stamped, prior, a.roles);
+  const owned = keepEstimatorOwnedFields(stamped, prior, a.roles);
+  // NQ-008A: after the handoff, who changed each price-affecting input and when is decided HERE (never by the client) and stored in the same save.
+  return stampChanges(owned, prior, { state: at?.state ?? "REP_DRAFT", revision: at?.revision ?? 1, email: a.email, nowIso });
 }
 
 export async function createGrowerQuoteAction(draft?: QuoteDraft): Promise<GrowerActionResult<{ id: string; quoteRef: string }>> {
@@ -241,7 +264,7 @@ export async function saveGrowerDraftAction(quoteId: string, draft: QuoteDraft):
     // Once the quotation has a Cin7 customer snapshot, the snapshot is the ONLY source of the customer name: a typed or edited name in the submitted draft is replaced by it.
     const snapName = (await customerFeaturesAvailable(db)) ? fieldValue((await latestSnapshot(db, a.orgId, quoteId))?.snapshot.name ?? { state: "missing" }) : null;
     const priorHash = prior?.draft_hash; // read now (D-12, #195): a store that updates the row it handed out in place must not change what "before" means
-    const saved = await saveDraft(db, a.orgId, a.roles, quoteId, await sanitiseSubmittedDraft(a, db, draft, prior?.draft), snapName);
+    const saved = await saveDraft(db, a.orgId, a.roles, quoteId, await sanitiseSubmittedDraft(a, db, draft, prior?.draft, prior ? { state: prior.state, revision: prior.revision } : undefined), snapName);
     // Changed content invalidates the estimator's sign-off (saveDraft clears it) and any open approval of the older content: the quote goes back to estimator review.
     // Race repair: if the customer was (re)selected while this save was in flight, the snapshot name wins - write it again from the stored draft.
     if (snapName !== null || (await customerFeaturesAvailable(db))) {

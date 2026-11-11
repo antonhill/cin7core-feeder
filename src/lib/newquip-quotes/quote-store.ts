@@ -25,6 +25,8 @@ import { recordReturn, recordSignoff, voidReturn, type ReturnBy } from "./return
 import { NEUTRAL_REASON } from "@/newquip/quote/return-info";
 import { verifyMappings } from "./mapping-check";
 import { mappedSkus } from "@/newquip/grower/mapping-integrity";
+import { buildIndicativeSnapshot } from "@/newquip/pricing/indicative-snapshot";
+import { handoffWithSnapshot } from "./indicative-store";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 
@@ -226,6 +228,14 @@ export async function sendToEstimator(
   const ev = evaluateDraft(q.draft, ctx);
   const chk = checkHandoff({ readiness: ev.readiness, totalExVatCents: indicativeTotalCents(ev), confirmedAmountCents: input.confirmedAmountCents, confirmedBy: input.confirmedBy });
   if (!chk.ok) fail(chk.error);
+  // NQ-008A: the indicative price and its calculation basis are captured in the SAME transaction as the state change (migration 0123), so a handoff either records
+  // what the Rep's price was or does not happen. `ctx` is the Rep's (cost-withheld) view; the cost-visible twin is used only for the confidential internal section.
+  // Until 0123 is applied the RPC is absent: nothing is written and the handoff proceeds exactly as before (the Estimator is then told no snapshot exists).
+  const built = ev.budget ? buildIndicativeSnapshot({ quoteRef: q.quote_ref, revision: q.revision, draft: q.draft, repEvaluation: ev, internalEvaluation: evaluateDraft(q.draft, { ...ctx, withholdCost: false }) }) : null;
+  if (built) {
+    const cap = await handoffWithSnapshot(db, orgId, quoteId, { draftHash: q.draft_hash, confirmedCents: input.confirmedAmountCents, confirmedBy: input.confirmedBy.trim(), handoffBy: email, snapshot: built.snapshot, snapshotHash: built.hash, index: built.index });
+    if (cap.captured) return;
+  }
   const r = await db.from("newquip_quotes").update({
     state: auth.to, customer_confirmed_cents: input.confirmedAmountCents, customer_confirmed_by: input.confirmedBy.trim(),
     customer_confirmed_at: new Date().toISOString(), handoff_by_email: email,
