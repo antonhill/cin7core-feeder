@@ -67,7 +67,8 @@ create trigger newquip_indicative_price_snapshots_guard_trg before insert or upd
 -- Privileges: deliberately NARROWER than 0116's pattern. The snapshot contains cost basis, so members get no SELECT at all (RLS on, no policy), and the service role
 -- gets SELECT + INSERT only (no UPDATE / DELETE / TRUNCATE privilege), on top of the guard trigger.
 alter table newquip_indicative_price_snapshots enable row level security;
-revoke all on newquip_indicative_price_snapshots from public, anon, authenticated;
+-- service_role is revoked too: Supabase's default privileges give it more than this table needs (TRUNCATE ignores RLS and row triggers), and a GRANT only adds.
+revoke all on newquip_indicative_price_snapshots from public, anon, authenticated, service_role;
 grant select, insert on newquip_indicative_price_snapshots to service_role;
 revoke all on function newquip_indicative_price_snapshots_guard() from public, anon, authenticated;
 

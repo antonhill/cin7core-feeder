@@ -80,6 +80,14 @@ select pg_temp.expect_denied($q$delete from newquip_indicative_price_snapshots$q
 select pg_temp.expect_denied($q$truncate newquip_indicative_price_snapshots$q$, 'member truncate');
 select pg_temp.reset_role();
 
+-- 6b. the privileges themselves (not just the guard trigger): service_role may only SELECT and INSERT; nobody else has any
+do $$ begin
+  if not (has_table_privilege('service_role', 'newquip_indicative_price_snapshots', 'SELECT') and has_table_privilege('service_role', 'newquip_indicative_price_snapshots', 'INSERT')) then raise exception 'service_role must be able to read and insert snapshots'; end if;
+  if has_table_privilege('service_role', 'newquip_indicative_price_snapshots', 'UPDATE') or has_table_privilege('service_role', 'newquip_indicative_price_snapshots', 'DELETE')
+     or has_table_privilege('service_role', 'newquip_indicative_price_snapshots', 'TRUNCATE') then raise exception 'service_role must NOT hold UPDATE / DELETE / TRUNCATE on snapshots'; end if;
+  if has_table_privilege('authenticated', 'newquip_indicative_price_snapshots', 'SELECT') or has_table_privilege('anon', 'newquip_indicative_price_snapshots', 'SELECT') then raise exception 'members and anon must have no privilege on snapshots'; end if;
+end $$;
+
 -- 7. deleting the organisation (the cascade) is the ONLY way rows go
 delete from newquip_quotes where quote_ref = 'IP-2';
 delete from organizations where id = '00000000-0000-0000-0000-0000000123b1';
