@@ -87,7 +87,9 @@ export interface PurchaseProbeResult {
   listEntry?: Scalars | null;
   listLookupError?: string;
   /** Source LastUpdatedDate vs the latest line/event Date seen in the detail. */
-  lastUpdated?: { listLastUpdated: string | null; latestDetailDate: string | null; listCoversLatestDetailDate: boolean | null };
+  lastUpdated?: { listLastUpdated: string | null; latestReceivingDate: string | null; listCoversLatestReceivingDate: boolean | null };
+  /** Cache vs live received totals for this PO (all SKUs) — a difference on a re-listed PO means receiving activity bumped the source timestamp. */
+  receivedTotals?: { cached: number | null; liveStockReceived: number; livePutAway: number };
   endpoint: "/purchase" | "/advanced-purchase" | null;
   error?: string;
   topLevelKeys: string[];
@@ -193,9 +195,10 @@ export async function probePurchaseReceipts(
   // Section headers/events and per-line statuses — to find draft/unauthorised receiving structures.
   const sectionEvents: Record<string, Scalars[]> = {};
   const lineStatuses: Record<string, Record<string, number>> = {};
-  let latestDetailDate: string | null = null;
-  const noteDate = (v: unknown) => {
-    if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) && (!latestDetailDate || v > latestDetailDate)) latestDetailDate = v;
+  // ACTUAL receiving dates only (StockReceived / PutAway line + event `Date`) — never invoice/due/other dates.
+  let latestReceivingDate: string | null = null;
+  const noteReceivingDate = (v: unknown) => {
+    if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) && (!latestReceivingDate || v > latestReceivingDate)) latestReceivingDate = v;
   };
   for (const [key, value] of Object.entries(response)) {
     if (!value || typeof value !== "object") continue;
@@ -204,12 +207,12 @@ export async function probePurchaseReceipts(
     for (const c of containers.slice(0, 10)) {
       const sc = safeScalars(c);
       if (Object.keys(sc).length) events.push(sc);
-      for (const v of Object.values(sc)) noteDate(v);
+      if (key === "StockReceived" || key === "PutAway") noteReceivingDate(sc.Date);
     }
     if (events.length) sectionEvents[key] = events;
     const lines = asLines(value);
     for (const l of lines) {
-      noteDate(l.Date);
+      if (key === "StockReceived" || key === "PutAway") noteReceivingDate(l.Date);
       if (typeof l.Status === "string") {
         lineStatuses[key] = lineStatuses[key] ?? {};
         lineStatuses[key][l.Status] = (lineStatuses[key][l.Status] ?? 0) + 1;
@@ -238,8 +241,8 @@ export async function probePurchaseReceipts(
   const listLast = typeof finalListEntry?.LastUpdatedDate === "string" ? (finalListEntry.LastUpdatedDate as string) : null;
   const lastUpdated = {
     listLastUpdated: listLast,
-    latestDetailDate,
-    listCoversLatestDetailDate: listLast && latestDetailDate ? listLast.slice(0, 10) >= (latestDetailDate as string).slice(0, 10) : null,
+    latestReceivingDate: latestReceivingDate as string | null,
+    listCoversLatestReceivingDate: listLast && latestReceivingDate ? listLast.slice(0, 10) >= (latestReceivingDate as string).slice(0, 10) : null,
   };
 
   const q = (l: Record<string, unknown>) => Number(l.Quantity ?? 0) || 0;
@@ -267,5 +270,5 @@ export async function probePurchaseReceipts(
     if (!agree) diffs.push(d);
   }
 
-  return { purchaseId, scalars: safeScalars(response), keyShapes: Object.fromEntries(Object.entries(response).map(([k, v]) => [k, shape(v).slice(0, 1500)])), sectionEvents, lineStatuses, parser, listEntry, listLookupError, lastUpdated, endpoint, topLevelKeys: Object.keys(response).sort(), sections: { ...sections, ...(orderLines.length ? { "Order.Lines": summarise(orderLines) } : {}) }, skuDiffs: diffs.slice(0, 15), skuCount: skus.size };
+  return { purchaseId, receivedTotals: { cached: cached ? r6([...cached.received.values()].reduce((n, v) => n + v, 0)) : null, liveStockReceived: r6(stockLines.reduce((n, l) => n + (Number(l.Quantity ?? 0) || 0), 0)), livePutAway: r6(putAwayLines.reduce((n, l) => n + (Number(l.Quantity ?? 0) || 0), 0)) }, scalars: safeScalars(response), keyShapes: Object.fromEntries(Object.entries(response).map(([k, v]) => [k, shape(v).slice(0, 1500)])), sectionEvents, lineStatuses, parser, listEntry, listLookupError, lastUpdated, endpoint, topLevelKeys: Object.keys(response).sort(), sections: { ...sections, ...(orderLines.length ? { "Order.Lines": summarise(orderLines) } : {}) }, skuDiffs: diffs.slice(0, 15), skuCount: skus.size };
 }

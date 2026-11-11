@@ -61,7 +61,21 @@ describe("probePurchaseReceipts", () => {
     const r = await probePurchaseReceipts(creds, "po4", null, "PO-4");
     expect(r.listEntry).toMatchObject({ LastUpdatedDate: "2026-07-02T10:00:00", Status: "RECEIVING" });
     expect(r.listEntry).not.toHaveProperty("Supplier");
-    expect(r.lastUpdated).toMatchObject({ listCoversLatestDetailDate: true });
+    expect(r.lastUpdated).toMatchObject({ latestReceivingDate: "2026-07-01T00:00:00", listCoversLatestReceivingDate: true });
     for (const call of vi.mocked(cin7Request).mock.calls) expect((call[2] as { method?: string } | undefined)?.method ?? "GET").toBe("GET");
+  });
+
+  it("uses ACTUAL receiving dates only: an invoice due date later than LastUpdatedDate must not affect the comparison", async () => {
+    vi.mocked(cin7Request).mockImplementation(async (_c, path) => {
+      if (path === "/purchaseList") return { PurchaseList: [{ ID: "po5", LastUpdatedDate: "2026-07-02T10:00:00" }] };
+      return {
+        Order: { Lines: [{ SKU: "A", Quantity: 2 }] },
+        StockReceived: { Lines: [{ CardID: "c1", SKU: "A", Quantity: 1, Date: "2026-07-01T00:00:00" }] },
+        Invoice: { DueDate: "2026-12-31T00:00:00", InvoiceDate: "2026-12-01T00:00:00", Lines: [{ SKU: "A", Quantity: 2, Date: "2026-12-31T00:00:00" }] },
+      };
+    });
+    const r = await probePurchaseReceipts(creds, "po5", { ordered: new Map([["A", 2]]), received: new Map([["A", 1]]) }, "PO-5");
+    expect(r.lastUpdated).toMatchObject({ latestReceivingDate: "2026-07-01T00:00:00", listCoversLatestReceivingDate: true });
+    expect(r.receivedTotals).toEqual({ cached: 1, liveStockReceived: 1, livePutAway: 0 });
   });
 });

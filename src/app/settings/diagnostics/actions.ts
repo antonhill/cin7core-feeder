@@ -1058,7 +1058,7 @@ export async function debugProbePurchaseReceiptIntegrity(instanceId: string, ref
         probe,
       });
     }
-    return { ok: true, message: JSON.stringify({ probeVersion: "v2.1-keyshapes-pksim", deployedSha: (process.env.VERCEL_GIT_COMMIT_SHA ?? "unknown").slice(0, 7), results }, null, 2) };
+    return { ok: true, message: JSON.stringify({ probeVersion: "v2.2-receiving-dates-only", deployedSha: (process.env.VERCEL_GIT_COMMIT_SHA ?? "unknown").slice(0, 7), results }, null, 2) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
   }
