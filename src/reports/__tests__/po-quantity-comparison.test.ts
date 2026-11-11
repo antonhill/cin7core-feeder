@@ -185,21 +185,35 @@ describe("receiving-status mismatch detection and trusted totals", () => {
 });
 
 describe("no product lines vs genuinely incomplete detail", () => {
-  it("a synced PO with no lines and receiving NOT AVAILABLE (Service Purchase with charges) is 'No product lines', not Incomplete", () => {
-    const [r] = buildPoQuantityRows({ purchases: [po({ combined_receiving_status: "NOT AVAILABLE" })], orderLines: [], receiptLines: [], instanceNames: names });
+  const svc = (over: Partial<PurchaseHeader> = {}) => po({ source: "advanced-purchase", combined_receiving_status: "NOT AVAILABLE", status: "COMPLETED", ...over });
+
+  it("a synced ADVANCED PO with no lines, receiving NOT AVAILABLE and a finished status (Service Purchase with charges) is 'No product lines', not Incomplete", () => {
+    const [r] = buildPoQuantityRows({ purchases: [svc()], orderLines: [], receiptLines: [], instanceNames: names });
     expect(r.dataQuality).toBe("no_product_lines");
     expect(qualityGroup(r.dataQuality)).toBe("not_applicable");
     expect(r).toMatchObject({ ordered: null, received: null, outstanding: null });
     expect(r.dataQualityNote).toMatch(/Service Purchase/);
   });
 
-  it("a synced PO with no lines but a normal receiving status stays Incomplete (no_lines_cached)", () => {
-    const [r] = buildPoQuantityRows({ purchases: [po({ combined_receiving_status: "NOT RECEIVED" })], orderLines: [], receiptLines: [], instanceNames: names });
+  it.each([
+    ["a CLASSIC PO", { source: "purchase" }],
+    ["a PO with no recorded source", { source: null }],
+    ["an unfinished DRAFT advanced PO", { status: "DRAFT" }],
+    ["an unfinished ORDERING advanced PO", { status: "ORDERING" }],
+    ["an advanced PO with a normal receiving status", { combined_receiving_status: "NOT RECEIVED" }],
+  ])("%s with no lines stays Incomplete (no_lines_cached)", (_label, over) => {
+    const [r] = buildPoQuantityRows({ purchases: [svc(over as Partial<PurchaseHeader>)], orderLines: [], receiptLines: [], instanceNames: names });
     expect(r.dataQuality).toBe("no_lines_cached");
   });
 
-  it("an UNSYNCED PO is Incomplete even when its status is NOT AVAILABLE (never assumed to be a service purchase)", () => {
-    const [r] = buildPoQuantityRows({ purchases: [po({ combined_receiving_status: "NOT AVAILABLE", detail_synced_at: null })], orderLines: [], receiptLines: [], instanceNames: names });
+  it("an advanced PO that HAS product lines is never 'No product lines'", () => {
+    const [r] = buildPoQuantityRows({ purchases: [svc()], orderLines: [ol("A", 2)], receiptLines: [], instanceNames: names });
+    expect(r.dataQuality).not.toBe("no_product_lines");
+    expect(r.sku).toBe("A");
+  });
+
+  it("an UNSYNCED PO is Incomplete even when it looks like a service purchase (never assumed)", () => {
+    const [r] = buildPoQuantityRows({ purchases: [svc({ detail_synced_at: null })], orderLines: [], receiptLines: [], instanceNames: names });
     expect(r.dataQuality).toBe("detail_not_synced");
   });
 
@@ -219,7 +233,7 @@ describe("no product lines vs genuinely incomplete detail", () => {
 
   it("no-product-line POs are counted separately and never as incomplete or trusted", () => {
     const rows = buildPoQuantityRows({
-      purchases: [po({ cin7_purchase_id: "svc", combined_receiving_status: "NOT AVAILABLE" }), po({ cin7_purchase_id: "inc", detail_synced_at: null })],
+      purchases: [svc({ cin7_purchase_id: "svc" }), po({ cin7_purchase_id: "inc", detail_synced_at: null })],
       orderLines: [],
       receiptLines: [],
       instanceNames: names,

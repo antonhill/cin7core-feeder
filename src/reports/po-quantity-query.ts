@@ -68,7 +68,7 @@ export async function getPoQuantityReport(db: SupabaseClient, orgId: string, fil
     db
       .from("purchases")
       .select(
-        "instance_id, cin7_purchase_id, order_number, supplier_name, status, combined_receiving_status, order_date, is_drop_ship, detail_synced_at, created_at, updated_at"
+        "instance_id, cin7_purchase_id, order_number, supplier_name, status, combined_receiving_status, order_date, is_drop_ship, source, detail_synced_at, created_at, updated_at"
       )
       .eq("org_id", orgId)
       .in("instance_id", instanceIds)

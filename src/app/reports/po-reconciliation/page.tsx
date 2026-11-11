@@ -255,7 +255,7 @@ export default function PoQuantityComparisonPage() {
               {noProductLinesPoCount > 0 && (
                 <Alert tone="info">
                   No product lines — {noProductLinesPoCount} PO{noProductLinesPoCount === 1 ? "" : "s"} in this selection are purchases with no product
-                  lines (receiving NOT AVAILABLE in Cin7, e.g. Service Purchases with additional charges). There is nothing to compare, so
+                  lines (Advanced purchases with receiving NOT AVAILABLE in Cin7, e.g. Service Purchases with additional charges). There is nothing to compare, so
                   they are not counted as incomplete.
                 </Alert>
               )}

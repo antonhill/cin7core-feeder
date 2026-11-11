@@ -56,6 +56,8 @@ export interface PurchaseHeader {
   combined_receiving_status: string | null;
   order_date: string | null;
   is_drop_ship: boolean | null;
+  /** Which Cin7 endpoint served the detail: "purchase" (classic) or "advanced-purchase". */
+  source?: string | null;
   detail_synced_at: string | null;
   created_at: string | null;
   updated_at: string | null;
@@ -171,6 +173,20 @@ function placeholderRow(h: PurchaseHeader, instanceName: string, quality: DataQu
   };
 }
 
+/**
+ * A charge/service-only purchase: Cin7 serves it from the Advanced-purchase
+ * endpoint (Service Purchases are an Advanced type), reports receiving as
+ * NOT AVAILABLE, and it has left the unfinished stages. Anything else with no
+ * lines — a Classic PO, an unfinished DRAFT/ORDERING Advanced PO, or a normal
+ * receiving status — stays Incomplete, never assumed to be a service purchase.
+ */
+export function isNoProductLinePurchase(h: Pick<PurchaseHeader, "source" | "combined_receiving_status" | "status">): boolean {
+  if (h.source !== "advanced-purchase") return false;
+  if (h.combined_receiving_status !== "NOT AVAILABLE") return false;
+  const status = (h.status ?? "").toUpperCase();
+  return status !== "" && status !== "DRAFT" && status !== "ORDERING";
+}
+
 function placeholderNote(quality: DataQuality, failure?: { at: string; message: string }): string {
   if (quality === "detail_not_synced") {
     return failure
@@ -178,7 +194,7 @@ function placeholderNote(quality: DataQuality, failure?: { at: string; message: 
       : "PO detail has not synced (never fetched, or failing without a recorded reason).";
   }
   if (quality === "no_product_lines") {
-    return "Cin7 reports receiving as NOT AVAILABLE and returned no product lines (e.g. a Service Purchase with additional charges). Nothing to compare — not a data gap.";
+    return "Advanced purchase with receiving NOT AVAILABLE and no product lines in Cin7 (e.g. a Service Purchase with additional charges). Nothing to compare — not a data gap.";
   }
   return "PO detail synced but no order or receipt lines are cached. Verify the PO in Cin7.";
 }
@@ -287,8 +303,7 @@ export function buildPoQuantityRows(input: {
     const orders = ordersByPo.get(k) ?? [];
     const receipts = receiptsByPo.get(k) ?? [];
     if (orders.length === 0 && receipts.length === 0) {
-      // A synced PO with no lines whose Cin7 receiving status is NOT AVAILABLE is a charge/service-only purchase, not a gap.
-      rows.push(placeholderRow(h, instanceName, h.combined_receiving_status === "NOT AVAILABLE" ? "no_product_lines" : "no_lines_cached"));
+      rows.push(placeholderRow(h, instanceName, isNoProductLinePurchase(h) ? "no_product_lines" : "no_lines_cached"));
       continue;
     }
 
