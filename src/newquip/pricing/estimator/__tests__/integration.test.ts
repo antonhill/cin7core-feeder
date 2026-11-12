@@ -149,3 +149,17 @@ describe("server ownership", () => {
     expect(keepServerOwnedPricing(readyDraft(), stored).estimator.pricing).toBeDefined(); // cannot switch it OFF
   });
 });
+
+describe("found in the isolated Preview run: a zero supplier cost is never shown as a price", () => {
+  it("the workspace row is NOT priced (no R 0,00), says a supplier quote is required, and the attention list names it", async () => {
+    const { buildPricingWorkspace } = await import("..");
+    const p = equivalentInputs(); p.skus.PNQ082 = { ...p.skus.PNQ082!, nativeUnitCostMicro: 0 };
+    const d = withPricing(p);
+    const v = buildPricingWorkspace({ quoteType: "project", pricing: p, budget: evalOf(d).budget, originalTotalCents: null, originalCapturedAt: null });
+    const row = v.rows.find((r) => r.sku === "PNQ082")!;
+    expect(row).toMatchObject({ status: "not_priced", unitPriceCents: null, lineRevenueCents: null, lineCostCents: null, unitLandedCostCents: null, margin: null });
+    expect(row.issues[0]).toMatch(/supplier cost is zero.*supplier quote is required/);
+    expect(v.attention.join(" ")).toMatch(/PNQ082: cannot be priced yet \(the supplier cost is zero/);
+    expect(v.totals.totalCents).toBeNull();
+  });
+});

@@ -64,7 +64,9 @@ export function buildPricingWorkspace(i: {
     const l = r?.lines[0];
     const qty = need?.quantity ?? 0;
     const ov = p?.skuPriceOverrides[sku] ?? null;
-    const priced = !!l && l.status === "priced" && l.unitPriceCents !== null;
+    // A zero price or zero landed cost is never a price (the price source says "supplier quote required"): the row must say so, never "priced R 0,00".
+    const zero = !!l && l.status === "priced" && ((l.unitPriceCents ?? 0) <= 0 || (l.unitLandedCostCents ?? 0) <= 0);
+    const priced = !!l && l.status === "priced" && l.unitPriceCents !== null && !zero;
     const unit = priced ? l!.unitPriceCents : null;
     const rev = unit !== null && qty > 0 ? Math.round(unit * qty) : null;
     const cost = priced && l!.unitLandedCostCents !== null && qty > 0 ? Math.round(l!.unitLandedCostCents * qty) : null;
@@ -73,10 +75,10 @@ export function buildPricingWorkspace(i: {
       status: !input ? "no_input" : priced ? "priced" : "not_priced",
       supplier: input?.supplierName ?? null, currency: input?.currency ?? null, nativeUnitCostMicro: input?.nativeUnitCostMicro ?? null, costSource: input?.source ?? null, verification: input?.verification ?? null,
       rate: l?.rate ?? null, freightFactorMicro: input?.freight?.factorMicro ?? null, freightAddOnCents: input?.freight?.addOnCents ?? null,
-      unitLandedCostCents: l?.unitLandedCostCents ?? null, calculatedUnitPriceCents: l?.calculatedUnitPriceCents ?? null, unitPriceCents: unit, priceOrigin: l?.priceOrigin ?? null,
+      unitLandedCostCents: zero ? null : (l?.unitLandedCostCents ?? null), calculatedUnitPriceCents: zero ? null : (l?.calculatedUnitPriceCents ?? null), unitPriceCents: unit, priceOrigin: zero ? null : (l?.priceOrigin ?? null),
       priceOverride: ov ? { unitPriceCents: ov.unitPriceCents, reason: ov.reason, by: ov.by, at: ov.at } : null,
       lineRevenueCents: rev, lineCostCents: cost, margin: rev !== null ? figures(rev, cost) : null,
-      issues: (l?.issues ?? []).map((x) => x.message.replace(`${sku}: `, "")),
+      issues: [...(zero ? ["the supplier cost is zero, so a supplier quote is required (a zero price is never quoted)"] : []), ...(l?.issues ?? []).map((x) => x.message.replace(`${sku}: `, ""))],
     };
   });
 
