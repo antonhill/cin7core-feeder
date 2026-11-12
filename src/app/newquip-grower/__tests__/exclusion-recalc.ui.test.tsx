@@ -250,7 +250,7 @@ describe("unsaved quotation protection", () => {
     await waitFor(() => expect((screen.getByRole("button", { name: "Save draft" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(screen.queryByText("Unsaved changes")).toBeNull(), { timeout: 8000 });
-    expect(unload()).toBe(false);
+    await waitFor(() => expect(unload()).toBe(false), { timeout: 8000 }); // the guard is released by an effect AFTER the badge clears: settle, do not sample once
   }, 30000);
 });
 
@@ -283,7 +283,7 @@ describe("D3-C Solution Builder: visible selected / excluded states and a stable
     (globalThis as { __QID?: string }).__QID = id;
     const { default: Page } = await import("../[id]/page");
     render(createElement(Page));
-    await waitFor(() => expect(screen.getByText("Equipment selections")).toBeTruthy(), { timeout: 5000 });
+    await waitFor(() => expect(screen.getByText("Equipment selections")).toBeTruthy(), { timeout: 15000 }); // the page is a dynamic import: under a loaded full-suite run 5s was not enough
     const controller = box(/Thomas-CL1 controller/).closest("label")!;
     expect(controller.textContent).toMatch(/Included/); // the stored draft ticks the controller
     const silo = box(/Silo weighing/).closest("label")!;
