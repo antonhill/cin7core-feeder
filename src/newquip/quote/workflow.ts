@@ -74,10 +74,18 @@ export function checkHandoff(i: { readiness: Readiness; totalExVatCents: number 
  */
 export function checkSignOff(i: { readiness: Readiness; totalExVatCents: number | null; customerConfirmedCents: number | null; costing: CostingStatus }): Check {
   if (i.readiness.state !== "READY") return fail(`The quote is ${i.readiness.state}; resolve ${i.readiness.reasons[0] ?? "the outstanding items"} before signing off.`);
-  if (!i.costing.complete) return fail(`Costing is incomplete: ${i.costing.reasons[0] ?? "supplier costs are unresolved"}. Complete it (or record an authorised incomplete-cost exception) before signing off.`);
+  if (!i.costing.complete) return fail(incompleteCostingMessage(i.costing.reasons[0], " Complete it (or record an authorised incomplete-cost exception) before signing off."));
   if (i.totalExVatCents == null || i.totalExVatCents <= 0) return fail("There is no contract value to sign off.");
   if (i.customerConfirmedCents == null || i.customerConfirmedCents !== i.totalExVatCents) return fail(AMOUNT_CHANGED_AT_SIGNOFF);
   return { ok: true };
+}
+/**
+ * "Costing is incomplete: <reason>." plus the usual next step. A reason that says it CANNOT be waived (unverified supplier pricing, NQ-008B owner decision 2) never
+ * suggests the incomplete-costing exception, and a reason that already ends in a full stop is not given a second one.
+ */
+function incompleteCostingMessage(reason: string | undefined, nextStep: string): string {
+  const r = (reason ?? "supplier costs are unresolved").replace(/\.+$/, "");
+  return `Costing is incomplete: ${r}.${/cannot be waived/i.test(r) && /exception/.test(nextStep) ? "" : nextStep}`;
 }
 export const AMOUNT_CHANGED_AT_SIGNOFF = "The amount changed since the customer confirmed it. Return it to the Rep to reconfirm.";
 
@@ -95,7 +103,7 @@ export function checkApproval(i: {
   costing: CostingStatus;
 }): Check {
   if (i.readiness.state !== "READY") return fail(`The quote is ${i.readiness.state}; it cannot be approved.`);
-  if (!i.costing.complete) return fail(`Costing is incomplete: ${i.costing.reasons[0] ?? "supplier costs are unresolved"}. It cannot be approved.`);
+  if (!i.costing.complete) return fail(incompleteCostingMessage(i.costing.reasons[0], " It cannot be approved."));
   if (i.totalExVatCents == null || i.totalExVatCents <= 0) return fail("There is no contract value to approve.");
   if (i.customerConfirmedCents == null) return fail("The customer's confirmation was never recorded.");
   if (!i.signoffHash) return fail("The estimator has not signed off this quote.");
