@@ -5,7 +5,7 @@
 // The change and its immutable revision are one database transaction; the existing amount-change workflow then withdraws the Rep's confirmation when the customer total moved.
 // Only async functions and erased types are exported.
 import { createServiceRoleClient } from "@/supabase/server";
-import { applyPricingChange, loadPricingWorkspace, type ApplyReport, type PricingActor, type WorkspaceBundle } from "@/lib/newquip-quotes/pricing-service";
+import { applyPricingChange, loadPricingWorkspace, verifyCosts, type ApplyReport, type PricingActor, type WorkspaceBundle } from "@/lib/newquip-quotes/pricing-service";
 import type { PricingSubmission } from "@/newquip/pricing/estimator/apply";
 import { auditActor, authoriseActor, errText as rawErrText, type Actor } from "./actor";
 
@@ -49,5 +49,18 @@ export async function applyEstimatorPricingAction(quoteId: string, submission: P
 export async function disableEstimatorPricingAction(quoteId: string, reason: string): Promise<PricingActionResult<ApplyReport>> {
   try {
     return await run(quoteId, null, reason);
+  } catch (e) { return { ok: false, error: errText(e) }; }
+}
+
+/** An INDEPENDENT review of supplier costs (not the person who entered them). Prices and the customer total do not change. */
+export async function verifyEstimatorCostsAction(quoteId: string, items: Array<{ sku: string; costHash: string }>, evidence: string): Promise<PricingActionResult<{ seq: number; verified: number }>> {
+  try {
+    const a = await pricingActor();
+    if (typeof quoteId !== "string" || quoteId.length === 0 || quoteId.length > 64 || !Array.isArray(items) || items.length > 300 || items.some((i) => !i || typeof i.sku !== "string" || typeof i.costHash !== "string") || typeof evidence !== "string") throw new TypeError("bad request");
+    const db = createServiceRoleClient();
+    const r = await verifyCosts(db, asPricingActor(a), quoteId, items.map((i) => ({ sku: i.sku, costHash: i.costHash })), evidence);
+    if (!r.ok) return { ok: false, error: r.errors[0], errors: r.errors };
+    await auditActor(db, a, { action: "newquip.cost_verification", summary: "Recorded an independent verification of supplier costs (local only; no Cin7 write)", detail: { quoteId, seq: r.report.seq, verified: r.report.verified } });
+    return { ok: true, data: r.report };
   } catch (e) { return { ok: false, error: errText(e) }; }
 }

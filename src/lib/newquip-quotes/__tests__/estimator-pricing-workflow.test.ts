@@ -51,7 +51,7 @@ describe("11. the full Rep -> Estimator -> Manager workflow with Estimator suppl
     const id = await stored(d);
     await handoff(id, cents(d)); // indicative is allowed
     expect((await loadQuote(db as never, ORG, id))!.state).toBe("ESTIMATOR_REVIEW");
-    expect(await err(estimatorSignOff(db as never, ORG, member, "est@nq", id, ctx))).toMatch(/Costing is incomplete.*not verified.*indicative only/);
+    expect(await err(estimatorSignOff(db as never, ORG, member, "est@nq", id, ctx))).toMatch(/Costing is incomplete.*not been independently verified.*indicative only/);
     expect(await err(managerApprove(db as never, ORG, admin, "mgr@nq", id, ctx))).toMatch(/Costing is incomplete|has not signed off/);
   });
   it("MISSING cost: a SKU with no supplier cost leaves the quotation BLOCKED, never priced at zero, and nothing can be signed off", async () => {
@@ -91,7 +91,7 @@ describe("8. an Estimator price change after handoff follows the existing Rep re
     expect(snap1.snapshot.internal.priceSource.id).toBe("estimator_supplier_pricing");
 
     // the Estimator records a 90-day forward-cover rate (what the pricing action will do in the next PR): the draft changes, the total changes
-    const cheaper = withPricing(equivalentInputs({ revision: 2, forwardCover: { EUR: { rateMicro: micro("19"), coverDays: 90, reason: "90-day forward contract", by: EST, at: AT } } }, "verified"));
+    const cheaper = withPricing(equivalentInputs({ revision: 2, forwardCover: { EUR: { rateMicro: micro("19"), coverDays: 90, reference: "FEC-FIX", validFrom: "2026-11-01", validUntil: "2026-12-31", reason: "90-day forward contract", by: EST, at: AT } } }, "verified"));
     await saveDraft(db as never, ORG, member, id, cheaper);
     const after = cents(cheaper);
     expect(after).toBeLessThan(before);

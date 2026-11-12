@@ -14,9 +14,9 @@ import type { ItemOverride, PricingRuleVersion, PricingScenario, ProjectAdjustme
 // A cost, rate or price that is not known is NULL and is reported; it is never 0, and a line that cannot be priced is left out of the totals and says why.
 
 export type LineStatus = "priced" | "not_priced";
-export type IssueCode = "cost_missing" | "cost_unverified_blocked" | "rate_missing" | "unverified_cost" | "freight_unspecified" | "freight_blocked" | "stale_rate" | "price_override_without_cost";
+export type IssueCode = "cost_missing" | "cost_unverified_blocked" | "rate_missing" | "unverified_cost" | "freight_unspecified" | "freight_blocked" | "rate_expired" | "forward_cover_expired" | "forward_cover_not_yet_valid" | "forward_cover_undocumented" | "price_override_without_cost";
 /** Issues that make the whole quotation provisional (a figure exists but rests on something unconfirmed). A line that is not priced makes it incomplete. */
-const PROVISIONAL: ReadonlySet<IssueCode> = new Set(["unverified_cost", "freight_unspecified", "stale_rate", "price_override_without_cost"]);
+const PROVISIONAL: ReadonlySet<IssueCode> = new Set(["unverified_cost", "freight_unspecified", "price_override_without_cost"]);
 
 export interface Issue { key: string | null; code: IssueCode | "adjustment_not_applied"; message: string }
 export type RateKind = "base" | "spot" | "forward_cover";
@@ -121,13 +121,24 @@ export function validateScenario(s: PricingScenario): string[] {
       if (l.freight.addOnCents !== undefined && (!isInt(l.freight.addOnCents) || l.freight.addOnCents < 0)) e.push(`${l.label}: the landed-cost add-on must be a whole number of cents, not negative.`);
     }
   }
-  for (const [cur, q] of Object.entries(s.fxQuotes)) if (q && (!ISO.test(cur) || cur === "ZAR" || !isInt(q.rateMicro) || q.rateMicro <= 0)) e.push(`The ${cur} exchange rate is not valid (ZAR is always 1).`);
+  for (const [cur, q] of Object.entries(s.fxQuotes)) {
+    if (q && (!ISO.test(cur) || cur === "ZAR" || !isInt(q.rateMicro) || q.rateMicro <= 0)) e.push(`The ${cur} exchange rate is not valid (ZAR is always 1).`);
+    if (q) {
+      const t = Date.parse(q.asOf);
+      if (!Number.isFinite(t)) e.push(`The ${cur} rate has no valid date.`);
+      else if (t > Date.parse(s.pricingDate) + 5 * 60_000) e.push(`The ${cur} rate cannot be dated after the pricing date.`);
+      if (!q.source || q.source.trim().length < 3) e.push(`The ${cur} rate needs a source (provider, fixing or quote).`);
+    }
+  }
   for (const [cur, f] of Object.entries(s.forwardCover)) {
     if (!f) continue;
     if (!ISO.test(cur) || cur === "ZAR") e.push(`A forward-cover rate cannot be set for ${cur}.`);
     if (!isInt(f.rateMicro) || f.rateMicro <= 0) e.push(`The ${cur} forward-cover rate must be greater than zero.`);
     if (!isInt(f.coverDays) || f.coverDays <= 0) e.push(`The ${cur} forward-cover period must be a whole number of days.`);
     if (!hasReason(f)) e.push(`The ${cur} forward-cover rate needs a reason.`);
+    const vf = f.validFrom ? Date.parse(f.validFrom) : null, vu = f.validUntil ? Date.parse(f.validUntil) : null;
+    if ((f.validFrom && !Number.isFinite(vf)) || (f.validUntil && !Number.isFinite(vu))) e.push(`The ${cur} forward-cover validity dates are not valid dates.`);
+    else if (vf !== null && vu !== null && vf > vu) e.push(`The ${cur} forward-cover validity ends before it starts.`);
   }
   for (const [key, o] of Object.entries(s.itemOverrides)) {
     if (!o) continue;
@@ -179,14 +190,19 @@ export function calculatePricing(scenario: PricingScenario, rules: PricingRuleVe
       if (c.currency === "ZAR") rate = { currency: "ZAR", rateMicro: 1_000_000, kind: "base", source: "Rand", asOf: null, coverDays: null };
       else if (scenario.forwardCover[c.currency]) {
         const f = scenario.forwardCover[c.currency]!;
-        rate = { currency: c.currency, rateMicro: f.rateMicro, kind: "forward_cover", source: `Forward cover (${f.coverDays} days) set by ${f.by}`, asOf: f.at, coverDays: f.coverDays };
+        // A forward-cover rate is used only while it is DOCUMENTED (contract reference + validity dates) and INSIDE its validity. Otherwise the line is not priced: it never falls back to spot.
+        const from = f.validFrom ? Date.parse(f.validFrom) : NaN;
+        const until = f.validUntil ? Date.parse(f.validUntil) + (f.validUntil.length <= 10 ? 86_400_000 - 1 : 0) : NaN;
+        if (rules.forwardCoverNeedsValidity && (!f.reference?.trim() || !Number.isFinite(from) || !Number.isFinite(until))) add("forward_cover_undocumented", `the ${c.currency} forward-cover rate needs a contract reference and validity dates, so it is not used.`);
+        else if (Number.isFinite(from) && nowMs < from) add("forward_cover_not_yet_valid", `the ${c.currency} forward-cover rate is not valid until ${f.validFrom}.`);
+        else if (Number.isFinite(until) && nowMs > until) add("forward_cover_expired", `the ${c.currency} forward-cover rate expired on ${f.validUntil}.`);
+        else rate = { currency: c.currency, rateMicro: f.rateMicro, kind: "forward_cover", source: `Forward cover ${f.reference ? `${f.reference} ` : ""}(${f.coverDays} days) set by ${f.by}`, asOf: f.at, coverDays: f.coverDays };
       } else if (scenario.fxQuotes[c.currency]) {
         const q = scenario.fxQuotes[c.currency]!;
-        rate = { currency: c.currency, rateMicro: q.rateMicro, kind: "spot", source: q.source, asOf: q.asOf, coverDays: null };
-        if (rules.maxRateAgeDays !== null) {
-          const ageDays = (nowMs - Date.parse(q.asOf)) / 86_400_000;
-          if (!(ageDays <= rules.maxRateAgeDays)) add("stale_rate", `the ${c.currency} rate is older than ${rules.maxRateAgeDays} days.`);
-        }
+        const ageHours = (nowMs - Date.parse(q.asOf)) / 3_600_000;
+        // An EXPIRED spot rate prices nothing (never an older rate, never zero): record a current rate.
+        if (rules.spotRateMaxAgeHours !== null && !(ageHours <= rules.spotRateMaxAgeHours)) add("rate_expired", `the ${c.currency} spot rate is older than ${rules.spotRateMaxAgeHours} hours, so it is not used.`);
+        else rate = { currency: c.currency, rateMicro: q.rateMicro, kind: "spot", source: q.source, asOf: q.asOf, coverDays: null };
       } else add("rate_missing", `there is no ${c.currency} exchange rate, so the rand cost cannot be calculated.`);
 
       if (c.verification === "unverified") {

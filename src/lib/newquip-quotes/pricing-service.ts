@@ -3,16 +3,16 @@ import "server-only";
 import type { createServiceRoleClient } from "@/supabase/server";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
-import { buildPricingWorkspace, canEnterPricingInputs, submissionFrom, type PricingSubmission, type PricingWorkspaceView, type Viewer } from "@/newquip/pricing/estimator";
+import { buildPricingWorkspace, canEnterPricingInputs, mayReviewCosts, mayVerifySku, selectRuleVersion, submissionFrom, type PricingSubmission, type PricingWorkspaceView, type VerifyItem, type Viewer } from "@/newquip/pricing/estimator";
 import { returnByOf } from "./return-store";
 import { reconcileConfirmationAmount, resyncApprovalsLogged, type AmountInvalidation } from "./confirmation-reconcile";
 import { latestIndicativeSnapshot } from "./indicative-store";
 import { loadQuote } from "./quote-store";
-import { applyEstimatorPricing, listPricingRevisions, type PricingRevisionRow } from "./pricing-store";
+import { applyEstimatorPricing, listPricingRevisions, verifyEstimatorCosts, type PricingRevisionRow } from "./pricing-store";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 export interface PricingActor { orgId: string; userId: string; email: string; roles: ReadonlySet<"rep" | "estimator" | "manager">; canSeeCost: boolean }
-export interface WorkspaceBundle { view: PricingWorkspaceView; /** The stored inputs as the form edits them (null while the model is off). */ current: PricingSubmission | null; revisions: PricingRevisionRow[]; state: string; revision: number; canEdit: boolean }
+export interface WorkspaceBundle { view: PricingWorkspaceView; /** What THIS viewer may do about cost verification: the SKUs they may independently verify now (never ones they entered themselves). */ verification: { canReview: boolean; reviewerRoles: string[]; verifiableSkus: string[] }; /** The stored inputs as the form edits them (null while the model is off). */ current: PricingSubmission | null; revisions: PricingRevisionRow[]; state: string; revision: number; canEdit: boolean }
 
 const viewerOf = (a: PricingActor): Viewer => ({ roles: a.roles, canSeeCost: a.canSeeCost });
 
@@ -25,10 +25,22 @@ export async function loadPricingWorkspace(db: Db, a: PricingActor, quoteId: str
   const ev = evaluateDraft(q.draft, evaluationContext(false));
   const snap = await latestIndicativeSnapshot(db, a.orgId, quoteId);
   const view = buildPricingWorkspace({ quoteType: q.draft.quoteType, pricing: q.draft.estimator.pricing, budget: ev.budget, originalTotalCents: snap?.snapshot.customerSafe.subtotalCents ?? null, originalCapturedAt: snap?.created_at ?? null });
-  return { view, current: q.draft.estimator.pricing ? submissionFrom(q.draft.estimator.pricing) : null, revisions: await listPricingRevisions(db, a.orgId, quoteId), state: q.state, revision: q.revision, canEdit: canEnterPricingInputs(viewerOf(a)) && q.state !== "MANAGER_APPROVED_FINAL" };
+  const sel = selectRuleVersion(q.draft.estimator.pricing?.ruleVersionId ?? null);
+  const verification = sel.ok
+    ? { canReview: mayReviewCosts(viewerOf(a), sel.rules), reviewerRoles: [...sel.rules.costReview.reviewerRoles], verifiableSkus: Object.keys(q.draft.estimator.pricing?.skus ?? {}).filter((k) => mayVerifySku(viewerOf(a), a.email, q.draft.estimator.pricing!.skus[k], sel.rules)).sort() }
+    : { canReview: false, reviewerRoles: [], verifiableSkus: [] };
+  return { view, verification, current: q.draft.estimator.pricing ? submissionFrom(q.draft.estimator.pricing) : null, revisions: await listPricingRevisions(db, a.orgId, quoteId), state: q.state, revision: q.revision, canEdit: canEnterPricingInputs(viewerOf(a)) && q.state !== "MANAGER_APPROVED_FINAL" };
 }
 
 export interface ApplyReport { seq: number; kind: string; changedValues: number; confirmation: AmountInvalidation | null }
+
+/** An independent cost verification: one immutable revision. The Rep's confirmation is untouched (no price moves); the Estimator's sign-off is withdrawn by the write itself. */
+export async function verifyCosts(db: Db, a: PricingActor, quoteId: string, items: VerifyItem[], evidence: string): Promise<{ ok: true; report: { seq: number; verified: number } } | { ok: false; errors: string[] }> {
+  const out = await verifyEstimatorCosts(db, a.orgId, quoteId, viewerOf(a), a.email, items, evidence);
+  if (!out.ok) return out;
+  await resyncApprovalsLogged(db, { orgId: a.orgId, userId: a.userId, email: a.email }, quoteId, { returnedToRep: false, signoffCleared: true });
+  return { ok: true, report: { seq: out.seq, verified: new Set(items.map((i) => i.sku)).size } };
+}
 
 /**
  * Applies (or, with a null submission, switches off) the Estimator pricing as one immutable revision, then runs the SAME confirmation workflow every draft writer runs: if the

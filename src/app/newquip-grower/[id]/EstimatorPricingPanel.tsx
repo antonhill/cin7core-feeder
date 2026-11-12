@@ -9,7 +9,7 @@ import { Status } from "@/components/ui/Status";
 import { formatSast } from "@/lib/approvals/time";
 import { fromMicro, micro, LEGACY_RULE_VERSION, type PricingSubmission, type SkuRow } from "@/newquip/pricing/estimator";
 import type { WorkspaceBundle } from "@/lib/newquip-quotes/pricing-service";
-import { applyEstimatorPricingAction, disableEstimatorPricingAction, getEstimatorPricingAction } from "../pricing-actions";
+import { applyEstimatorPricingAction, disableEstimatorPricingAction, getEstimatorPricingAction, verifyEstimatorCostsAction } from "../pricing-actions";
 import { fmtCents } from "../fields";
 
 // NQ-008B Phase 2: the ESTIMATOR PRICING WORKSPACE. INTERNAL: it shows supplier costs, rates, freight, markup and margin, so the page mounts it only for an Estimator or
@@ -25,7 +25,7 @@ const toMicro = (s: string): number | null => { try { return s.trim() === "" ? n
 const toCents = (s: string): number | null => { const n = Number(s.replace(/\s/g, "").replace(",", ".")); return s.trim() !== "" && Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null; };
 
 type Draft = PricingSubmission;
-const blankSku = (): Draft["skus"][string] => ({ supplierId: null, supplierName: "", currency: "ZAR", nativeUnitCostMicro: 0, verification: "unverified", source: "", freight: { factorMicro: 1_000_000, source: "" } });
+const blankSku = (): Draft["skus"][string] => ({ supplierId: null, supplierName: "", currency: "ZAR", nativeUnitCostMicro: 0, source: "", freight: { factorMicro: 1_000_000, source: "" } });
 
 export function EstimatorPricingPanel({ quoteId, reload, unsaved }: { quoteId: string; reload?: () => void; unsaved?: boolean }) {
   const [b, setB] = useState<WorkspaceBundle | null>(null);
@@ -35,6 +35,9 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved }: { quoteId: s
   const [errors, setErrors] = useState<string[]>([]);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [clears, setClears] = useState<Record<string, number>>({});
+  const [evidence, setEvidence] = useState("");
 
   const load = useCallback(() => {
     void getEstimatorPricingAction(quoteId).then((r) => {
@@ -51,6 +54,10 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved }: { quoteId: s
   const edit = b.canEdit;
   const set = (f: (d: Draft) => void) => setDraft((d) => { const n = structuredClone(d!); f(n); return n; });
   const rowsToShow = v.rows;
+  // Exchange-rate rows appear as soon as a SKU is in a foreign currency (not only after a save).
+  const foreign = [...new Set([...Object.values(draft.skus).map((s) => s?.currency ?? "").filter((c) => /^[A-Z]{3}$/.test(c) && c !== "ZAR"), ...v.currencies.map((c) => c.currency)])].sort();
+  const rateOf = (c: string) => v.rates.find((x) => x.currency === c);
+  const verifiable = new Set(b.verification.verifiableSkus);
 
   async function save() {
     if (!draft) return;
@@ -61,6 +68,14 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved }: { quoteId: s
     const c = r.data?.confirmation;
     setNote(c?.returnedToRep ? "Saved as revision " + r.data!.seq + ". The customer total changed, so the Rep's confirmation was withdrawn and the quotation is back with the Rep to reconfirm." : `Saved as revision ${r.data!.seq}. The customer total did not change; the Estimator sign-off (if any) was withdrawn because the content changed.`);
     setReason(""); load(); reload?.();
+  }
+  async function verify() {
+    setBusy(true); setErrors([]); setNote(null);
+    const r = await verifyEstimatorCostsAction(quoteId, picked.map((sku) => ({ sku, costHash: v.rows.find((r) => r.sku === sku)?.costHash ?? "" })), evidence);
+    setBusy(false);
+    if (!r.ok) { setErrors(r.errors?.length ? r.errors : [r.error ?? "Could not verify."]); return; }
+    setNote(`Recorded as revision ${r.data!.seq}: ${r.data!.verified} supplier cost${r.data!.verified === 1 ? "" : "s"} independently verified. No price changed; the Estimator sign-off (if any) was withdrawn.`);
+    setPicked([]); setEvidence(""); load(); reload?.();
   }
   async function off() {
     setBusy(true); setErrors([]); setNote(null);
@@ -90,7 +105,8 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved }: { quoteId: s
         <div><dt className="text-xs text-slate-700">Project markup</dt><dd className="tabular-nums font-semibold" data-testid="sum-markup-rule">{v.markup.bps == null ? "Rule version default" : `${v.markup.bps / 100}% (changed)`}</dd></div>
         <div><dt className="text-xs text-slate-700">Gross margin (costed lines)</dt><dd className="tabular-nums font-semibold" data-testid="sum-margin">{pct(v.totals.margin?.marginPct)}</dd></div>
         <div><dt className="text-xs text-slate-700">Markup on cost (costed lines)</dt><dd className="tabular-nums font-semibold" data-testid="sum-markup">{pct(v.totals.margin?.markupPct)}</dd></div>
-        <div className="sm:col-span-2"><dt className="text-xs text-slate-700">Pricing completeness</dt><dd data-testid="sum-complete">{v.totals.priceComplete ? "Every line has a price" : "Some lines are NOT priced: there is no project total yet"}</dd></div>
+        <div><dt className="text-xs text-slate-700">Supplier costs independently verified</dt><dd className="tabular-nums font-semibold" data-testid="sum-verified">{v.costs.verified} of {v.costs.required}</dd></div>
+        <div className="sm:col-span-2"><dt className="text-xs text-slate-700">Price completeness</dt><dd data-testid="sum-complete">{v.totals.priceComplete ? "Every line has a price" : "Some lines are NOT priced: there is no project total yet"}</dd></div>
       </dl>
       <p className="text-xs text-slate-700">Margin is a share of the selling price; markup is a share of the cost. They are different numbers. Lines the Estimator prices by design (M75, penning, manual prices) carry no cost and are outside both.</p>
 
@@ -100,34 +116,45 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved }: { quoteId: s
 
       <div className="overflow-x-auto">
         <table className="w-full min-w-[1100px] text-left text-sm" data-testid="pricing-table">
-          <thead><tr className="text-xs text-slate-700">{["SKU / used by", "Qty", "Supplier", "Cur", "Supplier cost", "Source", "Verified", "Rate used", "Freight ×", "Landed / unit", "Unit price", "Line total", "Margin / markup"].map((h) => <th key={h} className="px-2 py-1 font-medium">{h}</th>)}</tr></thead>
+          <thead><tr className="text-xs text-slate-700">{["SKU / used by", "Qty", "Supplier", "Cur", "Supplier cost", "Source", "Cost verification", "Rate used", "Freight ×", "Landed / unit", "Unit price", "Line total", "Margin / markup"].map((h) => <th key={h} className="px-2 py-1 font-medium">{h}</th>)}</tr></thead>
           <tbody>
-            {rowsToShow.map((r) => <Row key={r.sku} r={r} edit={edit} input={draft.skus[r.sku]} override={draft.skuPriceOverrides[r.sku]} set={set} />)}
+            {rowsToShow.map((r) => <Row key={`${r.sku}:${clears[r.sku] ?? 0}`} r={r} edit={edit} input={draft.skus[r.sku]} override={draft.skuPriceOverrides[r.sku]} set={set}
+              canPick={verifiable.has(r.sku)} picked={picked.includes(r.sku)} onPick={(on) => setPicked((p) => (on ? [...new Set([...p, r.sku])] : p.filter((x) => x !== r.sku)))}
+              onClear={() => { set((d) => { delete d.skus[r.sku]; }); setClears((c) => ({ ...c, [r.sku]: (c[r.sku] ?? 0) + 1 })); setPicked((p) => p.filter((x) => x !== r.sku)); }} />)}
           </tbody>
         </table>
       </div>
       {edit && <AddSku onAdd={addSku} />}
 
-      {v.currencies.length > 0 && (
+      {foreign.length > 0 && (
         <div data-testid="pricing-fx">
           <h4 className="text-sm font-semibold text-slate-900">Exchange rates (rand per 1 unit) and forward cover</h4>
+          <p className="text-xs text-slate-700">A spot rate older than {v.rates[0]?.maxAgeHours ?? 24} hours is expired: the lines using it are not priced, and sign-off and approval are blocked until a current rate is saved. Nothing is repriced until you save. A forward-cover rate needs its contract reference and validity dates and is used only inside them.</p>
           <ul className="mt-1 space-y-2">
-            {v.currencies.map((c) => {
-              const spot = draft.fxQuotes[c.currency]; const fc = draft.forwardCover[c.currency];
+            {foreign.map((cur) => {
+              const c = v.currencies.find((x) => x.currency === cur); const rt = rateOf(cur);
+              const spot = draft.fxQuotes[cur]; const fc = draft.forwardCover[cur];
               return (
-                <li key={c.currency} className="rounded-md border border-slate-200 p-2" data-testid={`fx-${c.currency}`}>
+                <li key={cur} className="rounded-md border border-slate-200 p-2" data-testid={`fx-${cur}`}>
                   <div className="flex flex-wrap items-end gap-2">
-                    <b className="w-10">{c.currency}</b>
-                    <Input label={`${c.currency} spot rate`} disabled={!edit} defaultValue={dec(spot?.rateMicro)} onBlur={(e) => { const m = toMicro(e.target.value); set((d) => { d.fxQuotes[c.currency] = { rateMicro: m ?? 0, source: d.fxQuotes[c.currency]?.source ?? "", asOf: d.fxQuotes[c.currency]?.asOf ?? new Date().toISOString() }; }); }} />
-                    <Input label={`${c.currency} rate source`} disabled={!edit} defaultValue={spot?.source ?? ""} onBlur={(e) => set((d) => { if (d.fxQuotes[c.currency]) d.fxQuotes[c.currency]!.source = e.target.value; })} />
-                    <Input label={`${c.currency} forward-cover rate`} disabled={!edit} defaultValue={dec(fc?.rateMicro)} placeholder="none" onBlur={(e) => { const m = toMicro(e.target.value); set((d) => { if (m === null) delete d.forwardCover[c.currency]; else d.forwardCover[c.currency] = { rateMicro: m, coverDays: d.forwardCover[c.currency]?.coverDays ?? 90, reason: d.forwardCover[c.currency]?.reason ?? "", reference: d.forwardCover[c.currency]?.reference }; }); }} />
+                    <b className="w-10">{cur}</b>
+                    <Input label={`${cur} spot rate`} disabled={!edit} defaultValue={dec(spot?.rateMicro)} onBlur={(e) => { const m = toMicro(e.target.value); if (m === null) return; set((d) => { d.fxQuotes[cur] = { rateMicro: m, source: d.fxQuotes[cur]?.source ?? "", asOf: new Date().toISOString() }; }); }} />
+                    <Input label={`${cur} rate source`} disabled={!edit} defaultValue={spot?.source ?? ""} onBlur={(e) => set((d) => { if (d.fxQuotes[cur]) d.fxQuotes[cur]!.source = e.target.value; })} />
+                    <Input label={`${cur} forward-cover rate`} disabled={!edit} defaultValue={dec(fc?.rateMicro)} placeholder="none" onBlur={(e) => { const m = toMicro(e.target.value); set((d) => { if (e.target.value.trim() === "") delete d.forwardCover[cur]; else if (m !== null) d.forwardCover[cur] = { rateMicro: m, coverDays: d.forwardCover[cur]?.coverDays ?? 90, reason: d.forwardCover[cur]?.reason ?? "", reference: d.forwardCover[cur]?.reference, validFrom: d.forwardCover[cur]?.validFrom, validUntil: d.forwardCover[cur]?.validUntil }; }); }} />
                     {fc && <>
-                      <Input label={`${c.currency} cover days`} disabled={!edit} className="w-20" defaultValue={String(fc.coverDays)} onBlur={(e) => set((d) => { if (d.forwardCover[c.currency]) d.forwardCover[c.currency]!.coverDays = Math.round(Number(e.target.value)) || 0; })} />
-                      <Input label={`${c.currency} contract reference`} disabled={!edit} defaultValue={fc.reference ?? ""} onBlur={(e) => set((d) => { if (d.forwardCover[c.currency]) d.forwardCover[c.currency]!.reference = e.target.value; })} />
-                      <Input label={`${c.currency} forward-cover reason`} disabled={!edit} defaultValue={fc.reason} onBlur={(e) => set((d) => { if (d.forwardCover[c.currency]) d.forwardCover[c.currency]!.reason = e.target.value; })} />
+                      <Input label={`${cur} cover days`} disabled={!edit} className="w-20" defaultValue={String(fc.coverDays)} onBlur={(e) => set((d) => { if (d.forwardCover[cur]) d.forwardCover[cur]!.coverDays = Math.round(Number(e.target.value)) || 0; })} />
+                      <Input label={`${cur} contract reference`} disabled={!edit} defaultValue={fc.reference ?? ""} onBlur={(e) => set((d) => { if (d.forwardCover[cur]) d.forwardCover[cur]!.reference = e.target.value; })} />
+                      <Input label={`${cur} forward-cover valid from`} placeholder="YYYY-MM-DD" disabled={!edit} className="w-32" defaultValue={fc.validFrom ?? ""} onBlur={(e) => set((d) => { if (d.forwardCover[cur]) d.forwardCover[cur]!.validFrom = e.target.value.trim() || undefined; })} />
+                      <Input label={`${cur} forward-cover valid until`} placeholder="YYYY-MM-DD" disabled={!edit} className="w-32" defaultValue={fc.validUntil ?? ""} onBlur={(e) => set((d) => { if (d.forwardCover[cur]) d.forwardCover[cur]!.validUntil = e.target.value.trim() || undefined; })} />
+                      <Input label={`${cur} forward-cover reason`} disabled={!edit} defaultValue={fc.reason} onBlur={(e) => set((d) => { if (d.forwardCover[cur]) d.forwardCover[cur]!.reason = e.target.value; })} />
                     </>}
                   </div>
-                  <p className="mt-1 text-xs text-slate-700">{c.spot ? `Spot as of ${formatSast(c.spot.asOf)}.` : "No spot rate recorded: lines in this currency are not priced."}{c.forwardCover ? ` Forward cover in force (${c.forwardCover.coverDays} days): set by ${c.forwardCover.by}, ${formatSast(c.forwardCover.at)}.` : ""}</p>
+                  <p className="mt-1 text-xs text-slate-700" data-testid={`fx-note-${cur}`}>
+                    {c?.spot ? `Spot recorded ${formatSast(c.spot.asOf)}${rt?.spotAgeHours != null ? ` (${rt.spotAgeHours} h ago)` : ""}.` : "No spot rate recorded yet: lines in this currency are not priced."}
+                    {rt?.spotExpired ? " EXPIRED: record a current rate." : ""}
+                    {c?.forwardCover ? ` Forward cover in force: ${c.forwardCover.coverDays} days${c.forwardCover.reference ? `, contract ${c.forwardCover.reference}` : ""}${c.forwardCover.validUntil ? `, valid until ${c.forwardCover.validUntil}` : ""}; set by ${c.forwardCover.by}, ${formatSast(c.forwardCover.at)}.` : ""}
+                    {rt?.forwardExpired ? " The forward-cover rate has EXPIRED." : ""}
+                  </p>
                 </li>
               );
             })}
@@ -155,6 +182,18 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved }: { quoteId: s
           ) : <p className="mt-1 text-xs text-slate-700">Never applied to the customer quotation: how a project-level adjustment appears to the customer is not yet decided by NewQuip.</p>}
         </div>
       </div>
+
+      {b.verification.canReview && b.state !== "MANAGER_APPROVED_FINAL" && (
+        <div className="space-y-2 rounded-md border border-slate-300 p-2" data-testid="verify-block">
+          <h4 className="text-sm font-semibold text-slate-900">Independent cost verification</h4>
+          <p className="text-xs text-slate-700">You may verify a supplier cost you did not enter ({b.verification.reviewerRoles.join(" or ")}; provisional). Tick the costs you have checked against the evidence. Verifying changes no price and does not touch the customer total. Any later change to a cost makes its verification stop applying.</p>
+          <Input label="Evidence checked (for example the supplier quote reference)" value={evidence} onChange={(e) => setEvidence(e.target.value)} className="w-full sm:w-[28rem]" />
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" onClick={verify} disabled={busy || picked.length === 0 || evidence.trim().length < 3} data-testid="verify-save">Verify {picked.length} selected cost{picked.length === 1 ? "" : "s"}</Button>
+            <Button size="sm" variant="secondary" onClick={() => setPicked([...verifiable])} disabled={busy || verifiable.size === 0} data-testid="verify-all">Select all I may verify ({verifiable.size})</Button>
+          </div>
+        </div>
+      )}
 
       {edit && (
         <div className="space-y-2 border-t border-slate-200 pt-3">
@@ -196,7 +235,7 @@ function AddSku({ onAdd }: { onAdd: (sku: string) => void }) {
   );
 }
 
-function Row({ r, edit, input, override, set }: { r: SkuRow; edit: boolean; input: Draft["skus"][string] | undefined; override: Draft["skuPriceOverrides"][string] | undefined; set: (f: (d: Draft) => void) => void }) {
+function Row({ r, edit, input, override, set, canPick, picked, onPick, onClear }: { r: SkuRow; edit: boolean; input: Draft["skus"][string] | undefined; override: Draft["skuPriceOverrides"][string] | undefined; set: (f: (d: Draft) => void) => void; canPick: boolean; picked: boolean; onPick: (on: boolean) => void; onClear: () => void }) {
   const tone = r.status === "priced" ? "success" : "danger";
   const upd = (f: (s: Draft["skus"][string]) => void) => set((d) => { d.skus[r.sku] = d.skus[r.sku] ?? blankSku(); f(d.skus[r.sku]); });
   return (
@@ -206,9 +245,14 @@ function Row({ r, edit, input, override, set }: { r: SkuRow; edit: boolean; inpu
         <td className="px-2 py-1 tabular-nums">{r.quantity}</td>
         <td className="px-2 py-1"><Input hideLabel label={`${r.sku} supplier`} disabled={!edit} defaultValue={input?.supplierName ?? ""} className="w-32" onBlur={(e) => upd((s) => { s.supplierName = e.target.value; })} /></td>
         <td className="px-2 py-1"><Input hideLabel label={`${r.sku} currency`} disabled={!edit} defaultValue={input?.currency ?? "ZAR"} className="w-16" onBlur={(e) => upd((s) => { s.currency = e.target.value.trim().toUpperCase(); })} /></td>
-        <td className="px-2 py-1"><Input hideLabel label={`${r.sku} supplier cost`} disabled={!edit} defaultValue={dec(input?.nativeUnitCostMicro)} className="w-24" onBlur={(e) => upd((s) => { s.nativeUnitCostMicro = toMicro(e.target.value) ?? 0; })} /></td>
+        <td className="px-2 py-1"><Input hideLabel label={`${r.sku} supplier cost`} disabled={!edit} defaultValue={dec(input?.nativeUnitCostMicro)} className="w-24" onBlur={(e) => { const m = toMicro(e.target.value); if (m !== null) upd((s) => { s.nativeUnitCostMicro = m; }); }} /></td>
         <td className="px-2 py-1"><Input hideLabel label={`${r.sku} cost source`} disabled={!edit} defaultValue={input?.source ?? ""} className="w-32" onBlur={(e) => upd((s) => { s.source = e.target.value; })} /></td>
-        <td className="px-2 py-1"><select aria-label={`${r.sku} verification`} disabled={!edit} defaultValue={input?.verification ?? "unverified"} className="rounded border border-slate-300 px-1 py-1 text-sm" onChange={(e) => upd((s) => { s.verification = e.target.value as "verified" | "unverified"; })}><option value="unverified">Unverified</option><option value="verified">Verified</option></select></td>
+        <td className="px-2 py-1 text-xs" data-testid="cost-state" data-cost-state={r.costState}>
+          <Status tone={r.costState === "verified" ? "success" : r.costState === "missing" ? "danger" : "warning"}>{r.costState === "verified" ? "Verified" : r.costState === "missing" ? "No cost" : r.costState === "review_outdated" ? "Changed since verified" : r.costState === "self_reviewed" ? "Not independent" : "Unverified"}</Status>
+          {r.review && <div>by {r.review.by}, {formatSast(r.review.at)}<br />{r.review.evidence}</div>}
+          {r.enteredBy && <div className="text-slate-600">entered by {r.enteredBy}</div>}
+          {r.priceBasis === "manual_price" && <div className="text-slate-900">Price is a MANUAL price; its supplier cost still has to be recorded and verified.</div>}
+        </td>
         <td className="px-2 py-1 text-xs">{r.rate ? `${r.rate.kind === "forward_cover" ? `Forward cover (${r.rate.coverDays} d)` : r.rate.kind === "spot" ? "Spot" : "Rand"} ${fromMicro(r.rate.rateMicro)}` : "n/a"}</td>
         <td className="px-2 py-1"><Input hideLabel label={`${r.sku} freight factor`} disabled={!edit} defaultValue={dec(input?.freight?.factorMicro)} className="w-16" onBlur={(e) => upd((s) => { s.freight = { factorMicro: toMicro(e.target.value) ?? 1_000_000, addOnCents: s.freight?.addOnCents, source: s.freight?.source || "Estimator" }; })} /></td>
         <td className="px-2 py-1 tabular-nums">{rand(r.unitLandedCostCents)}</td>
@@ -222,6 +266,8 @@ function Row({ r, edit, input, override, set }: { r: SkuRow; edit: boolean; inpu
             <Input label={`${r.sku} price override per unit (R)`} disabled={!edit} className="w-28" defaultValue={override ? String(override.unitPriceCents / 100) : ""} placeholder="none" onBlur={(e) => set((d) => { if (e.target.value.trim() === "") delete d.skuPriceOverrides[r.sku]; else d.skuPriceOverrides[r.sku] = { unitPriceCents: toCents(e.target.value) ?? 0, reason: d.skuPriceOverrides[r.sku]?.reason ?? "" }; })} />
             {override && <Input label={`${r.sku} override reason (required)`} disabled={!edit} className="w-64" defaultValue={override.reason} onBlur={(e) => set((d) => { if (d.skuPriceOverrides[r.sku]) d.skuPriceOverrides[r.sku]!.reason = e.target.value; })} />}
             {r.priceOverride && <span>Override set by {r.priceOverride.by}, {formatSast(r.priceOverride.at)}</span>}
+            {edit && input && <Button size="sm" variant="secondary" onClick={onClear} data-testid="clear-cost">Clear supplier cost</Button>}
+            {canPick && <label className="flex items-center gap-1"><input type="checkbox" checked={picked} onChange={(e) => onPick(e.target.checked)} aria-label={`Verify ${r.sku} cost`} />Verify this cost</label>}
             {r.issues.length > 0 && <span className="text-slate-900" data-testid="row-issues">{r.issues.join(" · ")}</span>}
             <span className="text-slate-700">Quantity changes are made in the quantity overrides, with their own reasons.</span>
           </div>

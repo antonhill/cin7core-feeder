@@ -43,7 +43,7 @@ describe("who may change pricing, and what a valid change looks like", () => {
     const sub = strip(first.next!);
     const sku = "PNQ082";
     sub.skus[sku] = { ...sub.skus[sku], nativeUnitCostMicro: micro("60") } as never;
-    sub.forwardCover = { EUR: { rateMicro: micro("19"), coverDays: 90, reference: "FEC-9", reason: "  90-day forward contract  " } };
+    sub.forwardCover = { EUR: { rateMicro: micro("19"), coverDays: 90, validFrom: "2026-11-01", validUntil: "2026-12-31", reference: "FEC-9", reason: "  90-day forward contract  " } };
     const second = applyPricingSubmission(first.next!, sub, EST_V, "mgr@nq", "2026-11-14T09:00:00.000Z", "Forward cover booked", "project");
     expect(second.ok).toBe(true);
     if (!second.ok) return;
@@ -105,12 +105,12 @@ describe("strict submission shape (independent security review)", () => {
       expect(errs(r), bad).toMatch(/not a valid key/);
     }
   });
-  it("refuses wrong types, non-integers, out-of-bound numbers, overlong text, a bad verification value and a future rate date", () => {
+  it("refuses wrong types, non-integers, out-of-bound numbers, overlong text, a zero cost and a future rate date", () => {
     expect(errs(run((s) => { Object.values<any>(s.skus)[0].supplierName = 12345; }))).toMatch(/supplier must be text/); // eslint-disable-line @typescript-eslint/no-explicit-any
     expect(errs(run((s) => { Object.values<any>(s.skus)[0].nativeUnitCostMicro = 1.5; }))).toMatch(/supplier cost must be a whole number/); // eslint-disable-line @typescript-eslint/no-explicit-any
-    expect(errs(run((s) => { Object.values<any>(s.skus)[0].nativeUnitCostMicro = 1e15; }))).toMatch(/supplier cost must be a whole number between 0 and 1000000000000/); // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(errs(run((s) => { Object.values<any>(s.skus)[0].nativeUnitCostMicro = 1e15; }))).toMatch(/supplier cost must be a whole number between 1 and 1000000000000/); // eslint-disable-line @typescript-eslint/no-explicit-any
     expect(errs(run((s) => { Object.values<any>(s.skus)[0].source = "x".repeat(201); }))).toMatch(/too long/); // eslint-disable-line @typescript-eslint/no-explicit-any
-    expect(errs(run((s) => { Object.values<any>(s.skus)[0].verification = "yes"; }))).toMatch(/verification must be/); // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(errs(run((s) => { Object.values<any>(s.skus)[0].nativeUnitCostMicro = 0; }))).toMatch(/a zero supplier cost is not a cost/); // eslint-disable-line @typescript-eslint/no-explicit-any
     expect(errs(run((s) => { s.fxQuotes.EUR.asOf = "2030-01-01T00:00:00.000Z"; }))).toMatch(/cannot be dated in the future/);
     expect(errs(run((s) => { s.fxQuotes.EUR.rateMicro = 1e12; }))).toMatch(/exchange rate must be a whole number/);
     expect(errs(run(() => undefined, "x".repeat(501)))).toMatch(/3 to 500 characters/);
