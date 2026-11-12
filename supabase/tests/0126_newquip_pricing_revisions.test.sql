@@ -90,7 +90,8 @@ do $$ begin
 end $$;
 
 -- 7. deleting the organisation (the cascade) is the ONLY way rows go
-delete from newquip_quotes where quote_ref in ('PR-1', 'PR-2');
+-- (a quotation that HAS revisions cannot be deleted on its own: the append-only guard refuses the cascade; PR-2 has none)
+delete from newquip_quotes where quote_ref = 'PR-2';
 delete from organizations where id = '00000000-0000-0000-0000-0000000126b1';
 do $$ begin
   if exists (select 1 from newquip_pricing_revisions) then raise exception 'organisation deletion must cascade to its revisions'; end if;
