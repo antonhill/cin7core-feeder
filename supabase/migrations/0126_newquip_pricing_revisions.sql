@@ -83,7 +83,7 @@ create or replace function newquip_apply_pricing_revision(
   p_previous_pricing jsonb, p_new_pricing jsonb, p_changes jsonb,
   p_new_pricing_hash text, p_changed_by text
 ) returns uuid language plpgsql set search_path = public as $$
-declare q newquip_quotes%rowtype; v_id uuid; v_seq integer;
+declare q newquip_quotes%rowtype; v_id uuid; v_seq integer; k text; n jsonb; o jsonb;
 begin
   select * into q from newquip_quotes where id = p_quote and org_id = p_org for update;
   if not found then raise exception 'pricing_conflict: the quotation was not found'; end if;
@@ -97,6 +97,23 @@ begin
   if (p_new_draft #- '{estimator,pricing}') is distinct from (q.draft #- '{estimator,pricing}') then raise exception 'pricing_conflict: a pricing revision may change only estimator.pricing'; end if;
   if nullif(p_previous_pricing, 'null'::jsonb) is distinct from nullif(q.draft #> '{estimator,pricing}', 'null'::jsonb) then raise exception 'pricing_conflict: the recorded previous pricing is not the stored pricing'; end if;
   if nullif(p_new_pricing, 'null'::jsonb) is distinct from nullif(p_new_draft #> '{estimator,pricing}', 'null'::jsonb) then raise exception 'pricing_conflict: the recorded new pricing is not the pricing written to the draft'; end if;
+
+  -- INDEPENDENT COST VERIFICATION, enforced here as well as in the application (defence in depth for any other service-role caller). A review may be recorded only (a) for a cost
+  -- that already exists and is unchanged, (b) by the person recorded as making this change, and (c) by someone other than whoever entered / last changed that cost. A cost
+  -- that changed in this revision cannot carry a review. (The application additionally binds each review to a hash of the exact cost; this check is structural.)
+  for k in select jsonb_object_keys(coalesce(p_new_draft #> '{estimator,pricing,skus}', '{}'::jsonb)) loop
+    n := p_new_draft #> array['estimator', 'pricing', 'skus', k];
+    o := q.draft #> array['estimator', 'pricing', 'skus', k];
+    if jsonb_typeof(n) = 'object' and (n -> 'review') is not null and jsonb_typeof(n -> 'review') = 'object' then
+      if (n -> 'review') is distinct from (o -> 'review') then
+        if o is null then raise exception 'pricing_conflict: a review cannot be recorded for a new cost'; end if;
+        if (n ->> 'by') is distinct from (o ->> 'by') then raise exception 'pricing_conflict: a review cannot be recorded together with a change to the cost'; end if;
+        if lower(btrim(coalesce(n #>> '{review,by}', ''))) is distinct from lower(btrim(coalesce(p_changed_by, ''))) then raise exception 'pricing_conflict: a review must be recorded by the reviewer'; end if;
+        if lower(btrim(coalesce(n #>> '{review,by}', ''))) = lower(btrim(coalesce(n ->> 'by', ''))) then raise exception 'pricing_conflict: a cost cannot be verified by the person who entered it'; end if;
+      end if;
+      if o is not null and (n - 'review' - 'by' - 'at') is distinct from (o - 'review' - 'by' - 'at') then raise exception 'pricing_conflict: a changed cost cannot carry a review'; end if;
+    end if;
+  end loop;
 
   insert into newquip_pricing_revisions (
     org_id, quote_id, seq, quote_revision, kind, rule_version, reason, previous_pricing, new_pricing, changes, new_pricing_hash, draft_hash_after, changed_by_email

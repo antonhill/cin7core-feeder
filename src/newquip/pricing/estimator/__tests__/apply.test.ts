@@ -124,3 +124,27 @@ describe("strict submission shape (independent security review)", () => {
     expect(r.ok).toBe(true);
   });
 });
+
+describe("strict dates and bounded forward cover (second security review)", () => {
+  const run = (mut: (s: Record<string, any>) => void) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+    const sub = strip() as unknown as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+    sub.forwardCover = { EUR: { rateMicro: micro("19"), coverDays: 90, reference: "FEC-1", validFrom: "2026-11-01", validUntil: "2026-12-31", reason: "booked" } };
+    mut(sub);
+    const r = apply(sub as unknown as PricingSubmission);
+    return r.ok ? "" : r.errors.join(" | ");
+  };
+  it("accepts a documented, bounded forward cover", () => expect(run(() => undefined)).toBe(""));
+  it("refuses local-time spellings and non-dates (expiry must never depend on a locale)", () => {
+    expect(run((s) => { s.forwardCover.EUR.validUntil = "31/12/2026"; })).toMatch(/real date written YYYY-MM-DD/);
+    expect(run((s) => { s.forwardCover.EUR.validUntil = "Dec 31 2026"; })).toMatch(/real date written YYYY-MM-DD/);
+    expect(run((s) => { s.forwardCover.EUR.validFrom = "2026-02-30"; })).toMatch(/real date written YYYY-MM-DD/);
+    expect(run((s) => { s.fxQuotes.EUR.asOf = "12 Nov 2026"; })).toMatch(/not a valid date and time/);
+    expect(run((s) => { s.fxQuotes.EUR.asOf = "2026-11-12"; })).toMatch(/not a valid date and time/); // a rate needs its time as well as its day
+  });
+  it("a documented rate cannot be made permanent: validity at most 366 days, a real contract reference, a sensible cover period", () => {
+    expect(run((s) => { s.forwardCover.EUR.validUntil = "9999-12-31"; })).toMatch(/longer than 366 days/);
+    expect(run((s) => { s.forwardCover.EUR.validFrom = "2026-12-31"; s.forwardCover.EUR.validUntil = "2026-11-01"; })).toMatch(/ends before it starts/);
+    expect(run((s) => { s.forwardCover.EUR.reference = "x"; })).toMatch(/contract reference is too short/);
+    expect(run((s) => { s.forwardCover.EUR.coverDays = 3650; })).toMatch(/cover period must be a whole number between 1 and 366/);
+  });
+});

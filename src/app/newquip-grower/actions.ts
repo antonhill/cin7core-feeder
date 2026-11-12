@@ -265,12 +265,12 @@ export async function saveGrowerDraftAction(quoteId: string, draft: QuoteDraft):
     // Once the quotation has a Cin7 customer snapshot, the snapshot is the ONLY source of the customer name: a typed or edited name in the submitted draft is replaced by it.
     const snapName = (await customerFeaturesAvailable(db)) ? fieldValue((await latestSnapshot(db, a.orgId, quoteId))?.snapshot.name ?? { state: "missing" }) : null;
     const priorHash = prior?.draft_hash; // read now (D-12, #195): a store that updates the row it handed out in place must not change what "before" means
-    const saved = await saveDraft(db, a.orgId, a.roles, quoteId, await sanitiseSubmittedDraft(a, db, draft, prior?.draft, prior ? { state: prior.state, revision: prior.revision } : undefined), snapName);
+    const saved = await saveDraft(db, a.orgId, a.roles, quoteId, await sanitiseSubmittedDraft(a, db, draft, prior?.draft, prior ? { state: prior.state, revision: prior.revision } : undefined), snapName, { keepStoredPricing: true });
     // Changed content invalidates the estimator's sign-off (saveDraft clears it) and any open approval of the older content: the quote goes back to estimator review.
     // Race repair: if the customer was (re)selected while this save was in flight, the snapshot name wins - write it again from the stored draft.
     if (snapName !== null || (await customerFeaturesAvailable(db))) {
       const nowName = fieldValue((await latestSnapshot(db, a.orgId, quoteId))?.snapshot.name ?? { state: "missing" });
-      if (nowName && nowName !== snapName) { const cur = await loadQuote(db, a.orgId, quoteId); if (cur) await saveDraft(db, a.orgId, a.roles, quoteId, cur.draft, nowName); }
+      if (nowName && nowName !== snapName) { const cur = await loadQuote(db, a.orgId, quoteId); if (cur) await saveDraft(db, a.orgId, a.roles, quoteId, cur.draft, nowName, { keepStoredPricing: true }); }
     }
     // A change of the commercial total withdraws the customer's confirmation (one helper for every draft writer); otherwise changed content only re-syncs the approval request.
     const amount = await reconcileConfirmationAmount(db, whoOf(a), quoteId, evaluationContext(true), returnByOf(a));
@@ -364,7 +364,7 @@ export async function signOffGrowerQuoteAction(quoteId: string) {
         if (q && q.state === "ESTIMATOR_REVIEW" && isPocQuote(q.draft) && !q.draft.estimator.costBasis?.incompleteAccepted) {
           const draft = structuredClone(q.draft);
           draft.estimator.costBasis = { ...(draft.estimator.costBasis ?? {}), incompleteAccepted: { reason: POC_COST_REASON, by: `${a.email} (POC PRESENTATION)`, at: new Date().toISOString() } };
-          await saveDraft(db, a.orgId, rolesFor("admin"), quoteId, draft);
+          await saveDraft(db, a.orgId, rolesFor("admin"), quoteId, draft, undefined, { keepStoredPricing: true });
           await audit(db, a, { action: "newquip.poc_presentation_cost_exception", summary: "POC Presentation Mode recorded the incomplete-cost exception at sign-off (demonstration only; not commercially validated)", detail: { quoteId } });
         }
       }

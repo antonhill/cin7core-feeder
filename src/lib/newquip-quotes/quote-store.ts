@@ -8,6 +8,7 @@ import type { createServiceRoleClient } from "@/supabase/server";
 import { evaluateDraft, type EvaluationContext, type QuoteEvaluation } from "@/newquip/grower/evaluate";
 import { emptyDraft, type QuoteDraft } from "@/newquip/grower/draft";
 import { pricingFinality } from "@/newquip/pricing/estimator/finality";
+import { keepServerOwnedPricing } from "@/newquip/pricing/estimator/ownership";
 import { buildAcceptedBaseline, baselineMatchesHash, commercialLinesOf, hashOf, type AcceptedBaseline } from "@/newquip/quote/baseline";
 import { baselineExceptionView, baselineMappingGate, validateExceptionReason, type BaselineExceptionRequest, type BaselineExceptionView } from "@/newquip/quote/baseline-exception";
 import { buildPhysicalScope } from "@/newquip/quote/physical-scope";
@@ -143,9 +144,15 @@ export async function saveDraft(
   db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, quoteId: string, submitted: QuoteDraft,
   /** The customer name of the quotation's Cin7 snapshot, when one exists. It is the ONLY source of the customer name then: whatever the client sent is replaced by it. */
   authoritativeCustomerName?: string | null,
+  /**
+   * `keepStoredPricing`: the SERVER-OWNED supplier pricing is taken from the row loaded HERE, not from the caller's (possibly older) copy of the draft. Every server writer that
+   * clones a draft and then saves it passes this, so a pricing / verification revision that landed in between can never be overwritten by the older pricing it cloned.
+   */
+  opts: { keepStoredPricing?: boolean } = {},
 ): Promise<{ draftHash: string; signoffCleared: boolean }> {
-  const draft = authoritativeCustomerName ? { ...submitted, customerName: authoritativeCustomerName } : submitted;
   const q = await mustLoad(db, orgId, quoteId);
+  const named = authoritativeCustomerName ? { ...submitted, customerName: authoritativeCustomerName } : submitted;
+  const draft = opts.keepStoredPricing ? keepServerOwnedPricing(named, q.draft) : named;
   if (!canEditDraft(roles, q.state)) fail(q.state === "MANAGER_APPROVED_FINAL" ? "The accepted quote is final and cannot be edited. Post-acceptance changes must be Variations." : "You do not have permission to edit this quote.");
   const draftHash = hashOf(draft);
   const changed = draftHash !== q.draft_hash;

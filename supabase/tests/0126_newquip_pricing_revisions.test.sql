@@ -19,7 +19,8 @@ insert into organizations (id, name) values ('00000000-0000-0000-0000-0000000126
 insert into org_members (org_id, user_id, role) values ('00000000-0000-0000-0000-0000000126b1', '00000000-0000-0000-0000-0000000126a1', 'member');
 insert into newquip_quotes (id, org_id, quote_ref, draft, draft_hash) values
   ('00000000-0000-0000-0000-0000000126c1', '00000000-0000-0000-0000-0000000126b1', 'PR-1', '{"estimator":{}}', 'h1'),
-  ('00000000-0000-0000-0000-0000000126c2', '00000000-0000-0000-0000-0000000126b1', 'PR-2', '{"estimator":{}}', 'h2');
+  ('00000000-0000-0000-0000-0000000126c2', '00000000-0000-0000-0000-0000000126b1', 'PR-2', '{"estimator":{}}', 'h2'),
+  ('00000000-0000-0000-0000-0000000126c3', '00000000-0000-0000-0000-0000000126b1', 'PR-3', '{"estimator":{}}', 'h3');
 -- PR-1 is in estimator review with a recorded sign-off (a quotation is always created as REP_DRAFT)
 update newquip_quotes set state = 'ESTIMATOR_REVIEW', customer_confirmed_cents = 100000, customer_confirmed_by = 'Farmer', customer_confirmed_at = now(), handoff_by_email = 'rep@x' where quote_ref = 'PR-1';
 update newquip_quotes set estimator_signoff_hash = 'h1', estimator_signoff_by_email = 'est@x', estimator_signoff_at = now() where quote_ref = 'PR-1';
@@ -62,6 +63,37 @@ select pg_temp.expect_denied($q$select pg_temp.apply_rev_x('00000000-0000-0000-0
 do $$ begin
   if (select draft_hash from newquip_quotes where quote_ref = 'PR-2') <> 'h2' then raise exception 'a rejected cross-check must change nothing'; end if;
 end $$;
+
+
+-- 2c. INDEPENDENT COST VERIFICATION is enforced by the function too (PR-3): structural rules, whatever the caller claims
+create or replace function pg_temp.rv(p_seq integer, p_hash text, p_new_hash text, p_draft jsonb, p_prev jsonb, p_by text) returns uuid language sql as $$
+  select newquip_apply_pricing_revision('00000000-0000-0000-0000-0000000126b1', '00000000-0000-0000-0000-0000000126c3', p_seq, p_hash, p_draft, p_new_hash,
+    case when p_prev is null then 'ENABLED' else 'CHANGED' end, 'Verification rule test', 'legacy-poc-v1', p_prev, p_draft #> '{estimator,pricing}', '[]'::jsonb, repeat('a', 64), p_by)
+$$;
+select pg_temp.rv(0, 'h3', 'h3a', '{"estimator":{"pricing":{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t"}}}}}'::jsonb, null, 'est@x');
+-- a review for a NEW cost, in the same revision that creates it, is refused
+select pg_temp.expect_denied($q$select pg_temp.rv(1, 'h3a', 'h3b', '{"estimator":{"pricing":{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t"},"B":{"nativeUnitCostMicro":7,"by":"est@x","at":"t","review":{"by":"rev@x","at":"t","evidence":"e","inputHash":"h"}}}}}}'::jsonb, '{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t"}}}'::jsonb, 'rev@x')$q$, 'review for a new cost');
+-- the person who entered the cost cannot verify it (even if they record the revision themselves)
+select pg_temp.expect_denied($q$select pg_temp.rv(1, 'h3a', 'h3b', '{"estimator":{"pricing":{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t","review":{"by":"est@x","at":"t","evidence":"e","inputHash":"h"}}}}}}'::jsonb, '{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t"}}}'::jsonb, 'est@x')$q$, 'self verification');
+select pg_temp.expect_denied($q$select pg_temp.rv(1, 'h3a', 'h3b', '{"estimator":{"pricing":{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t","review":{"by":" EST@X ","at":"t","evidence":"e","inputHash":"h"}}}}}}'::jsonb, '{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t"}}}'::jsonb, ' est@x')$q$, 'self verification, case and spaces');
+-- a review attributed to someone other than the person recording the revision is refused
+select pg_temp.expect_denied($q$select pg_temp.rv(1, 'h3a', 'h3b', '{"estimator":{"pricing":{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t","review":{"by":"rev@x","at":"t","evidence":"e","inputHash":"h"}}}}}}'::jsonb, '{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t"}}}'::jsonb, 'someone.else@x')$q$, 'review attributed to another person');
+-- a review recorded together with a change to the cost (value or attribution) is refused
+select pg_temp.expect_denied($q$select pg_temp.rv(1, 'h3a', 'h3b', '{"estimator":{"pricing":{"skus":{"A":{"nativeUnitCostMicro":6,"by":"est@x","at":"t","review":{"by":"rev@x","at":"t","evidence":"e","inputHash":"h"}}}}}}'::jsonb, '{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t"}}}'::jsonb, 'rev@x')$q$, 'review with a cost change');
+select pg_temp.expect_denied($q$select pg_temp.rv(1, 'h3a', 'h3b', '{"estimator":{"pricing":{"skus":{"A":{"nativeUnitCostMicro":5,"by":"rev@x","at":"t","review":{"by":"rev@x","at":"t","evidence":"e","inputHash":"h"}}}}}}'::jsonb, '{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t"}}}'::jsonb, 'rev@x')$q$, 'review with re-attributed entry');
+do $$ begin
+  if (select draft_hash from newquip_quotes where quote_ref = 'PR-3') <> 'h3a' then raise exception 'a refused verification must change nothing'; end if;
+end $$;
+-- a genuine independent review of an unchanged cost, recorded by the reviewer (case-insensitive), is accepted
+select pg_temp.rv(1, 'h3a', 'h3b', '{"estimator":{"pricing":{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t","review":{"by":"Rev@X","at":"t","evidence":"e","inputHash":"h"}}}}}}'::jsonb, '{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t"}}}'::jsonb, 'rev@x');
+do $$ begin
+  if (select count(*) from newquip_pricing_revisions where quote_id = '00000000-0000-0000-0000-0000000126c3') <> 2 then raise exception 'the independent review must be recorded'; end if;
+end $$;
+-- once reviewed, a changed cost that still carries the review is refused
+select pg_temp.expect_denied($q$select pg_temp.rv(2, 'h3b', 'h3c', '{"estimator":{"pricing":{"skus":{"A":{"nativeUnitCostMicro":9,"by":"est@x","at":"t","review":{"by":"Rev@X","at":"t","evidence":"e","inputHash":"h"}}}}}}'::jsonb, '{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t","review":{"by":"Rev@X","at":"t","evidence":"e","inputHash":"h"}}}}'::jsonb, 'est@x')$q$, 'changed cost keeping a review');
+-- ...but re-saving an unchanged reviewed cost (the review is carried over) is fine, and a changed cost WITHOUT a review is fine
+select pg_temp.rv(2, 'h3b', 'h3c', '{"estimator":{"pricing":{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t","review":{"by":"Rev@X","at":"t","evidence":"e","inputHash":"h"}},"projectNote":1}}}}'::jsonb, '{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t","review":{"by":"Rev@X","at":"t","evidence":"e","inputHash":"h"}}}}'::jsonb, 'est@x');
+select pg_temp.rv(3, 'h3c', 'h3d', '{"estimator":{"pricing":{"skus":{"A":{"nativeUnitCostMicro":9,"by":"est2@x","at":"t2"},"projectNote":1}}}}'::jsonb, '{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t","review":{"by":"Rev@X","at":"t","evidence":"e","inputHash":"h"}},"projectNote":1}}'::jsonb, 'est2@x');
 
 -- 3. ATOMIC: a reason that violates the CHECK after the lock rolls the whole call back, the draft write included
 select pg_temp.expect_denied($q$select pg_temp.apply_rev('00000000-0000-0000-0000-0000000126b1', '00000000-0000-0000-0000-0000000126c2', 0, 'h2', 'h2b', 'ENABLED', 'x')$q$, 'reason too short');

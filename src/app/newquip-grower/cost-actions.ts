@@ -121,7 +121,7 @@ async function writeDraftCosts(db: Db, a: Actor, quoteId: string, next: { physic
   const draft = structuredClone(q.draft);
   const physicalCosts = next.physicalCosts ?? draft.estimator.physicalCosts;
   const costBasis = "costBasis" in next ? next.costBasis : draft.estimator.costBasis;
-  const saved = await saveDraft(db, a.orgId, rolesFor("admin"), quoteId, keepServerOwnedCostBasis(keepServerOwnedCosts(draft, physicalCosts), costBasis));
+  const saved = await saveDraft(db, a.orgId, rolesFor("admin"), quoteId, keepServerOwnedCostBasis(keepServerOwnedCosts(draft, physicalCosts), costBasis), undefined, { keepStoredPricing: true });
   await logActivity(db, { orgId: a.orgId, actor: { userId: a.userId, email: a.email }, action, summary: `${summary} (read-only against Cin7)`, detail: { quoteId, ...detail } });
   // The same single helper as every draft writer: a changed commercial total withdraws the confirmation (a cost-only edit does not); a failed approval re-sync is audited, not swallowed.
   const amount = await reconcileConfirmationAmount(db, { orgId: a.orgId, userId: a.userId, email: a.email, isAdmin: true }, quoteId, evaluationContext(true),

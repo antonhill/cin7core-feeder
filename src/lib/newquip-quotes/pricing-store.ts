@@ -55,7 +55,9 @@ async function persist(db: Db, orgId: string, quoteId: string, email: string, bu
   if (r.error) {
     if (/pricing_conflict/i.test(r.error.message)) return { ok: false, errors: ["The quotation or its pricing changed while you were editing; refresh and try again."] };
     if (notAvailable(r.error.message)) return { ok: false, errors: [NOT_AVAILABLE] };
-    throw new Error(r.error.message);
+    // Anything else is an unexpected database error: it is logged for the operator, never echoed to the browser.
+    console.error("newquip pricing revision failed:", r.error.message);
+    return { ok: false, errors: ["The pricing change could not be saved and nothing was changed. Please try again."] };
   }
   return { ok: true, seq: expectedSeq + 1, kind: res.kind, changes: res.changes, draftHash: newHash };
 }

@@ -49,6 +49,12 @@ export function diffPricing(prior: EstimatorPricing | null | undefined, next: Es
 // ── STRICT SHAPE (security review): the submission comes from a browser, so nothing is trusted to be the shape the types claim. Only known keys are kept (extra keys never reach
 // the stored draft), every value is type-checked and bounded, and reserved object keys are refused. Bounds are far above any real price and keep every product below 2^53.
 const RESERVED = new Set(["__proto__", "constructor", "prototype", "toString", "valueOf", "hasOwnProperty", "isPrototypeOf"]);
+/** Strict calendar formats: `Date.parse` alone accepts many local-time spellings ("12/11/2026"), which would make expiry depend on the server's locale. */
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;
+const isRealDate = (s: string): boolean => ISO_DATE.test(s) && new Date(`${s}T00:00:00.000Z`).toISOString().slice(0, 10) === s;
+/** The longest a forward-cover contract may run (days): a "documented" rate cannot be made effectively permanent. */
+export const MAX_FORWARD_COVER_DAYS = 366;
 const MAX = { text: 200, reason: 500, costMicro: 1e12, rateMicro: 1e9, factorMicro: 1e8, addOnCents: 1e10, priceCents: 1e11, targetCents: 1e13, days: 3650, maps: 300, currencies: 20 } as const;
 const isObj = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 
@@ -94,14 +100,23 @@ export function normaliseSubmission(raw: unknown, nowIso: string): { ok: true; v
     if (!isObj(v)) { e.push(`The ${c} exchange rate is not valid.`); continue; }
     const asOf = text(v.asOf, 40, `The ${c} rate date`) ?? "";
     const t = Date.parse(asOf);
-    if (!Number.isFinite(t)) e.push(`The ${c} rate date is not a valid date.`);
+    if (!ISO_INSTANT.test(asOf) || !Number.isFinite(t)) e.push(`The ${c} rate date is not a valid date and time (for example 2026-11-12T08:00:00Z).`);
     else if (t > Date.parse(nowIso) + 5 * 60_000) e.push(`The ${c} rate cannot be dated in the future.`);
     out.fxQuotes[c] = { rateMicro: int(v.rateMicro, 0, MAX.rateMicro, `The ${c} exchange rate`), source: text(v.source, MAX.text, `The ${c} rate source`) ?? "", asOf };
   }
   for (const c of keys(raw.forwardCover, "Forward cover", MAX.currencies, (x) => /^[A-Z]{3}$/.test(x))) {
     const v = (raw.forwardCover as Record<string, unknown>)[c];
     if (!isObj(v)) { e.push(`The ${c} forward-cover entry is not valid.`); continue; }
-    out.forwardCover[c] = { rateMicro: int(v.rateMicro, 0, MAX.rateMicro, `The ${c} forward-cover rate`), coverDays: int(v.coverDays, 0, MAX.days, `The ${c} cover period`), reason: text(v.reason, MAX.reason, `The ${c} forward-cover reason`) ?? "", ...(v.reference === undefined || v.reference === null || v.reference === "" ? {} : { reference: text(v.reference, 100, `The ${c} contract reference`) ?? "" }), ...(v.validFrom ? { validFrom: text(v.validFrom, 40, `The ${c} forward-cover start date`) ?? "" } : {}), ...(v.validUntil ? { validUntil: text(v.validUntil, 40, `The ${c} forward-cover end date`) ?? "" } : {}) };
+    out.forwardCover[c] = { rateMicro: int(v.rateMicro, 0, MAX.rateMicro, `The ${c} forward-cover rate`), coverDays: int(v.coverDays, 1, MAX_FORWARD_COVER_DAYS, `The ${c} cover period`), reason: text(v.reason, MAX.reason, `The ${c} forward-cover reason`) ?? "", ...(v.reference === undefined || v.reference === null || v.reference === "" ? {} : { reference: ((r) => { if (r.trim().length < 3) e.push(`The ${c} contract reference is too short: give the contract number.`); return r; })(text(v.reference, 100, `The ${c} contract reference`) ?? "") }), ...(v.validFrom ? { validFrom: text(v.validFrom, 40, `The ${c} forward-cover start date`) ?? "" } : {}), ...(v.validUntil ? { validUntil: text(v.validUntil, 40, `The ${c} forward-cover end date`) ?? "" } : {}) };
+  }
+  for (const [c, f] of Object.entries(out.forwardCover)) {
+    if (!f) continue;
+    for (const [what, d] of [["start", f.validFrom], ["end", f.validUntil]] as const) if (d !== undefined && !isRealDate(d)) e.push(`The ${c} forward-cover ${what} date must be a real date written YYYY-MM-DD.`);
+    if (f.validFrom && f.validUntil && isRealDate(f.validFrom) && isRealDate(f.validUntil)) {
+      const days = (Date.parse(`${f.validUntil}T00:00:00.000Z`) - Date.parse(`${f.validFrom}T00:00:00.000Z`)) / 86_400_000;
+      if (days < 0) e.push(`The ${c} forward-cover ends before it starts.`);
+      else if (days > MAX_FORWARD_COVER_DAYS) e.push(`The ${c} forward-cover validity is longer than ${MAX_FORWARD_COVER_DAYS} days: a documented rate cannot be made permanent.`);
+    }
   }
   for (const k of keys(raw.skuPriceOverrides, "Price overrides", MAX.maps, (x) => SKU.test(x))) {
     const v = (raw.skuPriceOverrides as Record<string, unknown>)[k];

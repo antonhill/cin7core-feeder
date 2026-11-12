@@ -193,7 +193,7 @@ export function calculatePricing(scenario: PricingScenario, rules: PricingRuleVe
         // A forward-cover rate is used only while it is DOCUMENTED (contract reference + validity dates) and INSIDE its validity. Otherwise the line is not priced: it never falls back to spot.
         const from = f.validFrom ? Date.parse(f.validFrom) : NaN;
         const until = f.validUntil ? Date.parse(f.validUntil) + (f.validUntil.length <= 10 ? 86_400_000 - 1 : 0) : NaN;
-        if (rules.forwardCoverNeedsValidity && (!f.reference?.trim() || !Number.isFinite(from) || !Number.isFinite(until))) add("forward_cover_undocumented", `the ${c.currency} forward-cover rate needs a contract reference and validity dates, so it is not used.`);
+        if (rules.forwardCoverNeedsValidity && (!f.reference || f.reference.trim().length < 3 || !Number.isFinite(from) || !Number.isFinite(until))) add("forward_cover_undocumented", `the ${c.currency} forward-cover rate needs a contract reference and validity dates, so it is not used.`);
         else if (Number.isFinite(from) && nowMs < from) add("forward_cover_not_yet_valid", `the ${c.currency} forward-cover rate is not valid until ${f.validFrom}.`);
         else if (Number.isFinite(until) && nowMs > until) add("forward_cover_expired", `the ${c.currency} forward-cover rate expired on ${f.validUntil}.`);
         else rate = { currency: c.currency, rateMicro: f.rateMicro, kind: "forward_cover", source: `Forward cover ${f.reference ? `${f.reference} ` : ""}(${f.coverDays} days) set by ${f.by}`, asOf: f.at, coverDays: f.coverDays };

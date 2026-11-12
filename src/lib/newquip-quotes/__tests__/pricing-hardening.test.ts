@@ -166,6 +166,20 @@ describe("concurrent updates", () => {
   });
 });
 
+describe("server writers can never overwrite pricing / verification with an older copy of the draft", () => {
+  it("saveDraft with keepStoredPricing takes the pricing from the row it loads, so a clone made BEFORE a verification cannot revert it", async () => {
+    const { id } = await inReview();
+    await applyPricingChange(db as never, estimator, id, sub(), "Indicative supplier pricing");
+    const clone = structuredClone((await loaded(id)).draft); // a server writer cloned the draft here...
+    await verifyAll(id); // ...and a verification revision landed before it saved
+    await saveDraft(db as never, ORG, rolesFor("admin"), id, { ...clone, siteName: "Edited by a cost writer" }, undefined, { keepStoredPricing: true });
+    const after = await loaded(id);
+    expect(after.draft.siteName).toBe("Edited by a cost writer");
+    expect(Object.values(after.draft.estimator.pricing!.skus).every((s) => s!.review?.by === "mgr1@nq")).toBe(true); // the verification survived
+    expect(after.draft.estimator.pricing!.revision).toBe(2);
+  });
+});
+
 describe("tenant isolation and approved-quote immutability", () => {
   it("another organisation can neither read, change nor verify this quotation's pricing, and sees none of its revisions", async () => {
     const { id } = await inReview();
