@@ -190,6 +190,38 @@ describe("11. the full Rep -> Estimator -> Manager workflow through the pricing 
   });
 });
 
+describe("security review: a stale draft save cannot overwrite a pricing revision", () => {
+  it("saveDraft is a compare-and-set on the draft hash: a save that raced with a pricing revision is refused, and the revision survives", async () => {
+    const { id } = await inReview();
+    const stale = (await loaded(id)).draft; // what a Rep/Estimator editor loaded
+    await applyPricingChange(db as never, estimator(), id, submissionOf(), "Initial supplier pricing");
+    const row = db.rows("newquip_quotes")[0] as Record<string, unknown>;
+    const afterHash = row.draft_hash;
+    // the writer read the quotation BEFORE the revision and now writes: simulate by having the stored hash change between its read and its update
+    // the other writer lands as a REPLACED row (the writer's own copy keeps the hash it read; FakeDb aliases the object it hands out)
+    const from = db.from.bind(db) as (t: string) => Record<string, (...a: unknown[]) => unknown>;
+    (db as unknown as { from: unknown }).from = (t: string) => { const b = from(t); if (t === "newquip_quotes") { const upd = b.update.bind(b); b.update = (...a: unknown[]) => { db.tables.newquip_quotes[0] = { ...row, draft_hash: "moved-by-another-writer" }; return upd(...a); }; } return b; };
+    expect(await err(saveDraft(db as never, ORG, member, id, { ...stale, siteName: "Edited site" }))).toMatch(/changed while you were editing/);
+    expect((await loaded(id)).draft.estimator.pricing).toMatchObject({ enabled: true, revision: 1 });
+    expect(afterHash).not.toBe("moved-by-another-writer");
+  });
+});
+
+describe("security review: the supplier-pricing source text is not shown to a viewer without cost visibility", () => {
+  it("label, notice and provenance (a fingerprint of the confidential inputs) are neutral for a Rep, in the evaluation and in the sealed baseline", async () => {
+    const { id } = await inReview();
+    await applyPricingChange(db as never, estimator(), id, submissionOf({}, "unverified"), "Indicative pricing");
+    const q = await loaded(id);
+    const { redactEvaluationFinancials, redactInternalFinancials } = await import("@/newquip/quote/margin");
+    const rep = redactEvaluationFinancials(evaluateDraft(q.draft, ctx), false);
+    expect(rep.budget!.priceSource).toMatchObject({ label: "Project pricing", provenance: "Project pricing", notice: "Quoted at the approved NewQuip project price basis." });
+    expect(JSON.stringify(rep.budget!.priceSource)).not.toMatch(/unverified|inputs [0-9a-f]{12}|Estimator pricing revision/i);
+    const fake = { draft: q.draft, accepted_baseline: { pricing: { source: evaluateDraft(q.draft, ctx).budget!.priceSource }, estimator: {} } } as never;
+    const red = redactInternalFinancials(fake, false) as unknown as { accepted_baseline: { pricing: { source: Record<string, string> } } };
+    expect(JSON.stringify(red.accepted_baseline.pricing.source)).not.toMatch(/unverified|inputs [0-9a-f]{12}|Estimator pricing revision/i);
+  });
+});
+
 describe("the Server Actions file follows the project's standing rule", () => {
   it('"use server" file: ONLY async function exports (and erased interfaces) - no exported consts, objects or type re-exports', () => {
     const src = readFileSync(path.resolve(__dirname, "../../../app/newquip-grower/pricing-actions.ts"), "utf8");

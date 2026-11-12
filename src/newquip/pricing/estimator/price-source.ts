@@ -10,11 +10,13 @@ import type { EstimatorPricing } from "./types";
 const EPOCH_PRICING = "estimator_supplier_pricing" as const;
 
 /** The scenario for ONE SKU (quantity 1): its supplier cost, the rates, the SKU price override and the project markup. */
+const own = (o: object, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k);
+
 export function scenarioForSku(p: EstimatorPricing, sku: string): PricingScenario | null {
-  const s = p.skus[sku];
+  const s = own(p.skus, sku) ? p.skus[sku] : undefined;
   if (!s) return null;
   const { freight, by: _by, at: _at, ...cost } = s; void _by; void _at;
-  const ov = p.skuPriceOverrides[sku];
+  const ov = own(p.skuPriceOverrides, sku) ? p.skuPriceOverrides[sku] : undefined;
   return {
     pricingDate: p.pricingDate,
     fxQuotes: p.fxQuotes,
@@ -47,7 +49,7 @@ export function describePricing(p: EstimatorPricing): PriceSourceDescriptor {
 export function createEstimatorPriceSource(p: EstimatorPricing): PriceSource {
   return {
     descriptor: describePricing(p),
-    has: (sku) => Boolean(p.skus[sku]),
+    has: (sku) => own(p.skus, sku) && Boolean(p.skus[sku]),
     priceFor(sku: string, quoteType: QuoteType): PriceResult {
       if (quoteType !== "project") return { status: "not_in_source", reason: `${sku} cannot be priced yet: supplier pricing applies to project quotations only.` };
       // Deliberately neutral wording: this text can reach a viewer who may not see cost.

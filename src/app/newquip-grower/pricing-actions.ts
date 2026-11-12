@@ -7,7 +7,10 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { applyPricingChange, loadPricingWorkspace, type ApplyReport, type PricingActor, type WorkspaceBundle } from "@/lib/newquip-quotes/pricing-service";
 import type { PricingSubmission } from "@/newquip/pricing/estimator/apply";
-import { auditActor, authoriseActor, errText, type Actor } from "./actor";
+import { auditActor, authoriseActor, errText as rawErrText, type Actor } from "./actor";
+
+/** Unexpected programming errors (a malformed request) are not echoed to the browser; our own plain-language messages are. */
+const errText = (e: unknown): string => (e instanceof TypeError || e instanceof RangeError || e instanceof SyntaxError ? "The pricing request was not valid." : rawErrText(e));
 
 export interface PricingActionResult<T> { ok: boolean; error?: string; errors?: string[]; data?: T }
 
@@ -19,6 +22,7 @@ async function pricingActor(): Promise<Actor> {
   return a;
 }
 async function run(quoteId: string, submission: PricingSubmission | null, reason: string): Promise<PricingActionResult<ApplyReport>> {
+  if (typeof quoteId !== "string" || quoteId.length === 0 || quoteId.length > 64 || typeof reason !== "string") throw new TypeError("bad request");
   const a = await pricingActor();
   const db = createServiceRoleClient();
   const r = await applyPricingChange(db, asPricingActor(a), quoteId, submission, reason);

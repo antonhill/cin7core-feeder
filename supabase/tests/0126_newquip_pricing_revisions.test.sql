@@ -24,11 +24,14 @@ insert into newquip_quotes (id, org_id, quote_ref, draft, draft_hash) values
 update newquip_quotes set state = 'ESTIMATOR_REVIEW', customer_confirmed_cents = 100000, customer_confirmed_by = 'Farmer', customer_confirmed_at = now(), handoff_by_email = 'rep@x' where quote_ref = 'PR-1';
 update newquip_quotes set estimator_signoff_hash = 'h1', estimator_signoff_by_email = 'est@x', estimator_signoff_at = now() where quote_ref = 'PR-1';
 
+create or replace function pg_temp.apply_rev_x(p_org uuid, p_quote uuid, p_seq integer, p_hash text, p_new_draft jsonb, p_prev jsonb, p_new jsonb, p_kind text) returns uuid language sql as $$
+  select newquip_apply_pricing_revision(p_org, p_quote, p_seq, p_hash, p_new_draft, 'hx', p_kind, 'Cross-check test', 'legacy-poc-v1', p_prev, p_new, '[]'::jsonb, repeat('a', 64), 'est@x')
+$$;
 create or replace function pg_temp.apply_rev(p_org uuid, p_quote uuid, p_seq integer, p_hash text, p_new_hash text, p_kind text default 'ENABLED', p_reason text default 'Initial supplier pricing') returns uuid language sql as $$
   select newquip_apply_pricing_revision(p_org, p_quote, p_seq, p_hash,
     '{"estimator":{"pricing":{"revision":1,"secret":"cost"}}}'::jsonb, p_new_hash, p_kind, p_reason, 'legacy-poc-v1',
-    case when p_kind = 'ENABLED' then null else '{"revision":1}'::jsonb end,
-    case when p_kind = 'DISABLED' then null else '{"revision":2,"secret":"cost"}'::jsonb end,
+    case when p_kind = 'ENABLED' then null else '{"revision":1,"secret":"cost"}'::jsonb end,
+    case when p_kind = 'DISABLED' then null else '{"revision":1,"secret":"cost"}'::jsonb end,
     '[{"path":"skus.X.nativeUnitCostMicro","previous":1,"new":2}]'::jsonb, repeat('a', 64), 'est@x')
 $$;
 
@@ -50,6 +53,14 @@ select pg_temp.expect_denied($q$select pg_temp.apply_rev('00000000-0000-0000-000
 do $$ begin
   if (select draft_hash from newquip_quotes where quote_ref = 'PR-2') <> 'h2' then raise exception 'a refused change must leave the quotation untouched'; end if;
   if (select count(*) from newquip_pricing_revisions) <> 1 then raise exception 'a refused change must store no revision'; end if;
+end $$;
+
+-- 2b. CROSS-CHECKS: a pricing revision cannot rewrite anything but estimator.pricing, and the recorded previous / new pricing must be the real ones
+select pg_temp.expect_denied($q$select pg_temp.apply_rev_x('00000000-0000-0000-0000-0000000126b1', '00000000-0000-0000-0000-0000000126c2', 0, 'h2', '{"estimator":{"pricing":{"revision":1}},"customerName":"HIJACKED"}'::jsonb, null, '{"revision":1}'::jsonb, 'ENABLED')$q$, 'revision that changes another part of the draft');
+select pg_temp.expect_denied($q$select pg_temp.apply_rev_x('00000000-0000-0000-0000-0000000126b1', '00000000-0000-0000-0000-0000000126c2', 0, 'h2', '{"estimator":{"pricing":{"revision":1}}}'::jsonb, null, '{"revision":99}'::jsonb, 'ENABLED')$q$, 'recorded new pricing differs from the written pricing');
+select pg_temp.expect_denied($q$select pg_temp.apply_rev_x('00000000-0000-0000-0000-0000000126b1', '00000000-0000-0000-0000-0000000126c2', 0, 'h2', '{"estimator":{"pricing":{"revision":1}}}'::jsonb, '{"revision":7}'::jsonb, '{"revision":1}'::jsonb, 'CHANGED')$q$, 'recorded previous pricing is not the stored pricing');
+do $$ begin
+  if (select draft_hash from newquip_quotes where quote_ref = 'PR-2') <> 'h2' then raise exception 'a rejected cross-check must change nothing'; end if;
 end $$;
 
 -- 3. ATOMIC: a reason that violates the CHECK after the lock rolls the whole call back, the draft write included
