@@ -53,3 +53,26 @@ Pricing: switch off on the quotation (a recorded revision) to return to POC pric
 
 ## Open items for NewQuip (unchanged by this work)
 Final markup(s) and whether per category; freight/landed method; forward-cover policy and who may set it; approval thresholds for overrides and adjustments; exchange-rate source/age; customer presentation of project adjustments (deferred); whether Sean's workbook becomes the source of supplier cost (importer to be written against `SkuPricingInput`).
+
+## Hardening round (after the isolated test; owner review 2026-11-12)
+Everything below is in PR #212 on top of #209-#211, and none of it is merged or applied.
+
+1. **Independent cost verification.** There is no "verified" flag. A supplier cost is verified only by an independent review: a different person from whoever entered or last changed that cost, holding a reviewer role, able to see costs, who names the evidence, and who submits the hash of the exact cost they saw. Any change to the cost drops its review; a reviewer who edits a cost cannot verify it; holding the reviewer role as well never lets someone verify what they entered. One immutable revision per verification (who, when, evidence, which cost). The reviewer roles and independence are rule-version data and PROVISIONAL (`manager`): they are not NewQuip's final personnel assignment. The same rule is enforced structurally inside the database function as defence in depth.
+2. **Rate freshness.** Spot rates expire after a configurable number of hours (PROPOSED default 24, subject to NewQuip's confirmation). A forward-cover rate is documented: contract reference plus start and end dates (real calendar dates, at most 366 days). An expired, not-yet-valid or undocumented rate fails safe: the line is not priced, never priced at an older rate or at zero. Freshness is also a gate at sign-off and approval, judged at that moment. Evaluation is deterministic (it uses the stored pricing date), so nothing is ever repriced silently: saving a new rate is what reprices, as an attributed revision.
+3. **Manual prices.** A manually entered selling price (a manual resolution or a SKU price override) never conceals a missing or unverified supplier cost. The workspace reports price completeness and cost verification separately, and sign-off and approval are blocked until the required costs are recorded and independently verified. The incomplete-costing exception does not waive this.
+4. **UX.** Exchange-rate fields appear as soon as a SKU has a foreign currency. "Clear supplier cost" removes an input; a zero cost is refused and a blank field is ignored.
+
+### Merge and migration sequence (recommended)
+1. Merge #209, #210, #211, then #212 into the candidate branch, in that order, each only after exact-head CI (never into `main`).
+2. Before any migration: re-reconcile the shared ledger against every branch and open PR. Migration 0126 (revisions table + atomic function, as amended in this round) is the single migration of this stream.
+3. Apply 0126 to the shared database only on explicit instruction, after the owner decisions below.
+4. Connected acceptance (not before 0126): an Estimator/Manager walk-through on the connected candidate Preview with a NEW fixture quotation, normal sign-in, and customer-data access checked, as listed in the isolated plan above.
+
+### Owner decisions still needed
+- Who are the authorised cost reviewers (Sean? one role? named people?). Today: the `manager` role, provisional.
+- Confirm 24 hours for spot rates, and whether freshness should also be judged at sign-off/approval (as built) or only when entered.
+- Should the reviewer also attest the exchange rate? Today the rate and its time are entered by the Estimator and are not independently reviewed.
+- Should a manual selling price on a line with NO supplier SKU (for example the LED light, M75, penning) also require a recorded supplier quote? Today those stay under the existing Manager baseline-exception rules.
+
+### Proposed follow-up migration (NOT written as a file, NOT applied, NOT authorised): member read access to quotations
+Tenant isolation holds. But any member of the organisation, including a Rep, can read `newquip_quotes.draft` and `accepted_baseline` directly through the database API with their own session; those contain the supplier pricing inputs and the internal margin. The application hides them in its server layer only. The NewQuip app reads quotations through the service role, so the proposal is to revoke members' table-level SELECT on `newquip_quotes` and grant column-level SELECT on the non-confidential columns only (or none). This needs its own migration number (not 0126), the existing RLS test matrix updated, and a check that nothing relies on member reads. It predates this work (the internal margin was already exposed) but supplier costs make it more important to close before the trial.

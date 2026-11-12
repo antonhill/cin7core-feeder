@@ -83,7 +83,7 @@ export function checkSignOff(i: { readiness: Readiness; totalExVatCents: number 
  * "Costing is incomplete: <reason>." plus the usual next step. A reason that says it CANNOT be waived (unverified supplier pricing, NQ-008B owner decision 2) never
  * suggests the incomplete-costing exception, and a reason that already ends in a full stop is not given a second one.
  */
-function incompleteCostingMessage(reason: string | undefined, nextStep: string): string {
+export function incompleteCostingMessage(reason: string | undefined, nextStep: string): string {
   const r = (reason ?? "supplier costs are unresolved").replace(/\.+$/, "");
   return `Costing is incomplete: ${r}.${/cannot be waived/i.test(r) && /exception/.test(nextStep) ? "" : nextStep}`;
 }
