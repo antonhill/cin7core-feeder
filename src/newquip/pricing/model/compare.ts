@@ -14,10 +14,13 @@ export interface LineComparison {
   /** Why it differs: the recorded override reasons, or the stated basis change. "No reason recorded" only when nothing explains it. */
   reasons: string[];
 }
-export interface TotalsFigures { totalExVatCents: number; costCents: number | null; margin: MarginFigures | null; completeness: PricingResult["completeness"] }
+export interface TotalsFigures { totalExVatCents: number | null; pricedSubtotalCents: number; costCents: number | null; margin: MarginFigures | null; priceCompleteness: PricingResult["priceCompleteness"]; costCompleteness: PricingResult["costCompleteness"] }
 export interface PricingComparison {
   original: TotalsFigures; revised: TotalsFigures;
-  deltaTotalCents: number;
+  /** revised - original project total; null when either side has no total (a line is unpriced), so a partial total is never compared as if it were whole. */
+  deltaTotalCents: number | null;
+  /** Movement in the sum of priced lines: always available, and labelled as what it is. */
+  deltaPricedSubtotalCents: number;
   /** Percentage-point movement, null when either side is unknown. */
   deltaMarginPctPoints: number | null; deltaMarkupPctPoints: number | null;
   lines: LineComparison[];
@@ -27,7 +30,7 @@ export interface PricingComparison {
 
 const side = (l: CalculatedLine | undefined): SideFigures | null => (l ? { quantity: l.quantity, unitPriceCents: l.unitPriceCents, revenueCents: l.revenueCents, costCents: l.costCents, status: l.status } : null);
 const same = (a: SideFigures | null, b: SideFigures | null): boolean => !!a && !!b && a.status === b.status && a.quantity === b.quantity && a.unitPriceCents === b.unitPriceCents && a.revenueCents === b.revenueCents && a.costCents === b.costCents;
-const totals = (r: PricingResult): TotalsFigures => ({ totalExVatCents: r.totalExVatCents, costCents: r.itemsCostCents, margin: r.margin, completeness: r.completeness });
+const totals = (r: PricingResult): TotalsFigures => ({ totalExVatCents: r.totalExVatCents, pricedSubtotalCents: r.pricedSubtotalCents, costCents: r.costCents, margin: r.margin, priceCompleteness: r.priceCompleteness, costCompleteness: r.costCompleteness });
 const pts = (a: number | null | undefined, b: number | null | undefined): number | null => (a == null || b == null ? null : Math.round((b - a) * 100) / 100);
 const rateText = (r: RateUsed): string => `${r.currency} ${r.kind === "forward_cover" ? `forward cover (${r.coverDays} days)` : r.kind} ${(r.rateMicro / 1e6).toFixed(4)}`;
 
@@ -62,7 +65,8 @@ export function comparePricing(original: PricingResult, revised: PricingResult):
   });
   return {
     original: totals(original), revised: totals(revised),
-    deltaTotalCents: revised.totalExVatCents - original.totalExVatCents,
+    deltaTotalCents: original.totalExVatCents === null || revised.totalExVatCents === null ? null : revised.totalExVatCents - original.totalExVatCents,
+    deltaPricedSubtotalCents: revised.pricedSubtotalCents - original.pricedSubtotalCents,
     deltaMarginPctPoints: pts(original.margin?.marginPct, revised.margin?.marginPct),
     deltaMarkupPctPoints: pts(original.margin?.markupPct, revised.margin?.markupPct),
     lines, basisChanges,

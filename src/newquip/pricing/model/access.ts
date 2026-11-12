@@ -19,11 +19,15 @@ export const canEnterPricingInputs = (v: Viewer): boolean => v.canSeeCost && (v.
 export interface CustomerSafeLine { key: string; label: string; sku: string | null; status: "priced" | "not_priced"; quantity: number; unitPriceCents: number | null; revenueCents: number | null }
 export interface CustomerSafePricing {
   audience: "customer_safe";
-  completeness: PricingResult["completeness"];
+  /** Selling-price completeness only. Whether the COST is complete is cost information and is not part of this view. */
+  completeness: PricingResult["priceCompleteness"];
   lines: CustomerSafeLine[];
+  /** The sum of the priced lines. Not the project total unless `totalExVatCents` is present. */
+  pricedSubtotalCents: number;
   /** A project adjustment is a selling figure, so its amount is shown, as its own line, without the reason behind it. */
   adjustmentCents: number | null;
-  totalExVatCents: number;
+  /** null while any line is unpriced: a total that leaves a line out would understate the quotation. */
+  totalExVatCents: number | null;
 }
 export interface InternalPricing { audience: "internal"; result: PricingResult }
 
@@ -32,7 +36,8 @@ export function viewPricing(result: PricingResult, viewer: Viewer): InternalPric
   if (viewer.canSeeCost) return { audience: "internal", result };
   return {
     audience: "customer_safe",
-    completeness: result.completeness,
+    completeness: result.priceCompleteness,
+    pricedSubtotalCents: result.pricedSubtotalCents,
     lines: result.lines.map((l) => ({ key: l.key, label: l.label, sku: l.sku, status: l.status, quantity: l.quantity, unitPriceCents: l.unitPriceCents, revenueCents: l.revenueCents })),
     adjustmentCents: result.adjustment?.applied ? result.adjustment.amountCents : null,
     totalExVatCents: result.totalExVatCents,

@@ -6,7 +6,8 @@ import { readyDraft } from "../../../grower/__tests__/golden";
 import { testPriceSource } from "../../../grower/__tests__/test-snapshot";
 import { hashOf } from "../../../quote/baseline";
 import { snapshotOf } from "../../__tests__/helpers";
-import { calculatePricing, DEFAULT_RULE_VERSION_ID, FIXTURE_DRAFT_RULE_VERSION, LEGACY_RULE_VERSION, micro, selectRuleVersion, type PricingScenario } from "..";
+import { calculatePricing, DEFAULT_RULE_VERSION_ID, LEGACY_RULE_VERSION, micro, selectRuleVersion, type PricingScenario } from "..";
+import { FIXTURE_DRAFT_RULE_VERSION } from "../fixtures";
 
 const snap = snapshot as unknown as PriceSnapshot;
 const legacy = createWorkbookPriceSource(snap);
@@ -43,10 +44,11 @@ describe("explicit selection: nothing changes until a new version is chosen", ()
     expect(d).toEqual({ ok: true, rules: LEGACY_RULE_VERSION });
     expect(LEGACY_RULE_VERSION.markupBps).toBe(2000);
   });
-  it("a draft/fixture version cannot be selected for a quotation, and an unknown one is refused", () => {
-    expect(selectRuleVersion(FIXTURE_DRAFT_RULE_VERSION.id).ok).toBe(false);
-    expect(selectRuleVersion(FIXTURE_DRAFT_RULE_VERSION.id, { allowDraft: true }).ok).toBe(true);
+  it("a draft/fixture version cannot be selected for a quotation (there is no option to allow it), and an unknown one is refused", () => {
+    expect(selectRuleVersion(FIXTURE_DRAFT_RULE_VERSION.id)).toMatchObject({ ok: false });
+    expect((selectRuleVersion as (id: string, o: object) => unknown)(FIXTURE_DRAFT_RULE_VERSION.id, { allowDraft: true })).toMatchObject({ ok: false }); // a stray option changes nothing
     expect(selectRuleVersion("made-up").ok).toBe(false);
+    expect(selectRuleVersion("legacy-poc-v1").ok).toBe(true);
   });
 });
 

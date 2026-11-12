@@ -1,5 +1,5 @@
-import { marginFigures, type MarginFigures } from "@/lib/projects/margin-figures";
-import { isInt, isQty, landedCents, lineCents, withMarkupBps } from "./money";
+import type { MarginFigures } from "@/lib/projects/margin-figures";
+import { isInt, isQty, landedCents, lineCents, pct2, quantityMilli, withMarkupBps } from "./money";
 import type { ItemOverride, PricingRuleVersion, PricingScenario, ProjectAdjustment } from "./types";
 
 // THE PRICING CALCULATION (NQ-008B Phase 1). Pure: scenario + rule version in, result out. No I/O, no clock, no role, no UI. Everything it shows is derived from its inputs,
@@ -60,22 +60,38 @@ export interface AdjustmentResult {
   applied: boolean;
 }
 
-export type Completeness = "complete" | "provisional" | "incomplete";
+/** SELLING-PRICE completeness: is there a real customer price for every line? complete = every line priced from confirmed inputs; provisional = every line priced but something it rests on is unconfirmed (unverified cost, stale rate, unspecified freight); incomplete = at least one line has NO price, so there is no project total. */
+export type PriceCompleteness = "complete" | "provisional" | "incomplete";
+/** COST completeness, independent of the above: complete = every line's landed cost is known; partial = some are not; none = none are. A price can exist (by override) where the cost does not. */
+export type CostCompleteness = "complete" | "partial" | "none";
+/** There is deliberately no single combined "completeness": price and cost are reported separately so one can never stand in for the other. */
 export interface PricingResult {
   ruleVersion: { id: string; label: string; status: PricingRuleVersion["status"] };
   pricingDate: string;
   markup: { bps: number; source: "rule_version" | "project_markup_change" };
   lines: CalculatedLine[];
   ratesUsed: RateUsed[];
-  itemsRevenueCents: number;
-  /** Cost of the priced lines; null unless EVERY priced line has a known cost. */
-  itemsCostCents: number | null;
-  adjustment: AdjustmentResult | null;
-  totalExVatCents: number;
-  /** Margin and markup on the TOTAL (after any project adjustment). All null while a priced line has no known cost. */
+  /** The sum of the lines that HAVE a price. It is NOT the project total unless `priceCompleteness` is not "incomplete"; never present it as one. */
+  pricedSubtotalCents: number;
+  priceCompleteness: PriceCompleteness;
+  /** The project selling total (priced lines + any applied project adjustment). null while any line has no price: a total that silently leaves a line out would understate the quotation. */
+  totalExVatCents: number | null;
+  costCompleteness: CostCompleteness;
+  /** Total landed cost, only when every line's cost is known; null otherwise (never a partial sum presented as the cost). */
+  costCents: number | null;
+  /** True when every cost used is verified. Meaningful only while costs are known. */
+  costsVerified: boolean;
+  /** Margin and markup on the TOTAL. Present only when BOTH the price and the cost are complete. */
   margin: MarginFigures | null;
-  completeness: Completeness;
+  adjustment: AdjustmentResult | null;
   issues: Issue[];
+}
+
+/** Margin and markup for one selling/cost pair, by the model's own exact rounding rule (money.ts). Cost null = unknown = no margin. */
+export function figures(sellingCents: number, costCents: number | null): MarginFigures {
+  if (costCents === null) return { sellingCents, costCents: null, gpCents: null, marginPct: null, markupPct: null };
+  const gp = sellingCents - costCents;
+  return { sellingCents, costCents, gpCents: gp, marginPct: sellingCents > 0 ? pct2(gp, sellingCents) : null, markupPct: costCents > 0 ? pct2(gp, costCents) : null };
 }
 
 export class PricingInputError extends Error {
@@ -90,10 +106,11 @@ export function validateScenario(s: PricingScenario): string[] {
   const e: string[] = [];
   const keys = new Set<string>();
   if (!Number.isFinite(Date.parse(s.pricingDate))) e.push("The pricing date is not a valid date.");
+  if (s.lines.length === 0) e.push("There are no lines to price.");
   for (const l of s.lines) {
     if (keys.has(l.key)) e.push(`Line "${l.key}" appears more than once.`);
     keys.add(l.key);
-    if (!isQty(l.quantity)) e.push(`${l.label}: the quantity must be greater than zero.`);
+    if (!isQty(l.quantity) || quantityMilli(l.quantity) === null) e.push(`${l.label}: the quantity must be greater than zero, with at most 3 decimals.`);
     if (l.cost) {
       if (!ISO.test(l.cost.currency)) e.push(`${l.label}: the supplier currency must be a three-letter code.`);
       if (!isInt(l.cost.nativeUnitCostMicro) || l.cost.nativeUnitCostMicro < 0) e.push(`${l.label}: the supplier cost must be a non-negative number.`);
@@ -120,7 +137,7 @@ export function validateScenario(s: PricingScenario): string[] {
       if (!hasReason(o.price)) e.push(`${key}: a price override needs a reason.`);
     }
     if (o.quantity) {
-      if (!isQty(o.quantity.quantity)) e.push(`${key}: an overridden quantity must be greater than zero.`);
+      if (!isQty(o.quantity.quantity) || quantityMilli(o.quantity.quantity) === null) e.push(`${key}: an overridden quantity must be greater than zero.`);
       if (!hasReason(o.quantity)) e.push(`${key}: a quantity override needs a reason.`);
     }
   }
@@ -201,15 +218,14 @@ export function calculatePricing(scenario: PricingScenario, rules: PricingRuleVe
       supplier: l.cost?.supplierName ?? null, currency: l.cost?.currency ?? null, nativeUnitCostMicro: l.cost?.nativeUnitCostMicro ?? null, costVerification: l.cost?.verification ?? null,
       rate, freightFactorMicro: freightFactor, freightAddOnCents: addOn,
       unitLandedCostCents: unitLanded, calculatedUnitPriceCents: calculated, unitPriceCents: unitPrice, priceOrigin: origin,
-      revenueCents: revenue, costCents: cost, margin: revenue === null ? null : marginFigures(revenue, cost), override: ov && (ov.price || ov.quantity) ? structuredClone(ov) : null, issues,
+      revenueCents: revenue, costCents: cost, margin: revenue === null ? null : figures(revenue, cost), override: ov && (ov.price || ov.quantity) ? structuredClone(ov) : null, issues,
     };
   });
 
   const priced = lines.filter((l) => l.status === "priced");
-  const itemsRevenue = priced.reduce((a, l) => a + (l.revenueCents ?? 0), 0);
-  const itemsCost = priced.length > 0 && priced.every((l) => l.costCents !== null) ? priced.reduce((a, l) => a + (l.costCents ?? 0), 0) : null;
+  const pricedSubtotal = priced.reduce((a, l) => a + (l.revenueCents ?? 0), 0);
   const issues: Issue[] = lines.flatMap((l) => l.issues);
-  const incomplete = lines.some((l) => l.status === "not_priced");
+  const incomplete = priced.length < lines.length;
 
   let adjustment: AdjustmentResult | null = null;
   const a: ProjectAdjustment | null = scenario.projectAdjustment;
@@ -219,15 +235,19 @@ export function calculatePricing(scenario: PricingScenario, rules: PricingRuleVe
       // A target is meaningless against a partial total, so it is not applied until every line is priced.
       adjustment = incomplete
         ? { kind: a.kind, ...base, requestedTargetCents: a.targetTotalCents, amountCents: 0, applied: false }
-        : { kind: a.kind, ...base, requestedTargetCents: a.targetTotalCents, amountCents: a.targetTotalCents - itemsRevenue, applied: true };
+        : { kind: a.kind, ...base, requestedTargetCents: a.targetTotalCents, amountCents: a.targetTotalCents - pricedSubtotal, applied: true };
       if (!adjustment.applied) issues.push({ key: null, code: "adjustment_not_applied", message: "The target project price is not applied while some lines are not priced." });
-    } else if (itemsRevenue + a.amountCents < 0) {
+    } else if (pricedSubtotal + a.amountCents < 0) {
       adjustment = { kind: a.kind, ...base, requestedTargetCents: null, amountCents: 0, applied: false };
       issues.push({ key: null, code: "adjustment_not_applied", message: "The adjustment would make the project price negative, so it is not applied." });
     } else adjustment = { kind: a.kind, ...base, requestedTargetCents: null, amountCents: a.amountCents, applied: true };
   }
 
-  const total = itemsRevenue + (adjustment?.applied ? adjustment.amountCents : 0);
+  const total = incomplete ? null : pricedSubtotal + (adjustment?.applied ? adjustment.amountCents : 0);
+  const withCost = lines.filter((l) => l.unitLandedCostCents !== null);
+  const costCompleteness: CostCompleteness = withCost.length === lines.length ? "complete" : withCost.length === 0 ? "none" : "partial";
+  // Every line with a known cost is priced from it (an unpriced line never has a cost), so a complete cost implies a complete price.
+  const costCents = costCompleteness === "complete" ? lines.reduce((x, l) => x + (l.costCents ?? 0), 0) : null;
   const provisional = issues.some((i) => i.code !== "adjustment_not_applied" && PROVISIONAL.has(i.code));
   return {
     ruleVersion: { id: rules.id, label: rules.label, status: rules.status },
@@ -235,12 +255,14 @@ export function calculatePricing(scenario: PricingScenario, rules: PricingRuleVe
     markup: { bps: markupBps, source: markupSource },
     lines,
     ratesUsed: [...used.values()].sort((x, y) => x.currency.localeCompare(y.currency) || x.kind.localeCompare(y.kind)),
-    itemsRevenueCents: itemsRevenue,
-    itemsCostCents: itemsCost,
-    adjustment,
+    pricedSubtotalCents: pricedSubtotal,
+    priceCompleteness: incomplete ? "incomplete" : provisional ? "provisional" : "complete",
     totalExVatCents: total,
-    margin: priced.length === 0 ? null : marginFigures(total, itemsCost),
-    completeness: incomplete ? "incomplete" : provisional ? "provisional" : "complete",
+    costCompleteness,
+    costCents,
+    costsVerified: withCost.length > 0 && withCost.every((l) => l.costVerification === "verified"),
+    margin: total !== null && costCents !== null ? figures(total, costCents) : null,
+    adjustment,
     issues,
   };
 }

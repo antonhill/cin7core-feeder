@@ -1,8 +1,19 @@
 import { micro } from "./money";
-import type { PricingLineInput, PricingScenario } from "./types";
+import type { PricingLineInput, PricingRuleVersion, PricingScenario } from "./types";
 
 // DEVELOPMENT FIXTURES (NQ-008B Phase 1). Invented figures that exercise the model; they are not NewQuip prices, costs, rates or rules. The shapes are exactly what a completed
 // supplier workbook has to be converted into (supplier, currency, native cost, source, freight), so importing it later is a mapping exercise, not a redesign.
+
+/** DEVELOPMENT FIXTURE ONLY. Placeholder figures so the model can be exercised; NOT NewQuip rules. Deliberately not in the rule-version registry and not exported from the model's index. */
+export const FIXTURE_DRAFT_RULE_VERSION: PricingRuleVersion = {
+  id: "fixture-draft-v0",
+  label: "Development fixture (not a NewQuip rule)",
+  status: "draft",
+  markupBps: 2000,
+  unverifiedCost: "flag",
+  freightUnspecified: "flag",
+  maxRateAgeDays: 7,
+};
 
 export const FIXTURE_PRICING_DATE = "2026-11-12T08:00:00.000Z";
 export const FIXTURE_ACTOR = "estimator@example.test";

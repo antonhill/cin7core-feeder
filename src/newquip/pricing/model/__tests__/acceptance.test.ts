@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { baseScenario, FIXTURE_ACTOR, FIXTURE_PRICING_DATE, missingCostLine } from "../fixtures";
-import { calculatePricing, comparePricing, FIXTURE_DRAFT_RULE_VERSION as RULES, micro, sealPricing, verifySealed, PricingInputError } from "..";
+import { baseScenario, FIXTURE_ACTOR, FIXTURE_DRAFT_RULE_VERSION as RULES, FIXTURE_PRICING_DATE, missingCostLine } from "../fixtures";
+import { calculatePricing, comparePricing, micro, sealPricing, verifySealed, viewPricing, PricingInputError } from "..";
 
 const AT = FIXTURE_PRICING_DATE;
 const by = { by: FIXTURE_ACTOR, at: AT };
@@ -21,9 +21,10 @@ describe("1. a ZAR customer quote with EUR and USD supplier products", () => {
   });
   it("totals, and SEPARATE markup and gross margin", () => {
     expect(r.totalExVatCents).toBe(8_244_000);
-    expect(r.itemsCostCents).toBe(6_870_000);
+    expect(r.costCents).toBe(6_870_000);
     expect(r.margin).toMatchObject({ gpCents: 1_374_000, marginPct: 16.67, markupPct: 20 }); // margin on selling price (16.67%) is not markup on cost (20%)
-    expect(r.completeness).toBe("complete");
+    expect(r.priceCompleteness).toBe("complete");
+    expect(r.costCompleteness).toBe("complete");
   });
 });
 
@@ -81,7 +82,7 @@ describe("5. a target project price adjustment", () => {
   const rev = R(baseScenario({ projectAdjustment: { kind: "target_total", targetTotalCents: 8_000_000, reason: "Agreed round figure", ...by } }));
   it("is its own line: item prices are NOT changed", () => {
     expect(rev.lines.map((l) => l.revenueCents)).toEqual(R().lines.map((l) => l.revenueCents));
-    expect(rev.itemsRevenueCents).toBe(8_244_000);
+    expect(rev.pricedSubtotalCents).toBe(8_244_000);
     expect(rev.adjustment).toMatchObject({ kind: "target_total", amountCents: -244_000, applied: true, reason: "Agreed round figure" });
     expect(rev.totalExVatCents).toBe(8_000_000);
   });
@@ -98,10 +99,10 @@ describe("5. a target project price adjustment", () => {
   it("is refused (not applied) while a line is unpriced, and never makes the price negative", () => {
     const partial = R(baseScenario({ lines: [...baseScenario().lines, missingCostLine()], projectAdjustment: { kind: "target_total", targetTotalCents: 8_000_000, reason: "x", ...by } }));
     expect(partial.adjustment?.applied).toBe(false);
-    expect(partial.totalExVatCents).toBe(8_244_000);
+    expect(partial.totalExVatCents).toBeNull(); // no project total while a line is unpriced
     const neg = R(baseScenario({ projectAdjustment: { kind: "amount", amountCents: -9_000_000, reason: "x", ...by } }));
     expect(neg.adjustment?.applied).toBe(false);
-    expect(neg.totalExVatCents).toBe(8_244_000);
+    expect(neg.totalExVatCents).toBe(8_244_000); // not applied, so the total is the unadjusted one
   });
 });
 
@@ -118,7 +119,7 @@ describe("6. before / after totals, markup and gross margin", () => {
     expect(c.original.margin).toMatchObject({ marginPct: 16.67, markupPct: 20 });
     // feeder: 224 250 landed x1.25 = 280 312.5 -> 280 313 x10 ; drinker: override 125 000 x40 ; fixings: 31 250 x20
     expect(revised.totalExVatCents).toBe(2_803_130 + 5_000_000 + 625_000);
-    expect(c.deltaTotalCents).toBe(revised.totalExVatCents - 8_244_000);
+    expect(c.deltaTotalCents).toBe(revised.totalExVatCents! - 8_244_000);
     expect(c.deltaMarginPctPoints).toBe(Math.round((revised.margin!.marginPct! - 16.67) * 100) / 100);
     expect(c.deltaMarkupPctPoints).not.toBeNull();
     expect(verifySealed(original)).toBe(true);
@@ -134,40 +135,84 @@ describe("6. before / after totals, markup and gross margin", () => {
 });
 
 describe("7. missing and unverified supplier costs are handled safely", () => {
-  it("a missing cost is NOT priced, NOT zero, left out of the totals, and the quotation is incomplete", () => {
+  it("a missing cost is NOT priced, NOT zero, and there is NO project total: the priced lines are a labelled subtotal, never a total", () => {
     const r = R(baseScenario({ lines: [...baseScenario().lines, missingCostLine()] }));
     const ctl = line(r, "controller");
     expect(ctl).toMatchObject({ status: "not_priced", unitPriceCents: null, revenueCents: null, costCents: null, unitLandedCostCents: null });
     expect(ctl.issues.map((i) => i.code)).toEqual(["cost_missing"]);
-    expect(r.totalExVatCents).toBe(8_244_000);
-    expect(r.completeness).toBe("incomplete");
+    expect(r.pricedSubtotalCents).toBe(8_244_000);
+    expect(r.totalExVatCents).toBeNull();
+    expect(r.priceCompleteness).toBe("incomplete");
+    expect(r.costCompleteness).toBe("partial");
+    expect(r.costCents).toBeNull(); // never a partial sum presented as the cost
+    expect(r.margin).toBeNull();
   });
-  it("a missing exchange rate is reported, never defaulted", () => {
+  it("a missing exchange rate is reported, never defaulted, and also leaves no total", () => {
     const r = R(baseScenario({ fxQuotes: { USD: baseScenario().fxQuotes.USD } }));
     expect(line(r, "feeder")).toMatchObject({ status: "not_priced", unitPriceCents: null });
     expect(line(r, "feeder").issues[0].code).toBe("rate_missing");
+    expect(r.totalExVatCents).toBeNull();
   });
-  it("an unverified cost is priced but makes the quotation provisional, and the rules can instead refuse it", () => {
+  it("an unverified cost is priced (price provisional), the cost is complete but NOT verified, and the rules can instead refuse it", () => {
     const s = baseScenario(); s.lines[0].cost!.verification = "unverified";
     const r = R(s);
     expect(line(r, "feeder").issues.map((i) => i.code)).toEqual(["unverified_cost"]);
-    expect(r.completeness).toBe("provisional");
+    expect(r).toMatchObject({ priceCompleteness: "provisional", costCompleteness: "complete", costsVerified: false, totalExVatCents: 8_244_000 });
     const strict = calculatePricing(s, { ...RULES, unverifiedCost: "block" });
     expect(line(strict, "feeder").status).toBe("not_priced");
-    expect(strict.completeness).toBe("incomplete");
+    expect(strict).toMatchObject({ priceCompleteness: "incomplete", totalExVatCents: null, costCompleteness: "partial" });
   });
-  it("a price override on a line with no cost prices it but shows no margin for it, and flags it", () => {
+  it("a price override on a line with no cost: the SELLING price is complete, the COST is partial, and no margin is shown", () => {
     const r = R(baseScenario({ lines: [...baseScenario().lines, missingCostLine()], itemOverrides: { controller: { price: { unitPriceCents: 500_000, reason: "Supplier quote pending", ...by } } } }));
     expect(line(r, "controller")).toMatchObject({ status: "priced", revenueCents: 500_000, costCents: null });
     expect(line(r, "controller").margin).toMatchObject({ gpCents: null, marginPct: null });
-    expect(r.margin).toMatchObject({ gpCents: null, marginPct: null, markupPct: null }); // total margin is unknown while a priced line has no cost
-    expect(r.completeness).toBe("provisional");
+    expect(r).toMatchObject({ totalExVatCents: 8_744_000, priceCompleteness: "provisional", costCompleteness: "partial", costCents: null, margin: null });
   });
-  it("a stale spot rate and an unspecified freight adjustment are flagged", () => {
+  it("a stale spot rate and an unspecified freight adjustment make the price provisional (cost still complete)", () => {
     const s = baseScenario({ pricingDate: "2026-11-30T00:00:00.000Z" });
     expect(R(s).issues.some((i) => i.code === "stale_rate")).toBe(true);
     const f = baseScenario(); f.lines[2].freight = null;
-    expect(R(f).issues.map((i) => i.code)).toContain("freight_unspecified");
+    const rf = R(f);
+    expect(rf.issues.map((i) => i.code)).toContain("freight_unspecified");
+    expect(rf).toMatchObject({ priceCompleteness: "provisional", costCompleteness: "complete" });
+  });
+});
+
+// The full combination matrix of selling-price completeness x cost completeness. Each row says what the customer total, the project cost and the margin may be.
+describe("price completeness x cost completeness (the combinations)", () => {
+  const unverified = () => { const s = baseScenario(); s.lines[0].cost!.verification = "unverified"; return s; };
+  const withController = (over: Parameters<typeof baseScenario>[0] = {}) => baseScenario({ lines: [...baseScenario().lines, missingCostLine()], ...over });
+  const allMissing = (): ReturnType<typeof baseScenario> => baseScenario({ lines: baseScenario().lines.map((l) => ({ ...l, cost: null, freight: null })) });
+  const table: Array<[string, ReturnType<typeof baseScenario>, { price: string; cost: string; total: boolean; costKnown: boolean; margin: boolean }]> = [
+    ["everything known and verified", baseScenario(), { price: "complete", cost: "complete", total: true, costKnown: true, margin: true }],
+    ["cost unverified", unverified(), { price: "provisional", cost: "complete", total: true, costKnown: true, margin: true }],
+    ["one cost missing, no override", withController(), { price: "incomplete", cost: "partial", total: false, costKnown: false, margin: false }],
+    ["one cost missing, price overridden", withController({ itemOverrides: { controller: { price: { unitPriceCents: 500_000, reason: "r", ...by } } } }), { price: "provisional", cost: "partial", total: true, costKnown: false, margin: false }],
+    ["every cost missing, no override", allMissing(), { price: "incomplete", cost: "none", total: false, costKnown: false, margin: false }],
+    ["every cost missing, every price overridden", { ...allMissing(), itemOverrides: Object.fromEntries(baseScenario().lines.map((l) => [l.key, { price: { unitPriceCents: 100_000, reason: "r", ...by } }])) }, { price: "provisional", cost: "none", total: true, costKnown: false, margin: false }],
+    ["missing cost + target adjustment (refused)", withController({ projectAdjustment: { kind: "target_total", targetTotalCents: 8_000_000, reason: "r", ...by } }), { price: "incomplete", cost: "partial", total: false, costKnown: false, margin: false }],
+    ["missing cost + amount adjustment (total still withheld)", withController({ projectAdjustment: { kind: "amount", amountCents: -100_000, reason: "r", ...by } }), { price: "incomplete", cost: "partial", total: false, costKnown: false, margin: false }],
+  ];
+  for (const [name, scenario, want] of table) {
+    it(name, () => {
+      const r = R(scenario);
+      expect([r.priceCompleteness, r.costCompleteness]).toEqual([want.price, want.cost]);
+      expect(r.totalExVatCents !== null).toBe(want.total);
+      expect(r.costCents !== null).toBe(want.costKnown);
+      expect(r.margin !== null).toBe(want.margin);
+    });
+  }
+  it("the customer-safe view never carries a total while a line is unpriced, and says nothing about cost completeness", () => {
+    const v = viewPricing(R(withController()), { roles: new Set(["rep"]), canSeeCost: false });
+    expect(v).toMatchObject({ audience: "customer_safe", completeness: "incomplete", totalExVatCents: null, pricedSubtotalCents: 8_244_000 });
+    expect(JSON.stringify(v)).not.toMatch(/partial|costCompleteness|margin/i);
+  });
+  it("a before/after comparison never compares a partial total with a whole one", () => {
+    const whole = R(), partial = R(withController());
+    const c = comparePricing(whole, partial);
+    expect(c.deltaTotalCents).toBeNull();
+    expect(c.deltaPricedSubtotalCents).toBe(0);
+    expect(c.revised).toMatchObject({ totalExVatCents: null, priceCompleteness: "incomplete", costCompleteness: "partial" });
   });
 });
 

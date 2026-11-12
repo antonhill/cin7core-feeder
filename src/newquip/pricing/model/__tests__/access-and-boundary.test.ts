@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import { baseScenario, FIXTURE_ACTOR, FIXTURE_PRICING_DATE, missingCostLine } from "../fixtures";
-import { calculatePricing, canEnterPricingInputs, emptyInputRecord, FIXTURE_DRAFT_RULE_VERSION as RULES, micro, stampPricingInputs, viewPricing, type PricingInputRecord, type QuoteRoleSet, type Viewer } from "..";
+import { baseScenario, FIXTURE_ACTOR, FIXTURE_DRAFT_RULE_VERSION as RULES, FIXTURE_PRICING_DATE, missingCostLine } from "../fixtures";
+import { calculatePricing, canEnterPricingInputs, emptyInputRecord, micro, stampPricingInputs, viewPricing, type PricingInputRecord, type QuoteRoleSet, type Viewer } from "..";
 
 const roles = (...r: Array<"rep" | "estimator" | "manager">): QuoteRoleSet => new Set(r);
 const REP: Viewer = { roles: roles("rep"), canSeeCost: false };
@@ -25,16 +25,19 @@ describe("9. no unauthorised pricing or cost visibility", () => {
     const v = viewPricing(rich(), REP);
     expect(v.audience).toBe("customer_safe");
     const json = JSON.stringify(v);
-    for (const leak of ["Secret", "Euro Supplier", "Fixture spot", "19500000", "20000000", "nativeUnitCost", "Landed", "landed", "costCents", "marginPct", "markup", "freight", "rate", "supplier", "SupplierBV", "forward", "reason", "by\":", "cost_missing", "issues", "x@y"]) {
+    for (const leak of ["Secret", "Euro Supplier", "Fixture spot", "19500000", "20000000", "nativeUnitCost", "landed", "costCents", "marginPct", "markup", "freight", "rate", "supplier", "forward", "reason", "by\":", "cost_missing", "issues", "x@y", "costCompleteness", "verified"]) {
       expect(json.toLowerCase(), leak).not.toContain(leak.toLowerCase());
     }
-    expect(Object.keys(v).sort()).toEqual(["adjustmentCents", "audience", "completeness", "lines", "totalExVatCents"]);
+    expect(Object.keys(v).sort()).toEqual(["adjustmentCents", "audience", "completeness", "lines", "pricedSubtotalCents", "totalExVatCents"]);
   });
-  it("a viewer without cost visibility still sees the project adjustment as a selling line, and the true total", () => {
-    const r = rich();
+  it("a viewer without cost visibility still sees the project adjustment as a selling line, and the true total only when every line is priced", () => {
+    const r = rich(); // includes a line with no cost, so there is no total
     const v = viewPricing(r, REP);
     expect(v.audience === "customer_safe" && v.adjustmentCents).toBe(-100_000);
-    expect(v.audience === "customer_safe" && v.totalExVatCents).toBe(r.totalExVatCents);
+    expect(v.audience === "customer_safe" && v.totalExVatCents).toBeNull();
+    const whole = calculatePricing(baseScenario({ projectAdjustment: { kind: "amount", amountCents: -100_000, reason: "r", by: "x", at: AT } }), RULES);
+    const w = viewPricing(whole, REP);
+    expect(w.audience === "customer_safe" && w.totalExVatCents).toBe(8_144_000);
   });
   it("an unpriced line is 'not_priced' with no figure, never 0, in the reduced view", () => {
     const v = viewPricing(rich(), REP);
@@ -115,5 +118,21 @@ describe("10. no regression to Cin7 posting: the model cannot reach it, and noth
   it("is not called by anything outside the model in Phase 1: the existing quotation engine, actions, pages and posting code are unchanged and do not import it", () => {
     const offenders = walk(path.join(ROOT, "src")).filter((f) => /\.(ts|tsx)$/.test(f) && !f.startsWith(MODEL) && /pricing\/model/.test(readFileSync(f, "utf8")));
     expect(offenders.map((f) => path.relative(ROOT, f))).toEqual([]);
+  });
+});
+
+describe("6. fixture rule versions cannot reach a real quotation, and the engine stays unwired", () => {
+  const importers = (needle: RegExp) => walk(path.join(ROOT, "src")).filter((f) => /\.(ts|tsx)$/.test(f) && needle.test(readFileSync(f, "utf8"))).map((f) => path.relative(ROOT, f));
+  it("the fixtures module is imported only by the model's own tests", () => {
+    expect(importers(/pricing\/model\/fixtures|from "\.\.\/fixtures"|from "\.\/fixtures"/).filter((f) => !f.includes("pricing/model/__tests__/")  && !f.endsWith("pricing/model/fixtures.ts"))).toEqual([]);
+  });
+  it("the model's index does not export the fixtures or any draft rule version, and the registry holds no draft", () => {
+    expect(readFileSync(path.join(MODEL, "index.ts"), "utf8")).not.toMatch(/fixtures/);
+    const reg = readFileSync(path.join(MODEL, "rule-versions.ts"), "utf8");
+    expect(reg).not.toMatch(/status: "draft"/);
+    expect(reg).not.toMatch(/allowDraft/);
+  });
+  it("no production file (outside the model and its tests) mentions the model: the existing POC calculation is the only thing that prices a quotation", () => {
+    expect(importers(/newquip\/pricing\/model|pricing\/model\/|from "\.\/model"|from "\.\.\/model"/).filter((f) => !f.startsWith("src/newquip/pricing/model/"))).toEqual([]);
   });
 });

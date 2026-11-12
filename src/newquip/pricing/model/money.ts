@@ -28,8 +28,33 @@ export function withMarkupBps(costCents: number, bps: number): number {
   return Number(divRound(BigInt(costCents) * BigInt(10_000 + bps), BigInt(10_000)));
 }
 
-/** Whole-cent revenue/cost of `unitCents` x `quantity` (quantity may be fractional, e.g. running metres). */
-export const lineCents = (unitCents: number, quantity: number): number => Math.round(unitCents * quantity);
+/** A quantity may have at most 3 decimals (running metres, tonnes). Returns it in thousandths, or null when it has more precision than that. */
+export function quantityMilli(quantity: number): number | null {
+  const milli = Math.round(quantity * 1000);
+  return Number.isSafeInteger(milli) && Math.abs(milli - quantity * 1000) < 1e-6 ? milli : null;
+}
+
+/** Whole-cent revenue/cost of `unitCents` x `quantity`: exact integer arithmetic, half-up. */
+export const lineCents = (unitCents: number, quantity: number): number => {
+  const milli = quantityMilli(quantity);
+  if (milli === null) throw new Error("A quantity can have at most 3 decimals.");
+  return Number(divRound(BigInt(unitCents) * BigInt(milli), BigInt(1000)));
+};
+
+// ── THE ROUNDING RULE (one place, stated once) ─────────────────────────────
+//  • Money is held in whole cents. Every conversion or multiplication that is not already whole is rounded HALF UP (a tie goes away from zero) in exact integer arithmetic.
+//  • A margin or markup PERCENTAGE is rounded half up to 2 decimals, again in exact integers: 14.125% is 14.13%, 14.124% is 14.12%, a loss of 14.125% is -14.13%.
+//  • Percentages are DISPLAY figures only. Nothing is ever recalculated from a rounded percentage; prices come from cents and basis points.
+//  • The shared Projects helper (`marginFigures`) rounds in floating point and shows 14.125% as 14.12%. That is not changed here (Projects is out of scope and
+//    needs its own regression evidence); the model does not use it, and a test pins both behaviours so the difference is visible, not accidental.
+
+/** numerator / denominator x 100 as a percentage with 2 decimals, half away from zero, exactly. Denominator must be > 0. */
+export function pct2(numerator: number, denominator: number): number {
+  const n = BigInt(numerator), d = BigInt(denominator);
+  const neg = n < BigInt(0);
+  const hundredths = divRound((neg ? -n : n) * BigInt(10_000), d);
+  return (neg ? -1 : 1) * Number(hundredths) / 100;
+}
 
 export const isInt = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n);
 export const isQty = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n > 0;
