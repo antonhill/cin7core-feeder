@@ -99,7 +99,7 @@ const walk = (d: string): string[] => readdirSync(d).flatMap((f) => { const p = 
 const sources = walk(MODEL).filter((f) => f.endsWith(".ts") && !f.includes("__tests__"));
 const importsOf = (f: string) => [...readFileSync(f, "utf8").matchAll(/from\s+"([^"]+)"/g)].map((m) => m[1]);
 
-describe("10. no regression to Cin7 posting: the model cannot reach it, and nothing reaches the model", () => {
+describe("10. no regression to Cin7 posting: the model cannot reach it", () => {
   it("the model imports only NewQuip pure modules, the shared margin helper and itself: no Cin7, Xero, Supabase, server, email or billing code", () => {
     expect(sources.length).toBeGreaterThanOrEqual(8);
     for (const f of sources) for (const i of importsOf(f)) {
@@ -115,16 +115,12 @@ describe("10. no regression to Cin7 posting: the model cannot reach it, and noth
       expect(t, f).not.toMatch(/fetch\(|NEWQUIP_CIN7_WRITES_ENABLED|process\.env|createServiceRoleClient/);
     }
   });
-  it("is not called by anything outside the model in Phase 1: the existing quotation engine, actions, pages and posting code are unchanged and do not import it", () => {
-    const offenders = walk(path.join(ROOT, "src")).filter((f) => /\.(ts|tsx)$/.test(f) && !f.startsWith(MODEL) && /pricing\/model/.test(readFileSync(f, "utf8")));
-    expect(offenders.map((f) => path.relative(ROOT, f))).toEqual([]);
-  });
 });
 
-describe("6. fixture rule versions cannot reach a real quotation, and the engine stays unwired", () => {
+describe("fixture rule versions cannot reach a real quotation; the model is reached ONLY through the Estimator integration module", () => {
   const importers = (needle: RegExp) => walk(path.join(ROOT, "src")).filter((f) => /\.(ts|tsx)$/.test(f) && needle.test(readFileSync(f, "utf8"))).map((f) => path.relative(ROOT, f));
-  it("the fixtures module is imported only by the model's own tests", () => {
-    expect(importers(/pricing\/model\/fixtures|from "\.\.\/fixtures"|from "\.\/fixtures"/).filter((f) => !f.includes("pricing/model/__tests__/")  && !f.endsWith("pricing/model/fixtures.ts"))).toEqual([]);
+  it("the fixtures module is imported only by tests of the model and of the estimator integration", () => {
+    expect(importers(/model\/fixtures|from "\.\.\/fixtures"|from "\.\/fixtures"|from "\.\.\/\.\.\/model\/fixtures"/).filter((f) => !/pricing\/(model|estimator)\/__tests__\//.test(f) && !f.endsWith("pricing/model/fixtures.ts"))).toEqual([]);
   });
   it("the model's index does not export the fixtures or any draft rule version, and the registry holds no draft", () => {
     expect(readFileSync(path.join(MODEL, "index.ts"), "utf8")).not.toMatch(/fixtures/);
@@ -132,7 +128,12 @@ describe("6. fixture rule versions cannot reach a real quotation, and the engine
     expect(reg).not.toMatch(/status: "draft"/);
     expect(reg).not.toMatch(/allowDraft/);
   });
-  it("no production file (outside the model and its tests) mentions the model: the existing POC calculation is the only thing that prices a quotation", () => {
-    expect(importers(/newquip\/pricing\/model|pricing\/model\/|from "\.\/model"|from "\.\.\/model"/).filter((f) => !f.startsWith("src/newquip/pricing/model/"))).toEqual([]);
+  it("outside the model, ONLY the Estimator integration module imports it (the engine, actions, pages and Cin7 code reach it only through that module)", () => {
+    expect(importers(/pricing\/model|from "\.\.\/model"|from "\.\/model"/).filter((f) => !f.startsWith("src/newquip/pricing/model/") && !f.startsWith("src/newquip/pricing/estimator/") && !f.includes("/__tests__/"))).toEqual([]); // tests may import it; production code may not
+  });
+  it("the Estimator integration module itself imports no Cin7, Xero, Supabase, server, email or billing code", () => {
+    for (const f of walk(path.join(ROOT, "src/newquip/pricing/estimator")).filter((x) => x.endsWith(".ts") && !x.includes("__tests__"))) for (const i of importsOf(f)) {
+      expect(i, `${path.relative(ROOT, f)} -> ${i}`).not.toMatch(/cin7|xero|supabase|server-only|next\/|email|billing|sync|write-flag|posting/i);
+    }
   });
 });
