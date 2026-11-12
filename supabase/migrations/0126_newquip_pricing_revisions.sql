@@ -92,6 +92,12 @@ begin
   select coalesce(max(seq), 0) into v_seq from newquip_pricing_revisions where quote_id = p_quote and org_id = p_org;
   if v_seq <> p_expected_seq then raise exception 'pricing_conflict: the pricing changed while it was being edited'; end if;
 
+  -- The function writes a WHOLE draft, so it proves that ONLY estimator.pricing differs (a bug or another service-role caller can never rewrite anything else under a
+  -- pricing revision), that the recorded previous / new pricing are exactly the stored / written ones, and that the kind says what happened. JSON null and SQL null are the same here.
+  if (p_new_draft #- '{estimator,pricing}') is distinct from (q.draft #- '{estimator,pricing}') then raise exception 'pricing_conflict: a pricing revision may change only estimator.pricing'; end if;
+  if nullif(p_previous_pricing, 'null'::jsonb) is distinct from nullif(q.draft #> '{estimator,pricing}', 'null'::jsonb) then raise exception 'pricing_conflict: the recorded previous pricing is not the stored pricing'; end if;
+  if nullif(p_new_pricing, 'null'::jsonb) is distinct from nullif(p_new_draft #> '{estimator,pricing}', 'null'::jsonb) then raise exception 'pricing_conflict: the recorded new pricing is not the pricing written to the draft'; end if;
+
   insert into newquip_pricing_revisions (
     org_id, quote_id, seq, quote_revision, kind, rule_version, reason, previous_pricing, new_pricing, changes, new_pricing_hash, draft_hash_after, changed_by_email
   ) values (

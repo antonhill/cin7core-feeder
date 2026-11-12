@@ -153,9 +153,10 @@ export async function saveDraft(
   const r = await db.from("newquip_quotes").update({
     draft, draft_hash: draftHash, customer_name: draft.customerName, site_name: draft.siteName, quote_type: draft.quoteType,
     ...(clearSignoff ? { estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null } : {}),
-  }).eq("org_id", orgId).eq("id", quoteId).in("state", ["REP_DRAFT", "ESTIMATOR_REVIEW"]).select("id");
+  }).eq("org_id", orgId).eq("id", quoteId).eq("draft_hash", q.draft_hash).in("state", ["REP_DRAFT", "ESTIMATOR_REVIEW"]).select("id");
+  // Compare-and-set on the draft hash read above: a save that raced with another writer (e.g. an Estimator pricing revision, which also changes the hash) must not silently overwrite it.
   if (r.error) fail(r.error.message);
-  if (!r.data || r.data.length === 0) fail("The quote could not be saved (its state changed).");
+  if (!r.data || r.data.length === 0) fail("The quote could not be saved (it changed while you were editing; refresh and try again).");
   return { draftHash, signoffCleared: clearSignoff };
 }
 

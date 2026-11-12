@@ -66,9 +66,9 @@ describe("who may change pricing, and what a valid change looks like", () => {
     expect(bad((s) => { s.fxQuotes.EUR = { rateMicro: 0, source: "x", asOf: AT }; })).toMatch(/exchange rate is not valid/);
     expect(bad((s) => { s.skuPriceOverrides = { PNQ082: { unitPriceCents: 100, reason: " " } }; })).toMatch(/needs a reason/);
     expect(bad((s) => { s.skuPriceOverrides = { PNQ082: { unitPriceCents: 0, reason: "x" } }; })).toMatch(/never quoted at R0/);
-    expect(bad((s) => { s.projectMarkup = { markupBps: 200_000, reason: "x" }; })).toMatch(/between 0% and 1000%/);
+    expect(bad((s) => { s.projectMarkup = { markupBps: 200_000, reason: "x" }; })).toMatch(/project markup must be a whole number between 0 and 100000/);
     expect(bad((s) => { s.targetAdjustment = { targetTotalCents: 5_000_000, reason: "" }; })).toMatch(/target price adjustment needs a reason/);
-    expect(bad((s) => { s.skus["BAD SKU!!"] = Object.values(s.skus)[0] as never; })).toMatch(/Not a valid SKU/);
+    expect(bad((s) => { s.skus["BAD SKU!!"] = Object.values(s.skus)[0] as never; })).toMatch(/not a valid key/);
   });
   it("switching OFF is a recorded change by an authorised person only", () => {
     const first = apply(strip());
@@ -83,5 +83,44 @@ describe("who may change pricing, and what a valid change looks like", () => {
     b.revision = 9; b.pricingDate = "2030-01-01T00:00:00.000Z"; for (const s of Object.values(b.skus)) { s!.by = "x"; s!.at = "y"; }
     expect(diffPricing(a, b)).toEqual([]);
     expect(EST).toBeTruthy();
+  });
+});
+
+describe("strict submission shape (independent security review)", () => {
+  const run = (mut: (s: Record<string, any>) => void, reason = "Initial supplier pricing") => { // eslint-disable-line @typescript-eslint/no-explicit-any
+    const sub = strip() as unknown as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+    mut(sub);
+    return apply(sub as unknown as PricingSubmission, undefined, EST_V, reason);
+  };
+  const errs = (r: ReturnType<typeof run>) => (r.ok ? [] : r.errors).join(" | ");
+  it("drops unknown keys: nothing but the known fields reaches the stored pricing", () => {
+    const r = run((s) => { Object.values<any>(s.skus)[0].evil = { x: 1 }; s.fxQuotes.EUR.extra = "y"; s.surprise = true; }); // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(JSON.stringify(r.next)).not.toMatch(/evil|extra|surprise/);
+  });
+  it("refuses reserved object keys and malformed keys", () => {
+    for (const bad of ["__proto__", "constructor", "toString", "hasOwnProperty", "a b!!"]) {
+      const r = run((s) => { s.skus = { ...s.skus }; Object.defineProperty(s.skus, bad, { value: Object.values<any>(s.skus)[0], enumerable: true }); }); // eslint-disable-line @typescript-eslint/no-explicit-any
+      expect(errs(r), bad).toMatch(/not a valid key/);
+    }
+  });
+  it("refuses wrong types, non-integers, out-of-bound numbers, overlong text, a bad verification value and a future rate date", () => {
+    expect(errs(run((s) => { Object.values<any>(s.skus)[0].supplierName = 12345; }))).toMatch(/supplier must be text/); // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(errs(run((s) => { Object.values<any>(s.skus)[0].nativeUnitCostMicro = 1.5; }))).toMatch(/supplier cost must be a whole number/); // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(errs(run((s) => { Object.values<any>(s.skus)[0].nativeUnitCostMicro = 1e15; }))).toMatch(/supplier cost must be a whole number between 0 and 1000000000000/); // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(errs(run((s) => { Object.values<any>(s.skus)[0].source = "x".repeat(201); }))).toMatch(/too long/); // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(errs(run((s) => { Object.values<any>(s.skus)[0].verification = "yes"; }))).toMatch(/verification must be/); // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(errs(run((s) => { s.fxQuotes.EUR.asOf = "2030-01-01T00:00:00.000Z"; }))).toMatch(/cannot be dated in the future/);
+    expect(errs(run((s) => { s.fxQuotes.EUR.rateMicro = 1e12; }))).toMatch(/exchange rate must be a whole number/);
+    expect(errs(run(() => undefined, "x".repeat(501)))).toMatch(/3 to 500 characters/);
+    expect(errs(run(() => undefined, 42 as unknown as string))).toMatch(/Say why/);
+  });
+  it("a null, array or non-object submission is refused with a plain message (no exception)", () => {
+    for (const bad of [null, [], "x", 5]) expect(applyPricingSubmission(undefined, bad as never, EST_V, "e", NOW, "A valid reason", "project")).toMatchObject({ ok: false });
+  });
+  it("the largest allowed inputs still calculate exactly (no overflow)", () => {
+    const r = run((s) => { const k = Object.keys(s.skus)[0]; s.skus[k].nativeUnitCostMicro = 1e12; s.skus[k].currency = "EUR"; s.fxQuotes.EUR.rateMicro = 1e9; s.skus[k].freight = { factorMicro: 1e8, source: "max" }; });
+    expect(r.ok).toBe(true);
   });
 });
