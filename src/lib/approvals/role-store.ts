@@ -4,6 +4,8 @@ import "server-only";
 import type { createServiceRoleClient } from "@/supabase/server";
 import { DEFAULT_POLICIES, effectiveRoles, isFunctionalRole, validatePolicy, type FunctionalRole, type PolicySet, type StagePolicy } from "./roles";
 import type { ApprovalDocType } from "./types";
+import { activeSeesCosts, narrowToActive } from "./active-role";
+import { resolveSwitchState } from "./role-switch-store";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 function fail(message: string): never { throw new Error(message); }
@@ -33,18 +35,23 @@ export async function strictRoles(db: Db, orgId: string): Promise<boolean> {
   return !!(r.data as { roles_enforced?: boolean }).roles_enforced;
 }
 
-/** The roles this person effectively holds in the organisation (server-side; never trusted from the client). */
+/** The roles this person effectively holds in the organisation (server-side; never trusted from the client). A role-switch user holds only their ACTIVE process role. */
 export async function resolveRoles(db: Db, orgId: string, userId: string, adminTier: boolean): Promise<ReadonlySet<FunctionalRole>> {
   const all = await listAssignments(db, orgId);
-  if (all === null) return effectiveRoles([], adminTier, false);
-  return effectiveRoles(all.filter((a) => a.user_id === userId).map((a) => a.role), adminTier, await strictRoles(db, orgId));
+  const roles = all === null ? effectiveRoles([], adminTier, false) : effectiveRoles(all.filter((a) => a.user_id === userId).map((a) => a.role), adminTier, await strictRoles(db, orgId));
+  if (all === null) return roles;
+  const sw = await resolveSwitchState(db, orgId, userId);
+  return sw ? narrowToActive(roles, sw.active) : roles;
 }
 
 /**
  * May this person see estimated costs and margins and make audited cost overrides? An organisation owner/admin, or someone EXPLICITLY given the Estimator or
  * Manager role. The tier fallback never grants it (otherwise every member would see cost), and Procurement / Rep / Project Manager / Administrator alone do not.
+ * A role-switch user sees costs only while acting as Estimator or Manager: in Rep mode neither their admin tier nor their other roles reveal anything.
  */
 export async function canSeeCosts(db: Db, orgId: string, userId: string, adminTier: boolean): Promise<boolean> {
+  const sw = await resolveSwitchState(db, orgId, userId);
+  if (sw) return activeSeesCosts(sw.active);
   if (adminTier) return true;
   const all = await listAssignments(db, orgId);
   return !!all && all.some((a) => a.user_id === userId && (a.role === "ESTIMATOR" || a.role === "MANAGER"));
