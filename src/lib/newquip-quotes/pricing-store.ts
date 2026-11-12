@@ -12,7 +12,7 @@ import { loadQuote } from "./quote-store";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 const NOT_AVAILABLE = "Estimator pricing revisions are not available yet (database migration pending).";
-const notAvailable = (m: string | undefined): boolean => /does not exist|schema cache|could not find the (table|function)|PGRST20[24]/i.test(m ?? "");
+const notAvailable = (m: string | undefined): boolean => /newquip_(apply_pricing_revision|pricing_revisions)/i.test(m ?? "") && /does not exist|schema cache|could not find the (table|function)|PGRST20[24]/i.test(m ?? "");
 
 export interface PricingRevisionRow {
   id: string; seq: number; quoteRevision: number; kind: RevisionKind; ruleVersion: string; reason: string;
