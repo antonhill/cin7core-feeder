@@ -284,12 +284,14 @@ describe("D3-C Solution Builder: visible selected / excluded states and a stable
     const { default: Page } = await import("../[id]/page");
     render(createElement(Page));
     await waitFor(() => expect(screen.getByText("Equipment selections")).toBeTruthy(), { timeout: 15000 }); // the page is a dynamic import: under a loaded full-suite run 5s was not enough
-    const controller = box(/Thomas-CL1 controller/).closest("label")!;
-    expect(controller.textContent).toMatch(/Included/); // the stored draft ticks the controller
-    const silo = box(/Silo weighing/).closest("label")!;
-    expect(silo.textContent).toMatch(/Not included/);
+    // The labels settle after the stored draft is applied (not on first paint): wait for them, never sample once.
+    await waitFor(() => expect(box(/Thomas-CL1 controller/).closest("label")!.textContent).toMatch(/Included/), { timeout: 15000 }); // the stored draft ticks the controller
+    await waitFor(() => expect(box(/Silo weighing/).closest("label")!.textContent).toMatch(/Not included/), { timeout: 15000 });
+    // The page re-applies the stored draft once its customer details have loaded; a click before that is overwritten. Let it settle first (as the other tests in this file do).
+    await waitFor(() => expect(screen.getByText("All changes saved")).toBeTruthy(), { timeout: 15000 });
+    await sleep(300);
     fireEvent.click(box(/Silo weighing/));
-    expect(silo.textContent).toMatch(/✓ Included/);
+    await waitFor(() => expect(box(/Silo weighing/).closest("label")!.textContent).toMatch(/✓ Included/), { timeout: 15000 });
   }, 30000);
 
   it("when the live recalculation FAILS the bar says so in text, marks the total out of date, and does not call it a preview", async () => {
