@@ -15,7 +15,10 @@ const MAX_QUERY_VALUE_LEN = 128;
 const MAX_CONSECUTIVE_ERRORS = 3;
 const MAX_RATE_LIMIT_RETRIES = 3;
 const BACKOFF_MS = [2000, 4000, 8000];
-const PACING_MS = 1000;
+export const DEFAULT_PACING_MS = 1500;
+export const DEFAULT_DEADLINE_MS = 240_000;
+export const DEFAULT_MAX_SUPPLIER_LOOKUPS = 100;
+const LOOKUP_LIMIT = 10; // /Product?SKU= and /Supplier?Name= may be contains/prefix matches: ask for 10 and pick the exact one
 
 /** A short, safe failure code (never a message from Cin7, never a URL or credential). */
 export class DiagnosticError extends Error {
@@ -25,6 +28,13 @@ export class DiagnosticError extends Error {
 export type QueryValue = string | number | boolean;
 /** The only thing the gate ever hands to a transport: method is always GET. */
 export type GetTransport = (method: "GET", path: string, query: Record<string, string | number>) => Promise<unknown>;
+
+/** The same value rule the gate enforces: a string value must be short and free of control characters. */
+export function isQueryableString(value: string): boolean {
+  if (value.length > MAX_QUERY_VALUE_LEN) return false;
+  for (let i = 0; i < value.length; i++) if (value.charCodeAt(i) < 32) return false;
+  return true;
+}
 
 export class Cin7ReadOnlyGate {
   constructor(private readonly transport: GetTransport) {}
@@ -36,7 +46,7 @@ export class Cin7ReadOnlyGate {
       if (!ALLOWED_QUERY_KEYS.includes(key)) throw new DiagnosticError("query_key_not_allowed");
       if (typeof value === "number") { if (!Number.isFinite(value)) throw new DiagnosticError("query_value_invalid"); safe[key] = value; }
       else if (typeof value === "boolean") safe[key] = value ? "true" : "false";
-      else if (typeof value === "string" && value.length <= MAX_QUERY_VALUE_LEN && !/[\u0000-\u001f]/.test(value)) safe[key] = value;
+      else if (typeof value === "string" && isQueryableString(value)) safe[key] = value;
       else throw new DiagnosticError("query_value_invalid");
     }
     return this.transport("GET", path, safe);
@@ -100,6 +110,12 @@ export interface SupplierEntry {
   cost: number | null; fixedCost: number | null;
   supplierInventoryCode: string | null; lastSupplied: string | null;
   currencyConflict: boolean; currencyUnknown: boolean;
+  /** Live supplier master lookup was not done (cap or deadline), so masterCurrency is unknown. */
+  supplierLookupSkipped: boolean;
+  /** More than one live supplier matched the name case-insensitively and none matched exactly. */
+  supplierNameAmbiguous: boolean;
+  /** The supplier name cannot be used as a query value (too long / control characters). */
+  nameNotQueryable: boolean;
   substitutionFields: Record<string, unknown>;
 }
 export interface BomComponent { code: string | null; name: string | null; qty: number | null; wastagePercent: number | null; wastageQty: number | null; costPercentage: number | null; raw: Raw; substitutionFields: Record<string, unknown> }
@@ -111,13 +127,16 @@ export interface SkuResult {
   rawBomLineKeys: string[]; rawSupplierKeys: string[];
   substitutionFields: Record<string, unknown>;
 }
-export interface SupplierMaster { name: string; found: boolean; currency: string | null; status: string | null; error: string | null }
+export interface SupplierMaster { name: string; found: boolean; currency: string | null; status: string | null; error: string | null; lookupSkipped: boolean; ambiguous: boolean; nameNotQueryable: boolean }
 export interface DiagnosticSummary {
   requested: number; found: number; missing: number; inactive: number; noSupplier: number; multipleSuppliers: number;
   currencyConflicts: number; currencyUnknown: number; bomMissing: number; errors: number;
+  supplierLookupsSkipped: number; supplierNameAmbiguous: number; nameNotQueryable: number;
 }
 export interface DiagnosticResult {
   generatedAt: string; readOnly: true; aborted: boolean;
+  /** Why the run stopped early: "consecutive_errors" (3 in a row) or "deadline" (wall-clock budget spent). null when it ran to the end. */
+  abortReason: "consecutive_errors" | "deadline" | null;
   fieldNotes: Record<string, string>;
   summary: DiagnosticSummary; skus: SkuResult[]; supplierMasters: SupplierMaster[];
 }
@@ -129,6 +148,10 @@ const FIELD_NOTES: Record<string, string> = {
   masterCurrency: "Currency on the LIVE /Supplier master record (exact name match), or null.",
   currencyConflict: "Both currencies are known and differ.",
   currencyUnknown: "Neither the record nor the live supplier master gives a currency.",
+  supplierLookupSkipped: "The live supplier lookup was skipped (lookup cap or deadline), so masterCurrency is unknown.",
+  supplierNameAmbiguous: "More than one live supplier matched the name case-insensitively and none matched exactly; masterCurrency is not used.",
+  nameNotQueryable: "The supplier name is too long or has control characters, so it could not be looked up (not counted as an error).",
+  abortReason: "consecutive_errors = 3 errors in a row; deadline = the wall-clock budget ran out. Remaining SKUs are marked skipped_after_abort; results so far are valid.",
   rawBomLineKeys: "Every key seen on any BOM component object, so substitute/alternative fields are discovered rather than assumed.",
 };
 
@@ -138,7 +161,7 @@ function parseSupplier(s: Raw): SupplierEntry {
     recordCurrency: str(s.Currency), masterCurrency: null,
     cost: num(s.Cost), fixedCost: num(s.FixedCost),
     supplierInventoryCode: str(s.SupplierInventoryCode) ?? str(s.SupplierSKU) ?? str(s.SupplierProductCode), lastSupplied: str(s.LastSupplied),
-    currencyConflict: false, currencyUnknown: false, substitutionFields: substitutionFields(s),
+    currencyConflict: false, currencyUnknown: false, supplierLookupSkipped: false, supplierNameAmbiguous: false, nameNotQueryable: false, substitutionFields: substitutionFields(s),
   };
 }
 function parseComponent(c: Raw): BomComponent {
@@ -182,51 +205,74 @@ async function getWithBackoff(gate: Cin7ReadOnlyGate, sleep: Sleep, path: string
   }
 }
 
-export interface InspectOptions { sleep?: Sleep; now?: () => Date }
+export interface InspectOptions {
+  sleep?: Sleep; /** Milliseconds clock (injectable). */ now?: () => number;
+  pacingMs?: number; deadlineMs?: number; maxSupplierLookups?: number;
+}
 
-/** Sequential, paced, abort-after-3-consecutive-errors. `skus` must already be validated (validateSkus). */
+const masterStub = (name: string, over: Partial<SupplierMaster>): SupplierMaster => ({ name, found: false, currency: null, status: null, error: null, lookupSkipped: false, ambiguous: false, nameNotQueryable: false, ...over });
+
+/** Sequential, paced, abort after 3 consecutive errors or when the wall-clock deadline passes. `skus` must already be validated (validateSkus). */
 export async function inspectSkus(gate: Cin7ReadOnlyGate, skus: string[], opts: InspectOptions = {}): Promise<DiagnosticResult> {
   const sleep = opts.sleep ?? realSleep;
+  const now = opts.now ?? Date.now;
+  const pacing = opts.pacingMs ?? DEFAULT_PACING_MS;
+  const maxLookups = opts.maxSupplierLookups ?? DEFAULT_MAX_SUPPLIER_LOOKUPS;
+  const deadline = now() + (opts.deadlineMs ?? DEFAULT_DEADLINE_MS);
   const results: SkuResult[] = [];
   let consecutive = 0;
-  let aborted = false;
+  let abortReason: DiagnosticResult["abortReason"] = null;
   let first = true;
   for (const sku of skus) {
-    if (aborted) { results.push(emptyResult(sku, "skipped_after_abort")); continue; }
-    if (!first) await sleep(PACING_MS);
+    if (abortReason) { results.push(emptyResult(sku, "skipped_after_abort")); continue; }
+    if (!first) await sleep(pacing);
     first = false;
+    if (now() >= deadline) { abortReason = "deadline"; results.push(emptyResult(sku, "skipped_after_abort")); continue; } // checked AFTER the pacing sleep: no request past the budget
     try {
-      const resp = await getWithBackoff(gate, sleep, "/Product", { SKU: sku, IncludeSuppliers: "true", IncludeBOM: "true", page: 1, limit: 1 });
+      const resp = await getWithBackoff(gate, sleep, "/Product", { SKU: sku, IncludeSuppliers: "true", IncludeBOM: "true", page: 1, limit: LOOKUP_LIMIT });
       consecutive = 0;
-      const p = isObj(resp) ? objs(resp.Products)[0] : undefined;
-      results.push(p && p.SKU === sku ? parseProduct(sku, p) : emptyResult(sku, null)); // exact SKU only: Cin7 may ignore the filter
+      const p = isObj(resp) ? objs(resp.Products).find((x) => x.SKU === sku) : undefined; // exact, case-sensitive SKU only: Cin7 may match loosely
+      results.push(p ? parseProduct(sku, p) : emptyResult(sku, null));
     } catch (e) {
       results.push(emptyResult(sku, codeOf(e)));
-      if (++consecutive >= MAX_CONSECUTIVE_ERRORS) aborted = true;
+      if (++consecutive >= MAX_CONSECUTIVE_ERRORS) abortReason = "consecutive_errors";
     }
   }
 
-  // Live supplier master for the distinct supplier names (exact name match).
+  // Live supplier master for the distinct supplier names. Exact name; else a UNIQUE case-insensitive trimmed match; else ambiguous.
   const masters = new Map<string, SupplierMaster>();
   const names = [...new Set(results.flatMap((r) => r.suppliers.map((s) => s.supplierName)).filter((n): n is string => !!n))].sort();
   let supplierErrors = 0;
+  let lookups = 0;
   for (const name of names) {
-    if (aborted || supplierErrors >= MAX_CONSECUTIVE_ERRORS) { masters.set(name, { name, found: false, currency: null, status: null, error: "skipped_after_abort" }); continue; }
-    await sleep(PACING_MS);
+    if (!isQueryableString(name)) { masters.set(name, masterStub(name, { nameNotQueryable: true })); continue; } // not an error: never counts toward the abort
+    if (abortReason === "consecutive_errors" || supplierErrors >= MAX_CONSECUTIVE_ERRORS || lookups >= maxLookups || now() >= deadline) {
+      if (!abortReason && now() >= deadline) abortReason = "deadline";
+      masters.set(name, masterStub(name, { lookupSkipped: true }));
+      continue;
+    }
+    lookups++;
+    await sleep(pacing);
+    if (now() >= deadline) { abortReason = abortReason ?? "deadline"; masters.set(name, masterStub(name, { lookupSkipped: true })); continue; }
     try {
-      const resp = await getWithBackoff(gate, sleep, "/Supplier", { Name: name, page: 1, limit: 1 });
+      const resp = await getWithBackoff(gate, sleep, "/Supplier", { Name: name, page: 1, limit: LOOKUP_LIMIT });
       supplierErrors = 0;
-      const s = isObj(resp) ? objs(resp.SupplierList)[0] : undefined;
-      masters.set(name, s && s.Name === name ? { name, found: true, currency: str(s.Currency), status: str(s.Status), error: null } : { name, found: false, currency: null, status: null, error: null });
+      const list = isObj(resp) ? objs(resp.SupplierList) : [];
+      const exact = list.find((x) => x.Name === name);
+      const loose = list.filter((x) => typeof x.Name === "string" && x.Name.trim().toLowerCase() === name.trim().toLowerCase());
+      const hit = exact ?? (loose.length === 1 ? loose[0] : undefined);
+      masters.set(name, hit ? masterStub(name, { found: true, currency: str(hit.Currency), status: str(hit.Status) }) : masterStub(name, { ambiguous: !exact && loose.length > 1 }));
     } catch (e) {
       supplierErrors++;
-      masters.set(name, { name, found: false, currency: null, status: null, error: codeOf(e) });
+      masters.set(name, masterStub(name, { error: codeOf(e) }));
     }
   }
 
   let currencyConflicts = 0; let currencyUnknown = 0;
   for (const r of results) for (const s of r.suppliers) {
-    s.masterCurrency = s.supplierName ? masters.get(s.supplierName)?.currency ?? null : null;
+    const m = s.supplierName ? masters.get(s.supplierName) : undefined;
+    s.masterCurrency = m?.currency ?? null;
+    s.supplierLookupSkipped = !!m?.lookupSkipped; s.supplierNameAmbiguous = !!m?.ambiguous; s.nameNotQueryable = !!m?.nameNotQueryable;
     s.currencyConflict = !!s.recordCurrency && !!s.masterCurrency && s.recordCurrency.toUpperCase() !== s.masterCurrency.toUpperCase();
     s.currencyUnknown = !s.recordCurrency && !s.masterCurrency;
     if (s.currencyConflict) currencyConflicts++;
@@ -242,6 +288,9 @@ export async function inspectSkus(gate: Cin7ReadOnlyGate, skus: string[], opts: 
     currencyConflicts, currencyUnknown,
     bomMissing: foundRows.filter((r) => r.bom === null).length,
     errors: results.filter((r) => !!r.error).length + [...masters.values()].filter((m) => !!m.error).length,
+    supplierLookupsSkipped: [...masters.values()].filter((m) => m.lookupSkipped).length,
+    supplierNameAmbiguous: [...masters.values()].filter((m) => m.ambiguous).length,
+    nameNotQueryable: [...masters.values()].filter((m) => m.nameNotQueryable).length,
   };
-  return { generatedAt: (opts.now?.() ?? new Date()).toISOString(), readOnly: true, aborted, fieldNotes: FIELD_NOTES, summary, skus: results, supplierMasters: [...masters.values()] };
+  return { generatedAt: new Date(now()).toISOString(), readOnly: true, aborted: abortReason !== null, abortReason, fieldNotes: FIELD_NOTES, summary, skus: results, supplierMasters: [...masters.values()] };
 }

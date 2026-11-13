@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { pageContainerClass } from "@/app/PageContainer";
 import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
@@ -14,14 +14,18 @@ export function DiagnosticClient() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [json, setJson] = useState<string | null>(null);
+  const running = useRef(false); // a ref, not state: a same-tick double click must not start two runs
   const skus = text.split("\n").map((l) => l.trim()).filter(Boolean);
 
   async function run() {
+    if (running.current) return;
+    running.current = true;
     setBusy(true); setError(null); setJson(null);
     try {
       const r = await runCin7DiagnosticAction(skus);
       if (r.ok && r.data) setJson(JSON.stringify(r.data, null, 2)); else setError(r.error ?? "The diagnostic could not be completed.");
     } catch { setError("The diagnostic could not be completed."); }
+    running.current = false;
     setBusy(false);
   }
 
@@ -36,7 +40,7 @@ export function DiagnosticClient() {
         <textarea className="mt-2 h-48 w-full rounded-md border border-slate-300 bg-white p-2 font-mono text-sm" value={text} onChange={(e) => setText(e.target.value)} aria-label="SKUs, one per line" />
         <div className="mt-3 flex items-center gap-3">
           <Button onClick={run} loading={busy} disabled={!skus.length || skus.length > MAX_SKUS}>Run read-only check</Button>
-          <span className="text-xs text-slate-600">{skus.length} SKU(s). About one request per second, so allow a minute or two for a long list.</span>
+          <span className="text-xs text-slate-600">{skus.length} SKU(s). About one request every 1.5 seconds; a run stops after 4 minutes and returns what it has.</span>
         </div>
       </Panel>
       {error && <div className="mt-4"><Alert tone="danger">{error}</Alert></div>}

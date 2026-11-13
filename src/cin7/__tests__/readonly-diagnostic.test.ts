@@ -66,8 +66,8 @@ describe("inspectSkus", () => {
     const res = await inspectSkus(r.gate, ["A", "I", "WRONG", "NONE"], { sleep: r.sleep });
     expect(res.skus.map((s) => s.found)).toEqual([true, true, false, false]);
     expect(res.summary).toMatchObject({ requested: 4, found: 2, missing: 2, inactive: 1, noSupplier: 2, errors: 0 });
-    expect(r.calls[0]).toEqual({ method: "GET", path: "/Product", query: { SKU: "A", IncludeSuppliers: "true", IncludeBOM: "true", page: 1, limit: 1 } });
-    expect(r.sleeps.filter((ms) => ms === 1000)).toHaveLength(3); // paced between SKUs, not before the first
+    expect(r.calls[0]).toEqual({ method: "GET", path: "/Product", query: { SKU: "A", IncludeSuppliers: "true", IncludeBOM: "true", page: 1, limit: 10 } });
+    expect(r.sleeps.filter((ms) => ms === 1500)).toHaveLength(3); // paced between SKUs, not before the first
     expect(res.readOnly).toBe(true);
   });
 
@@ -87,7 +87,7 @@ describe("inspectSkus", () => {
     expect(res.skus[0].rawSupplierKeys).toEqual([...res.skus[0].rawSupplierKeys].sort());
     const supplierCalls = r.calls.filter((c) => c.path === "/Supplier");
     expect(supplierCalls.map((c) => c.query.Name).sort()).toEqual(["S1", "S2", "S3", "S4"]);
-    expect(supplierCalls.every((c) => c.query.page === 1 && c.query.limit === 1)).toBe(true);
+    expect(supplierCalls.every((c) => c.query.page === 1 && c.query.limit === 10)).toBe(true);
   });
 
   it("a supplier master that is not an exact name match is not used", async () => {
@@ -161,5 +161,88 @@ describe("inspectSkus", () => {
     expect(res.supplierMasters[0].error).toBe("http_500");
     expect(res.summary.errors).toBe(1);
     expect(JSON.stringify(res)).not.toContain(CANARY);
+  });
+
+  it("the default pacing is 1500 ms and is injectable", async () => {
+    const r = rig(() => prod("A"));
+    await inspectSkus(r.gate, ["A", "B"], { sleep: r.sleep });
+    expect(r.sleeps).toEqual([1500]);
+    const r2 = rig(() => prod("A"));
+    await inspectSkus(r2.gate, ["A", "B"], { sleep: r2.sleep, pacingMs: 10 });
+    expect(r2.sleeps).toEqual([10]);
+  });
+
+  it("deadline: stops further requests, returns partial results with aborted + reason", async () => {
+    let t = 0;
+    const r = rig((_p, q) => prod(String(q.SKU)));
+    const sleep = async (ms: number) => { t += ms * 100; }; // a slow run: each pacing sleep burns 100x
+    const res = await inspectSkus(r.gate, ["A", "B", "C", "D"], { sleep, now: () => t, deadlineMs: 200_000 });
+    expect(res.aborted).toBe(true);
+    expect(res.abortReason).toBe("deadline");
+    expect(r.calls.length).toBeLessThan(4);
+    expect(res.skus.filter((s) => s.error === "skipped_after_abort").length).toBe(4 - r.calls.length);
+    expect(res.skus.filter((s) => s.found).length).toBe(r.calls.length);
+    const ok = await inspectSkus(rig(() => prod("X")).gate, ["X"], { sleep: async () => {}, now: () => 0 });
+    expect(ok.aborted).toBe(false);
+    expect(ok.abortReason).toBeNull();
+    const err = await inspectSkus(rig(() => { throw Object.assign(new Error("e"), { status: 500 }); }).gate, ["A", "B", "C"], { sleep: async () => {} });
+    expect(err.abortReason).toBe("consecutive_errors");
+  });
+
+  it("deadline reached before the supplier stage: lookups are skipped and flagged", async () => {
+    let t = 0;
+    const r = rig((path) => (path === "/Product" ? prod("A", { Suppliers: [sup("S1")] }) : master("S1", "ZAR")));
+    const res = await inspectSkus(r.gate, ["A"], { sleep: async () => {}, now: () => (t += 150_000), deadlineMs: 200_000 });
+    expect(r.calls.some((c) => c.path === "/Supplier")).toBe(false);
+    expect(res.skus[0].suppliers[0]).toMatchObject({ supplierLookupSkipped: true, masterCurrency: null });
+    expect(res.abortReason).toBe("deadline");
+  });
+
+  it("caps supplier-master lookups; the excess are flagged unknown and counted", async () => {
+    const names = Array.from({ length: 5 }, (_, i) => `S${i}`);
+    const r = rig((path, q) => (path === "/Product" ? prod("A", { Suppliers: names.map((n) => sup(n)) }) : master(String(q.Name), "ZAR")));
+    const res = await inspectSkus(r.gate, ["A"], { sleep: r.sleep, maxSupplierLookups: 2 });
+    expect(r.calls.filter((c) => c.path === "/Supplier")).toHaveLength(2);
+    const sups = res.skus[0].suppliers;
+    expect(sups.filter((s) => s.supplierLookupSkipped)).toHaveLength(3);
+    expect(sups.filter((s) => s.supplierLookupSkipped).every((s) => s.masterCurrency === null && s.currencyUnknown)).toBe(true);
+    expect(res.summary.supplierLookupsSkipped).toBe(3);
+  });
+
+  it("picks the EXACT SKU when it is not the first result (case-sensitive)", async () => {
+    const r = rig(() => ({ Products: [{ SKU: "ABC-10", Name: "wrong" }, { SKU: "abc", Name: "case" }, { SKU: "ABC", Name: "right", Suppliers: [] }] }));
+    const res = await inspectSkus(r.gate, ["ABC"], { sleep: r.sleep });
+    expect(res.skus[0]).toMatchObject({ found: true });
+    const none = await inspectSkus(rig(() => ({ Products: [{ SKU: "ABC-10" }, { SKU: "abc" }] })).gate, ["ABC"], { sleep: async () => {} });
+    expect(none.skus[0].found).toBe(false);
+  });
+
+  it("supplier name: exact match wins when not first; unique case-insensitive trim match is the fallback; otherwise ambiguous", async () => {
+    const list = (items: Array<[string, string]>) => ({ SupplierList: items.map(([Name, Currency]) => ({ Name, Currency })) });
+    const run = async (sups: string[], resp: Record<string, unknown>) => {
+      const r = rig((path, q) => (path === "/Product" ? prod("A", { Suppliers: sups.map((n) => sup(n)) }) : resp[String(q.Name)]));
+      return inspectSkus(r.gate, ["A"], { sleep: r.sleep });
+    };
+    const exact = await run(["Acme"], { Acme: list([["Acme Corp", "USD"], ["ACME", "EUR"], ["Acme", "ZAR"]]) });
+    expect(exact.skus[0].suppliers[0]).toMatchObject({ masterCurrency: "ZAR", supplierNameAmbiguous: false });
+    const loose = await run(["Acme"], { Acme: list([["Acme Corp", "USD"], [" ACME ", "EUR"]]) });
+    expect(loose.skus[0].suppliers[0]).toMatchObject({ masterCurrency: "EUR" });
+    const amb = await run(["Acme"], { Acme: list([["ACME", "USD"], ["acme", "EUR"]]) });
+    expect(amb.skus[0].suppliers[0]).toMatchObject({ masterCurrency: null, supplierNameAmbiguous: true });
+    expect(amb.summary.supplierNameAmbiguous).toBe(1);
+    const none = await run(["Acme"], { Acme: list([["Acme Corp", "USD"]]) });
+    expect(none.skus[0].suppliers[0]).toMatchObject({ masterCurrency: null, supplierNameAmbiguous: false });
+  });
+
+  it("an unqueryable supplier name is nameNotQueryable, makes no request and does not count toward the abort", async () => {
+    const bad = ["a".repeat(200), "bad\nname", "bad2\tname", "bad3\rname"];
+    const r = rig((path) => (path === "/Product" ? prod("A", { Suppliers: [...bad.map((n) => sup(n)), sup("Good")] }) : master("Good", "ZAR")));
+    const res = await inspectSkus(r.gate, ["A"], { sleep: r.sleep });
+    expect(res.skus[0].suppliers.filter((s) => s.nameNotQueryable)).toHaveLength(4);
+    expect(r.calls.filter((c) => c.path === "/Supplier").map((c) => c.query.Name)).toEqual(["Good"]);
+    expect(res.skus[0].suppliers.find((s) => s.supplierName === "Good")).toMatchObject({ masterCurrency: "ZAR" });
+    expect(res.summary.nameNotQueryable).toBe(4);
+    expect(res.summary.errors).toBe(0);
+    expect(res.aborted).toBe(false);
   });
 });
