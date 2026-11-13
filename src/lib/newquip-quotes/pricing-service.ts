@@ -3,16 +3,16 @@ import "server-only";
 import type { createServiceRoleClient } from "@/supabase/server";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
-import { buildPricingWorkspace, canEnterPricingInputs, mayReviewCosts, mayVerifySku, selectRuleVersion, submissionFrom, type PricingSubmission, type PricingWorkspaceView, type VerifyItem, type Viewer } from "@/newquip/pricing/estimator";
+import { buildPricingWorkspace, canEnterPricingInputs, mayAttestRate, mayAttestRates, mayReviewCosts, mayVerifySku, selectRuleVersion, submissionFrom, type PricingSubmission, type PricingWorkspaceView, type AttestItem, type EvidenceItem, type VerifyItem, type Viewer } from "@/newquip/pricing/estimator";
 import { returnByOf } from "./return-store";
 import { reconcileConfirmationAmount, resyncApprovalsLogged, type AmountInvalidation } from "./confirmation-reconcile";
 import { latestIndicativeSnapshot } from "./indicative-store";
 import { loadQuote } from "./quote-store";
-import { applyEstimatorPricing, listPricingRevisions, verifyEstimatorCosts, type PricingRevisionRow } from "./pricing-store";
+import { applyEstimatorPricing, attestEstimatorRates, listPricingRevisions, recordManualPriceEvidence, verifyEstimatorCosts, type PricingRevisionRow } from "./pricing-store";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 export interface PricingActor { orgId: string; userId: string; email: string; roles: ReadonlySet<"rep" | "estimator" | "manager">; canSeeCost: boolean }
-export interface WorkspaceBundle { view: PricingWorkspaceView; /** What THIS viewer may do about cost verification: the SKUs they may independently verify now (never ones they entered themselves). */ verification: { canReview: boolean; reviewerRoles: string[]; verifiableSkus: string[] }; /** The stored inputs as the form edits them (null while the model is off). */ current: PricingSubmission | null; revisions: PricingRevisionRow[]; state: string; revision: number; canEdit: boolean }
+export interface WorkspaceBundle { view: PricingWorkspaceView; /** What THIS viewer may do about cost verification: the SKUs they may independently verify now (never ones they entered themselves). */ verification: { canReview: boolean; reviewerRoles: string[]; verifiableSkus: string[] }; /** What THIS viewer may do about forward-cover rate attestation: the currencies they may independently attest now (never rates they entered themselves). */ rateAttestation: { canReview: boolean; reviewerRoles: string[]; attestableCurrencies: string[] }; /** The stored inputs as the form edits them (null while the model is off). */ current: PricingSubmission | null; revisions: PricingRevisionRow[]; state: string; revision: number; canEdit: boolean }
 
 const viewerOf = (a: PricingActor): Viewer => ({ roles: a.roles, canSeeCost: a.canSeeCost });
 
@@ -29,7 +29,26 @@ export async function loadPricingWorkspace(db: Db, a: PricingActor, quoteId: str
   const verification = sel.ok
     ? { canReview: mayReviewCosts(viewerOf(a), sel.rules), reviewerRoles: [...sel.rules.costReview.reviewerRoles], verifiableSkus: Object.keys(q.draft.estimator.pricing?.skus ?? {}).filter((k) => mayVerifySku(viewerOf(a), a.email, q.draft.estimator.pricing!.skus[k], sel.rules)).sort() }
     : { canReview: false, reviewerRoles: [], verifiableSkus: [] };
-  return { view, verification, current: q.draft.estimator.pricing ? submissionFrom(q.draft.estimator.pricing) : null, revisions: await listPricingRevisions(db, a.orgId, quoteId), state: q.state, revision: q.revision, canEdit: canEnterPricingInputs(viewerOf(a)) && q.state !== "MANAGER_APPROVED_FINAL" };
+  const rateAttestation = sel.ok
+    ? { canReview: mayAttestRates(viewerOf(a), sel.rules), reviewerRoles: [...sel.rules.rateReview.reviewerRoles], attestableCurrencies: Object.keys(q.draft.estimator.pricing?.forwardCover ?? {}).filter((c) => mayAttestRate(viewerOf(a), a.email, c, q.draft.estimator.pricing!.forwardCover[c], sel.rules)).sort() }
+    : { canReview: false, reviewerRoles: [], attestableCurrencies: [] };
+  return { view, verification, rateAttestation, current: q.draft.estimator.pricing ? submissionFrom(q.draft.estimator.pricing) : null, revisions: await listPricingRevisions(db, a.orgId, quoteId), state: q.state, revision: q.revision, canEdit: canEnterPricingInputs(viewerOf(a)) && q.state !== "MANAGER_APPROVED_FINAL" };
+}
+
+/** An independent forward-cover rate attestation: one immutable revision, no price moves; the Estimator's sign-off is withdrawn by the write itself. */
+export async function attestRates(db: Db, a: PricingActor, quoteId: string, items: AttestItem[], evidence: string): Promise<{ ok: true; report: { seq: number; attested: number } } | { ok: false; errors: string[] }> {
+  const out = await attestEstimatorRates(db, a.orgId, quoteId, viewerOf(a), a.email, items, evidence);
+  if (!out.ok) return out;
+  await resyncApprovalsLogged(db, { orgId: a.orgId, userId: a.userId, email: a.email }, quoteId, { returnedToRep: false, signoffCleared: true });
+  return { ok: true, report: { seq: out.seq, attested: new Set(items.map((i) => i.currency)).size } };
+}
+
+/** Pricing-evidence notes for SKU-less manual items: one immutable revision, no price moves; the Estimator's sign-off is withdrawn by the write itself. */
+export async function recordManualEvidence(db: Db, a: PricingActor, quoteId: string, items: EvidenceItem[]): Promise<{ ok: true; report: { seq: number; recorded: number } } | { ok: false; errors: string[] }> {
+  const out = await recordManualPriceEvidence(db, a.orgId, quoteId, viewerOf(a), a.email, items);
+  if (!out.ok) return out;
+  await resyncApprovalsLogged(db, { orgId: a.orgId, userId: a.userId, email: a.email }, quoteId, { returnedToRep: false, signoffCleared: true });
+  return { ok: true, report: { seq: out.seq, recorded: new Set(items.map((i) => i.itemKey)).size } };
 }
 
 export interface ApplyReport { seq: number; kind: string; changedValues: number; confirmation: AmountInvalidation | null }

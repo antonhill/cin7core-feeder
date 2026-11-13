@@ -36,6 +36,11 @@ export interface PricingRuleVersion {
    * assignments are not decided here); `requireIndependent` means the reviewer must be a different person from whoever entered / last changed that cost.
    */
   costReview: { reviewerRoles: readonly ("estimator" | "manager")[]; requireIndependent: boolean };
+  /**
+   * Who may INDEPENDENTLY ATTEST an Estimator's forward-cover rate (NQ-008B P2-E): a rate the Estimator chose themselves replaces spot, so a second person must check its contract
+   * reference, validity dates and evidence. `reviewerRoles` is provisional (same as costReview): NewQuip's final personnel assignment is not decided here.
+   */
+  rateReview: { reviewerRoles: readonly ("estimator" | "manager")[]; requireIndependent: boolean };
 }
 
 // ── cost inputs ────────────────────────────────────────────────────────────

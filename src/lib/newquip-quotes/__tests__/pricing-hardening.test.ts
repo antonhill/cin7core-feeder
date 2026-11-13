@@ -6,10 +6,10 @@ import { testPriceSource } from "@/newquip/grower/__tests__/test-snapshot";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import { rolesFor } from "@/newquip/quote/roles";
-import { equivalentInputs, itemsOf, withPricing } from "@/newquip/pricing/estimator/__tests__/helpers";
+import { equivalentInputs, evidenceItemsFor, itemsOf, withPricing } from "@/newquip/pricing/estimator/__tests__/helpers";
 import { submissionFrom, type PricingSubmission } from "@/newquip/pricing/estimator";
 import { createQuote, estimatorSignOff, loadQuote, managerApprove, saveDraft, sendToEstimator } from "../quote-store";
-import { applyPricingChange, loadPricingWorkspace, verifyCosts, type PricingActor } from "../pricing-service";
+import { applyPricingChange, loadPricingWorkspace, recordManualEvidence, verifyCosts, type PricingActor } from "../pricing-service";
 import { listPricingRevisions } from "../pricing-store";
 
 // NQ-008B hardening, store level (FakeDb emulating 0123 and 0126): independent verification, concurrent updates, tenant isolation, approved-quote immutability, clearing a cost,
@@ -195,6 +195,7 @@ describe("tenant isolation and approved-quote immutability", () => {
     const { id } = await inReview();
     await applyPricingChange(db as never, estimator, id, sub(), "Indicative supplier pricing");
     await verifyAll(id);
+    expect(await recordManualEvidence(db as never, estimator, id, evidenceItemsFor((await loaded(id)).draft))).toMatchObject({ ok: true });
     await estimatorSignOff(db as never, ORG, member, "est@nq", id, ctx);
     await managerApprove(db as never, ORG, admin, "mgr1@nq", id, ctx);
     expect(await verifyCosts(db as never, manager2, id, await itemsFor(id, ["PNQ082"]), "Late")).toMatchObject({ ok: false, errors: [expect.stringMatching(/approved/)] });

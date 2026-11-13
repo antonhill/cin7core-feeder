@@ -13,6 +13,7 @@ import { rolesFor } from "@/newquip/quote/roles";
 import { stampPriceResolutions } from "@/newquip/quote/price-resolution";
 import { stampChanges } from "@/newquip/pricing/change-stamps";
 import { keepServerOwnedPricing } from "@/newquip/pricing/estimator/ownership";
+import { manualEvidenceRows } from "@/newquip/pricing/estimator/workspace-view";
 import { compareToIndicative, type IndicativeComparison } from "@/newquip/pricing/comparison";
 import { allIndicativeSnapshots } from "@/lib/newquip-quotes/indicative-store";
 import { keepEstimatorOwnedFields } from "@/newquip/quote/draft-ownership";
@@ -121,6 +122,8 @@ export interface QuoteView {
   returnInfo: ReturnInfo | null;
   /** Whether the Manager must accept a baseline exception to approve (Estimator-priced systems with no Cin7 SKU), and which items. Cost-entitled callers only (labels and pricing route, never a value). */
   baselineException?: BaselineExceptionView;
+  /** NQ-008B P2-E. Pricing evidence for SKU-less manual items (M75, LED, penning...): who recorded what, and whether it still covers the current price. Cost-entitled viewers only (a Manager sees it at approval); NEVER in a Rep payload. Absent while supplier pricing is off. */
+  manualPriceEvidence?: import("@/newquip/pricing/estimator").ManualEvidenceRow[];
   /** NQ-008A. The indicative price handed off versus the price now. Cost-entitled viewers only (never in a Rep payload); null when not applicable. */
   indicativeComparison?: IndicativeComparison;
   /** SERVER-derived: true only for a quotation created in POC Presentation Mode on the NewQuip POC deployment. The page then leaves out cost / mapping diagnostics and exception forms (the server records them with the POC reason). */
@@ -131,7 +134,9 @@ async function view(db: ReturnType<typeof createServiceRoleClient>, quote: Quote
   const canViewCommercials = a.canSeeCost;
   let costing: QuoteView["costing"];
   let baselineException: QuoteView["baselineException"];
+  let manualPriceEvidence: QuoteView["manualPriceEvidence"];
   if (canViewCommercials) {
+    if (quote.draft.estimator.pricing?.enabled) { try { manualPriceEvidence = manualEvidenceRows(quote.draft.estimator.pricing, evaluateDraft(quote.draft, evaluationContext(false)).budget); } catch { manualPriceEvidence = undefined; } }
     // Only an open quotation can need one; once approved the exception (if any) is read from the sealed baseline.
     if (quote.state === "ESTIMATOR_REVIEW") { try { baselineException = await baselineExceptionOf(db, a.orgId, quote.draft, evaluationContext(true)); } catch { baselineException = undefined; } }
     try { const c = await costingOf(db, a.orgId, quote.draft, evaluationContext(true)); costing = { complete: c.complete, reason: c.reasons[0] ?? null, ...(c.acceptedIncomplete ? { acceptedIncomplete: c.acceptedIncomplete } : {}) }; } catch { costing = undefined; }
@@ -158,6 +163,7 @@ async function view(db: ReturnType<typeof createServiceRoleClient>, quote: Quote
     viewer: { roles: [...a.roles], canViewCommercials, previewTools: process.env.VERCEL_ENV === "preview" },
     ...(isPocQuote(quote.draft) && pocPresentationEnabled(process.env as Record<string, string | undefined>, a.orgId) ? { poc: true } : {}),
     ...(costing ? { costing } : {}),
+    ...(manualPriceEvidence && manualPriceEvidence.length ? { manualPriceEvidence } : {}),
     returnInfo: returnInfoForViewer(await returnInfoOf(db, quote.org_id, quote), canViewCommercials),
     ...(baselineException ? { baselineException } : {}),
   };

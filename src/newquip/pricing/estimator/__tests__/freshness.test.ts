@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { calculatePricing, LEGACY_RULE_VERSION, micro, type PricingScenario } from "../../model";
 import { baseScenario, FIXTURE_ACTOR, FIXTURE_PRICING_DATE as PD } from "../../model/fixtures";
-import { applyPricingSubmission, pricingFinality, submissionFrom, type PricingSubmission } from "..";
+import { applyPricingSubmission, pricingFinality, rateInputHash, submissionFrom, type PricingSubmission } from "..";
 import { AT, equivalentInputs, evalOf, withPricing } from "./helpers";
 
 // EXCHANGE-RATE FRESHNESS (NQ-008B hardening): spot rates expire (proposed default 24 hours, subject to NewQuip's confirmation), forward cover is a DOCUMENTED rate with validity dates,
@@ -84,8 +84,10 @@ describe("freshness at sign-off / approval is a GATE, never a silent repricing",
   });
   it("an expired forward-cover contract blocks too, with its date", () => {
     const d = withPricing(priced(0));
-    const fcov = (cur: string) => ({ rateMicro: micro("19"), coverDays: 90, reference: `FEC-${cur}`, validFrom: "2026-11-01", validUntil: "2026-11-20", reason: "r", by: "x", at: AT });
-    d.estimator.pricing!.forwardCover = { EUR: fcov("EUR"), USD: { ...fcov("USD"), validUntil: "2026-12-31" } }; // (a valid USD contract, so only the EUR one can fail)
+    const base = (cur: string) => ({ rateMicro: micro("19"), coverDays: 90, reference: `FEC-${cur}`, validFrom: "2026-11-01", validUntil: "2026-11-20", reason: "r", by: "x", at: AT });
+    // (an attested rate: an independent reviewer, so only expiry can fail)
+    const fcov = (cur: string) => ({ ...base(cur), review: { by: "reviewer@example.test", at: AT, evidence: "FEC confirmation", inputHash: rateInputHash(cur, base(cur)) } });
+    d.estimator.pricing!.forwardCover = { EUR: fcov("EUR"), USD: (() => { const u = { ...base("USD"), validUntil: "2026-12-31" }; return { ...u, review: { by: "reviewer@example.test", at: AT, evidence: "FEC confirmation", inputHash: rateInputHash("USD", u) } }; })() }; // (a valid USD contract, so only the EUR one can fail)
     expect(pricingFinality(d.estimator.pricing, evalOf(d).budget, "2026-11-20T23:00:00.000Z").final).toBe(true);
     expect(pricingFinality(d.estimator.pricing, evalOf(d).budget, "2026-11-21T00:30:00.000Z").reasons.join(" ")).toMatch(/EUR forward-cover rate expired on 2026-11-20/);
   });

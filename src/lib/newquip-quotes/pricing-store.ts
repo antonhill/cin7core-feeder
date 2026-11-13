@@ -3,7 +3,9 @@ import type { createServiceRoleClient } from "@/supabase/server";
 import { hashOf } from "@/newquip/quote/baseline";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import type { EstimatorPricing } from "@/newquip/pricing/estimator/types";
-import { applyCostVerification, applyPricingSubmission, disablePricing, selectRuleVersion, type ApplyResult, type PricingChange, type PricingSubmission, type RevisionKind, type VerifyItem, type Viewer } from "@/newquip/pricing/estimator";
+import { evaluateDraft } from "@/newquip/grower/evaluate";
+import { evaluationContext } from "./context";
+import { applyCostVerification, applyManualEvidence, applyPricingSubmission, applyRateAttestation, disablePricing, selectRuleVersion, type ApplyResult, type AttestItem, type EvidenceItem, type PricingChange, type PricingSubmission, type RevisionKind, type VerifyItem, type Viewer } from "@/newquip/pricing/estimator";
 import { loadQuote, type QuoteRecord } from "./quote-store";
 
 // IMMUTABLE ESTIMATOR PRICING REVISIONS (NQ-008B Phase 2, migration 0126). The change and its revision are ONE database transaction (newquip_apply_pricing_revision): a pricing
@@ -87,5 +89,38 @@ export function verifyEstimatorCosts(
     if (!sel.ok) return { ok: false, errors: [sel.error] };
     const v = applyCostVerification(prior, items, viewer, email, nowIso, evidence, sel.rules);
     return v.ok ? { res: { ok: true, kind: "CHANGED", next: v.next, changes: v.changes }, reason: `Independent cost verification: ${evidence.trim()}` } : v;
+  });
+}
+
+/**
+ * Records an INDEPENDENT attestation of forward-cover rates as one immutable revision (who, when, what evidence, which exact rate). Prices, the pricing date and the customer total do not
+ * change. The reviewer must hold a reviewer role, see costs, and not be the person who entered the rate; the whole request is refused otherwise.
+ */
+export function attestEstimatorRates(
+  db: Db, orgId: string, quoteId: string, viewer: Viewer, email: string, items: AttestItem[], evidence: string, nowIso: string = new Date().toISOString(),
+): Promise<ApplyOutcome | ApplyFailure> {
+  return persist(db, orgId, quoteId, email, (q) => {
+    const prior = q.draft.estimator.pricing;
+    if (!prior) return { ok: false, errors: ["Supplier pricing is not switched on for this quotation."] };
+    const sel = selectRuleVersion(prior.ruleVersionId);
+    if (!sel.ok) return { ok: false, errors: [sel.error] };
+    const v = applyRateAttestation(prior, items, viewer, email, nowIso, evidence, sel.rules);
+    return v.ok ? { res: { ok: true, kind: "CHANGED", next: v.next, changes: v.changes }, reason: `Independent forward-cover rate attestation: ${evidence.trim()}` } : v;
+  });
+}
+
+/**
+ * Records pricing-evidence notes for SKU-less manual items as one immutable revision. The evidence is bound (by a hash the SERVER computes from the freshly evaluated, cost-visible budget,
+ * never from anything the client sent) to the item's current price. No price changes.
+ */
+export function recordManualPriceEvidence(
+  db: Db, orgId: string, quoteId: string, viewer: Viewer, email: string, items: EvidenceItem[], nowIso: string = new Date().toISOString(),
+): Promise<ApplyOutcome | ApplyFailure> {
+  return persist(db, orgId, quoteId, email, (q) => {
+    const prior = q.draft.estimator.pricing;
+    if (!prior) return { ok: false, errors: ["Supplier pricing is not switched on for this quotation."] };
+    const ev = evaluateDraft(q.draft, evaluationContext(false));
+    const v = applyManualEvidence(prior, ev.budget, items, viewer, email, nowIso);
+    return v.ok ? { res: { ok: true, kind: "CHANGED", next: v.next, changes: v.changes }, reason: `Pricing evidence recorded for ${new Set(items.map((i) => i.itemKey)).size} manual item(s)` } : v;
   });
 }

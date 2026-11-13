@@ -1,6 +1,8 @@
 import type { BudgetQuote } from "../../grower/quote-bridge";
 import { selectRuleVersion } from "../model";
 import { pricingForSku } from "./price-source";
+import { RATE_STATE_TEXT, rateDocumentationGaps, rateStateOf } from "./attestation";
+import { EVIDENCE_STATE_TEXT, evidenceStateOf, skuLessManualItems } from "./manual-evidence";
 import { COST_STATE_TEXT, costStateOf } from "./verification";
 import type { EstimatorPricing } from "./types";
 
@@ -63,12 +65,21 @@ export function pricingFinality(p: EstimatorPricing | undefined, budget: BudgetQ
     if (f) {
       const until = f.validUntil ? Date.parse(f.validUntil) + (f.validUntil.length <= 10 ? 86_400_000 - 1 : 0) : NaN;
       if (Number.isFinite(until) && now > until) reasons.push(`The ${cur} forward-cover rate expired on ${f.validUntil}. Record a current rate. ${NOT_WAIVABLE}`);
+      // A forward-cover rate is the Estimator's own rate (no market reference): it must be documented AND independently attested. The reason names the currency only, never the rate.
+      const gaps = rateDocumentationGaps(f, rules);
+      if (gaps.length) reasons.push(`The ${cur} forward-cover rate is missing ${gaps.join(" and ")}, so its price is indicative only. ${NOT_WAIVABLE}`);
+      else { const rs = rateStateOf(cur, f, rules); if (rs !== "attested") reasons.push(`The ${cur} forward-cover rate: ${RATE_STATE_TEXT[rs]}, so its price is indicative only. ${NOT_WAIVABLE}`); }
       continue;
     }
     const q = Object.prototype.hasOwnProperty.call(p.fxQuotes, cur) ? p.fxQuotes[cur] : undefined;
     if (q && rules.spotRateMaxAgeHours !== null && !((now - Date.parse(q.asOf)) / 3_600_000 <= rules.spotRateMaxAgeHours)) {
       reasons.push(`The ${cur} spot rate is older than ${rules.spotRateMaxAgeHours} hours. Record a current rate (nothing is repriced until you save one). ${NOT_WAIVABLE}`);
     }
+  }
+  // Items the Estimator prices by hand with NO SKU (M75, LED lighting, penning, any manual item) need a recorded evidence note bound to their current price. Names the item only, never a price.
+  for (const item of skuLessManualItems(budget)) {
+    const es = evidenceStateOf(item, p);
+    if (es !== "recorded") reasons.push(`${item.label}: ${EVIDENCE_STATE_TEXT[es]}, so its price is indicative only. ${NOT_WAIVABLE}`);
   }
   return { final: reasons.length === 0, reasons: [...new Set(reasons)] };
 }

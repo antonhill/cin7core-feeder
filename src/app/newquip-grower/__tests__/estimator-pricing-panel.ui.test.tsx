@@ -6,13 +6,14 @@ import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readyDraft } from "@/newquip/grower/__tests__/golden";
 import { equivalentInputs, evalOf, withPricing } from "@/newquip/pricing/estimator/__tests__/helpers";
-import { buildPricingWorkspace, submissionFrom, type EstimatorPricing } from "@/newquip/pricing/estimator";
+import { buildPricingWorkspace, manualEvidenceRows, submissionFrom, type EstimatorPricing } from "@/newquip/pricing/estimator";
 import type { WorkspaceBundle } from "@/lib/newquip-quotes/pricing-service";
 import * as actions from "../pricing-actions";
+import { ManualEvidencePanel } from "../[id]/ManualEvidencePanel";
 
 // NQ-008B Phase 2 (P2-C): the Estimator pricing workspace as rendered. The server actions are mocked; the view-model is built by the REAL pure builder from a real
 // evaluation, so what is rendered is what the server would send.
-vi.mock("../pricing-actions", () => ({ getEstimatorPricingAction: vi.fn(), applyEstimatorPricingAction: vi.fn(), disableEstimatorPricingAction: vi.fn(), verifyEstimatorCostsAction: vi.fn() }));
+vi.mock("../pricing-actions", () => ({ getEstimatorPricingAction: vi.fn(), applyEstimatorPricingAction: vi.fn(), disableEstimatorPricingAction: vi.fn(), verifyEstimatorCostsAction: vi.fn(), attestEstimatorRatesAction: vi.fn(), recordManualPriceEvidenceAction: vi.fn() }));
 import { EstimatorPricingPanel } from "../[id]/EstimatorPricingPanel";
 
 function bundle(p: EstimatorPricing | undefined, over: Partial<WorkspaceBundle> = {}, skipSku?: string): WorkspaceBundle {
@@ -20,7 +21,7 @@ function bundle(p: EstimatorPricing | undefined, over: Partial<WorkspaceBundle> 
   if (pricing && skipSku) delete pricing.skus[skipSku];
   const d = pricing ? withPricing(pricing) : readyDraft();
   const view = buildPricingWorkspace({ quoteType: "project", pricing, budget: evalOf(d).budget, originalTotalCents: 860_954_240, originalCapturedAt: "2026-11-12T08:00:00.000Z", nowIso: "2026-11-12T09:00:00.000Z" });
-  return { view, verification: { canReview: false, reviewerRoles: ["manager"], verifiableSkus: [] }, current: pricing ? submissionFrom(pricing) : null, revisions: [], state: "ESTIMATOR_REVIEW", revision: 1, canEdit: true, ...over };
+  return { view, verification: { canReview: false, reviewerRoles: ["manager"], verifiableSkus: [] }, rateAttestation: { canReview: false, reviewerRoles: ["manager"], attestableCurrencies: [] }, current: pricing ? submissionFrom(pricing) : null, revisions: [], state: "ESTIMATOR_REVIEW", revision: 1, canEdit: true, ...over };
 }
 beforeEach(() => { vi.clearAllMocks(); });
 afterEach(() => cleanup());
@@ -220,5 +221,116 @@ describe("hardening: cost verification, expiry, clearing and rate fields (render
     expect(Object.keys(submission.skus)).not.toContain("PNQ082");
     expect(Object.values(submission.skus).every((s) => s.nativeUnitCostMicro > 0)).toBe(true);
     expect(JSON.stringify(submission)).not.toMatch(/"review"|"verification"/);
+  });
+});
+
+// NQ-008B P2-E: independent forward-cover rate attestation and pricing evidence for SKU-less manual items.
+const FC = { rateMicro: 19_000_000, coverDays: 90, reference: "FEC-FIX", validFrom: "2026-11-01", validUntil: "2026-12-31", reason: "90-day contract", by: "est@x", at: "2026-11-12T08:00:00.000Z" };
+describe("forward-cover rate attestation", () => {
+  it("shows each forward-cover rate's attestation state; an unattested rate says it is not final", async () => {
+    mount(bundle(equivalentInputs({ forwardCover: { EUR: FC } })));
+    await waitFor(() => expect(screen.getByTestId("rate-state-EUR")).toBeTruthy());
+    expect(screen.getByTestId("rate-state-EUR").getAttribute("data-rate-state")).toBe("unattested");
+    expect(screen.getByTestId("rate-state-EUR").textContent).toMatch(/Not attested.*has not been independently attested/);
+    expect(screen.queryByTestId("attest-block")).toBeNull(); // this viewer is not a permitted reviewer
+  });
+  it("a permitted reviewer attests the rate they did not enter: the action gets the currency, the hash of the rate on screen and the evidence (never by / at)", async () => {
+    const b = bundle(equivalentInputs({ forwardCover: { EUR: FC } }), { rateAttestation: { canReview: true, reviewerRoles: ["manager"], attestableCurrencies: ["EUR"] } });
+    const reload = mount(b);
+    await waitFor(() => expect(screen.getByTestId("attest-block")).toBeTruthy());
+    const btn = screen.getByTestId("attest-save") as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText("Attest EUR forward-cover rate"));
+    expect(btn.disabled).toBe(true); // no evidence yet
+    fireEvent.change(screen.getByLabelText(/Evidence checked \(for example the forward-exchange contract number\)/), { target: { value: "FEC-FIX bank confirmation" } });
+    expect(btn.disabled).toBe(false);
+    vi.mocked(actions.attestEstimatorRatesAction).mockResolvedValue({ ok: true, data: { seq: 2, attested: 1 } });
+    fireEvent.click(btn);
+    await waitFor(() => expect(actions.attestEstimatorRatesAction).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(actions.attestEstimatorRatesAction).mock.calls[0]).toEqual(["q1", [{ currency: "EUR", rateHash: b.view.currencies.find((c) => c.currency === "EUR")!.forwardCover!.rateHash }], "FEC-FIX bank confirmation"]);
+    await waitFor(() => expect(screen.getByTestId("pricing-note").textContent).toMatch(/1 forward-cover rate independently attested.*No price changed/));
+    expect(reload).toHaveBeenCalled();
+  });
+  it("a viewer who entered the rate holds the role but may attest none: the block says so", async () => {
+    mount(bundle(equivalentInputs({ forwardCover: { EUR: FC } }), { rateAttestation: { canReview: true, reviewerRoles: ["manager"], attestableCurrencies: [] } }));
+    await waitFor(() => expect(screen.getByTestId("attest-none").textContent).toMatch(/need another reviewer/));
+    expect((screen.getByTestId("attest-save") as HTMLButtonElement).disabled).toBe(true);
+  });
+  it("shows the refusal the server gives, and no block once the quotation is approved", async () => {
+    mount(bundle(equivalentInputs({ forwardCover: { EUR: FC } }), { rateAttestation: { canReview: true, reviewerRoles: ["manager"], attestableCurrencies: ["EUR"] } }));
+    await waitFor(() => expect(screen.getByTestId("attest-block")).toBeTruthy());
+    fireEvent.click(screen.getByLabelText("Attest EUR forward-cover rate"));
+    fireEvent.change(screen.getByLabelText(/Evidence checked \(for example the forward-exchange contract number\)/), { target: { value: "FEC-FIX" } });
+    vi.mocked(actions.attestEstimatorRatesAction).mockResolvedValue({ ok: false, error: "x", errors: ["EUR: the rate changed after you opened it. Open the current rate and review that."] });
+    fireEvent.click(screen.getByTestId("attest-save"));
+    await waitFor(() => expect(screen.getByTestId("pricing-errors").textContent).toMatch(/EUR: the rate changed after you opened it/));
+    cleanup();
+    mount(bundle(equivalentInputs({ forwardCover: { EUR: FC } }), { state: "MANAGER_APPROVED_FINAL", canEdit: false, rateAttestation: { canReview: true, reviewerRoles: ["manager"], attestableCurrencies: ["EUR"] } }));
+    await waitFor(() => expect(screen.getByTestId("pricing-table")).toBeTruthy());
+    expect(screen.queryByTestId("attest-block")).toBeNull();
+  });
+});
+
+describe("pricing evidence for manual items", () => {
+  it("lists each SKU-less manual item with its state; a note is needed; the action gets only the key, note and reference (never a hash, by or at)", async () => {
+    const reload = mount(bundle(equivalentInputs({}, "unverified")));
+    await waitFor(() => expect(screen.getByTestId("evidence-block")).toBeTruthy());
+    const items = screen.getAllByTestId("evidence-item");
+    expect(items.map((i) => i.getAttribute("data-item"))).toEqual(["flex_auger", "led_light", "penning_package"]);
+    expect(items.every((i) => i.getAttribute("data-evidence-state") === "missing")).toBe(true);
+    expect(screen.getByTestId("evidence-block").textContent).toMatch(/M75 feed distribution system.*No evidence/);
+    const save = screen.getByTestId("evidence-save") as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText(/FORTIS.* evidence note/), { target: { value: "short" } });
+    expect(save.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText(/FORTIS.* evidence note/), { target: { value: "Basis: installer quote Q-7" } });
+    fireEvent.change(screen.getByLabelText(/FORTIS.* evidence reference/), { target: { value: "Q-7" } });
+    expect(save.disabled).toBe(false);
+    vi.mocked(actions.recordManualPriceEvidenceAction).mockResolvedValue({ ok: true, data: { seq: 2, recorded: 1 } });
+    fireEvent.click(save);
+    await waitFor(() => expect(actions.recordManualPriceEvidenceAction).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(actions.recordManualPriceEvidenceAction).mock.calls[0]).toEqual(["q1", [{ itemKey: "led_light", note: "Basis: installer quote Q-7", reference: "Q-7" }]]);
+    await waitFor(() => expect(screen.getByTestId("pricing-note").textContent).toMatch(/pricing evidence for 1 item.*No price changed/));
+    expect(reload).toHaveBeenCalled();
+  });
+  it("shows recorded evidence with who and when, and an outdated one as such; it is read-only when the quotation is approved", async () => {
+    const p = equivalentInputs({}, "verified");
+    p.manualEvidence!.led_light = { ...p.manualEvidence!.led_light!, note: "Basis: installer quote Q-7", by: "est@x" };
+    p.manualEvidence!.penning_package = { ...p.manualEvidence!.penning_package!, priceHash: "0".repeat(64) }; // the price it covered is not the current one
+    mount(bundle(p));
+    await waitFor(() => expect(screen.getByTestId("evidence-block")).toBeTruthy());
+    const led = screen.getAllByTestId("evidence-item").find((i) => i.getAttribute("data-item") === "led_light")!;
+    expect(led.getAttribute("data-evidence-state")).toBe("recorded");
+    expect(within(led).getByTestId("evidence-text").textContent).toMatch(/Basis: installer quote Q-7.*est@x/);
+    expect(screen.getAllByTestId("evidence-item").find((i) => i.getAttribute("data-item") === "penning_package")!.textContent).toMatch(/Price changed since.*price changed after its evidence was recorded/);
+    cleanup();
+    mount(bundle(p, { canEdit: false, state: "MANAGER_APPROVED_FINAL" }));
+    await waitFor(() => expect(screen.getByTestId("evidence-block")).toBeTruthy());
+    expect(screen.queryByTestId("evidence-save")).toBeNull();
+  });
+  it("supplier pricing OFF: nothing needs evidence and the block is absent (legacy POC behaviour unchanged)", async () => {
+    mount(bundle(undefined));
+    await waitFor(() => expect(screen.getByTestId("estimator-pricing-panel")).toBeTruthy());
+    expect(screen.queryByTestId("evidence-block")).toBeNull();
+  });
+});
+
+describe("what the Manager sees at approval (cost-entitled viewers only)", () => {
+  const rows = manualEvidenceRows(equivalentInputs({}, "verified"), evalOf(withPricing(equivalentInputs({}, "verified"))).budget);
+  it("shows the evidence note, who recorded it and when, and whether it still covers the price; nothing when there is nothing to show", () => {
+    render(createElement(ManualEvidencePanel, { rows }));
+    const r = screen.getAllByTestId("manual-evidence-row");
+    expect(r).toHaveLength(3);
+    expect(screen.getByTestId("manual-evidence-summary").textContent).toMatch(/Fixture pricing basis.*recorded by estimator@example\.test/);
+    cleanup();
+    const { container } = render(createElement(ManualEvidencePanel, { rows: [] }));
+    expect(container.textContent).toBe("");
+  });
+  it("is wired into the page for cost-entitled viewers only, outside POC presentation, and the server puts the rows in the view for them alone", () => {
+    const page = readFileSync(path.resolve(__dirname, "../[id]/page.tsx"), "utf8");
+    expect(page.match(/canCommercials && !poc && view\.manualPriceEvidence && <ManualEvidencePanel/g)?.length).toBe(2); // Stage 2 and Stage 3
+    const actionsSrc = readFileSync(path.resolve(__dirname, "../actions.ts"), "utf8");
+    const at = actionsSrc.indexOf("let manualPriceEvidence");
+    expect(actionsSrc.slice(at, at + 400)).toMatch(/if \(canViewCommercials\) \{\s*if \(quote\.draft\.estimator\.pricing\?\.enabled\)/);
   });
 });
