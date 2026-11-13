@@ -20,6 +20,7 @@ import { buildReviewDetail, type ReviewDetail } from "@/lib/approvals/review-det
 import { authoriseStageDecision } from "@/lib/approvals/policy";
 import { canAdminister, STAGE_LABEL, type FunctionalRole } from "@/lib/approvals/roles";
 import { emailsWithRole, resolveRoles } from "@/lib/approvals/role-store";
+import { narrowTier } from "@/lib/approvals/role-switch-store";
 import { awaitsMe, filterQueue, sortQueue, summarise, currentReturned, type QueueFilters, type QueueSort, type QueueSummary } from "@/lib/approvals/queue";
 import type { ApprovalAction, ApprovalDocType, ApprovalEventRow, ApprovalNotificationRow, ApprovalRequestRow, ApprovalSettings } from "@/lib/approvals/types";
 
@@ -34,6 +35,7 @@ async function context(): Promise<ApprovalCtx> {
   let isManager = false;
   if (acting.demo) isManager = acting.tier === "admin"; // the effective user's OWN tier
   else { try { await requireOrgAdmin("manage approvals"); isManager = true; } catch { isManager = false; } } // fail closed
+  if (isManager && !acting.demo) isManager = await narrowTier(createServiceRoleClient(), acting.orgId, acting.userId, true); // a role-switch user: admin tier counts only as Manager
   const base = approvalBaseUrl(process.env);
   return { orgId: acting.orgId, userId: acting.userId, email: acting.email.toLowerCase(), name: acting.demo?.actorName ?? acting.email, isManager, baseUrl: base, ...(acting.demo ? { demo: acting.demo } : {}) };
 }
