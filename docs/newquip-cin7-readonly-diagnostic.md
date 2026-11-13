@@ -8,7 +8,7 @@ It is a diagnostic. It does not fix, sync, capture or change anything.
 
 ## What it does
 
-- Page: `/newquip-grower/diagnostics` (a 404 unless enabled and authorised). Action: `runCin7DiagnosticAction` in `src/app/newquip-grower/cin7-diagnostic-actions.ts`.
+- Page: `/newquip-grower/diagnostics` (a 404 unless enabled and authorised). Action: `runCin7DiagnosticAction` in `src/app/newquip-grower/cin7-diagnostic-actions.ts` (credential loading lives in `src/cin7/readonly-diagnostic-run.ts`, outside the NewQuip no-write scan area).
 - Per SKU, one `GET /Product?SKU=<sku>&IncludeSuppliers=true&IncludeBOM=true&page=1&limit=1`. An EXACT SKU match is required (Cin7 can ignore the filter); anything else is reported as not found.
 - Per distinct supplier name across the batch, one `GET /Supplier?Name=<name>&page=1&limit=1` (exact name) to read the live master `Currency` and `Status`.
 - All requests go through `Cin7ReadOnlyGate` (`src/cin7/readonly-diagnostic.ts`) which has a single `get(path, query)` method. The HTTP method is hard-coded GET, only `/Product` and `/Supplier` are allowed, and only the query keys `SKU, Name, ID, IncludeSuppliers, IncludeBOM, page, limit`. Anything else throws before a request is built. Requests use the existing credential loader and the existing Cin7 gateway (`cin7Request`, canonical origin, no redirects, distributed rate limiter).
