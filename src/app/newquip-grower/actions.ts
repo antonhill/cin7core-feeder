@@ -13,6 +13,7 @@ import { rolesFor } from "@/newquip/quote/roles";
 import { stampPriceResolutions } from "@/newquip/quote/price-resolution";
 import { stampChanges } from "@/newquip/pricing/change-stamps";
 import { keepServerOwnedPricing } from "@/newquip/pricing/estimator/ownership";
+import { manualEvidenceRows } from "@/newquip/pricing/estimator/workspace-view";
 import { compareToIndicative, type IndicativeComparison } from "@/newquip/pricing/comparison";
 import { allIndicativeSnapshots } from "@/lib/newquip-quotes/indicative-store";
 import { keepEstimatorOwnedFields } from "@/newquip/quote/draft-ownership";

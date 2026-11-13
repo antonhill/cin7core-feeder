@@ -9,6 +9,8 @@
 --                                    privilege; only the service-role Server Actions read it, and they release it to cost-entitled viewers only (the same rule as every cost field).
 --   newquip_apply_pricing_revision() ONE transaction: lock the quotation, check it is still editable, with exactly the draft hash and revision sequence the caller evaluated,
 --                                    insert the revision, write the new draft (withdrawing any Estimator sign-off). A change therefore either records its revision or does not happen.
+--                                    It also enforces, structurally, that a supplier-cost review or a forward-cover rate attestation is recorded only by the person making the change,
+--                                    for an existing unchanged entry, and never by the person who entered it (defence in depth; NQ-008B P2-E amended this function in place, signature unchanged).
 --
 -- Nothing here talks to Cin7 or Xero. Older application code ignores all of it. Rollback / recovery (every object is new and unreferenced by older code):
 --   drop function newquip_apply_pricing_revision(uuid, uuid, integer, text, jsonb, text, text, text, text, text, jsonb, jsonb, jsonb, text, text);
@@ -98,9 +100,12 @@ begin
   if nullif(p_previous_pricing, 'null'::jsonb) is distinct from nullif(q.draft #> '{estimator,pricing}', 'null'::jsonb) then raise exception 'pricing_conflict: the recorded previous pricing is not the stored pricing'; end if;
   if nullif(p_new_pricing, 'null'::jsonb) is distinct from nullif(p_new_draft #> '{estimator,pricing}', 'null'::jsonb) then raise exception 'pricing_conflict: the recorded new pricing is not the pricing written to the draft'; end if;
 
-  -- INDEPENDENT COST VERIFICATION, enforced here as well as in the application (defence in depth for any other service-role caller). A review may be recorded only (a) for a cost
-  -- that already exists and is unchanged, (b) by the person recorded as making this change, and (c) by someone other than whoever entered / last changed that cost. A cost
-  -- that changed in this revision cannot carry a review. (The application additionally binds each review to a hash of the exact cost; this check is structural.)
+  -- INDEPENDENT VERIFICATION AND ATTESTATION, enforced here as well as in the application (defence in depth for any other service-role caller). Two server-owned reviews exist:
+  --   * a SKU's supplier-cost review (estimator.pricing.skus[sku].review), and
+  --   * a forward-cover rate attestation (estimator.pricing.forwardCover[currency].review, NQ-008B P2-E).
+  -- A review may be recorded only (a) for an entry that already exists and is unchanged, (b) by the person recorded as making this change, and (c) by someone other than whoever
+  -- entered / last changed that entry. An entry that changed in this revision cannot carry a review. (The application additionally binds each review to a hash of the exact cost or
+  -- rate; this check is structural.) Pricing evidence for manual items (estimator.pricing.manualEvidence) is ordinary pricing content: the only-pricing-differs proof above covers it.
   for k in select jsonb_object_keys(coalesce(p_new_draft #> '{estimator,pricing,skus}', '{}'::jsonb)) loop
     n := p_new_draft #> array['estimator', 'pricing', 'skus', k];
     o := q.draft #> array['estimator', 'pricing', 'skus', k];
@@ -112,6 +117,19 @@ begin
         if lower(btrim(coalesce(n #>> '{review,by}', ''))) = lower(btrim(coalesce(n ->> 'by', ''))) then raise exception 'pricing_conflict: a cost cannot be verified by the person who entered it'; end if;
       end if;
       if o is not null and (n - 'review' - 'by' - 'at') is distinct from (o - 'review' - 'by' - 'at') then raise exception 'pricing_conflict: a changed cost cannot carry a review'; end if;
+    end if;
+  end loop;
+  for k in select jsonb_object_keys(coalesce(p_new_draft #> '{estimator,pricing,forwardCover}', '{}'::jsonb)) loop
+    n := p_new_draft #> array['estimator', 'pricing', 'forwardCover', k];
+    o := q.draft #> array['estimator', 'pricing', 'forwardCover', k];
+    if jsonb_typeof(n) = 'object' and (n -> 'review') is not null and jsonb_typeof(n -> 'review') = 'object' then
+      if (n -> 'review') is distinct from (o -> 'review') then
+        if o is null then raise exception 'pricing_conflict: an attestation cannot be recorded for a new forward-cover rate'; end if;
+        if (n ->> 'by') is distinct from (o ->> 'by') then raise exception 'pricing_conflict: an attestation cannot be recorded together with a change to the rate'; end if;
+        if lower(btrim(coalesce(n #>> '{review,by}', ''))) is distinct from lower(btrim(coalesce(p_changed_by, ''))) then raise exception 'pricing_conflict: an attestation must be recorded by the reviewer'; end if;
+        if lower(btrim(coalesce(n #>> '{review,by}', ''))) = lower(btrim(coalesce(n ->> 'by', ''))) then raise exception 'pricing_conflict: a forward-cover rate cannot be attested by the person who entered it'; end if;
+      end if;
+      if o is not null and (n - 'review' - 'by' - 'at') is distinct from (o - 'review' - 'by' - 'at') then raise exception 'pricing_conflict: a changed forward-cover rate cannot carry an attestation'; end if;
     end if;
   end loop;
 

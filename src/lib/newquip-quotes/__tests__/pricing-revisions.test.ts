@@ -9,10 +9,10 @@ import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { rolesFor } from "@/newquip/quote/roles";
 import { micro } from "@/newquip/pricing/model";
 import type { PricingSubmission } from "@/newquip/pricing/estimator/apply";
-import { equivalentInputs, itemsOf } from "@/newquip/pricing/estimator/__tests__/helpers";
+import { equivalentInputs, evidenceItemsFor, itemsOf } from "@/newquip/pricing/estimator/__tests__/helpers";
 import { createQuote, estimatorSignOff, loadQuote, managerApprove, saveDraft, sendToEstimator } from "../quote-store";
 import { allIndicativeSnapshots } from "../indicative-store";
-import { applyPricingChange, loadPricingWorkspace, verifyCosts, type PricingActor } from "../pricing-service";
+import { applyPricingChange, loadPricingWorkspace, recordManualEvidence, verifyCosts, type PricingActor } from "../pricing-service";
 import { listPricingRevisions } from "../pricing-store";
 
 // NQ-008B Phase 2 persistence + workflow (FakeDb emulating migration 0126 and 0123): the immutable revision, the Rep reconfirmation, role gates, confidentiality and the
@@ -27,6 +27,7 @@ const repOnly = new Set(["rep"] as const) as ReadonlySet<"rep">;
 const estimator = (over: Partial<PricingActor> = {}): PricingActor => ({ orgId: ORG, userId: "u-est", email: "est@nq", roles: new Set(["rep", "estimator"]), canSeeCost: true, ...over });
 const reviewer = (over: Partial<PricingActor> = {}): PricingActor => ({ orgId: ORG, userId: "u-mgr", email: "mgr@nq", roles: new Set(["rep", "estimator", "manager"]), canSeeCost: true, ...over });
 const verifyAll = async (id: string, a: PricingActor = reviewer()) => { const p = (await loadQuote(db as never, ORG, id))!.draft.estimator.pricing!; return verifyCosts(db as never, a, id, itemsOf(p, Object.keys(p.skus)), "Supplier quote SQ-ISO-1"); };
+const evidenceAll = async (id: string, a: PricingActor = estimator()) => recordManualEvidence(db as never, a, id, evidenceItemsFor((await loadQuote(db as never, ORG, id))!.draft));
 const rep: PricingActor = { orgId: ORG, userId: "u-rep", email: "rep@nq", roles: new Set(["rep"]), canSeeCost: false };
 let db: FakeDb;
 const err = async (p: Promise<unknown>): Promise<string> => p.then(() => "", (e: Error) => e.message);
@@ -97,6 +98,7 @@ describe("7. immutable revision history", () => {
     const { id } = await inReview();
     await applyPricingChange(db as never, estimator(), id, submissionOf(), "Initial supplier pricing");
     expect(await verifyAll(id)).toMatchObject({ ok: true }); // an INDEPENDENT reviewer, not the Estimator who entered the costs
+    expect(await evidenceAll(id)).toMatchObject({ ok: true }); // pricing evidence for the SKU-less manual items (LED lighting, penning)
     await estimatorSignOff(db as never, ORG, member, "est@nq", id, ctx);
     await managerApprove(db as never, ORG, admin, "mgr@nq", id, ctx);
     expect(await applyPricingChange(db as never, estimator(), id, submissionOf({ projectMarkup: { markupBps: 3000, reason: "late" } }), "Too late")).toMatchObject({ ok: false, errors: [expect.stringMatching(/approved/)] });
@@ -191,6 +193,9 @@ describe("11. the full Rep -> Estimator -> Manager workflow through the pricing 
     expect(r).toMatchObject({ ok: true, report: { seq: 2 } });
     expect(cents((await loaded(id)).draft)).toBe(total);
     const revs = await listPricingRevisions(db as never, ORG, id);
+    // costs are verified, but the SKU-less manual items (LED lighting, penning) still have no recorded pricing evidence: sign-off stays blocked, and the exception cannot waive it
+    expect(await err(estimatorSignOff(db as never, ORG, member, "est@nq", id, ctx))).toMatch(/no pricing evidence has been recorded/);
+    expect(await evidenceAll(id)).toMatchObject({ ok: true });
     expect(revs[1]).toMatchObject({ seq: 2, kind: "CHANGED", changedBy: "mgr@nq", reason: "Independent cost verification: Supplier quote SQ-ISO-1" });
     expect(revs[1].changes.some((c) => /skus\.[^.]+\.review\.by$/.test(c.path) && c.new === "mgr@nq")).toBe(true);
     await estimatorSignOff(db as never, ORG, member, "est@nq", id, ctx);
@@ -198,7 +203,7 @@ describe("11. the full Rep -> Estimator -> Manager workflow through the pricing 
     expect(approved.contractCents).toBeGreaterThan(0);
     const q = await loaded(id);
     expect(q.state).toBe("MANAGER_APPROVED_FINAL");
-    expect(q.accepted_baseline!.estimator.pricing).toMatchObject({ revision: 2 });
+    expect(q.accepted_baseline!.estimator.pricing).toMatchObject({ revision: 3 });
     expect(Object.values(q.accepted_baseline!.estimator.pricing!.skus)[0]).toMatchObject({ review: { by: "mgr@nq", evidence: "Supplier quote SQ-ISO-1" } });
   });
 });

@@ -12,7 +12,7 @@ import * as actions from "../pricing-actions";
 
 // NQ-008B Phase 2 (P2-C): the Estimator pricing workspace as rendered. The server actions are mocked; the view-model is built by the REAL pure builder from a real
 // evaluation, so what is rendered is what the server would send.
-vi.mock("../pricing-actions", () => ({ getEstimatorPricingAction: vi.fn(), applyEstimatorPricingAction: vi.fn(), disableEstimatorPricingAction: vi.fn(), verifyEstimatorCostsAction: vi.fn() }));
+vi.mock("../pricing-actions", () => ({ getEstimatorPricingAction: vi.fn(), applyEstimatorPricingAction: vi.fn(), disableEstimatorPricingAction: vi.fn(), verifyEstimatorCostsAction: vi.fn(), attestEstimatorRatesAction: vi.fn(), recordManualPriceEvidenceAction: vi.fn() }));
 import { EstimatorPricingPanel } from "../[id]/EstimatorPricingPanel";
 
 function bundle(p: EstimatorPricing | undefined, over: Partial<WorkspaceBundle> = {}, skipSku?: string): WorkspaceBundle {
@@ -20,7 +20,7 @@ function bundle(p: EstimatorPricing | undefined, over: Partial<WorkspaceBundle> 
   if (pricing && skipSku) delete pricing.skus[skipSku];
   const d = pricing ? withPricing(pricing) : readyDraft();
   const view = buildPricingWorkspace({ quoteType: "project", pricing, budget: evalOf(d).budget, originalTotalCents: 860_954_240, originalCapturedAt: "2026-11-12T08:00:00.000Z", nowIso: "2026-11-12T09:00:00.000Z" });
-  return { view, verification: { canReview: false, reviewerRoles: ["manager"], verifiableSkus: [] }, current: pricing ? submissionFrom(pricing) : null, revisions: [], state: "ESTIMATOR_REVIEW", revision: 1, canEdit: true, ...over };
+  return { view, verification: { canReview: false, reviewerRoles: ["manager"], verifiableSkus: [] }, rateAttestation: { canReview: false, reviewerRoles: ["manager"], attestableCurrencies: [] }, current: pricing ? submissionFrom(pricing) : null, revisions: [], state: "ESTIMATOR_REVIEW", revision: 1, canEdit: true, ...over };
 }
 beforeEach(() => { vi.clearAllMocks(); });
 afterEach(() => cleanup());

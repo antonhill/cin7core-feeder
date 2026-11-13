@@ -9,7 +9,7 @@ import { Status } from "@/components/ui/Status";
 import { formatSast } from "@/lib/approvals/time";
 import { fromMicro, micro, LEGACY_RULE_VERSION, type PricingSubmission, type SkuRow } from "@/newquip/pricing/estimator";
 import type { WorkspaceBundle } from "@/lib/newquip-quotes/pricing-service";
-import { applyEstimatorPricingAction, disableEstimatorPricingAction, getEstimatorPricingAction, verifyEstimatorCostsAction } from "../pricing-actions";
+import { applyEstimatorPricingAction, disableEstimatorPricingAction, attestEstimatorRatesAction, getEstimatorPricingAction, recordManualPriceEvidenceAction, verifyEstimatorCostsAction } from "../pricing-actions";
 import { fmtCents } from "../fields";
 
 // NQ-008B Phase 2: the ESTIMATOR PRICING WORKSPACE. INTERNAL: it shows supplier costs, rates, freight, markup and margin, so the page mounts it only for an Estimator or
@@ -38,6 +38,9 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved }: { quoteId: s
   const [picked, setPicked] = useState<string[]>([]);
   const [clears, setClears] = useState<Record<string, number>>({});
   const [evidence, setEvidence] = useState("");
+  const [pickedRates, setPickedRates] = useState<string[]>([]);
+  const [rateEvidence, setRateEvidence] = useState("");
+  const [notes, setNotes] = useState<Record<string, { note: string; reference: string }>>({});
 
   const load = useCallback(() => {
     void getEstimatorPricingAction(quoteId).then((r) => {
@@ -76,6 +79,23 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved }: { quoteId: s
     if (!r.ok) { setErrors(r.errors?.length ? r.errors : [r.error ?? "Could not verify."]); return; }
     setNote(`Recorded as revision ${r.data!.seq}: ${r.data!.verified} supplier cost${r.data!.verified === 1 ? "" : "s"} independently verified. No price changed; the Estimator sign-off (if any) was withdrawn.`);
     setPicked([]); setEvidence(""); load(); reload?.();
+  }
+  async function attest() {
+    setBusy(true); setErrors([]); setNote(null);
+    const r = await attestEstimatorRatesAction(quoteId, pickedRates.map((currency) => ({ currency, rateHash: v.currencies.find((c) => c.currency === currency)?.forwardCover?.rateHash ?? "" })), rateEvidence);
+    setBusy(false);
+    if (!r.ok) { setErrors(r.errors?.length ? r.errors : [r.error ?? "Could not attest."]); return; }
+    setNote(`Recorded as revision ${r.data!.seq}: ${r.data!.attested} forward-cover rate${r.data!.attested === 1 ? "" : "s"} independently attested. No price changed; the Estimator sign-off (if any) was withdrawn.`);
+    setPickedRates([]); setRateEvidence(""); load(); reload?.();
+  }
+  async function saveEvidence() {
+    const items = Object.entries(notes).filter(([, n]) => n.note.trim().length > 0).map(([itemKey, n]) => ({ itemKey, note: n.note, ...(n.reference.trim() ? { reference: n.reference } : {}) }));
+    setBusy(true); setErrors([]); setNote(null);
+    const r = await recordManualPriceEvidenceAction(quoteId, items);
+    setBusy(false);
+    if (!r.ok) { setErrors(r.errors?.length ? r.errors : [r.error ?? "Could not record the evidence."]); return; }
+    setNote(`Recorded as revision ${r.data!.seq}: pricing evidence for ${r.data!.recorded} item${r.data!.recorded === 1 ? "" : "s"}. No price changed; the Estimator sign-off (if any) was withdrawn.`);
+    setNotes({}); load(); reload?.();
   }
   async function off() {
     setBusy(true); setErrors([]); setNote(null);
@@ -155,6 +175,12 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved }: { quoteId: s
                     {c?.forwardCover ? ` Forward cover in force: ${c.forwardCover.coverDays} days${c.forwardCover.reference ? `, contract ${c.forwardCover.reference}` : ""}${c.forwardCover.validUntil ? `, valid until ${c.forwardCover.validUntil}` : ""}; set by ${c.forwardCover.by}, ${formatSast(c.forwardCover.at)}.` : ""}
                     {rt?.forwardExpired ? " The forward-cover rate has EXPIRED." : ""}
                   </p>
+                  {c?.forwardCover && (
+                    <p className="mt-1 text-xs text-slate-800" data-testid={`rate-state-${cur}`} data-rate-state={c.forwardCover.state}>
+                      <Status tone={c.forwardCover.state === "attested" ? "success" : "warning"}>{c.forwardCover.state === "attested" ? "Attested" : c.forwardCover.state === "attestation_outdated" ? "Changed since attested" : c.forwardCover.state === "self_attested" ? "Not independent" : c.forwardCover.state === "undocumented" ? "Needs reference / dates" : "Not attested"}</Status>{" "}
+                      {c.forwardCover.state === "attested" && c.forwardCover.review ? `Independently attested by ${c.forwardCover.review.by}, ${formatSast(c.forwardCover.review.at)}: ${c.forwardCover.review.evidence}` : `Not final: ${c.forwardCover.stateText}.`}
+                    </p>
+                  )}
                 </li>
               );
             })}
@@ -182,6 +208,40 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved }: { quoteId: s
           ) : <p className="mt-1 text-xs text-slate-700">Never applied to the customer quotation: how a project-level adjustment appears to the customer is not yet decided by NewQuip.</p>}
         </div>
       </div>
+
+      {v.enabled && v.manualEvidence.length > 0 && (
+        <div className="space-y-2 rounded-md border border-slate-300 p-2" data-testid="evidence-block">
+          <h4 className="text-sm font-semibold text-slate-900">Pricing evidence for manual items</h4>
+          <p className="text-xs text-slate-700">These items are priced by the Estimator and have no SKU behind them (for example the M75 system, LED lighting, penning). Record what each price is based on: a note is required before final approval, and it stops applying if the price changes. Recording evidence changes no price.</p>
+          <ul className="space-y-2">
+            {v.manualEvidence.map((m) => (
+              <li key={m.itemKey} className="rounded-md border border-slate-200 p-2" data-testid="evidence-item" data-item={m.itemKey} data-evidence-state={m.state}>
+                <div className="flex flex-wrap items-baseline gap-2"><b>{m.label}</b><Status tone={m.state === "recorded" ? "success" : "warning"}>{m.state === "recorded" ? "Evidence recorded" : m.state === "outdated" ? "Price changed since" : "No evidence"}</Status></div>
+                {m.note && <p className="mt-1 text-xs text-slate-800" data-testid="evidence-text">{m.note}{m.reference ? ` (ref ${m.reference})` : ""} — {m.by}, {m.at ? formatSast(m.at) : ""}</p>}
+                {m.state === "outdated" && <p className="mt-1 text-xs text-slate-900">{m.stateText}.</p>}
+                {edit && b.state !== "MANAGER_APPROVED_FINAL" && (
+                  <div className="mt-1 flex flex-wrap items-end gap-2">
+                    <Input label={`${m.label} evidence note`} className="w-full sm:w-[24rem]" value={notes[m.itemKey]?.note ?? ""} onChange={(e) => setNotes((n) => ({ ...n, [m.itemKey]: { note: e.target.value, reference: n[m.itemKey]?.reference ?? "" } }))} />
+                    <Input label={`${m.label} evidence reference (optional)`} className="w-48" value={notes[m.itemKey]?.reference ?? ""} onChange={(e) => setNotes((n) => ({ ...n, [m.itemKey]: { note: n[m.itemKey]?.note ?? "", reference: e.target.value } }))} />
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+          {edit && b.state !== "MANAGER_APPROVED_FINAL" && <Button size="sm" onClick={saveEvidence} disabled={busy || unsaved || !Object.values(notes).some((n) => n.note.trim().length >= 10)} data-testid="evidence-save">Record pricing evidence</Button>}
+        </div>
+      )}
+
+      {b.rateAttestation.canReview && b.state !== "MANAGER_APPROVED_FINAL" && v.currencies.some((c) => c.forwardCover) && (
+        <div className="space-y-2 rounded-md border border-slate-300 p-2" data-testid="attest-block">
+          <h4 className="text-sm font-semibold text-slate-900">Independent forward-cover rate attestation</h4>
+          <p className="text-xs text-slate-700">You may attest a forward-cover rate you did not enter ({b.rateAttestation.reviewerRoles.join(" or ")}; provisional). Check its contract reference, validity dates and the contract itself, then tick it. Attesting changes no price. Any later change to the rate, contract or dates makes the attestation stop applying.</p>
+          <ul className="flex flex-wrap gap-3">{b.rateAttestation.attestableCurrencies.map((cur) => <li key={cur}><label className="flex items-center gap-1"><input type="checkbox" checked={pickedRates.includes(cur)} onChange={(e) => setPickedRates((p) => (e.target.checked ? [...new Set([...p, cur])] : p.filter((x) => x !== cur)))} aria-label={`Attest ${cur} forward-cover rate`} />Attest the {cur} rate</label></li>)}</ul>
+          {b.rateAttestation.attestableCurrencies.length === 0 && <p className="text-xs text-slate-800" data-testid="attest-none">There is no forward-cover rate you may attest now (rates you entered yourself need another reviewer).</p>}
+          <Input label="Evidence checked (for example the forward-exchange contract number)" value={rateEvidence} onChange={(e) => setRateEvidence(e.target.value)} className="w-full sm:w-[28rem]" />
+          <Button size="sm" onClick={attest} disabled={busy || pickedRates.length === 0 || rateEvidence.trim().length < 3} data-testid="attest-save">Attest {pickedRates.length} selected rate{pickedRates.length === 1 ? "" : "s"}</Button>
+        </div>
+      )}
 
       {b.verification.canReview && b.state !== "MANAGER_APPROVED_FINAL" && (
         <div className="space-y-2 rounded-md border border-slate-300 p-2" data-testid="verify-block">
