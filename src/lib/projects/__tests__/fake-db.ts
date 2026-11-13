@@ -15,6 +15,7 @@ const UNIQUE: Record<string, string[][]> = {
   project_claim_cin7_postings: [["claim_id"], ["org_id", "idempotency_key"], ["org_id", "memo"]],
   newquip_quote_customers: [["quote_id", "seq"]],
   newquip_indicative_price_snapshots: [["quote_id", "seq"]],
+  newquip_pricing_revisions: [["quote_id", "seq"]],
   newquip_quote_documents: [["quote_id", "version"], ["storage_path"]],
   newquip_quote_sends: [["document_id", "idempotency_key"]],
   newquip_response_links: [["token_hash"]],
@@ -59,6 +60,7 @@ export class FakeDb {
   rpc(fn: string, args: Row): Promise<{ data: unknown; error: { message: string } | null }> {
     this.rpcCalls.push({ fn, args });
     if (fn === "newquip_handoff_with_snapshot") return Promise.resolve(this.handoffWithSnapshot(args));
+    if (fn === "newquip_apply_pricing_revision") return Promise.resolve(this.applyPricingRevision(args));
     const h = this.rpcHandlers[fn];
     return Promise.resolve({ data: null, error: h ? h(args).error : { message: `no handler for ${fn}` } });
   }
@@ -88,6 +90,27 @@ export class FakeDb {
       state: "ESTIMATOR_REVIEW", customer_confirmed_cents: a.p_confirmed_cents, customer_confirmed_by: String(a.p_confirmed_by).trim(), customer_confirmed_at: this.ts(), handoff_by_email: a.p_handoff_by,
       estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null,
     });
+    return { data: row.id, error: null };
+  }
+
+  /** Migration 0126 (immutable Estimator pricing revisions + the atomic apply function) is not applied unless a test says so. */
+  pricingApplied = false;
+  /** Emulates newquip_apply_pricing_revision (migration 0126) as ONE transaction: check, insert the revision, write the draft - or change nothing at all. */
+  private applyPricingRevision(a: Row): { data: unknown; error: { message: string } | null } {
+    if (!this.pricingApplied) return { data: null, error: { message: "Could not find the function public.newquip_apply_pricing_revision in the schema cache" } };
+    const q = this.rows("newquip_quotes").find((r) => r.id === a.p_quote && r.org_id === a.p_org);
+    if (!q) return { data: null, error: { message: "pricing_conflict: the quotation was not found" } };
+    if (q.state !== "REP_DRAFT" && q.state !== "ESTIMATOR_REVIEW") return { data: null, error: { message: "pricing_conflict: the quotation can no longer be edited" } };
+    if (q.draft_hash !== a.p_expected_draft_hash) return { data: null, error: { message: "pricing_conflict: the quotation changed while the pricing was being edited" } };
+    const revs = this.rows("newquip_pricing_revisions");
+    const seq = Math.max(0, ...revs.filter((r) => r.quote_id === a.p_quote && r.org_id === a.p_org).map((r) => Number(r.seq)));
+    if (seq !== a.p_expected_seq) return { data: null, error: { message: "pricing_conflict: the pricing changed while it was being edited" } };
+    if (String(a.p_reason ?? "").trim().length < 3) return { data: null, error: { message: "check violation: reason" } };
+    const row: Row = { id: `id-${++this.seq}`, created_at: this.ts(), org_id: a.p_org, quote_id: a.p_quote, seq: seq + 1, quote_revision: q.revision, kind: a.p_kind, rule_version: a.p_rule_version, reason: a.p_reason,
+      previous_pricing: structuredClone(a.p_previous_pricing), new_pricing: structuredClone(a.p_new_pricing), changes: structuredClone(a.p_changes), new_pricing_hash: a.p_new_pricing_hash, draft_hash_after: a.p_new_draft_hash, changed_by_email: a.p_changed_by };
+    revs.push(row);
+    this.writes.push({ table: "newquip_pricing_revisions", op: "insert" });
+    Object.assign(q, { draft: structuredClone(a.p_new_draft), draft_hash: a.p_new_draft_hash, estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null });
     return { data: row.id, error: null };
   }
 

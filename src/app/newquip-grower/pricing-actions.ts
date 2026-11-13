@@ -1,0 +1,53 @@
+"use server";
+
+// NewQuip: the Estimator supplier-pricing workspace (NQ-008B Phase 2). INTERNAL: supplier costs, rates, freight, markup and margin. Every action re-establishes the same
+// authority as the rest of the Estimator workflow (NewQuip organisation, module access, Estimator or Manager role AND cost visibility) and none writes to Cin7 or Xero.
+// The change and its immutable revision are one database transaction; the existing amount-change workflow then withdraws the Rep's confirmation when the customer total moved.
+// Only async functions and erased types are exported.
+import { createServiceRoleClient } from "@/supabase/server";
+import { applyPricingChange, loadPricingWorkspace, type ApplyReport, type PricingActor, type WorkspaceBundle } from "@/lib/newquip-quotes/pricing-service";
+import type { PricingSubmission } from "@/newquip/pricing/estimator/apply";
+import { auditActor, authoriseActor, errText as rawErrText, type Actor } from "./actor";
+
+/** Unexpected programming errors (a malformed request) are not echoed to the browser; our own plain-language messages are. */
+const errText = (e: unknown): string => (e instanceof TypeError || e instanceof RangeError || e instanceof SyntaxError ? "The pricing request was not valid." : rawErrText(e));
+
+export interface PricingActionResult<T> { ok: boolean; error?: string; errors?: string[]; data?: T }
+
+const asPricingActor = (a: Actor): PricingActor => ({ orgId: a.orgId, userId: a.userId, email: a.email, roles: a.roles, canSeeCost: a.canSeeCost });
+/** Supplier pricing is cost data: like the cost actions, it is not available while a Demo Mode identity is active. */
+async function pricingActor(): Promise<Actor> {
+  const a = await authoriseActor();
+  if (a.demo) throw new Error("Supplier pricing is not available in Demo Mode.");
+  return a;
+}
+async function run(quoteId: string, submission: PricingSubmission | null, reason: string): Promise<PricingActionResult<ApplyReport>> {
+  if (typeof quoteId !== "string" || quoteId.length === 0 || quoteId.length > 64 || typeof reason !== "string") throw new TypeError("bad request");
+  const a = await pricingActor();
+  const db = createServiceRoleClient();
+  const r = await applyPricingChange(db, asPricingActor(a), quoteId, submission, reason);
+  if (!r.ok) return { ok: false, error: r.errors[0], errors: r.errors };
+  await auditActor(db, a, { action: "newquip.pricing_revision", summary: "Recorded an Estimator pricing revision (local only; no Cin7 write)", detail: { quoteId, seq: r.report.seq, kind: r.report.kind, changedValues: r.report.changedValues, customerConfirmationWithdrawn: !!r.report.confirmation } });
+  return { ok: true, data: r.report };
+}
+
+export async function getEstimatorPricingAction(quoteId: string): Promise<PricingActionResult<WorkspaceBundle>> {
+  try {
+    const a = await pricingActor();
+    return { ok: true, data: await loadPricingWorkspace(createServiceRoleClient(), asPricingActor(a), quoteId) };
+  } catch (e) { return { ok: false, error: errText(e) }; }
+}
+
+/** Records the submitted pricing as one immutable revision (the first one switches the model on for this quotation). */
+export async function applyEstimatorPricingAction(quoteId: string, submission: PricingSubmission, reason: string): Promise<PricingActionResult<ApplyReport>> {
+  try {
+    return await run(quoteId, submission, reason);
+  } catch (e) { return { ok: false, error: errText(e) }; }
+}
+
+/** Switches the model off for this quotation (recorded as a revision): it returns to the POC price source. */
+export async function disableEstimatorPricingAction(quoteId: string, reason: string): Promise<PricingActionResult<ApplyReport>> {
+  try {
+    return await run(quoteId, null, reason);
+  } catch (e) { return { ok: false, error: errText(e) }; }
+}

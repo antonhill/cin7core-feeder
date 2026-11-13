@@ -229,6 +229,8 @@ export function redactInternalFinancials<Q extends { draft: { estimator: { costO
   delete q.draft.estimator.changeStamps; // NQ-008A: who adjusted which input is for cost-entitled roles
   delete q.draft.estimator.pricing; // NQ-008B: supplier costs, rates, freight and markup
   if (q.accepted_baseline) q.accepted_baseline = neutraliseDeep(q.accepted_baseline);
+  const src = (q.accepted_baseline as unknown as { pricing?: { source?: { id?: string; label?: string; basis?: string; provenance?: string; notice?: string } } } | null)?.pricing?.source;
+  if (src && src.id === "estimator_supplier_pricing") Object.assign(src, { label: "Project pricing", basis: "Project pricing: quoted at the project price basis, ex VAT.", provenance: "Project pricing", notice: "Quoted at the approved NewQuip project price basis." });
   if (q.accepted_baseline) { delete q.accepted_baseline.internalMargin; delete q.accepted_baseline.physicalCostEstimate; if (q.accepted_baseline.estimator) { delete q.accepted_baseline.estimator.physicalCosts; delete q.accepted_baseline.estimator.costOverrides; delete q.accepted_baseline.estimator.costBasis; delete q.accepted_baseline.estimator.pricing; } }
   return q;
 }
@@ -270,7 +272,10 @@ export function redactEvaluationFinancials<E extends { budget: BudgetQuote | nul
   // The pricing basis text describes how the selling price is derived from COST ("landed cost + 20%"): a neutral description for anyone who may not see cost.
   const neutral = NEUTRAL_PRICING_BASIS[out.budget!.quoteType] ?? "Quoted at the approved NewQuip price list.";
   out.budget!.pricingBasis = neutral;
-  out.budget!.priceSource = { ...out.budget!.priceSource, basis: neutral };
+  out.budget!.priceSource = out.budget!.priceSource.id === "estimator_supplier_pricing"
+    // NQ-008B: the supplier-pricing source's label, notice and provenance (a fingerprint of the confidential inputs) are for cost-entitled roles only.
+    ? { ...out.budget!.priceSource, label: "Project pricing", basis: neutral, provenance: "Project pricing", notice: "Quoted at the approved NewQuip project price basis." }
+    : { ...out.budget!.priceSource, basis: neutral };
   // …and the same wording inside server reason / detail text (line reasons, readiness items and reasons, manual-price reasons).
   return neutraliseDeep(out);
 }
