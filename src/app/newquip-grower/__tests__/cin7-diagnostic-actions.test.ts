@@ -199,7 +199,7 @@ describe("diagnostics page", () => {
 });
 
 const SRC = join(__dirname, "..", "..", "..");
-const FILES = ["cin7/readonly-diagnostic.ts", "cin7/readonly-diagnostic-run.ts", "app/newquip-grower/cin7-diagnostic-actions.ts", "app/newquip-grower/diagnostics/authorise.ts", "app/newquip-grower/diagnostics/page.tsx", "app/newquip-grower/diagnostics/DiagnosticClient.tsx"];
+const FILES = ["cin7/readonly-diagnostic.ts", "cin7/readonly-diagnostic-run.ts", "cin7/readonly-diagnostic-audit.ts", "app/newquip-grower/cin7-diagnostic-actions.ts", "app/newquip-grower/diagnostics/authorise.ts", "app/newquip-grower/diagnostics/page.tsx", "app/newquip-grower/diagnostics/DiagnosticClient.tsx"];
 const read = (f: string) => readFileSync(join(SRC, f), "utf8");
 
 describe("static guards", () => {

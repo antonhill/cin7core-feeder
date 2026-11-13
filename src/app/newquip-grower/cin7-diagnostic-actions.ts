@@ -6,6 +6,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/supabase/server";
 import { validateSkus, type DiagnosticResult } from "@/cin7/readonly-diagnostic";
+import { COMPLETED, recordRunStarted, runInProgress } from "@/cin7/readonly-diagnostic-audit";
 import { runReadOnlyDiagnostic } from "@/cin7/readonly-diagnostic-run";
 import { logActivity } from "@/lib/activity-log";
 import { NEWQUIP_POC_CIN7_INSTANCE_ID } from "@/newquip/access";
@@ -13,24 +14,13 @@ import { authoriseDiagnostic, type DiagnosticActor } from "./diagnostics/authori
 
 export interface Cin7DiagnosticActionResult { ok: boolean; error?: string; data?: DiagnosticResult }
 
-const STARTED = "newquip.cin7_diagnostic_run_started";
-const COMPLETED = "newquip.cin7_diagnostic_run";
 const REFUSED = "newquip.cin7_diagnostic_refused";
-const IN_PROGRESS_WINDOW_MS = 5 * 60_000;
 const BUSY = "A run is already in progress, try again in a few minutes.";
-const inFlight = new Set<string>();
+const inFlight = new Map<string, boolean>();
 
 /** Best-effort audit of a refused attempt by an AUTHENTICATED user. Reason code only. */
 async function refused(db: SupabaseClient, who: DiagnosticActor, reason: string) {
   await logActivity(db, { orgId: who.orgId, actor: { userId: who.userId, email: who.email }, action: REFUSED, summary: "Read-only Cin7 diagnostic refused", detail: { reason } });
-}
-
-/** True when the newest started/completed row in the window is a "started" one. null = could not tell (the caller fails closed). */
-async function runInProgress(db: SupabaseClient, orgId: string): Promise<boolean | null> {
-  const since = new Date(Date.now() - IN_PROGRESS_WINDOW_MS).toISOString();
-  const { data, error } = await db.from("activity_log").select("action, created_at").eq("org_id", orgId).in("action", [STARTED, COMPLETED]).gte("created_at", since).order("created_at", { ascending: false }).limit(1);
-  if (error || !Array.isArray(data)) return null;
-  return data[0]?.action === STARTED;
 }
 
 export async function runCin7DiagnosticAction(skus: string[]): Promise<Cin7DiagnosticActionResult> {
@@ -43,13 +33,12 @@ export async function runCin7DiagnosticAction(skus: string[]): Promise<Cin7Diagn
   const a = auth.actor;
   const valid = validateSkus(skus);
   if (!valid.ok) { await refused(db, a, "invalid_input"); return { ok: false, error: valid.error }; }
-  if (inFlight.has(a.orgId)) { await refused(db, a, "concurrent"); return { ok: false, error: BUSY }; }
-  inFlight.add(a.orgId);
+  if (inFlight.get(a.orgId) === true) { await refused(db, a, "concurrent"); return { ok: false, error: BUSY }; }
+  inFlight.set(a.orgId, true);
   try {
     if ((await runInProgress(db, a.orgId)) !== false) { await refused(db, a, "concurrent"); return { ok: false, error: BUSY }; } // also refuses when the check itself failed
     // The "started" row is written BEFORE any Cin7 call and checked directly (logActivity swallows errors): no audit row, no run.
-    const started = await db.from("activity_log").insert({ org_id: a.orgId, actor_user_id: a.userId, actor_email: a.email, action: STARTED, summary: "Read-only Cin7 diagnostic started (GET only)", detail: { skusRequested: valid.skus.length } });
-    if (started.error) return { ok: false, error: "The diagnostic could not be completed." };
+    if (!(await recordRunStarted(db, a, valid.skus.length))) return { ok: false, error: "The diagnostic could not be completed." };
     const done = (detail: Record<string, unknown>) => logActivity(db, { orgId: a.orgId, actor: { userId: a.userId, email: a.email }, action: COMPLETED, summary: "Read-only Cin7 diagnostic run (GET only; no Cin7 or quotation write)", detail });
     try {
       const data = await runReadOnlyDiagnostic(db, a.orgId, NEWQUIP_POC_CIN7_INSTANCE_ID, valid.skus); // credentials are loaded in there, never returned or logged
@@ -60,6 +49,6 @@ export async function runCin7DiagnosticAction(skus: string[]): Promise<Cin7Diagn
       return { ok: false, error: "The diagnostic could not be completed." };
     }
   } finally {
-    inFlight.delete(a.orgId);
+    inFlight.set(a.orgId, false);
   }
 }
