@@ -14,7 +14,7 @@ const NOW = "2026-11-12T09:00:00.000Z";
 
 const rich = () => calculatePricing(baseScenario({
   lines: [...baseScenario().lines, missingCostLine()],
-  forwardCover: { EUR: { rateMicro: micro("19.5"), coverDays: 90, reason: "Secret forward contract", by: "x@y", at: AT } },
+  forwardCover: { EUR: { rateMicro: micro("19.5"), coverDays: 90, reference: "FEC-FIX", validFrom: "2026-11-01", validUntil: "2026-12-31", reason: "Secret forward contract", by: "x@y", at: AT } },
   itemOverrides: { drinker: { price: { unitPriceCents: 125_000, reason: "Secret competitor match", by: "x@y", at: AT } } },
   projectMarkup: { markupBps: 2500, reason: "Secret terms", by: "x@y", at: AT },
   projectAdjustment: { kind: "amount", amountCents: -100_000, reason: "Secret discount reason", by: "x@y", at: AT },
@@ -58,7 +58,7 @@ describe("reasons and audit evidence for overrides (server-owned attribution)", 
   const submitted = (): PricingInputRecord => ({
     ...emptyInputRecord(),
     itemOverrides: { drinker: { price: { unitPriceCents: 125_000, reason: "  Match competitor  ", by: "attacker@evil", at: "1999-01-01T00:00:00.000Z" } } },
-    forwardCover: { EUR: { rateMicro: micro("19.5"), coverDays: 90, reason: "FEC", by: "attacker@evil", at: "1999-01-01T00:00:00.000Z" } },
+    forwardCover: { EUR: { rateMicro: micro("19.5"), coverDays: 90, reference: "FEC-FIX", validFrom: "2026-11-01", validUntil: "2026-12-31", reason: "FEC", by: "attacker@evil", at: "1999-01-01T00:00:00.000Z" } },
   });
   it("replaces whatever who/when the client sent with the actor and the time, and trims the reason", () => {
     const s = stampPricingInputs(submitted(), emptyInputRecord(), EST, FIXTURE_ACTOR, NOW);

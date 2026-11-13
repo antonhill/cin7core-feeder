@@ -4,9 +4,11 @@ import { TEST_SNAPSHOT, testPriceSource } from "../../../grower/__tests__/test-s
 import type { QuoteDraft } from "../../../grower/draft";
 import { micro } from "../../model";
 import type { EstimatorPricing, SkuPricingInput } from "../types";
+import { costInputHash } from "../verification";
 
 export const AT = "2026-11-12T08:00:00.000Z";
 export const EST = "estimator@example.test";
+export const REVIEWER = "reviewer@example.test";
 export const evalOf = (d: QuoteDraft, withholdCost = false): QuoteEvaluation => evaluateDraft(d, { priceSource: testPriceSource(), withholdCost });
 
 /**
@@ -19,10 +21,12 @@ export function equivalentInputs(over: Partial<EstimatorPricing> = {}, verificat
   Object.values(TEST_SNAPSHOT.entries).filter((e) => e.cost > 0).forEach((e, i) => {
     const currency = order[i % 3];
     const rate = currency === "ZAR" ? 1 : 20;
-    skus[e.sku] = {
+    const entry: SkuPricingInput = {
       supplierId: `sup-${currency}`, supplierName: `${currency} Supplier`, currency, nativeUnitCostMicro: micro(String(e.cost / rate)),
-      verification, source: "Fixture supplier sheet", freight: { factorMicro: micro(String(e.freight)), source: "Fixture" }, by: EST, at: AT,
+      source: "Fixture supplier sheet", freight: { factorMicro: micro(String(e.freight)), source: "Fixture" }, by: EST, at: AT,
     };
+    // "verified" = an INDEPENDENT review (a different person from the one who entered it) of exactly this cost
+    skus[e.sku] = verification === "verified" ? { ...entry, review: { by: REVIEWER, at: AT, evidence: "Supplier quote SQ-FIXTURE", inputHash: costInputHash(entry) } } : entry;
   });
   return {
     enabled: true, ruleVersionId: "legacy-poc-v1", pricingDate: AT, revision: 1, skus,
@@ -33,3 +37,6 @@ export function equivalentInputs(over: Partial<EstimatorPricing> = {}, verificat
 }
 export const withPricing = (p: EstimatorPricing, base: QuoteDraft = readyDraft()): QuoteDraft => ({ ...base, estimator: { ...base.estimator, pricing: p } });
 export const lineOf = (ev: QuoteEvaluation, key: string) => ev.budget!.lines.find((l) => l.itemKey === key)!;
+
+/** What a reviewer submits: each SKU with the hash of the exact cost they were looking at. */
+export const itemsOf = (p: EstimatorPricing | undefined, skus: readonly string[]) => skus.map((sku) => ({ sku, costHash: p && Object.prototype.hasOwnProperty.call(p.skus, sku) && p.skus[sku] ? costInputHash(p.skus[sku]!) : "unknown" }));

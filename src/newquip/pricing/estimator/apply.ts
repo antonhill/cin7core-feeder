@@ -7,9 +7,11 @@ import type { EstimatorPricing, SkuPricingInput } from "./types";
 // (previous -> new) for the immutable revision record. Nothing is stored here.
 
 type NoStamp<T> = Omit<T, "by" | "at">;
+/** What the form submits for one SKU: the cost facts only. There is NO verification field (it is derived from an independent review) and no attribution (the server stamps it). */
+export type SkuSubmission = Omit<SkuPricingInput, "by" | "at" | "review">;
 export interface PricingSubmission {
   ruleVersionId: string;
-  skus: Record<string, NoStamp<SkuPricingInput>>;
+  skus: Record<string, SkuSubmission>;
   fxQuotes: Record<string, FxQuote>;
   forwardCover: Record<string, NoStamp<ForwardCover>>;
   skuPriceOverrides: Record<string, { unitPriceCents: number; reason: string }>;
@@ -36,7 +38,7 @@ function keepOrStamp<T extends { by: string; at: string }>(sub: Omit<T, "by" | "
 /** Every leaf that differs, as dotted paths. Attribution and the bookkeeping fields (by, at, pricingDate, revision) are not "changes". */
 export function diffPricing(prior: EstimatorPricing | null | undefined, next: EstimatorPricing | null | undefined): PricingChange[] {
   const flat = (v: unknown, base: string, out: Map<string, unknown>) => {
-    if (v !== null && typeof v === "object" && !Array.isArray(v)) { for (const [k, x] of Object.entries(v as Record<string, unknown>)) { if (k === "by" || k === "at") continue; if (!base && (k === "pricingDate" || k === "revision" || k === "enabled")) continue; flat(x, base ? `${base}.${k}` : k, out); } }
+    if (v !== null && typeof v === "object" && !Array.isArray(v)) { for (const [k, x] of Object.entries(v as Record<string, unknown>)) { if ((k === "by" || k === "at") && !base.endsWith(".review")) continue; if (!base && (k === "pricingDate" || k === "revision" || k === "enabled")) continue; flat(x, base ? `${base}.${k}` : k, out); } }
     else if (v !== undefined) out.set(base, v);
   };
   const a = new Map<string, unknown>(), b = new Map<string, unknown>();
@@ -47,6 +49,12 @@ export function diffPricing(prior: EstimatorPricing | null | undefined, next: Es
 // ── STRICT SHAPE (security review): the submission comes from a browser, so nothing is trusted to be the shape the types claim. Only known keys are kept (extra keys never reach
 // the stored draft), every value is type-checked and bounded, and reserved object keys are refused. Bounds are far above any real price and keep every product below 2^53.
 const RESERVED = new Set(["__proto__", "constructor", "prototype", "toString", "valueOf", "hasOwnProperty", "isPrototypeOf"]);
+/** Strict calendar formats: `Date.parse` alone accepts many local-time spellings ("12/11/2026"), which would make expiry depend on the server's locale. */
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;
+const isRealDate = (s: string): boolean => ISO_DATE.test(s) && new Date(`${s}T00:00:00.000Z`).toISOString().slice(0, 10) === s;
+/** The longest a forward-cover contract may run (days): a "documented" rate cannot be made effectively permanent. */
+export const MAX_FORWARD_COVER_DAYS = 366;
 const MAX = { text: 200, reason: 500, costMicro: 1e12, rateMicro: 1e9, factorMicro: 1e8, addOnCents: 1e10, priceCents: 1e11, targetCents: 1e13, days: 3650, maps: 300, currencies: 20 } as const;
 const isObj = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 
@@ -80,11 +88,10 @@ export function normaliseSubmission(raw: unknown, nowIso: string): { ok: true; v
     if (f !== null && !isObj(f)) e.push(`${k}: the freight entry is not valid.`);
     const cur = text(v.currency, 3, `${k}: the currency`) ?? "";
     if (!/^[A-Z]{3}$/.test(cur)) e.push(`${k}: the currency must be a three-letter code.`);
-    if (v.verification !== "verified" && v.verification !== "unverified") e.push(`${k}: verification must be "verified" or "unverified".`);
     out.skus[k] = {
       supplierId: text(v.supplierId, 64, `${k}: the supplier id`, { nullable: true }), supplierName: text(v.supplierName, 120, `${k}: the supplier`, { nullable: true }),
-      currency: cur, nativeUnitCostMicro: int(v.nativeUnitCostMicro, 0, MAX.costMicro, `${k}: the supplier cost`),
-      verification: v.verification === "verified" ? "verified" : "unverified", source: text(v.source, MAX.text, `${k}: the cost source`) ?? "",
+      currency: cur, nativeUnitCostMicro: v.nativeUnitCostMicro === 0 ? (e.push(`${k}: a zero supplier cost is not a cost. Clear the cost to remove it, or enter the quoted cost.`), 0) : int(v.nativeUnitCostMicro, 1, MAX.costMicro, `${k}: the supplier cost`),
+      source: text(v.source, MAX.text, `${k}: the cost source`) ?? "",
       freight: isObj(f) ? { factorMicro: int(f.factorMicro, 1, MAX.factorMicro, `${k}: the freight factor`), ...(f.addOnCents === undefined || f.addOnCents === null ? {} : { addOnCents: int(f.addOnCents, 0, MAX.addOnCents, `${k}: the landed-cost add-on`) }), source: text(f.source, MAX.text, `${k}: the freight source`, { nullable: true }) ?? "" } : null,
     } as PricingSubmission["skus"][string];
   }
@@ -93,14 +100,23 @@ export function normaliseSubmission(raw: unknown, nowIso: string): { ok: true; v
     if (!isObj(v)) { e.push(`The ${c} exchange rate is not valid.`); continue; }
     const asOf = text(v.asOf, 40, `The ${c} rate date`) ?? "";
     const t = Date.parse(asOf);
-    if (!Number.isFinite(t)) e.push(`The ${c} rate date is not a valid date.`);
+    if (!ISO_INSTANT.test(asOf) || !Number.isFinite(t)) e.push(`The ${c} rate date is not a valid date and time (for example 2026-11-12T08:00:00Z).`);
     else if (t > Date.parse(nowIso) + 5 * 60_000) e.push(`The ${c} rate cannot be dated in the future.`);
     out.fxQuotes[c] = { rateMicro: int(v.rateMicro, 0, MAX.rateMicro, `The ${c} exchange rate`), source: text(v.source, MAX.text, `The ${c} rate source`) ?? "", asOf };
   }
   for (const c of keys(raw.forwardCover, "Forward cover", MAX.currencies, (x) => /^[A-Z]{3}$/.test(x))) {
     const v = (raw.forwardCover as Record<string, unknown>)[c];
     if (!isObj(v)) { e.push(`The ${c} forward-cover entry is not valid.`); continue; }
-    out.forwardCover[c] = { rateMicro: int(v.rateMicro, 0, MAX.rateMicro, `The ${c} forward-cover rate`), coverDays: int(v.coverDays, 0, MAX.days, `The ${c} cover period`), reason: text(v.reason, MAX.reason, `The ${c} forward-cover reason`) ?? "", ...(v.reference === undefined || v.reference === null || v.reference === "" ? {} : { reference: text(v.reference, 100, `The ${c} contract reference`) ?? "" }) };
+    out.forwardCover[c] = { rateMicro: int(v.rateMicro, 0, MAX.rateMicro, `The ${c} forward-cover rate`), coverDays: int(v.coverDays, 1, MAX_FORWARD_COVER_DAYS, `The ${c} cover period`), reason: text(v.reason, MAX.reason, `The ${c} forward-cover reason`) ?? "", ...(v.reference === undefined || v.reference === null || v.reference === "" ? {} : { reference: ((r) => { if (r.trim().length < 3) e.push(`The ${c} contract reference is too short: give the contract number.`); return r; })(text(v.reference, 100, `The ${c} contract reference`) ?? "") }), ...(v.validFrom ? { validFrom: text(v.validFrom, 40, `The ${c} forward-cover start date`) ?? "" } : {}), ...(v.validUntil ? { validUntil: text(v.validUntil, 40, `The ${c} forward-cover end date`) ?? "" } : {}) };
+  }
+  for (const [c, f] of Object.entries(out.forwardCover)) {
+    if (!f) continue;
+    for (const [what, d] of [["start", f.validFrom], ["end", f.validUntil]] as const) if (d !== undefined && !isRealDate(d)) e.push(`The ${c} forward-cover ${what} date must be a real date written YYYY-MM-DD.`);
+    if (f.validFrom && f.validUntil && isRealDate(f.validFrom) && isRealDate(f.validUntil)) {
+      const days = (Date.parse(`${f.validUntil}T00:00:00.000Z`) - Date.parse(`${f.validFrom}T00:00:00.000Z`)) / 86_400_000;
+      if (days < 0) e.push(`The ${c} forward-cover ends before it starts.`);
+      else if (days > MAX_FORWARD_COVER_DAYS) e.push(`The ${c} forward-cover validity is longer than ${MAX_FORWARD_COVER_DAYS} days: a documented rate cannot be made permanent.`);
+    }
   }
   for (const k of keys(raw.skuPriceOverrides, "Price overrides", MAX.maps, (x) => SKU.test(x))) {
     const v = (raw.skuPriceOverrides as Record<string, unknown>)[k];
@@ -135,7 +151,13 @@ export function applyPricingSubmission(prior: EstimatorPricing | undefined, sub:
   if (bad.length) return { ok: false, errors: [`Not a valid SKU: ${bad.slice(0, 3).join(", ")}.`] };
 
   const skus: EstimatorPricing["skus"] = {};
-  for (const [k, v] of Object.entries(sub.skus)) skus[k] = keepOrStamp<SkuPricingInput>(v as NoStamp<SkuPricingInput>, (prior && Object.prototype.hasOwnProperty.call(prior.skus, k) ? prior.skus[k] : undefined), email, nowIso)!;
+  for (const [k, v] of Object.entries(sub.skus)) {
+    const before = prior && Object.prototype.hasOwnProperty.call(prior.skus, k) ? prior.skus[k] : undefined;
+    // An UNCHANGED cost keeps its original who/when AND its independent review; any change re-stamps it and drops the review (it covered a different cost).
+    const { review: _r, ...beforeCost } = (before ?? {}) as SkuPricingInput; void _r;
+    const kept = before && content(beforeCost) === content(v) ? before : null;
+    skus[k] = kept ?? ({ ...v, by: email, at: nowIso } as SkuPricingInput);
+  }
   const forwardCover: EstimatorPricing["forwardCover"] = {};
   for (const [c, v] of Object.entries(sub.forwardCover)) forwardCover[c] = keepOrStamp<ForwardCover>(v, prior?.forwardCover[c], email, nowIso)!;
   const skuPriceOverrides: EstimatorPricing["skuPriceOverrides"] = {};
@@ -150,7 +172,7 @@ export function applyPricingSubmission(prior: EstimatorPricing | undefined, sub:
   // Validate the WHOLE result with the Phase 1 model (rates, costs, freight, overrides, reasons, markup bounds).
   const scenario: PricingScenario = {
     pricingDate: nowIso, fxQuotes: next.fxQuotes, forwardCover: next.forwardCover, projectMarkup: next.projectMarkup, projectAdjustment: null,
-    lines: Object.entries(next.skus).map(([sku, s]) => { const { freight, by: _b, at: _a, ...cost } = s!; void _b; void _a; return { key: sku, label: sku, sku, quantity: 1, cost, freight }; }),
+    lines: Object.entries(next.skus).map(([sku, s]) => { const { freight, by: _b, at: _a, review: _r, ...cost } = s!; void _b; void _a; void _r; return { key: sku, label: sku, sku, quantity: 1, cost: { ...cost, verification: "unverified" as const }, freight }; }),
     itemOverrides: Object.fromEntries(Object.entries(next.skuPriceOverrides).map(([k, v]) => [k, { price: v! }])),
   };
   const errors = validateScenario(scenario);
@@ -179,7 +201,7 @@ export function submissionFrom(p: EstimatorPricing): PricingSubmission {
   const strip = <T extends { by?: string; at?: string }>(x: T): Omit<T, "by" | "at"> => { const { by: _b, at: _a, ...rest } = x; void _b; void _a; return rest; };
   return {
     ruleVersionId: p.ruleVersionId,
-    skus: Object.fromEntries(Object.entries(p.skus).map(([k, v]) => [k, strip(v!)])) as PricingSubmission["skus"],
+    skus: Object.fromEntries(Object.entries(p.skus).map(([k, v]) => { const { review: _r, ...rest } = v!; void _r; return [k, strip(rest)]; })) as PricingSubmission["skus"],
     fxQuotes: structuredClone(p.fxQuotes) as PricingSubmission["fxQuotes"],
     forwardCover: Object.fromEntries(Object.entries(p.forwardCover).map(([k, v]) => [k, strip(v!)])) as PricingSubmission["forwardCover"],
     skuPriceOverrides: Object.fromEntries(Object.entries(p.skuPriceOverrides).map(([k, v]) => [k, { unitPriceCents: v!.unitPriceCents, reason: v!.reason }])),

@@ -1,6 +1,7 @@
 "use client";
 
 import { pageContainerClass } from "@/app/PageContainer";
+import { incompleteCostingMessage } from "@/newquip/quote/workflow";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useId } from "react";
@@ -550,7 +551,7 @@ export default function QuoteEditorPage() {
   // Every reason the server (or the review policy) would refuse the sign-off for, up front, in the server's own order: READY, costing complete, confirmed amount = total, then the review mark.
   const signoffBlockers = [
     signoffWhy,
-    !signoffWhy && costingIncomplete ? `Costing is incomplete: ${costingReason ?? "supplier costs are unresolved"}. Complete it (or record an authorised incomplete-cost exception) before signing off.` : undefined,
+    !signoffWhy && costingIncomplete ? incompleteCostingMessage(costingReason ?? undefined, " Complete it (or record an authorised incomplete-cost exception) before signing off.") : undefined,
     !signoffWhy && amountChange.changed ? amountChange.text ?? undefined : undefined,
     signoffNeedsReview ? "Mark the costing reviewed first (Final review)." : undefined,
   ].filter((x): x is string => !!x);

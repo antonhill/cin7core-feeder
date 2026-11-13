@@ -29,7 +29,7 @@ describe("1. a ZAR customer quote with EUR and USD supplier products", () => {
 });
 
 describe("2. a 90-day forward-cover rate override", () => {
-  const rev = R(baseScenario({ forwardCover: { EUR: { rateMicro: micro("19.5"), coverDays: 90, reference: "FEC-001", reason: "90-day forward contract booked", ...by } } }));
+  const rev = R(baseScenario({ forwardCover: { EUR: { rateMicro: micro("19.5"), coverDays: 90, validFrom: "2026-11-01", validUntil: "2026-12-31", reference: "FEC-001", reason: "90-day forward contract booked", ...by } } }));
   it("replaces the spot rate for that currency only, visibly", () => {
     expect(line(rev, "feeder")).toMatchObject({ unitLandedCostCents: 224_250, unitPriceCents: 269_100, revenueCents: 2_691_000, rate: { kind: "forward_cover", coverDays: 90, rateMicro: 19_500_000 } });
     expect(line(rev, "drinker").rate?.kind).toBe("spot"); // USD untouched
@@ -110,7 +110,7 @@ describe("6. before / after totals, markup and gross margin", () => {
   it("one combined revision, compared with the sealed original", () => {
     const original = sealPricing(R());
     const revised = R(baseScenario({
-      forwardCover: { EUR: { rateMicro: micro("19.5"), coverDays: 90, reason: "FEC", ...by } },
+      forwardCover: { EUR: { rateMicro: micro("19.5"), coverDays: 90, reference: "FEC-FIX", validFrom: "2026-11-01", validUntil: "2026-12-31", reason: "FEC", ...by } },
       itemOverrides: { drinker: { price: { unitPriceCents: 125_000, reason: "Competitor", ...by } } },
       projectMarkup: { markupBps: 2500, reason: "Terms", ...by },
     }));
@@ -170,7 +170,10 @@ describe("7. missing and unverified supplier costs are handled safely", () => {
   });
   it("a stale spot rate and an unspecified freight adjustment make the price provisional (cost still complete)", () => {
     const s = baseScenario({ pricingDate: "2026-11-30T00:00:00.000Z" });
-    expect(R(s).issues.some((i) => i.code === "stale_rate")).toBe(true);
+    const expired = R(s);
+    expect(expired.issues.some((i) => i.code === "rate_expired")).toBe(true); // an EXPIRED spot rate prices nothing (never falls back to an older rate, never zero)
+    expect(expired.lines.filter((l) => l.currency !== "ZAR").every((l) => l.status === "not_priced")).toBe(true);
+    expect(expired.totalExVatCents).toBeNull();
     const f = baseScenario(); f.lines[2].freight = null;
     const rf = R(f);
     expect(rf.issues.map((i) => i.code)).toContain("freight_unspecified");
@@ -222,7 +225,7 @@ describe("input validation", () => {
     expect(bad({ itemOverrides: { drinker: { price: { unitPriceCents: 125_000, reason: "  ", ...by } } } }).join()).toMatch(/needs a reason/);
     expect(bad({ itemOverrides: { drinker: { price: { unitPriceCents: 0, reason: "x", ...by } } } }).join()).toMatch(/never quoted at R0/);
     expect(bad({ itemOverrides: { nope: { price: { unitPriceCents: 1, reason: "x", ...by } } } }).join()).toMatch(/not a line/);
-    expect(bad({ forwardCover: { ZAR: { rateMicro: 1_000_000, coverDays: 90, reason: "x", ...by } } }).join()).toMatch(/cannot be set for ZAR/);
+    expect(bad({ forwardCover: { ZAR: { rateMicro: 1_000_000, coverDays: 90, reference: "FEC-FIX", validFrom: "2026-11-01", validUntil: "2026-12-31", reason: "x", ...by } } }).join()).toMatch(/cannot be set for ZAR/);
     expect(bad({ lines: [...baseScenario().lines, ...baseScenario().lines] }).join()).toMatch(/more than once/);
     expect(bad({ projectMarkup: { markupBps: -1, reason: "x", ...by } }).join()).toMatch(/between 0% and 1000%/);
   });

@@ -1,6 +1,7 @@
 import type { PriceResult, PriceSource, PriceSourceDescriptor, QuoteType } from "../../grower/pricing-source";
 import { hashOf } from "../../quote/baseline";
 import { calculatePricing, PricingInputError, selectRuleVersion, type PricingResult, type PricingScenario } from "../model";
+import { costStateOf } from "./verification";
 import type { EstimatorPricing } from "./types";
 
 // THE ESTIMATOR PRICING MODEL AS A PRICE SOURCE (NQ-008B Phase 2). The quote engine already asks a `PriceSource` for one SKU at a time and never reads a source directly, so
@@ -15,13 +16,17 @@ const own = (o: object, k: string): boolean => Object.prototype.hasOwnProperty.c
 export function scenarioForSku(p: EstimatorPricing, sku: string): PricingScenario | null {
   const s = own(p.skus, sku) ? p.skus[sku] : undefined;
   if (!s) return null;
-  const { freight, by: _by, at: _at, ...cost } = s; void _by; void _at;
+  const rules = selectRuleVersion(p.ruleVersionId);
+  if (!rules.ok) return null;
+  const { freight, by: _by, at: _at, review: _review, ...cost } = s; void _by; void _at; void _review;
+  // "verified" is DERIVED from an independent review of exactly this cost; nothing a person typed is trusted.
+  const verification = costStateOf(s, rules.rules) === "verified" ? "verified" : "unverified";
   const ov = own(p.skuPriceOverrides, sku) ? p.skuPriceOverrides[sku] : undefined;
   return {
     pricingDate: p.pricingDate,
     fxQuotes: p.fxQuotes,
     forwardCover: p.forwardCover,
-    lines: [{ key: sku, label: sku, sku, quantity: 1, cost, freight }],
+    lines: [{ key: sku, label: sku, sku, quantity: 1, cost: { ...cost, verification }, freight }],
     itemOverrides: ov ? { [sku]: { price: ov } } : {},
     projectMarkup: p.projectMarkup,
     projectAdjustment: null,

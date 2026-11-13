@@ -12,7 +12,9 @@ export const FIXTURE_DRAFT_RULE_VERSION: PricingRuleVersion = {
   markupBps: 2000,
   unverifiedCost: "flag",
   freightUnspecified: "flag",
-  maxRateAgeDays: 7,
+  spotRateMaxAgeHours: 24,
+  forwardCoverNeedsValidity: true,
+  costReview: { reviewerRoles: ["manager"], requireIndependent: true },
 };
 
 export const FIXTURE_PRICING_DATE = "2026-11-12T08:00:00.000Z";

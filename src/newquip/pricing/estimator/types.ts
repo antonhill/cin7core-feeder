@@ -6,9 +6,19 @@ import type { ForwardCover, FreightInput, FxQuote, ProjectMarkupChange, Reasoned
 // SERVER-OWNED, like `physicalCosts`: a client-submitted draft can never add, change or remove it (see ownership.ts); it changes only through the pricing action, which
 // stamps who/when, records the reason and appends an immutable revision. It is INTERNAL: it holds supplier costs, so it is never sent to a viewer without cost visibility.
 
-/** One SKU's purchasing facts: who supplies it, in what currency, at what native cost, where that came from and whether anyone has verified it, plus its landed-cost assumptions. */
-export interface SkuPricingInput extends SupplierCostInput, Stamp {
+/**
+ * An INDEPENDENT commercial review of one SKU's supplier cost. SERVER-OWNED: only the verification action writes it, and only a reviewer who is not the person who entered or
+ * last changed that cost. `inputHash` binds it to the exact cost it covered: any later change to the supplier, currency, cost, source or freight makes it stop applying.
+ */
+export interface CostReview { by: string; at: string; /** What was checked against (a supplier quote or invoice reference). */ evidence: string; inputHash: string }
+
+/**
+ * One SKU's purchasing facts: who supplies it, in what currency, at what native cost, where that came from, plus its landed-cost assumptions. There is deliberately NO
+ * "verified" flag a person can set: whether the cost is verified is DERIVED from `review` (see verification.ts), and `by` / `at` say who entered or last changed it.
+ */
+export interface SkuPricingInput extends Omit<SupplierCostInput, "verification">, Stamp {
   freight: FreightInput | null;
+  review?: CostReview;
 }
 
 export interface EstimatorPricing {

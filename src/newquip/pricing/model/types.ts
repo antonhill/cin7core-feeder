@@ -24,8 +24,18 @@ export interface PricingRuleVersion {
   unverifiedCost: "flag" | "block";
   /** A line with no freight / landed-cost adjustment recorded: assume none but flag it ("flag"), or refuse to price it ("block"). */
   freightUnspecified: "flag" | "block";
-  /** An exchange rate older than this many days is flagged stale. null = age is not checked. */
-  maxRateAgeDays: number | null;
+  /**
+   * A SPOT rate recorded more than this many hours before the pricing date is EXPIRED: the line is not priced (it fails safe, never falls back to an older rate).
+   * null = age is not checked. PROPOSED default 24 (indicative spot rates), subject to NewQuip's confirmation.
+   */
+  spotRateMaxAgeHours: number | null;
+  /** A forward-cover rate must carry a contract reference and explicit validity dates; it applies only inside them. A rule that does not require this accepts the old shape. */
+  forwardCoverNeedsValidity: boolean;
+  /**
+   * Who may INDEPENDENTLY VERIFY a supplier cost (NQ-008B hardening). `reviewerRoles` is provisional: it names the roles that may review (NewQuip's final personnel
+   * assignments are not decided here); `requireIndependent` means the reviewer must be a different person from whoever entered / last changed that cost.
+   */
+  costReview: { reviewerRoles: readonly ("estimator" | "manager")[]; requireIndependent: boolean };
 }
 
 // ── cost inputs ────────────────────────────────────────────────────────────
@@ -52,8 +62,11 @@ export interface FreightInput {
 }
 
 export interface FxQuote { rateMicro: number; source: string; asOf: string }
-/** The Estimator's own forward-exchange-contract rate. It replaces the spot rate for that currency, visibly, and carries who set it and why. */
-export interface ForwardCover extends Reasoned { rateMicro: number; coverDays: number; reference?: string }
+/**
+ * The Estimator's own forward-exchange-contract rate. It replaces the spot rate for that currency, visibly, and carries who set it and why. `reference` (the contract) and the
+ * validity dates (ISO dates, inclusive) are what makes it a DOCUMENTED rate; outside them the rate is not used and the line is not priced (it never falls back to spot).
+ */
+export interface ForwardCover extends Reasoned { rateMicro: number; coverDays: number; reference?: string; validFrom?: string; validUntil?: string }
 
 export interface PricingLineInput {
   key: string;

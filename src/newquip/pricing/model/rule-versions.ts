@@ -11,7 +11,9 @@ export const LEGACY_RULE_VERSION: PricingRuleVersion = {
   markupBps: PROJECT_MARKUP_PCT * 100,
   unverifiedCost: "flag",
   freightUnspecified: "flag",
-  maxRateAgeDays: null,
+  spotRateMaxAgeHours: 24, // PROPOSED default, subject to NewQuip's confirmation
+  forwardCoverNeedsValidity: true,
+  costReview: { reviewerRoles: ["manager"], requireIndependent: true }, // PROVISIONAL: reviewer roles are not NewQuip's final assignment
 };
 
 // The registry holds ONLY versions a quotation may use. Development fixture versions live in fixtures.ts and are not in it, so they cannot be found, let alone selected.

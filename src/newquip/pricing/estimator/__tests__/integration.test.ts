@@ -45,7 +45,7 @@ describe("2. EUR, USD and ZAR supplier costs price the quotation to the cent", (
 });
 
 describe("3. forward cover with a recorded reason", () => {
-  const p = equivalentInputs({ forwardCover: { EUR: { rateMicro: micro("19"), coverDays: 90, reference: "FEC-9", reason: "90-day forward contract", by: EST, at: AT } } });
+  const p = equivalentInputs({ forwardCover: { EUR: { rateMicro: micro("19"), coverDays: 90, validFrom: "2026-11-01", validUntil: "2026-12-31", reference: "FEC-9", reason: "90-day forward contract", by: EST, at: AT } } });
   it("re-prices only the EUR SKUs, and the model says which rate and why", () => {
     const eurSku = Object.entries(p.skus).find(([, s]) => s!.currency === "EUR")![0];
     const usdSku = Object.entries(p.skus).find(([, s]) => s!.currency === "USD")![0];
@@ -107,7 +107,7 @@ describe("6. missing and unverified supplier costs are visible and block finalit
     const f = pricingFinality(d.estimator.pricing, ev.budget);
     expect(f.final).toBe(false);
     expect(f.reasons.length).toBeGreaterThan(0);
-    expect(f.reasons.join(" ")).toMatch(/not verified.*indicative only.*cannot be waived/);
+    expect(f.reasons.join(" ")).toMatch(/not been independently verified.*indicative only.*cannot be waived/);
     expect(f.reasons.join(" ")).not.toMatch(/R\s?\d|\d+\.\d{2}/); // SKUs only, never a cost or rate
   });
   it("verified costs with a recorded freight assumption are final; no pricing at all is final (legacy)", () => {
