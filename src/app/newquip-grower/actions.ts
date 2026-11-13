@@ -23,6 +23,8 @@ import { searchCatalogue, type CatalogueResult } from "@/lib/projects/catalogue-
 import { hasAny, PROJECT_CREATE_ROLES, type OrgTier, type QuoteRole } from "@/newquip/quote/roles";
 import { toQuoteRoles } from "@/lib/approvals/roles";
 import { canSeeCosts, resolveRoles } from "@/lib/approvals/role-store";
+import { narrowTier, resolveSwitchState } from "@/lib/approvals/role-switch-store";
+import type { SwitchRole } from "@/lib/approvals/active-role";
 import { demoAuditDetail, resolveActing, type DemoInfo } from "@/lib/demo-mode/context";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
 import { confirmationLabel, resolveConfirmationContact, type ConfirmationInput } from "@/lib/newquip-quotes/confirmation-contact";
@@ -59,7 +61,7 @@ export interface GrowerActionResult<T> {
 /** `canSeeCost`: owner/admin, or explicitly given the Estimator / Manager role. Cost, ROE, freight, margins and cost overrides are withheld from everyone else, server-side. */
 interface Actor {
   /** The EFFECTIVE user (under Demo Mode, the allowlisted test account). Every permission and separation-of-duties check evaluates this one. */
-  orgId: string; userId: string; email: string; tier: OrgTier; roles: ReadonlySet<QuoteRole>; canSeeCost: boolean;
+  orgId: string; userId: string; email: string; tier: OrgTier; roles: ReadonlySet<QuoteRole>; canSeeCost: boolean; activeRole: SwitchRole | null;
   /** Set only while the owner is impersonating a demo identity; the real owner is then in demo.ownerEmail / demo.ownerUserId. */
   demo: DemoInfo | null;
 }
@@ -81,9 +83,11 @@ async function authorise(): Promise<Actor> {
     }
   }
   const db = createServiceRoleClient();
+  if (tier === "admin" && !(await narrowTier(db, orgId, acting.userId, true))) tier = "member"; // a role-switch user's admin tier counts only as Manager
+  const switchState = await resolveSwitchState(db, orgId, acting.userId);
   // Functional roles (migration 0112) when assigned; otherwise exactly the tier-based roles of Phase H.
   const functional = await resolveRoles(db, orgId, acting.userId, tier === "admin");
-  return { orgId, userId: acting.userId, email: acting.email, tier, roles: toQuoteRoles(functional), canSeeCost: await canSeeCosts(db, orgId, acting.userId, tier === "admin"), demo: acting.demo };
+  return { orgId, userId: acting.userId, email: acting.email, tier, roles: toQuoteRoles(functional), canSeeCost: await canSeeCosts(db, orgId, acting.userId, tier === "admin"), demo: acting.demo, activeRole: switchState?.active ?? null };
 }
 
 /** The approval context of the effective user. Under Demo Mode it carries the DEMO actor name and the real owner. */
@@ -96,8 +100,8 @@ const whoOf = (a: Actor) => ({ orgId: a.orgId, userId: a.userId, email: a.email,
 /** The audit record of any action: the REAL owner is the actor, the effective user and the DEMO marker are in the detail. */
 async function audit(db: ReturnType<typeof createServiceRoleClient>, a: Actor, i: { action: string; summary: string; detail: Record<string, unknown> }) {
   await logActivity(db, a.demo
-    ? { orgId: a.orgId, actor: { userId: a.demo.ownerUserId, email: a.demo.ownerEmail }, action: i.action, summary: `[DEMO] ${i.summary}`, detail: demoAuditDetail(a.demo, i.detail) }
-    : { orgId: a.orgId, actor: { userId: a.userId, email: a.email }, action: i.action, summary: i.summary, detail: i.detail });
+    ? { orgId: a.orgId, actor: { userId: a.demo.ownerUserId, email: a.demo.ownerEmail }, action: i.action, summary: `[DEMO] ${i.summary}`, detail: { ...demoAuditDetail(a.demo, i.detail), ...(a.activeRole ? { effectiveRole: a.activeRole } : {}) } }
+    : { orgId: a.orgId, actor: { userId: a.userId, email: a.email }, action: i.action, summary: i.summary, detail: { ...i.detail, ...(a.activeRole ? { effectiveRole: a.activeRole } : {}) } });
 }
 
 function errMsg(e: unknown): string {
