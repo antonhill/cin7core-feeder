@@ -15,13 +15,21 @@ export interface ManualItem { itemKey: string; label: string; /** The item's cur
 
 const MANUAL_BY = new Set(["estimator_input", "estimator_resolution", "penning_rate"]);
 
-/** Priced budget lines the Estimator prices by hand that have no SKU of their own and no non-reference component SKU. Sorted by key. Never invents a SKU. */
+/**
+ * Priced budget lines the Estimator prices by hand that cost verification does NOT govern. Sorted by key. Never invents a SKU.
+ *  - M75 / penning (`estimator_input`, `penning_rate`): the Estimator prices the system as a whole. Cost verification already skips these lines entirely (see skuNeedsOf), whatever
+ *    component SKUs they list for reference (the M75 line lists some), so they always need evidence here.
+ *  - a manual price resolution (`estimator_resolution`, e.g. LED lighting): needs evidence only when the line has no SKU of its own and no non-reference component SKU; a line whose
+ *    SKU carries a supplier cost is governed by cost verification (manualPricedSkus) instead.
+ */
 export function skuLessManualItems(budget: BudgetQuote | null): ManualItem[] {
   const out: ManualItem[] = [];
   for (const l of budget?.lines ?? []) {
     if (l.status !== "priced" || !l.pricedBy || !MANUAL_BY.has(l.pricedBy)) continue;
-    if (l.sku) continue;
-    if (l.components?.some((c) => !!c.sku && c.status !== "reference_only")) continue;
+    if (l.pricedBy === "estimator_resolution") {
+      if (l.sku) continue;
+      if (l.components?.some((c) => !!c.sku && c.status !== "reference_only")) continue;
+    } else if (l.sku) continue; // a SKU line priced by the Estimator's own input: its SKU is its identity, not a SKU-less item
     const price = l.unitPrice ?? l.revenueExTax;
     if (price === null || price === undefined) continue;
     out.push({ itemKey: String(l.itemKey), label: l.label, unitPriceCents: Math.round(price * 100), pricedBy: l.pricedBy as ManualItem["pricedBy"] });
