@@ -12,7 +12,7 @@ const PROTECTED = /\b(newquip_[a-z_]+|approval_(requests|events|notifications|po
 const USER_JWT_CLIENT = /createSessionClient|createBrowserSupabaseClient|createServerClient|createBrowserClient|supabase\/server-session|supabase\/browser/;
 /** Reviewed files that use a user-JWT client; they read only org_members / organizations / auth, never a protected table. */
 const REVIEWED = new Set([
-  "src/actions/active-org.ts", "src/actions/auth.ts", "src/app/auth/callback/route.ts", "src/app/login/page.tsx", "src/app/mfa-challenge/page.tsx", "src/app/settings/security/page.tsx",
+  "src/actions/active-org.ts", "src/actions/auth.ts", "src/app/auth/callback/route.ts", "src/app/login/page.tsx", "src/app/mfa-challenge/page.tsx", "src/app/presenter/actions.ts", "src/app/settings/security/page.tsx",
   "src/app/signup/actions.ts", "src/app/signup/page.tsx", "src/lib/current-org.ts", "src/lib/require-privileged.ts", "src/lib/require-super-admin.ts", "src/middleware.ts",
   "src/supabase/browser.ts", "src/supabase/server-session.ts",
 ]);
