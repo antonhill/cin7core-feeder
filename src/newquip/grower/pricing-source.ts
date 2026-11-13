@@ -6,7 +6,7 @@
 // whichever `PriceSource` is plugged in. Swapping to Cin7 Core later means supplying another PriceSource — nothing in the
 // engine or the UI changes. No workbook price is scattered through UI components.
 
-export type PriceSourceId = "newquip_master_workbook_snapshot" | "cin7_core_live";
+export type PriceSourceId = "newquip_master_workbook_snapshot" | "cin7_core_live" | "estimator_supplier_pricing";
 
 export type QuoteType = "day_to_day" | "project";
 export const QUOTE_TYPE_LABEL: Record<QuoteType, string> = { day_to_day: "Day-to-day", project: "Project" };

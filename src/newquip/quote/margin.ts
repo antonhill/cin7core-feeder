@@ -220,15 +220,16 @@ export function keepServerOwnedCostBasis<D extends { estimator: { costBasis?: un
 }
 
 /** Removes every internal financial from a quote record for a viewer who may not see cost: the frozen margin sheet and the cost overrides. */
-export function redactInternalFinancials<Q extends { draft: { estimator: { costOverrides?: unknown; physicalCosts?: unknown; costBasis?: unknown; changeStamps?: unknown } }; accepted_baseline: { internalMargin?: unknown; physicalCostEstimate?: unknown; estimator?: { physicalCosts?: unknown; costOverrides?: unknown; costBasis?: unknown } } | null }>(quote: Q, canViewCommercials: boolean): Q {
+export function redactInternalFinancials<Q extends { draft: { estimator: { costOverrides?: unknown; physicalCosts?: unknown; costBasis?: unknown; changeStamps?: unknown; pricing?: unknown } }; accepted_baseline: { internalMargin?: unknown; physicalCostEstimate?: unknown; estimator?: { physicalCosts?: unknown; costOverrides?: unknown; costBasis?: unknown; pricing?: unknown } } | null }>(quote: Q, canViewCommercials: boolean): Q {
   if (canViewCommercials) return quote;
   const q = structuredClone(quote);
   delete q.draft.estimator.costOverrides;
   delete q.draft.estimator.physicalCosts;
   delete q.draft.estimator.costBasis;
   delete q.draft.estimator.changeStamps; // NQ-008A: who adjusted which input is for cost-entitled roles
+  delete q.draft.estimator.pricing; // NQ-008B: supplier costs, rates, freight and markup
   if (q.accepted_baseline) q.accepted_baseline = neutraliseDeep(q.accepted_baseline);
-  if (q.accepted_baseline) { delete q.accepted_baseline.internalMargin; delete q.accepted_baseline.physicalCostEstimate; if (q.accepted_baseline.estimator) { delete q.accepted_baseline.estimator.physicalCosts; delete q.accepted_baseline.estimator.costOverrides; delete q.accepted_baseline.estimator.costBasis; } }
+  if (q.accepted_baseline) { delete q.accepted_baseline.internalMargin; delete q.accepted_baseline.physicalCostEstimate; if (q.accepted_baseline.estimator) { delete q.accepted_baseline.estimator.physicalCosts; delete q.accepted_baseline.estimator.costOverrides; delete q.accepted_baseline.estimator.costBasis; delete q.accepted_baseline.estimator.pricing; } }
   return q;
 }
 

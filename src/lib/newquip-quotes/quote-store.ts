@@ -7,6 +7,7 @@ import "server-only";
 import type { createServiceRoleClient } from "@/supabase/server";
 import { evaluateDraft, type EvaluationContext, type QuoteEvaluation } from "@/newquip/grower/evaluate";
 import { emptyDraft, type QuoteDraft } from "@/newquip/grower/draft";
+import { pricingFinality } from "@/newquip/pricing/estimator/finality";
 import { buildAcceptedBaseline, baselineMatchesHash, commercialLinesOf, hashOf, type AcceptedBaseline } from "@/newquip/quote/baseline";
 import { baselineExceptionView, baselineMappingGate, validateExceptionReason, type BaselineExceptionRequest, type BaselineExceptionView } from "@/newquip/quote/baseline-exception";
 import { buildPhysicalScope } from "@/newquip/quote/physical-scope";
@@ -75,7 +76,12 @@ const indicativeTotalCents = (ev: QuoteEvaluation): number | null => (ev.budget 
  */
 export async function costingOf(db: Db, orgId: string, draft: QuoteDraft, ctx: EvaluationContext): Promise<CostingStatus> {
   const library = await listActiveMappings(db, orgId);
-  return estimatorCostingComplete(draft, evaluateDraft(draft, { ...ctx, withholdCost: false }), library ? libraryOf(library) : undefined);
+  const ev = evaluateDraft(draft, { ...ctx, withholdCost: false });
+  const base = estimatorCostingComplete(draft, ev, library ? libraryOf(library) : undefined);
+  // NQ-008B Phase 2 (owner decision 2): supplier pricing that is not verified is indicative only. It makes costing INCOMPLETE for sign-off and approval and the
+  // accepted-incomplete exception does not waive it (so `acceptedIncomplete` is dropped). A draft without Estimator pricing is judged exactly as before.
+  const fin = pricingFinality(draft.estimator.pricing, ev.budget);
+  return fin.final ? base : { complete: false, reasons: [...base.reasons, ...fin.reasons] };
 }
 
 /**

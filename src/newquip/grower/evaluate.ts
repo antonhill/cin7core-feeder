@@ -4,6 +4,7 @@ import { assessReadiness, type Readiness } from "./readiness";
 import { POC_TAX } from "./final-feedback";
 import type { PriceSource } from "./pricing-source";
 import type { QuoteDraft } from "./draft";
+import { createEstimatorPriceSource } from "../pricing/estimator/price-source";
 import type { GrowerCalculationResult } from "./types";
 
 // ONE function turns an editable draft into everything the quote screens show: engineering result, priced budget, readiness.
@@ -26,7 +27,8 @@ export function evaluateDraft(draft: QuoteDraft, ctx: EvaluationContext): QuoteE
   const calc = calculateGrowerHouse(draft.config);
   const budget = calc.valid
     ? buildBudgetQuote(calc.lines, {
-        priceSource: ctx.priceSource,
+        // OPT-IN (NQ-008B Phase 2): only a draft that carries Estimator pricing is priced by the supplier-cost model; every other draft uses the POC source exactly as before.
+        priceSource: draft.estimator.pricing?.enabled ? createEstimatorPriceSource(draft.estimator.pricing) : ctx.priceSource,
         quoteType: draft.quoteType,
         taxRatePct: POC_TAX.ratePct,
         taxInclusive: POC_TAX.inclusive,

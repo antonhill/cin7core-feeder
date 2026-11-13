@@ -4,6 +4,7 @@ import type { QuoteType } from "./pricing-source";
 import type { CostOverride } from "../quote/margin";
 import type { CostEntry } from "@/lib/projects/latest-cost";
 import type { UnitBasis } from "@/lib/projects/supplier-price";
+import type { EstimatorPricing } from "../pricing/estimator/types";
 
 // The editable state of one NewQuip Grower quote. Everything in it is an INPUT (engineering inputs from the rep, decisions
 // from the estimator); every number the quote shows is recomputed from it by evaluate.ts. Persisted as JSON.
@@ -33,6 +34,11 @@ export interface EstimatorState {
    * Absent until such a change is made, so a quotation that has none hashes exactly as it always did. Whatever a client sends for it is ignored.
    */
   changeStamps?: Record<string, { by: string; at: string; rev: number }>;
+  /**
+   * SERVER-OWNED and INTERNAL (NQ-008B Phase 2). OPT-IN supplier-cost pricing. Absent = the quotation is priced exactly as it always was (and hashes exactly as before).
+   * Only the pricing action writes it (see pricing/estimator/ownership.ts); it is never sent to a viewer without cost visibility.
+   */
+  pricing?: EstimatorPricing;
   /** Free-text assumptions that travel with the quote and are frozen in the baseline. */
   assumptions: string;
 }
