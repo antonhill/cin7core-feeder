@@ -156,10 +156,11 @@ select pg_temp.expect_42501($q$select count(*) from activity_log$q$, 'anon read 
 select pg_temp.as_role('postgres');
 
 -- ── 6. nothing else changed: unrelated Toolbox tables keep their client read ──
+-- (products / quotes / quote_lines / sale_lines are deliberately locked down by 0127 and are asserted in tests/0127_toolbox_cost_confidentiality.test.sql)
 do $$
 declare t text;
 begin
-  foreach t in array array['products','customers','quotes','quote_lines','sale_lines','org_members','organizations'] loop
+  foreach t in array array['customers','org_members','organizations'] loop
     if to_regclass('public.' || t) is not null and not has_table_privilege('authenticated', 'public.' || t, 'SELECT') then raise exception '0122 must not change access to %', t; end if;
   end loop;
 end $$;

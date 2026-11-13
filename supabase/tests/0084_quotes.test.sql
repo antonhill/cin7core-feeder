@@ -72,15 +72,16 @@ begin
   if n <> 3 then raise exception 'expected RLS enabled on all 3 quote tables, got %', n; end if;
 
   -- quotes + quote_lines have EXACTLY one policy each, a SELECT (read) policy; no write policy.
+  -- 0127 (toolbox cost confidentiality): quotes and quote_lines carry margins, so client roles have NO access at all (no policy, no privilege); only the service role reads them.
   select count(*) into n from pg_policies where schemaname = 'public' and tablename = 'quotes';
-  if n <> 1 then raise exception 'quotes should have exactly 1 policy, got %', n; end if;
-  select count(*) into n from pg_policies where schemaname = 'public' and tablename = 'quotes' and cmd = 'SELECT';
-  if n <> 1 then raise exception 'quotes policy should be SELECT-only, got % SELECT policies', n; end if;
+  if n <> 0 then raise exception 'quotes must have no policy after 0127 (service-role only), got %', n; end if;
+  if has_table_privilege('authenticated', 'public.quotes', 'SELECT') or has_table_privilege('anon', 'public.quotes', 'SELECT') then
+    raise exception 'client roles must hold no privilege on quotes after 0127'; end if;
 
   select count(*) into n from pg_policies where schemaname = 'public' and tablename = 'quote_lines';
-  if n <> 1 then raise exception 'quote_lines should have exactly 1 policy, got %', n; end if;
-  select count(*) into n from pg_policies where schemaname = 'public' and tablename = 'quote_lines' and cmd = 'SELECT';
-  if n <> 1 then raise exception 'quote_lines policy should be SELECT-only, got % SELECT policies', n; end if;
+  if n <> 0 then raise exception 'quote_lines must have no policy after 0127 (service-role only), got %', n; end if;
+  if has_table_privilege('authenticated', 'public.quote_lines', 'SELECT') or has_table_privilege('anon', 'public.quote_lines', 'SELECT') then
+    raise exception 'client roles must hold no privilege on quote_lines after 0127'; end if;
 
   -- quote_creation_claims has NO policies at all (service-role only).
   select count(*) into n from pg_policies where schemaname = 'public' and tablename = 'quote_creation_claims';
