@@ -59,6 +59,7 @@ import { Disclosure, EstimatorResult, FinalReviewChecklist, OwnerTag, RepSubmitt
 import { PricingFeedbackNote } from "./PricingFeedbackNote";
 import { pricingFeedback } from "@/newquip/pricing/pricing-feedback";
 import { IndicativeComparisonPanel } from "./IndicativeComparisonPanel";
+import { ManualEvidencePanel } from "./ManualEvidencePanel";
 import { EstimatorReturnNotice, returnNoticeText } from "./ReturnNotice";
 import { ConfirmationPanel } from "./ConfirmationPanel";
 import { DeliveryPanel, type DeliveryGate } from "./DeliveryPanel";
@@ -767,6 +768,7 @@ export default function QuoteEditorPage() {
           {amountChange.changed && q.state === "ESTIMATOR_REVIEW" && <div className="mt-2"><Alert tone="warning"><span data-testid="total-changed">{amountChange.text}</span></Alert></div>}
           {repSummary}
           {canCommercials && view.indicativeComparison && <IndicativeComparisonPanel c={view.indicativeComparison} />}
+          {canCommercials && !poc && view.manualPriceEvidence && <ManualEvidencePanel rows={view.manualPriceEvidence} />}
           {req2No !== null && req2No > visible2.length && <p className="mt-3 text-sm text-slate-800" data-testid="step-unavailable">That step is not available to you, so the first step is shown.</p>}
           <StepRail dense oneLineNotes id="s2" ariaLabel="Costing and review steps" steps={railSteps2View} currentId={step2Id} onSelect={goStep2}
             moreActions={(
@@ -1234,6 +1236,7 @@ export default function QuoteEditorPage() {
           </div>
           {!poc && commercial && !commercial.complete && <Alert tone="warning"><span data-testid="s3-commercial">{commercial.headline}</span></Alert>}
           {repSummary}
+          {canCommercials && !poc && view.manualPriceEvidence && <ManualEvidencePanel rows={view.manualPriceEvidence} />}
           <EstimatorResult signedOffBy={q.estimator_signoff_by_email} signedOffAt={q.estimator_signoff_at} signoffCurrent={s2Base.signoff === "current"} totalCents={totalCents} confirmedCents={q.customer_confirmed_cents}
             costing={canCommercials && !poc && budget ? { estimatedCost: shownMargin?.cost ?? budget.totals.estimatedCost, marginPct: shownMargin?.pct ?? budget.totals.overallMarginPct } : null} priceExceptions={poc ? [] : priceExceptions} costOverrides={poc ? [] : costOverrideRows} showPriceDetail={canCommercials && !poc}
             marginUnknown={canCommercials && !!budget && (marginIncomplete || budget.incomplete || budget.totals.overallMarginPct == null)} missingCostLines={marginIncomplete && marginInfo!.missing > 0 ? marginInfo!.missing : null} estimatorPricedLines={marginInfo?.exempt.length ?? 0} largestLines={canCommercials ? largestLines : null} />
