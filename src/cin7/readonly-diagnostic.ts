@@ -45,7 +45,7 @@ export class Cin7ReadOnlyGate {
 
 /** The real transport: the existing Cin7 gateway, GET only, no internal retries (the diagnostic does its own bounded backoff). */
 export function cin7Transport(creds: Cin7Credentials): GetTransport {
-  return (method, path, query) => cin7Request<unknown>(creds, path, { method, query, maxRetries: 0 });
+  return (_method, path, query) => cin7Request<unknown>(creds, path, { method: "GET", query, maxRetries: 0 });
 }
 
 function codeOf(e: unknown): string {

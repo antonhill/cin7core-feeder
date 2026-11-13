@@ -3,8 +3,8 @@
 // NewQuip read-only Cin7 diagnostic. GET of /Product and /Supplier only, through Cin7ReadOnlyGate. Writes nothing to Cin7 or to any quotation draft; the one thing it
 // writes is its own audit row (counts only). Cost-bearing output: internal, never cached. Only async functions and erased types are exported.
 import { createServiceRoleClient } from "@/supabase/server";
-import { loadCin7Credentials } from "@/cin7/load-credentials";
-import { Cin7ReadOnlyGate, cin7Transport, inspectSkus, validateSkus, type DiagnosticResult } from "@/cin7/readonly-diagnostic";
+import { validateSkus, type DiagnosticResult } from "@/cin7/readonly-diagnostic";
+import { runReadOnlyDiagnostic } from "@/cin7/readonly-diagnostic-run";
 import { logActivity } from "@/lib/activity-log";
 import { NEWQUIP_POC_CIN7_INSTANCE_ID } from "@/newquip/access";
 import { authoriseDiagnostic } from "./diagnostics/authorise";
@@ -18,8 +18,7 @@ export async function runCin7DiagnosticAction(skus: string[]): Promise<Cin7Diagn
   if (!valid.ok) return { ok: false, error: valid.error };
   try {
     const db = createServiceRoleClient();
-    const creds = await loadCin7Credentials(db, auth.actor.orgId, NEWQUIP_POC_CIN7_INSTANCE_ID); // never returned or logged
-    const data = await inspectSkus(new Cin7ReadOnlyGate(cin7Transport(creds)), valid.skus);
+    const data = await runReadOnlyDiagnostic(db, auth.actor.orgId, NEWQUIP_POC_CIN7_INSTANCE_ID, valid.skus); // credentials are loaded in there, never returned or logged
     await logActivity(db, {
       orgId: auth.actor.orgId, actor: { userId: auth.actor.userId, email: auth.actor.email },
       action: "newquip.cin7_diagnostic_run", summary: "Read-only Cin7 diagnostic run (GET only; no Cin7 or quotation write)",
