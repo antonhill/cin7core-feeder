@@ -3,8 +3,7 @@ import "server-only";
 import type { createServiceRoleClient } from "@/supabase/server";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
-import { buildPricingWorkspace, canEnterPricingInputs, type PricingWorkspaceView, type Viewer } from "@/newquip/pricing/estimator";
-import type { PricingSubmission } from "@/newquip/pricing/estimator/apply";
+import { buildPricingWorkspace, canEnterPricingInputs, submissionFrom, type PricingSubmission, type PricingWorkspaceView, type Viewer } from "@/newquip/pricing/estimator";
 import { returnByOf } from "./return-store";
 import { reconcileConfirmationAmount, resyncApprovalsLogged, type AmountInvalidation } from "./confirmation-reconcile";
 import { latestIndicativeSnapshot } from "./indicative-store";
@@ -13,7 +12,7 @@ import { applyEstimatorPricing, listPricingRevisions, type PricingRevisionRow } 
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 export interface PricingActor { orgId: string; userId: string; email: string; roles: ReadonlySet<"rep" | "estimator" | "manager">; canSeeCost: boolean }
-export interface WorkspaceBundle { view: PricingWorkspaceView; revisions: PricingRevisionRow[]; state: string; revision: number; canEdit: boolean }
+export interface WorkspaceBundle { view: PricingWorkspaceView; /** The stored inputs as the form edits them (null while the model is off). */ current: PricingSubmission | null; revisions: PricingRevisionRow[]; state: string; revision: number; canEdit: boolean }
 
 const viewerOf = (a: PricingActor): Viewer => ({ roles: a.roles, canSeeCost: a.canSeeCost });
 
@@ -26,7 +25,7 @@ export async function loadPricingWorkspace(db: Db, a: PricingActor, quoteId: str
   const ev = evaluateDraft(q.draft, evaluationContext(false));
   const snap = await latestIndicativeSnapshot(db, a.orgId, quoteId);
   const view = buildPricingWorkspace({ quoteType: q.draft.quoteType, pricing: q.draft.estimator.pricing, budget: ev.budget, originalTotalCents: snap?.snapshot.customerSafe.subtotalCents ?? null, originalCapturedAt: snap?.created_at ?? null });
-  return { view, revisions: await listPricingRevisions(db, a.orgId, quoteId), state: q.state, revision: q.revision, canEdit: canEnterPricingInputs(viewerOf(a)) && q.state !== "MANAGER_APPROVED_FINAL" };
+  return { view, current: q.draft.estimator.pricing ? submissionFrom(q.draft.estimator.pricing) : null, revisions: await listPricingRevisions(db, a.orgId, quoteId), state: q.state, revision: q.revision, canEdit: canEnterPricingInputs(viewerOf(a)) && q.state !== "MANAGER_APPROVED_FINAL" };
 }
 
 export interface ApplyReport { seq: number; kind: string; changedValues: number; confirmation: AmountInvalidation | null }

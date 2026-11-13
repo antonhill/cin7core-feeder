@@ -43,6 +43,7 @@ import { MarginPanel } from "./MarginPanel";
 import { BuildStamp } from "@/components/BuildStamp";
 import { ScheduleChooser } from "./ScheduleChooser";
 import { CostPanel } from "./CostPanel";
+import { EstimatorPricingPanel } from "./EstimatorPricingPanel";
 import { BaselineExceptionBlock, BaselineExceptionNote, BaselineExceptionsSummary, UnmappedTypedPriceNote } from "./BaselineExceptionBlock";
 import { CustomerPanel } from "./CustomerPanel";
 import { Stage1Review } from "./Stage1Review";
@@ -1097,6 +1098,11 @@ export default function QuoteEditorPage() {
           {canCommercials && (
             <StepPanel railId="s2" stepId="costs" number={visible2.indexOf("costs") + 1} title={STAGE2_WIZARD_LABEL.costs} current={step2Id === "costs"} showAll={showAllSteps} locked={lockedFor2("costs")} className="space-y-6">
               {editWarning && <Alert tone="warning"><span data-testid="edit-clears-signoff-costs">{editWarning}</span></Alert>}
+              {(roles.has("estimator") || roles.has("manager")) && (
+                <Disclosure testId="disc-supplier-pricing" title="Supplier pricing (Estimator workspace)" summary="Supplier, currency, cost, exchange rate and forward cover, freight, markup and margin per SKU; original versus revised price. Off unless you switch it on for this quotation.">
+                  <EstimatorPricingPanel quoteId={id} unsaved={dirty} reload={() => { void getGrowerQuoteAction(id).then((r) => { if (r.ok && r.data) adopt(r.data, true); }); }} />
+                </Disclosure>
+              )}
               {!poc && (<Disclosure testId="disc-cost-capture" title="Cin7 cost capture and FX rates" summary={costingIncomplete ? (marginInfo && marginInfo.missing > 0 ? `Costs are incomplete for ${marginInfo.missing} line${marginInfo.missing === 1 ? "" : "s"}: capture or enter them here` : `Costing is incomplete: ${costingReason ?? "supplier costs are unresolved"}`) : "Latest supplier prices from Cin7, exchange rates and exceptions"} attention={costingIncomplete}>
                 {final ? <CostPanel quoteId={id} /> : <CostPanel quoteId={id} unsaved={dirty} previewDraft={dirty ? previewedFor : null} />}
               </Disclosure>)}

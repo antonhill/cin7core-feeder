@@ -173,3 +173,17 @@ export function disablePricing(prior: EstimatorPricing | undefined, viewer: View
   if (!prior) return { ok: false, errors: ["Supplier pricing is not switched on for this quotation."] };
   return { ok: true, kind: "DISABLED", next: null, changes: diffPricing(prior, null) };
 }
+
+/** The stored pricing as the form edits it: every input, without the server's attribution (which is decided again on save). */
+export function submissionFrom(p: EstimatorPricing): PricingSubmission {
+  const strip = <T extends { by?: string; at?: string }>(x: T): Omit<T, "by" | "at"> => { const { by: _b, at: _a, ...rest } = x; void _b; void _a; return rest; };
+  return {
+    ruleVersionId: p.ruleVersionId,
+    skus: Object.fromEntries(Object.entries(p.skus).map(([k, v]) => [k, strip(v!)])) as PricingSubmission["skus"],
+    fxQuotes: structuredClone(p.fxQuotes) as PricingSubmission["fxQuotes"],
+    forwardCover: Object.fromEntries(Object.entries(p.forwardCover).map(([k, v]) => [k, strip(v!)])) as PricingSubmission["forwardCover"],
+    skuPriceOverrides: Object.fromEntries(Object.entries(p.skuPriceOverrides).map(([k, v]) => [k, { unitPriceCents: v!.unitPriceCents, reason: v!.reason }])),
+    projectMarkup: p.projectMarkup ? { markupBps: p.projectMarkup.markupBps, reason: p.projectMarkup.reason } : null,
+    targetAdjustment: p.targetAdjustment ? { targetTotalCents: p.targetAdjustment.targetTotalCents, reason: p.targetAdjustment.reason } : null,
+  };
+}
