@@ -103,27 +103,23 @@ do $$ begin
 end $$;
 -- ── RLS ──
 select pg_temp.act_as('00000000-0000-0000-0000-0000000007a1');
-do $$ begin
-  if (select count(*) from project_deliveries) <> 3 then raise exception 'member A should see org A deliveries (3), saw %', (select count(*) from project_deliveries); end if;
-  if (select count(*) from project_delivery_allocations) <> 3 then raise exception 'member A should see org A allocations'; end if;
-  if (select count(*) from project_delivery_events) <> 1 then raise exception 'member A should see the audit row'; end if;
-  if (select count(*) from project_milestone_confirmations) <> 1 then raise exception 'member A should see the confirmation'; end if;
-end $$;
-select pg_temp.expect_no_rows_changed($q$update project_deliveries set label = 'hacked'$q$, 'member update delivery');
-select pg_temp.expect_no_rows_changed($q$update project_delivery_allocations set quantity = 999$q$, 'member update allocation');
-select pg_temp.expect_no_rows_changed($q$delete from project_delivery_allocations$q$, 'member delete allocation');
+select pg_temp.expect_denied($q$select count(*) from project_deliveries$q$, 'a signed-in member has no read access to project_deliveries (0122)');
+select pg_temp.expect_denied($q$select count(*) from project_delivery_allocations$q$, 'a signed-in member has no read access to project_delivery_allocations (0122)');
+select pg_temp.expect_denied($q$select count(*) from project_delivery_events$q$, 'a signed-in member has no read access to project_delivery_events (0122)');
+select pg_temp.expect_denied($q$select count(*) from project_milestone_confirmations$q$, 'a signed-in member has no read access to project_milestone_confirmations (0122)');
+select pg_temp.expect_denied($q$update project_deliveries set label = 'hacked'$q$, 'member update delivery');
+select pg_temp.expect_denied($q$update project_delivery_allocations set quantity = 999$q$, 'member update allocation');
+select pg_temp.expect_denied($q$delete from project_delivery_allocations$q$, 'member delete allocation');
 select pg_temp.expect_denied($q$insert into project_deliveries (org_id, project_id, label, created_by_email) values ('00000000-0000-0000-0000-0000000007b1','00000000-0000-0000-0000-0000000007c1','Member made','m@x')$q$, 'member insert delivery');
 select pg_temp.expect_denied($q$insert into project_delivery_allocations (org_id, project_id, delivery_id, sku, quantity, updated_by_email) values ('00000000-0000-0000-0000-0000000007b1','00000000-0000-0000-0000-0000000007c1','00000000-0000-0000-0000-0000000007e1','SKU-Q',1,'m@x')$q$, 'member insert allocation');
 select pg_temp.expect_denied($q$insert into project_milestone_confirmations (org_id, project_id, stage_id, confirmed_by_email, note) values ('00000000-0000-0000-0000-0000000007b1','00000000-0000-0000-0000-0000000007c1','00000000-0000-0000-0000-0000000007d9','m@x','member made')$q$, 'member insert confirmation');
 select pg_temp.expect_denied($q$insert into project_delivery_events (org_id, project_id, delivery_id, action, actor_email) values ('00000000-0000-0000-0000-0000000007b1','00000000-0000-0000-0000-0000000007c1','00000000-0000-0000-0000-0000000007e1','DELIVERY_CREATED','m@x')$q$, 'member insert audit row');
 select pg_temp.reset_role();
 select pg_temp.act_as('00000000-0000-0000-0000-0000000007a2');
-do $$ begin
-  if (select count(*) from project_deliveries) <> 0 then raise exception 'org B must not see org A deliveries'; end if;
-  if (select count(*) from project_delivery_allocations) <> 0 then raise exception 'org B must not see org A allocations'; end if;
-  if (select count(*) from project_delivery_events) <> 0 then raise exception 'org B must not see org A audit'; end if;
-  if (select count(*) from project_milestone_confirmations) <> 0 then raise exception 'org B must not see org A confirmations'; end if;
-end $$;
+select pg_temp.expect_denied($q$select count(*) from project_deliveries$q$, 'a signed-in member has no read access to project_deliveries (0122)');
+select pg_temp.expect_denied($q$select count(*) from project_delivery_allocations$q$, 'a signed-in member has no read access to project_delivery_allocations (0122)');
+select pg_temp.expect_denied($q$select count(*) from project_delivery_events$q$, 'a signed-in member has no read access to project_delivery_events (0122)');
+select pg_temp.expect_denied($q$select count(*) from project_milestone_confirmations$q$, 'a signed-in member has no read access to project_milestone_confirmations (0122)');
 select pg_temp.reset_role();
 
 -- ── cascade: deleting the project removes its plan and its audit (the append-only guard only protects live projects) ──

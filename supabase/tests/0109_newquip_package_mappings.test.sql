@@ -64,12 +64,12 @@ do $$ begin
 end $$;
 -- RLS and organisation isolation
 select pg_temp.act_as('00000000-0000-0000-0000-0000000009a1');
-do $$ begin if (select count(*) from newquip_package_mappings) <> 3 then raise exception 'member A should see its 3 versions'; end if; end $$;
+select pg_temp.expect_denied($q$select count(*) from newquip_package_mappings$q$, 'a signed-in member has no read access to newquip_package_mappings (0122)');
 select pg_temp.expect_denied($q$insert into newquip_package_mappings (org_id, package_key, lines, reason, created_by_email) values ('00000000-0000-0000-0000-0000000009b1','z','[{"sku":"A"}]','r','m@x')$q$, 'member insert');
-select pg_temp.expect_no_rows_changed($q$update newquip_package_mappings set status = 'SUPERSEDED', superseded_at = now()$q$, 'member supersede');
+select pg_temp.expect_denied($q$update newquip_package_mappings set status = 'SUPERSEDED', superseded_at = now()$q$, 'member supersede');
 select pg_temp.reset_role();
 select pg_temp.act_as('00000000-0000-0000-0000-0000000009a2');
-do $$ begin if (select count(*) from newquip_package_mappings) <> 0 then raise exception 'org B must not see org A mappings'; end if; end $$;
+select pg_temp.expect_denied($q$select count(*) from newquip_package_mappings$q$, 'a signed-in member has no read access to newquip_package_mappings (0122)');
 select pg_temp.reset_role();
 -- another org can use the same package key with its own version 1
 insert into newquip_package_mappings (org_id, package_key, lines, reason, created_by_email) values ('00000000-0000-0000-0000-0000000009b2', 'penning_package', '[{"sku":"B-1","factor":1}]', 'org B', 'm@x');
