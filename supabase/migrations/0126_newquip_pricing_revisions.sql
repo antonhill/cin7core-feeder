@@ -106,7 +106,7 @@ begin
   -- A review may be recorded only (a) for an entry that already exists and is unchanged, (b) by the person recorded as making this change, and (c) by someone other than whoever
   -- entered / last changed that entry. An entry that changed in this revision cannot carry a review. (The application additionally binds each review to a hash of the exact cost or
   -- rate; this check is structural.) Pricing evidence for manual items (estimator.pricing.manualEvidence) is ordinary pricing content: the only-pricing-differs proof above covers it.
-  for k in select jsonb_object_keys(coalesce(p_new_draft #> '{estimator,pricing,skus}', '{}'::jsonb)) loop
+  for k in select jsonb_object_keys(case when jsonb_typeof(p_new_draft #> '{estimator,pricing,skus}') = 'object' then p_new_draft #> '{estimator,pricing,skus}' else '{}'::jsonb end) loop
     n := p_new_draft #> array['estimator', 'pricing', 'skus', k];
     o := q.draft #> array['estimator', 'pricing', 'skus', k];
     if jsonb_typeof(n) = 'object' and (n -> 'review') is not null and jsonb_typeof(n -> 'review') = 'object' then
@@ -117,9 +117,10 @@ begin
         if lower(btrim(coalesce(n #>> '{review,by}', ''))) = lower(btrim(coalesce(n ->> 'by', ''))) then raise exception 'pricing_conflict: a cost cannot be verified by the person who entered it'; end if;
       end if;
       if o is not null and (n - 'review' - 'by' - 'at') is distinct from (o - 'review' - 'by' - 'at') then raise exception 'pricing_conflict: a changed cost cannot carry a review'; end if;
+      if o is not null and (n -> 'review') is not distinct from (o -> 'review') and (n ->> 'by') is distinct from (o ->> 'by') then raise exception 'pricing_conflict: who entered a reviewed cost cannot be changed'; end if;
     end if;
   end loop;
-  for k in select jsonb_object_keys(coalesce(p_new_draft #> '{estimator,pricing,forwardCover}', '{}'::jsonb)) loop
+  for k in select jsonb_object_keys(case when jsonb_typeof(p_new_draft #> '{estimator,pricing,forwardCover}') = 'object' then p_new_draft #> '{estimator,pricing,forwardCover}' else '{}'::jsonb end) loop
     n := p_new_draft #> array['estimator', 'pricing', 'forwardCover', k];
     o := q.draft #> array['estimator', 'pricing', 'forwardCover', k];
     if jsonb_typeof(n) = 'object' and (n -> 'review') is not null and jsonb_typeof(n -> 'review') = 'object' then
@@ -130,6 +131,7 @@ begin
         if lower(btrim(coalesce(n #>> '{review,by}', ''))) = lower(btrim(coalesce(n ->> 'by', ''))) then raise exception 'pricing_conflict: a forward-cover rate cannot be attested by the person who entered it'; end if;
       end if;
       if o is not null and (n - 'review' - 'by' - 'at') is distinct from (o - 'review' - 'by' - 'at') then raise exception 'pricing_conflict: a changed forward-cover rate cannot carry an attestation'; end if;
+      if o is not null and (n -> 'review') is not distinct from (o -> 'review') and (n ->> 'by') is distinct from (o ->> 'by') then raise exception 'pricing_conflict: who entered an attested forward-cover rate cannot be changed'; end if;
     end if;
   end loop;
 

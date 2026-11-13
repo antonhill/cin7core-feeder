@@ -95,6 +95,53 @@ select pg_temp.expect_denied($q$select pg_temp.rv(2, 'h3b', 'h3c', '{"estimator"
 select pg_temp.rv(2, 'h3b', 'h3c', '{"estimator":{"pricing":{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t","review":{"by":"Rev@X","at":"t","evidence":"e","inputHash":"h"}},"projectNote":1}}}}'::jsonb, '{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t","review":{"by":"Rev@X","at":"t","evidence":"e","inputHash":"h"}}}}'::jsonb, 'est@x');
 select pg_temp.rv(3, 'h3c', 'h3d', '{"estimator":{"pricing":{"skus":{"A":{"nativeUnitCostMicro":9,"by":"est2@x","at":"t2"},"projectNote":1}}}}'::jsonb, '{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t","review":{"by":"Rev@X","at":"t","evidence":"e","inputHash":"h"}},"projectNote":1}}'::jsonb, 'est2@x');
 
+-- 2d. FORWARD-COVER ATTESTATION (P2-E) + "who entered it" can never be rewritten while an independent review is kept (PR-4). Same structural rules as 2c, for rates.
+insert into newquip_quotes (id, org_id, quote_ref, draft, draft_hash) values ('00000000-0000-0000-0000-0000000126c4', '00000000-0000-0000-0000-0000000126b1', 'PR-4', '{"estimator":{}}', 'h4');
+create or replace function pg_temp.p4(variant text) returns jsonb language sql as $$
+  select case variant
+    when 'base'        then '{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t"}},"forwardCover":{"EUR":{"rateMicro":19000000,"by":"est@x","at":"t"}}}'
+    when 'reviewed'    then '{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t","review":{"by":"Rev@X","at":"t","evidence":"e","inputHash":"h"}}},"forwardCover":{"EUR":{"rateMicro":19000000,"by":"est@x","at":"t","review":{"by":"Rev@X","at":"t","evidence":"fec","inputHash":"h"}}}}'
+    when 'self_rate'   then '{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t"}},"forwardCover":{"EUR":{"rateMicro":19000000,"by":"est@x","at":"t","review":{"by":"est@x","at":"t","evidence":"fec","inputHash":"h"}}}}'
+    when 'rate_changed' then '{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t"}},"forwardCover":{"EUR":{"rateMicro":20000000,"by":"est@x","at":"t","review":{"by":"Rev@X","at":"t","evidence":"fec","inputHash":"h"}}}}'
+    when 'new_usd'     then '{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t"}},"forwardCover":{"EUR":{"rateMicro":19000000,"by":"est@x","at":"t"},"USD":{"rateMicro":18000000,"by":"est@x","at":"t","review":{"by":"Rev@X","at":"t","evidence":"fec","inputHash":"h"}}}}'
+    when 'launder_rate' then '{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t","review":{"by":"Rev@X","at":"t","evidence":"e","inputHash":"h"}}},"forwardCover":{"EUR":{"rateMicro":19000000,"by":"third@x","at":"t","review":{"by":"Rev@X","at":"t","evidence":"fec","inputHash":"h"}}}}'
+    when 'launder_cost' then '{"skus":{"A":{"nativeUnitCostMicro":5,"by":"third@x","at":"t","review":{"by":"Rev@X","at":"t","evidence":"e","inputHash":"h"}}},"forwardCover":{"EUR":{"rateMicro":19000000,"by":"est@x","at":"t","review":{"by":"Rev@X","at":"t","evidence":"fec","inputHash":"h"}}}}'
+    when 'null_fc'     then '{"skus":{"A":{"nativeUnitCostMicro":5,"by":"est@x","at":"t"}},"forwardCover":null}'
+    when 'scalar_skus' then '{"skus":7,"forwardCover":"x"}'
+  end::jsonb
+$$;
+create or replace function pg_temp.go4(p_seq integer, p_hash text, p_new_hash text, p_prev text, p_new text, p_by text) returns uuid language sql as $$
+  select newquip_apply_pricing_revision('00000000-0000-0000-0000-0000000126b1', '00000000-0000-0000-0000-0000000126c4', p_seq, p_hash,
+    jsonb_build_object('estimator', jsonb_build_object('pricing', pg_temp.p4(p_new))), p_new_hash,
+    case when p_prev is null then 'ENABLED' else 'CHANGED' end, 'Attestation rule test', 'legacy-poc-v1',
+    case when p_prev is null then null else pg_temp.p4(p_prev) end, pg_temp.p4(p_new), '[]'::jsonb, repeat('a', 64), p_by)
+$$;
+select pg_temp.go4(0, 'h4', 'h4a', null, 'base', 'est@x');
+-- a rate attested by the person who entered it is refused
+select pg_temp.expect_denied($q$select pg_temp.go4(1, 'h4a', 'h4b', 'base', 'self_rate', 'est@x')$q$, 'self-attested rate');
+-- an attestation attributed to someone other than the person recording the revision is refused
+select pg_temp.expect_denied($q$select pg_temp.go4(1, 'h4a', 'h4b', 'base', 'reviewed', 'est@x')$q$, 'attestation recorded by a different person');
+-- an attestation recorded together with a change to the rate is refused
+select pg_temp.expect_denied($q$select pg_temp.go4(1, 'h4a', 'h4b', 'base', 'rate_changed', 'rev@x')$q$, 'attestation with a changed rate');
+-- an attestation for a rate that is new in this revision is refused
+select pg_temp.expect_denied($q$select pg_temp.go4(1, 'h4a', 'h4b', 'base', 'new_usd', 'rev@x')$q$, 'attestation for a new rate');
+-- nothing was recorded by the refused attempts
+do $$ begin if (select count(*) from newquip_pricing_revisions where quote_id = '00000000-0000-0000-0000-0000000126c4') <> 1 then raise exception 'refused attestations must record nothing'; end if; end $$;
+-- a genuine independent attestation (and cost review) of unchanged entries, recorded by the reviewer (case-insensitive), is accepted
+select pg_temp.go4(1, 'h4a', 'h4b', 'base', 'reviewed', 'rev@x');
+do $$ begin if (select count(*) from newquip_pricing_revisions where quote_id = '00000000-0000-0000-0000-0000000126c4') <> 2 then raise exception 'the independent attestation must be recorded'; end if; end $$;
+-- LAUNDERING: while the review is KEPT, who entered the rate / cost cannot be rewritten to a third person (a self-attested entry would otherwise read as independent)
+select pg_temp.expect_denied($q$select pg_temp.go4(2, 'h4b', 'h4c', 'reviewed', 'launder_rate', 'est@x')$q$, 'rewriting the author of an attested rate');
+select pg_temp.expect_denied($q$select pg_temp.go4(2, 'h4b', 'h4c', 'reviewed', 'launder_rate', 'third@x')$q$, 'rewriting the author of an attested rate (as the new author)');
+select pg_temp.expect_denied($q$select pg_temp.go4(2, 'h4b', 'h4c', 'reviewed', 'launder_cost', 'est@x')$q$, 'rewriting the author of a verified cost');
+select pg_temp.expect_denied($q$select pg_temp.go4(2, 'h4b', 'h4c', 'reviewed', 'launder_cost', 'third@x')$q$, 'rewriting the author of a verified cost (as the new author)');
+do $$ begin if (select count(*) from newquip_pricing_revisions where quote_id = '00000000-0000-0000-0000-0000000126c4') <> 2 then raise exception 'refused laundering must record nothing'; end if; end $$;
+-- a changed rate WITHOUT a review (the application drops it) is fine
+select pg_temp.go4(2, 'h4b', 'h4c', 'reviewed', 'base', 'est@x');
+-- robustness: a JSON null / scalar where an object is expected does not crash the function (it never raises an unrelated error)
+select pg_temp.go4(3, 'h4c', 'h4d', 'base', 'null_fc', 'est@x');
+select pg_temp.go4(4, 'h4d', 'h4e', 'null_fc', 'scalar_skus', 'est@x');
+
 -- 3. ATOMIC: a reason that violates the CHECK after the lock rolls the whole call back, the draft write included
 select pg_temp.expect_denied($q$select pg_temp.apply_rev('00000000-0000-0000-0000-0000000126b1', '00000000-0000-0000-0000-0000000126c2', 0, 'h2', 'h2b', 'ENABLED', 'x')$q$, 'reason too short');
 do $$ begin
