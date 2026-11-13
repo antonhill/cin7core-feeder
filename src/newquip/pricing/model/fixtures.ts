@@ -15,6 +15,7 @@ export const FIXTURE_DRAFT_RULE_VERSION: PricingRuleVersion = {
   spotRateMaxAgeHours: 24,
   forwardCoverNeedsValidity: true,
   costReview: { reviewerRoles: ["manager"], requireIndependent: true },
+  rateReview: { reviewerRoles: ["manager"], requireIndependent: true }, // PROVISIONAL: reviewer roles are not NewQuip's final assignment
 };
 
 export const FIXTURE_PRICING_DATE = "2026-11-12T08:00:00.000Z";

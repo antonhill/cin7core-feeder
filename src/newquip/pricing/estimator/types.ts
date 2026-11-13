@@ -21,6 +21,20 @@ export interface SkuPricingInput extends Omit<SupplierCostInput, "verification">
   review?: CostReview;
 }
 
+/**
+ * An INDEPENDENT attestation of one currency's forward-cover rate (NQ-008B P2-E). SERVER-OWNED, like CostReview: only the attestation action writes it, and only a reviewer who is not
+ * the person who entered or last changed the rate. `inputHash` binds it to the exact rate, cover period, contract reference, validity dates and reason it covered.
+ */
+export interface RateReview { by: string; at: string; /** What was checked against (the forward-exchange contract or the bank's confirmation). */ evidence: string; inputHash: string }
+/** A forward-cover rate as stored: the Estimator's documented rate plus (server-owned) its independent attestation. The form never submits `review`. */
+export type StoredForwardCover = ForwardCover & { review?: RateReview };
+
+/**
+ * A recorded pricing-evidence note for ONE SKU-less manual item (M75 system, LED lighting, penning, any manual item). `priceHash` binds it to the item's key, its current unit price and
+ * what priced it, so a later change to the price makes the evidence outdated. SERVER-OWNED: written only by the evidence action, which computes the hash from the freshly evaluated budget.
+ */
+export interface ManualPriceEvidence { note: string; reference?: string; by: string; at: string; priceHash: string }
+
 export interface EstimatorPricing {
   /** Literal true: the model is only ever switched ON explicitly, never inferred. */
   enabled: true;
@@ -33,7 +47,9 @@ export interface EstimatorPricing {
   skus: Record<string, SkuPricingInput | undefined>;
   fxQuotes: Record<string, FxQuote | undefined>;
   /** The Estimator's forward-cover rate per currency (e.g. a 90-day contract): replaces spot, with its reason, who and when. */
-  forwardCover: Record<string, ForwardCover | undefined>;
+  forwardCover: Record<string, StoredForwardCover | undefined>;
+  /** Evidence notes for SKU-less manual items, by item key (see manual-evidence.ts). Server-owned; absent on older quotations. */
+  manualEvidence?: Record<string, ManualPriceEvidence | undefined>;
   /** A price decision for one SKU (applies wherever that SKU is priced). Needs a reason. */
   skuPriceOverrides: Record<string, (Reasoned & { unitPriceCents: number }) | undefined>;
   /** An overall change to the project markup on landed cost. Changes the item prices (it IS pricing). */

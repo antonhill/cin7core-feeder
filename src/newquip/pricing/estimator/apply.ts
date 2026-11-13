@@ -1,6 +1,6 @@
 import { stableStringify } from "../../quote/baseline";
 import { canEnterPricingInputs, selectRuleVersion, validateScenario, type ForwardCover, type FxQuote, type PricingScenario, type Viewer } from "../model";
-import type { EstimatorPricing, SkuPricingInput } from "./types";
+import type { EstimatorPricing, SkuPricingInput, StoredForwardCover } from "./types";
 
 // APPLYING AN ESTIMATOR PRICING CHANGE (NQ-008B Phase 2). Pure. The form submits the inputs WITHOUT attribution; this decides who may change them, validates the whole
 // result with the Phase 1 model, stamps who/when for exactly the entries that changed (never trusting a client's by/at), bumps the revision and lists every changed value
@@ -159,7 +159,12 @@ export function applyPricingSubmission(prior: EstimatorPricing | undefined, sub:
     skus[k] = kept ?? ({ ...v, by: email, at: nowIso } as SkuPricingInput);
   }
   const forwardCover: EstimatorPricing["forwardCover"] = {};
-  for (const [c, v] of Object.entries(sub.forwardCover)) forwardCover[c] = keepOrStamp<ForwardCover>(v, prior?.forwardCover[c], email, nowIso)!;
+  for (const [c, v] of Object.entries(sub.forwardCover)) {
+    // An UNCHANGED rate keeps its original who/when AND its independent attestation; any change re-stamps it and drops the attestation (it covered a different rate).
+    const before = prior && Object.prototype.hasOwnProperty.call(prior.forwardCover, c) ? prior.forwardCover[c] : undefined;
+    const { review: _r, ...beforeRate } = (before ?? {}) as StoredForwardCover; void _r;
+    forwardCover[c] = before && content(beforeRate) === content(v) ? before : keepOrStamp<ForwardCover>(v, null, email, nowIso)!;
+  }
   const skuPriceOverrides: EstimatorPricing["skuPriceOverrides"] = {};
   for (const [k, v] of Object.entries(sub.skuPriceOverrides)) skuPriceOverrides[k] = keepOrStamp(v, prior?.skuPriceOverrides[k], email, nowIso)!;
   const next: EstimatorPricing = {
@@ -167,6 +172,8 @@ export function applyPricingSubmission(prior: EstimatorPricing | undefined, sub:
     skus, fxQuotes: structuredClone(sub.fxQuotes), forwardCover, skuPriceOverrides,
     projectMarkup: keepOrStamp(sub.projectMarkup, prior?.projectMarkup, email, nowIso),
     targetAdjustment: keepOrStamp(sub.targetAdjustment, prior?.targetAdjustment, email, nowIso),
+    // Pricing evidence for manual items is server-owned (it is written only by its own action): a pricing save carries it over untouched.
+    ...(prior?.manualEvidence ? { manualEvidence: structuredClone(prior.manualEvidence) } : {}),
   };
 
   // Validate the WHOLE result with the Phase 1 model (rates, costs, freight, overrides, reasons, markup bounds).
@@ -203,7 +210,7 @@ export function submissionFrom(p: EstimatorPricing): PricingSubmission {
     ruleVersionId: p.ruleVersionId,
     skus: Object.fromEntries(Object.entries(p.skus).map(([k, v]) => { const { review: _r, ...rest } = v!; void _r; return [k, strip(rest)]; })) as PricingSubmission["skus"],
     fxQuotes: structuredClone(p.fxQuotes) as PricingSubmission["fxQuotes"],
-    forwardCover: Object.fromEntries(Object.entries(p.forwardCover).map(([k, v]) => [k, strip(v!)])) as PricingSubmission["forwardCover"],
+    forwardCover: Object.fromEntries(Object.entries(p.forwardCover).map(([k, v]) => { const { review: _r, ...rest } = v!; void _r; return [k, strip(rest)]; })) as PricingSubmission["forwardCover"],
     skuPriceOverrides: Object.fromEntries(Object.entries(p.skuPriceOverrides).map(([k, v]) => [k, { unitPriceCents: v!.unitPriceCents, reason: v!.reason }])),
     projectMarkup: p.projectMarkup ? { markupBps: p.projectMarkup.markupBps, reason: p.projectMarkup.reason } : null,
     targetAdjustment: p.targetAdjustment ? { targetTotalCents: p.targetAdjustment.targetTotalCents, reason: p.targetAdjustment.reason } : null,

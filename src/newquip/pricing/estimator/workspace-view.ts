@@ -4,6 +4,8 @@ import { figures, type CalculatedLine, type RateUsed } from "../model";
 import { internalAdjustmentView, type InternalAdjustmentView } from "./adjustment";
 import { pricingFinality, type PricingFinality } from "./finality";
 import { pricingForSku } from "./price-source";
+import { RATE_STATE_TEXT, rateInputHash, rateStateOf, type RateState } from "./attestation";
+import { EVIDENCE_STATE_TEXT, evidenceStateOf, skuLessManualItems, type EvidenceState } from "./manual-evidence";
 import { COST_STATE_TEXT, costInputHash, costStateOf, type CostState } from "./verification";
 import { LEGACY_RULE_VERSION, selectRuleVersion } from "../model";
 import type { EstimatorPricing } from "./types";
@@ -11,6 +13,13 @@ import type { EstimatorPricing } from "./types";
 // THE ESTIMATOR PRICING WORKSPACE, as data (NQ-008B Phase 2). Pure: a quotation's evaluation (cost visible) + its pricing inputs + the original indicative price in, a view-model
 // out. INTERNAL ONLY: it carries supplier costs, rates, freight, markup and margin, so the server builds it for a cost-entitled Estimator/Manager and for nobody else. The screen
 // only renders it; it does no arithmetic of its own.
+
+/** A forward-cover rate and its INDEPENDENT attestation. `rateHash` identifies the exact rate shown: a reviewer submits it so a rate that changed since they opened it is never covered by mistake. */
+export interface ForwardCoverView {
+  rateMicro: number; coverDays: number; reason: string; reference?: string; validFrom?: string; validUntil?: string; by: string; at: string;
+  state: RateState; stateText: string; rateHash: string; review: { by: string; at: string; evidence: string } | null;
+}
+export interface ManualEvidenceRow { itemKey: string; label: string; pricedBy: string; state: EvidenceState; stateText: string; note: string | null; reference: string | null; by: string | null; at: string | null }
 
 export interface SkuNeed { sku: string; quantity: number; usedBy: string[]; /** The SKU's line carries a MANUAL selling price: its supplier cost still has to be recorded and verified. */ manual: boolean }
 export interface SkuRow {
@@ -41,7 +50,9 @@ export interface PricingWorkspaceView {
   markup: { bps: number | null; changedBy: { by: string; at: string; reason: string } | null };
   rows: SkuRow[];
   /** One row per supplier currency in use: the spot rate and the forward cover, if any. */
-  currencies: { currency: string; spot: { rateMicro: number; source: string; asOf: string } | null; forwardCover: { rateMicro: number; coverDays: number; reason: string; reference?: string; validFrom?: string; validUntil?: string; by: string; at: string } | null }[];
+  currencies: { currency: string; spot: { rateMicro: number; source: string; asOf: string } | null; forwardCover: ForwardCoverView | null }[];
+  /** SKU-less manual items (M75, LED lighting, penning, any manual item) and whether their pricing evidence is recorded. Cost-entitled viewers only (this whole view is). */
+  manualEvidence: ManualEvidenceRow[];
   totals: WorkspaceTotals;
   /** The Rep-confirmed indicative total (the latest NQ-008A snapshot) against the current total. */
   indicative: { originalTotalCents: number | null; currentTotalCents: number | null; deltaCents: number | null; capturedAt: string | null };
@@ -53,6 +64,16 @@ export interface PricingWorkspaceView {
   rates: { currency: string; spotAgeHours: number | null; spotExpired: boolean; maxAgeHours: number | null; forwardExpired: boolean }[];
   /** Plain-language things the Estimator must resolve (no cost values). */
   attention: string[];
+}
+
+/** Evidence state of each SKU-less manual item. Empty while supplier pricing is off (the legacy POC behaviour is unchanged). INTERNAL: the notes are for cost-entitled roles only. */
+export function manualEvidenceRows(p: EstimatorPricing | undefined, budget: BudgetQuote | null): ManualEvidenceRow[] {
+  if (!p?.enabled) return [];
+  return skuLessManualItems(budget).map((it): ManualEvidenceRow => {
+    const st = evidenceStateOf(it, p);
+    const e = p.manualEvidence && Object.prototype.hasOwnProperty.call(p.manualEvidence, it.itemKey) ? p.manualEvidence[it.itemKey] : undefined;
+    return { itemKey: it.itemKey, label: it.label, pricedBy: it.pricedBy, state: st, stateText: EVIDENCE_STATE_TEXT[st], note: e?.note ?? null, reference: e?.reference ?? null, by: e?.by ?? null, at: e?.at ?? null };
+  });
 }
 
 export function skuNeedsOf(budget: BudgetQuote | null): SkuNeed[] {
@@ -115,7 +136,7 @@ export function buildPricingWorkspace(i: {
   const currencies = [...new Set(Object.values(p?.skus ?? {}).map((s) => s!.currency).filter((c) => c !== "ZAR"))].sort().map((currency) => ({
     currency,
     spot: p?.fxQuotes[currency] ? { ...p.fxQuotes[currency]! } : null,
-    forwardCover: p?.forwardCover[currency] ? { rateMicro: p.forwardCover[currency]!.rateMicro, coverDays: p.forwardCover[currency]!.coverDays, reason: p.forwardCover[currency]!.reason, reference: p.forwardCover[currency]!.reference, validFrom: p.forwardCover[currency]!.validFrom, validUntil: p.forwardCover[currency]!.validUntil, by: p.forwardCover[currency]!.by, at: p.forwardCover[currency]!.at } : null,
+    forwardCover: p?.forwardCover[currency] ? ((f): ForwardCoverView => { const st = rateStateOf(currency, f, rules); return { rateMicro: f.rateMicro, coverDays: f.coverDays, reason: f.reason, reference: f.reference, validFrom: f.validFrom, validUntil: f.validUntil, by: f.by, at: f.at, state: st, stateText: RATE_STATE_TEXT[st], rateHash: rateInputHash(currency, f), review: f.review ? { by: f.review.by, at: f.review.at, evidence: f.review.evidence } : null }; })(p.forwardCover[currency]!) : null,
   }));
   const finality = pricingFinality(p, i.budget, nowIso);
   const attention: string[] = [];
@@ -130,6 +151,7 @@ export function buildPricingWorkspace(i: {
     ruleVersionId: p?.ruleVersionId ?? null, revision: p?.revision ?? 0, pricingDate: p?.pricingDate ?? null,
     markup: { bps: p ? (p.projectMarkup?.markupBps ?? null) : null, changedBy: p?.projectMarkup ? { by: p.projectMarkup.by, at: p.projectMarkup.at, reason: p.projectMarkup.reason } : null },
     rows, currencies,
+    manualEvidence: manualEvidenceRows(p, i.budget),
     totals: { totalCents, pricedSubtotalCents: Math.round((t?.subtotalExTax ?? 0) * 100), costOnCostedLinesCents: costOnCosted, costedRevenueCents: costedRevenue, margin: costedRevenue > 0 ? figures(costedRevenue, costOnCosted) : null, priceComplete },
     indicative: { originalTotalCents: i.originalTotalCents, currentTotalCents: current, deltaCents: i.originalTotalCents !== null && current !== null ? current - i.originalTotalCents : null, capturedAt: i.originalCapturedAt },
     adjustment: internalAdjustmentView(p, { totalCents: current, costCents: costOnCosted, costComplete: priceComplete && costedRevenue === current }),
