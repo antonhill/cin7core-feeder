@@ -727,15 +727,15 @@ describe("review findings P2", () => {
     expect(bar.textContent).not.toMatch(/BLOCKED|DRAFT/);
   }, 30000);
 
-  it("inside a step the six stage cards collapse to one line, expandable; the cards stay in the DOM", async () => {
+  it("inside a step the four phase cards collapse to one line, expandable; the cards stay in the DOM", async () => {
     await open({ view: snapshotView(true), step: "2" });
     const toggle = screen.getByTestId("stage-nav-toggle");
-    expect(toggle.textContent).toContain("Stage 1 of 6 · Configuration");
-    expect(toggle.textContent).toContain("Show all stages");
+    expect(toggle.textContent).toContain("Phase 1 of 4 · Configure & Submit");
+    expect(toggle.textContent).toContain("Show all phases");
     expect(document.getElementById("stage-nav-list")!.className).toContain("hidden");
     fireEvent.click(toggle);
     expect(document.getElementById("stage-nav-list")!.className).not.toMatch(/(^|\s)hidden/);
-    expect(document.querySelectorAll("[data-stage]").length).toBe(6);
+    expect(document.querySelectorAll("[data-phase]").length).toBe(4);
   }, 30000);
 
   it("'Load recommended configuration' states precisely what it replaces and keeps", async () => {
