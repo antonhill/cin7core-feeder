@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, realpathSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readSync, realpathSync } from "node:fs";
 import path from "node:path";
 import synthetic from "@/rwtsa-demo/fixtures/bond-report.synthetic.json";
 import { validateBondReport, type BondReportData } from "./report-schema";
@@ -24,7 +24,10 @@ function readReportFile(file: string): { ok: true; text: string } | { ok: false;
     const stat = fstatSync(fd);
     if (!stat.isFile()) return { ok: false, problem: "The report path is not a regular file." };
     if (stat.size > MAX_BOND_REPORT_BYTES) return { ok: false, problem: "The report file is larger than the dashboard's size limit." };
-    return { ok: true, text: readFileSync(fd, "utf8") };
+    const buf = Buffer.alloc(MAX_BOND_REPORT_BYTES + 1);
+    const n = readSync(fd, buf, 0, buf.length, 0); // never reads past the limit even if the file grows after the check
+    if (n > MAX_BOND_REPORT_BYTES) return { ok: false, problem: "The report file is larger than the dashboard's size limit." };
+    return { ok: true, text: buf.toString("utf8", 0, n) };
   } catch { return { ok: false, problem: "The report file cannot be read." }; }
   finally { if (fd !== undefined) closeSync(fd); }
 }

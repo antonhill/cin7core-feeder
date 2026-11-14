@@ -156,7 +156,6 @@ describe("independent review fixes (status vs evidence, references, real/synthet
     const c = clone(); c.releases.find((x: any) => x.proposalId).proposalId = "P-99"; expect(problems(c)).toContain("a release refers to an unknown proposal");
     const d = clone(); d.proposals[1].id = d.proposals[0].id; expect(problems(d)).toContain("duplicate proposal ids");
     const e = clone(); e.releases[1].id = e.releases[0].id; expect(problems(e)).toContain("duplicate release ids");
-    const f = clone(); const p = f.proposals.find((x: any) => x.status === "COMPLETED"); p.completedQuantity = p.quantity + 1; expect(problems(f)).toContain("a proposal's completed quantity exceeds its quantity");
     const g = clone(); g.proposals.find((x: any) => x.status === "COMPLETED").status = "OPEN"; expect(problems(g)).toContain("a proposal's status does not match its completed quantity");
     const h = clone(); h.proposals.find((x: any) => x.status === "COMPLETED").completedQuantity = 10; h.proposals.find((x: any) => x.status === "COMPLETED").status = "PARTLY_COMPLETED"; expect(problems(h)).toContain("a proposal's completed quantity does not equal the releases that cite it");
   });
@@ -182,6 +181,30 @@ describe("independent review fixes (status vs evidence, references, real/synthet
   it("a release may only cite a proposal for the same SKU", () => {
     const r = clone(); r.releases.find((l: any) => l.proposalId).sku = "SYN-JKT-M";
     expect(problems(r)).toContain("a release cites a proposal for a different SKU");
+  });
+  it("genuine builder output is accepted: withdrawn proposals and voided releases for SKUs with no row, and a release larger than the proposal it cites", () => {
+    const a = clone();
+    a.proposals.push({ id: "P-9", sku: "SYN-ZZ", quantity: 5, destination: "JHB", proposedBy: "synthetic-owner", proposedOn: "2026-11-12", reason: "r", status: "WITHDRAWN", completedQuantity: 0 });
+    a.releases.push({ id: "R-9", sku: "SYN-ZZ", quantity: 3, on: "2026-11-13", fromTakenAt: "2026-11-12T08:00:00.000Z", toTakenAt: "2026-11-13T08:00:00.000Z", voided: true, releasedBeforeCoverUnits: 3 });
+    expect(problems(a)).toEqual([]);
+    const b = clone(); const p = b.proposals.find((x: any) => x.status === "COMPLETED"); const rel = b.releases.find((l: any) => l.proposalId === p.id);
+    p.quantity = 30; p.completedQuantity = 40; p.status = "COMPLETED"; b.summary.proposedUnits += 0;
+    expect(problems(b)).not.toContain("a proposal's completed quantity exceeds its quantity");
+    expect(rel.quantity).toBe(40);
+  });
+  it("a live (non-voided) release or an open proposal for a SKU with no row is still rejected", () => {
+    const a = clone(); a.proposals.push({ id: "P-9", sku: "SYN-ZZ", quantity: 5, destination: "JHB", proposedBy: "synthetic-owner", proposedOn: "2026-11-12", reason: "r", status: "OPEN", completedQuantity: 0 });
+    expect(problems(a)).toContain("a proposal or release refers to a SKU that has no row");
+  });
+  it("cheap forgery bounds: previous hash vs observed, released-before-cover bounds, projected usable, observed eligibleBefore and alreadyRecorded", () => {
+    const a = clone(); a.previousSnapshotHash = null; expect(problems(a)).toContain("observed movements require a previous snapshot");
+    const b = clone(); b.releases.find((l: any) => l.releasedBeforeCoverUnits > 0).releasedBeforeCoverUnits = 999; expect(problems(b)).toContain("released-before-cover units exceed the release quantity");
+    const c = clone(); row(c, "SYN-RAIN-L").releasedBeforeCover = 0; c.releases.find((l: any) => l.sku === "SYN-RAIN-L").releasedBeforeCoverUnits = 0; row(c, "SYN-RAIN-L").exceptions = ["OVER_RELEASED"]; c.summary.exceptionCount -= 1;
+    expect(problems(c)).toContain("released-before-cover units are below the minimum implied by the release and the verified clearance");
+    const d = clone(); row(d, "SYN-JKT-M").projectedUsableIfProposedCompleted += 1; expect(problems(d)).toContain("projected usable does not equal usable plus open proposals");
+    const e = clone(); const o = e.observed.find((x: any) => x.uncleared > 0); o.eligibleBefore = 100000; o.uncleared = 0; o.exceptions = []; e.summary.unclearedObservedUnits -= 40; e.summary.exceptionCount -= 1;
+    expect(problems(e)).toContain("an observed movement's eligible-before quantity exceeds all verified evidence");
+    const f = clone(); f.observed[0].alreadyRecorded = 100000; expect(problems(f)).toContain("an observed movement claims more recorded releases than exist");
   });
   it("the fixed safety statements must be present, so a report cannot omit them", () => {
     const r = realStyleReport(); r.statements = r.statements.filter((s: string) => !/Unverified clearance means NOT CLEARED/.test(s));

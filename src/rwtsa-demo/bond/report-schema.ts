@@ -82,11 +82,12 @@ function crossChecks(r: BondReportData): string[] {
   const lines = (status: "VERIFIED" | "UNVERIFIED_NOT_CLEARED", sku: string) => sum(r.evidence.filter((e) => e.status === status), (e) => sum(e.lines.filter((l) => l.sku === sku), (l) => l.quantity));
   const rowSkus = new Set(r.rows.map((x) => x.sku));
   if (r.evidence.some((e) => e.status !== "WITHDRAWN" && e.lines.some((l) => !rowSkus.has(l.sku)))) p.push("evidence refers to a SKU that has no row");
-  if ([...r.proposals, ...r.releases].some((o) => !rowSkus.has(o.sku))) p.push("a proposal or release refers to a SKU that has no row");
+  // The live engine builds rows only for SKUs with Bond stock, non-withdrawn evidence, live (non-voided) releases and proposals that still have something open.
+  if ([...r.proposals.filter((o) => o.status !== "WITHDRAWN" && o.quantity - o.completedQuantity > EPS), ...r.releases.filter((l) => !l.voided)].some((o) => !rowSkus.has(o.sku))) p.push("a proposal or release refers to a SKU that has no row");
+  if (r.previousSnapshotHash === null && r.observed.length > 0) p.push("observed movements require a previous snapshot");
   const propById = new Map(r.proposals.map((o) => [o.id, o]));
   for (const l of r.releases) if (l.proposalId !== undefined) { const o = propById.get(l.proposalId); if (!o) p.push("a release refers to an unknown proposal"); else if (o.sku !== l.sku) p.push("a release cites a proposal for a different SKU"); }
   for (const o of r.proposals) {
-    if (o.completedQuantity > o.quantity + EPS) p.push("a proposal's completed quantity exceeds its quantity");
     const expected = o.status === "WITHDRAWN" ? o.status : o.completedQuantity + EPS >= o.quantity ? "COMPLETED" : o.completedQuantity > EPS ? "PARTLY_COMPLETED" : "OPEN";
     if (o.status !== expected) p.push("a proposal's status does not match its completed quantity");
     if (!close(o.completedQuantity, sum(r.releases.filter((l) => l.proposalId === o.id && !l.voided), (l) => l.quantity))) p.push("a proposal's completed quantity does not equal the releases that cite it");
@@ -97,12 +98,15 @@ function crossChecks(r: BondReportData): string[] {
     const live = r.releases.filter((l) => l.sku === x.sku && !l.voided);
     if (!close(x.released, sum(live, (l) => l.quantity))) p.push("released quantity does not equal the recorded releases");
     if (!close(x.releasedBeforeCover, sum(live, (l) => l.releasedBeforeCoverUnits))) p.push("released-before-cover quantity does not equal the recorded releases");
+    if (x.releasedBeforeCover < Math.max(0, x.released - x.verifiedCleared) - EPS) p.push("released-before-cover units are below the minimum implied by the release and the verified clearance");
+    if (x.operationalUsable !== undefined && x.projectedUsableIfProposedCompleted !== undefined && !close(x.projectedUsableIfProposedCompleted, x.operationalUsable + x.activeProposed)) p.push("projected usable does not equal usable plus open proposals");
+    if ((x.operationalUsable === undefined) !== (x.projectedUsableIfProposedCompleted === undefined)) p.push("usable and projected usable must both be present or both absent");
     if (!close(x.activeProposed, sum(r.proposals.filter((o) => o.sku === x.sku && o.status !== "WITHDRAWN"), (o) => Math.max(0, o.quantity - o.completedQuantity)))) p.push("proposed quantity does not equal the open proposals");
     if (!close(x.remainingCleared, Math.max(0, x.verifiedCleared - x.released))) p.push("remaining cleared quantity is inconsistent");
     if (x.eligible > x.bondPhysical + EPS) p.push("eligible quantity exceeds physical Bond stock");
     if (x.eligible > x.remainingCleared + EPS) p.push("eligible quantity exceeds the verified clearance");
     if (!close(x.eligible, Math.min(x.bondPhysical, x.remainingCleared))) p.push("eligible quantity is not the lesser of Bond stock and remaining verified clearance");
-    if ((x.clearanceStatus === "NOT_CLEARED" || x.clearanceStatus === "NO_BOND_STOCK") && x.eligible !== 0) p.push("a NOT CLEARED row cannot be eligible");
+    if ((x.clearanceStatus === "NOT_CLEARED" || x.clearanceStatus === "NO_BOND_STOCK") && x.eligible > EPS) p.push("a NOT CLEARED row cannot be eligible");
     const status = x.bondPhysical <= EPS ? "NO_BOND_STOCK" : x.remainingCleared <= EPS ? "NOT_CLEARED" : x.remainingCleared + EPS >= x.bondPhysical ? "CLEARED" : "PARTIALLY_CLEARED";
     if (x.clearanceStatus !== status) p.push("clearance status does not follow from the stock and verified evidence");
     if (x.clearedExceedsBond !== (x.inSnapshot && x.remainingCleared - x.bondPhysical > EPS)) p.push("clearedExceedsBond is inconsistent with the stock and clearance");
@@ -113,7 +117,11 @@ function crossChecks(r: BondReportData): string[] {
     if (x.activeProposed > x.eligible + EPS) want.add("PROPOSAL_EXCEEDS_ELIGIBLE");
     if (want.size !== x.exceptions.length || x.exceptions.some((c) => !want.has(c)) || new Set(x.exceptions).size !== x.exceptions.length) p.push("row exceptions do not match the figures");
   }
+  for (const l of r.releases) if (l.releasedBeforeCoverUnits > l.quantity + EPS) p.push("released-before-cover units exceed the release quantity");
   for (const o of r.observed) {
+    const detailed = (e: (typeof r.evidence)[number]) => e.status === "VERIFIED" || (e.status === "WITHDRAWN" && e.verifiedBy !== undefined);
+    if (o.eligibleBefore > sum(r.evidence.filter(detailed), (e) => sum(e.lines.filter((l) => l.sku === o.sku), (l) => l.quantity)) + EPS) p.push("an observed movement's eligible-before quantity exceeds all verified evidence");
+    if (o.alreadyRecorded > sum(r.releases.filter((l) => l.sku === o.sku && !l.voided), (l) => l.quantity) + EPS) p.push("an observed movement claims more recorded releases than exist");
     if (!close(o.uncleared, Math.max(0, o.bondDecrease - o.eligibleBefore))) p.push("an observed movement's uncleared quantity does not follow from its decrease and eligibility");
     if ((o.uncleared > EPS) !== (o.exceptions.length > 0)) p.push("an uncleared movement must carry the exception");
   }
