@@ -24,7 +24,9 @@ describe("four-phase navigation (the six workflow stages are unchanged underneat
     for (const n of [1, 2, 3, 4]) expect(h).toContain(`data-phase="${n}"`);
     for (const owner of ["Rep", "Estimator", "Manager", "Rep and Manager"]) expect(h).toContain(`>${owner}`);
     expect(h).toContain("Complete"); expect(h).toContain("Awaiting action");
-    expect(h.match(/data-phase="\d" aria-current|aria-current="step" data-phase/g)).toHaveLength(1); // exactly one phase is highlighted
+    expect(h.match(/aria-current="(?:step|true)" data-phase/g)).toHaveLength(1); // exactly one phase is highlighted
+    expect(h.match(/aria-current="step"/g)).toHaveLength(1); // inside Customer & Handover only the active step is "step"; the phase card is "true"
+    expect(h).toMatch(/aria-current="true" data-phase="4" data-stage="4"/);
     expect(h).toContain("Rep and Manager · you are here");
     expect(h).toContain("Phase 4 of 4 · Customer &amp; Handover");
     expect(h).toMatch(/Next: Rep: choose the payment schedule and generate the customer quotation PDF/);
@@ -38,7 +40,7 @@ describe("four-phase navigation (the six workflow stages are unchanged underneat
     expect(h).toContain("Not yet available"); // stage 6 waits for the verified acceptance
     const early = html({}, 2);
     expect(early).not.toContain('data-testid="phase4-steps"');
-    expect(early).not.toMatch(/data-stage="[456]"/);
+    expect(early).not.toMatch(/<button[^>]*aria-current="step"[^>]*data-stage="[456]"/);
   });
   it("lets a user inspect a different phase than the current one (the highlight follows the viewed phase, 'you are here' stays on the current one)", () => {
     const h = html({}, 2);

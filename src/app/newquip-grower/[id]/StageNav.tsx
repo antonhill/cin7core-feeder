@@ -43,7 +43,7 @@ export function StageNav({ stages, current, viewing, onSelect, previewable = [],
             const pr = pres(p.stageId);
             return (
               <li key={p.id}>
-                <button type="button" onClick={() => { if (!on) onSelect(p.stageId); close(); }} aria-current={on ? "step" : undefined} data-phase={p.id} {...(p.id <= 3 ? { "data-stage": p.id } : {})}
+                <button type="button" onClick={() => { if (!on) onSelect(p.stageId); close(); }} aria-current={on ? (p.id === 4 ? "true" : "step") : undefined} data-phase={p.id} data-stage={p.stageId}
                   className={`flex h-full min-h-11 w-full flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors ${on ? "border-indigo-600 bg-indigo-50 ring-2 ring-indigo-600" : "border-slate-200 bg-white hover:bg-slate-50"}${rep?.status === "NOT_AVAILABLE" && !on ? " border-dashed bg-slate-50" : ""}`}>
                   {/* Every card has the same three zones: a header of fixed height (the owner, and "you are here"), the title (grows, never truncated) and the status chip pinned to the bottom. */}
                   <span className="block w-full lg:min-h-8 text-xs font-semibold text-slate-600">{p.owner}{here ? " · you are here" : ""}</span>
@@ -63,7 +63,7 @@ export function StageNav({ stages, current, viewing, onSelect, previewable = [],
               const on = id === viewing;
               return (
                 <li key={id}>
-                  <button type="button" onClick={() => { if (!on) onSelect(id); }} aria-current={on ? "step" : undefined} data-stage={id}
+                  <button type="button" onClick={() => { if (!on) onSelect(id); close(); }} aria-current={on ? "step" : undefined} data-stage={id}
                     className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm ${on ? "border-indigo-600 bg-indigo-50 font-semibold text-slate-900 ring-2 ring-indigo-600" : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"}`}>
                     <span>{s.label}</span><Status tone={TONE[s.status]}>{pr.chip}</Status>
                   </button>
