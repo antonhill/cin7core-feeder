@@ -256,8 +256,8 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
       const unit = opts.estimatorUnitPrices?.[g.itemKey];
       const reference = pkg.components.map((c) => evaluateComponent(c, g.projectQuantity!, opts).comp)
         .map((c): BridgeComponent => (c.status === "priced" ? { ...c, status: "reference_only", reason: "Historic package reference — not priced (the estimator prices the M75 system)", unitPrice: null, revenueExTax: null, estimatedCost: null } : c));
-      // An included system is a PRODUCT: it needs a real (positive) price, and a zero is not a way round that. (Quantity 0 is the only case where an explicit 0 price is meaningful.)
-      if (!(g.projectQuantity! > 0 ? isAmount(unit) : isChargeEntered(unit)) || unit == null) {
+      // An included system is a PRODUCT: it needs a real (positive) price; a zero is never a way round that (deliberately NOT relaxed with the charges).
+      if (!isAmount(unit)) {
         bridge.push({ ...emptyLine(g), status: "estimator_price_required", reason: "M75 is estimator input by design — enter the commercial price per system (ex VAT).", components: reference });
         blockers.push(`${g.label}: estimator commercial price required (manual by design)`);
         continue;
