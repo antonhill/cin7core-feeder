@@ -276,4 +276,3 @@ describe("S2 review fixes in the engine", () => {
     expect(() => fold([{ ...b, accountIdSha256: "" } as RegisterEvent])).toThrow(/account/i);
   });
 });
-});
