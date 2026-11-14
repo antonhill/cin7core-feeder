@@ -112,6 +112,18 @@ describe("shipment-specific landed cost on the synthetic workbook", () => {
     expect(t).toContain("+R900.00");
     expect(indicator(m, "ind-variance")).toMatch(/^\+R/);
   });
+  it("WORDING: the customs-FX figure is called customs valuation, never actual; actual settlement FX stays UNVERIFIED", async () => {
+    synthetic();
+    const m = await page();
+    const t = text(m);
+    expect(t).not.toMatch(/Landed \(actual\)/i);
+    expect(t).not.toMatch(/Landed cost \(actual\)/i);
+    expect(t).not.toMatch(/actual minus estimate/i);
+    expect(t.match(/Landed \(customs valuation\)/g)?.length).toBe(3);
+    expect(t).toContain("Landed cost (customs valuation)");
+    expect(t).toContain("customs valuation minus planning-FX estimate; not a settlement result");
+    expect(t).toMatch(/actual settlement FX rate is UNVERIFIED/);
+  });
   it("states its assumptions, including what the duty column is taken to mean", async () => {
     synthetic();
     const t = text(await page());

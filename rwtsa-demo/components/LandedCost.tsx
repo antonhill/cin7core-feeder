@@ -86,7 +86,7 @@ export function LandedPageView({ model }: { model: LandedModel }) {
       <div>
         <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Scenario C</p>
         <h1 className="text-xl font-semibold text-slate-900">Imports, landed cost and foreign currency</h1>
-        <p className="mt-1 text-sm text-slate-600">Shipment-specific landed cost, estimated versus actual, and USD exposure by due date, calculated on this machine from the loaded data.</p>
+        <p className="mt-1 text-sm text-slate-600">Shipment-specific landed cost, estimated (planning FX) versus customs valuation (customs FX), and USD exposure by due date, calculated on this machine from the loaded data. The actual settlement FX rate is UNVERIFIED: the workbook holds no payment or settlement evidence.</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <ProvenanceBadge provenance={model.provenance} />
           <span data-testid="structure">
@@ -230,8 +230,8 @@ export function LandedPageView({ model }: { model: LandedModel }) {
 
           <div data-testid="indicators" className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
             <Indicator label="Shipments" testid="ind-shipments" value={String(r.shipments.length)} hint={`${r.lines.length} lines`} />
-            <Indicator label="Landed cost (actual)" testid="ind-landed" value={money(r.totals.landedActualCents)} hint={r.totals.complete ? "all lines complete" : "complete lines only"} />
-            <Indicator label="FX variance" testid="ind-variance" value={signed(r.totals.fxVarianceCents)} hint={`actual minus estimate (planning FX)${r.totals.complete ? "" : "; complete lines only"}`} />
+            <Indicator label="Landed cost (customs valuation)" testid="ind-landed" value={money(r.totals.landedActualCents)} hint={r.totals.complete ? "all lines complete" : "complete lines only"} />
+            <Indicator label="FX variance" testid="ind-variance" value={signed(r.totals.fxVarianceCents)} hint={`customs valuation minus planning-FX estimate; not a settlement result${r.totals.complete ? "" : "; complete lines only"}`} />
             <Indicator label="Incomplete lines" testid="ind-incomplete" value={String(incomplete)} hint="inputs missing, nothing invented" />
             <Indicator label="Potential USD exposure" testid="ind-potential" value={money(x.totals.potentialUsdCents, "$")} hint={`not confirmed paid; ${x.totals.counts.unknown} payment(s) settlement unknown; uncovered ${money(x.totals.potentialUncoveredUsdCents, "$")}`} />
             <Indicator label="Confirmed open USD" testid="ind-confirmed-open" value={x.totals.confirmedOpenUsdCents === null ? "Not established" : money(x.totals.confirmedOpenUsdCents, "$")} hint={x.totals.confirmedOpenUsdCents === null ? "no payment has explicit open evidence" : `${x.totals.counts.open} payment(s) with explicit open status`} />
@@ -278,7 +278,7 @@ export function LandedPageView({ model }: { model: LandedModel }) {
                     <TH align="right">Customs value</TH>
                     <TH align="right">Duty</TH>
                     <TH align="right">Freight (allocated / shipment)</TH>
-                    <TH align="right">Landed (actual)</TH>
+                    <TH align="right">Landed (customs valuation)</TH>
                     <TH align="right">Landed (estimate)</TH>
                     <TH align="right">FX variance</TH>
                     <TH>Status</TH>
@@ -345,7 +345,7 @@ export function LandedPageView({ model }: { model: LandedModel }) {
                     <TH align="right">Customs value</TH>
                     <TH align="right">Duty</TH>
                     <TH align="right">Freight</TH>
-                    <TH align="right">Landed (actual)</TH>
+                    <TH align="right">Landed (customs valuation)</TH>
                     <TH align="right">Per unit</TH>
                     <TH align="right">Estimate</TH>
                     <TH align="right">FX variance</TH>
@@ -416,7 +416,7 @@ export function LandedPageView({ model }: { model: LandedModel }) {
                     <TH>Shipments</TH>
                     <TH align="right">Qty</TH>
                     <TH align="right">Freight</TH>
-                    <TH align="right">Landed (actual)</TH>
+                    <TH align="right">Landed (customs valuation)</TH>
                     <TH align="right">Per unit</TH>
                     <TH align="right">FX variance</TH>
                     <TH>Status</TH>
