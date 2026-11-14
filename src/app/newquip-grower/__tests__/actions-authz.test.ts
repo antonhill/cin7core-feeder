@@ -57,6 +57,7 @@ describe("every NewQuip action authorises first", () => {
     ["previewGrowerDraftAction", () => actions.previewGrowerDraftAction(readyDraft())],
     ["saveGrowerDraftAction", () => actions.saveGrowerDraftAction("q", readyDraft())],
     ["sendGrowerQuoteToEstimatorAction", () => actions.sendGrowerQuoteToEstimatorAction("q", 1, { source: "QUOTATION_CONTACT" })],
+    ["sendGrowerQuoteUnpricedToEstimatorAction", () => actions.sendGrowerQuoteUnpricedToEstimatorAction("q", true)],
     ["returnGrowerQuoteToRepAction", () => actions.returnGrowerQuoteToRepAction("q", "x")],
     ["signOffGrowerQuoteAction", () => actions.signOffGrowerQuoteAction("q")],
     ["approveGrowerQuoteAction", () => actions.approveGrowerQuoteAction("q")],
