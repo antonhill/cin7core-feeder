@@ -79,3 +79,10 @@ The source-only acceptance is recorded in the output (`summary.sourceOnlyAllocat
 npx tsx scripts/rwtsa-live/reconcile.ts --snapshot <file> --workbook <protected workbook> --known <known-transactions.json> [--accept-source-only-allocations]
 ```
 The module does not assume what the known transactions did; raw-material (component) consumption is **not** verified by a stock snapshot (Cin7's availability list omits zero-stock rows) and needs an independent movement report.
+
+## Phase 2 S1: bonded-stock engine (`src/rwtsa-live/bond/engine.ts`, pure)
+Separates five things that must never be collapsed: physical Bond stock (Cin7), customs-clearance status (an owner-maintained register), eligible-for-release,
+proposed transfers (drafts) and observed completed transfers. **Unverified clearance is NOT CLEARED.** Eligible = min(physical Bond, verified-cleared quantity
+not yet released). A stock transfer, posted customs duty, a freight invoice or a landed-cost line is never clearance evidence (closed provenance list; an
+`OWNER_STATEMENT` can be recorded but never verified). A Bond decrease beyond what was eligible is `TRANSFER_WITHOUT_CLEARANCE_EVIDENCE` and is never
+promoted to cleared. Proposals create no Cin7 transaction. No I/O, no clock, no network; the register file and CLI are slice S2.
