@@ -20,7 +20,7 @@ import { credentialsDir, proposeLocationMap, recordApprovedFingerprint, writeIni
 import { writeSnapshotAtomic, writeTextAtomic } from "../../src/rwtsa-live/store";
 import { contractVerdict } from "../../src/rwtsa-live/verdict";
 import { ROLES, RwtsaLiveError, type LocationMap, type Role } from "../../src/rwtsa-live/types";
-import { runReconcile } from "./reconcile-lib";
+import { runReconcile, summaryLines } from "./reconcile-lib";
 
 const out = (s = "") => process.stdout.write(s + "\n");
 const DEFAULT_WORKBOOK = path.join(homedir(), "Downloads", "RWTSA_ERP_Demo_DataSlice_DTCS-RWT-2026-001_FINAL_v2_29Oct2026.xlsx");
@@ -131,8 +131,7 @@ async function main(): Promise<number> {
       catch (e) { report.reconciliation = { error: e instanceof RwtsaLiveError ? e.message : "reconciliation failed (details withheld)" }; out(`Reconciliation failed: ${(report.reconciliation as { error: string }).error}`); r = undefined; }
       if (r) {
       const s = r.summary;
-      out(`RECONCILIATION · ${s.skus} SKUs · match ${s.match} · explained ${s.explained} · unexplained ${s.unexplained} · only in workbook ${s.onlyInWorkbook} · only in Cin7 ${s.onlyInCin7}`);
-      out(`  workbook physical ${s.totals.workbookPhysical} vs Cin7 ${s.totals.cin7Physical} · Bond ${s.totals.workbookBond} vs ${s.totals.cin7Bond} · usable ${s.totals.workbookUsable} vs ${s.totals.cin7Usable} · known transactions supplied: ${r.knownCount}`);
+      out("RECONCILIATION"); summaryLines(s).forEach((l) => out(l));
       report.reconciliation = { file: path.basename(r.file), summary: s, knownTransactions: r.knownCount };
       }
     }

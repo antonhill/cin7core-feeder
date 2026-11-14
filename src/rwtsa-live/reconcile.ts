@@ -5,11 +5,26 @@ export interface WorkbookStockRow { sku: string; jhb: number; durban: number; ca
 /** Owner-supplied explanation of a known demo transaction: the effect on a SKU's physical (and optionally Bond) quantity since the workbook date. */
 export interface KnownTransaction { ref: string; sku: string; physicalDelta: number; bondDelta?: number }
 interface Side { physical: number; bond: number; allocated: number; usable: number }
-export type RowStatus = "MATCH" | "EXPLAINED" | "UNEXPLAINED" | "ONLY_IN_WORKBOOK" | "ONLY_IN_CIN7";
+/** Overall row status. KNOWN_SOURCE_ONLY_ALLOCATION exists only when the owner has accepted source-only allocations and nothing else is unexplained. */
+export type RowStatus = "MATCH" | "EXPLAINED" | "KNOWN_SOURCE_ONLY_ALLOCATION" | "UNEXPLAINED" | "ONLY_IN_WORKBOOK" | "ONLY_IN_CIN7";
+/** Physical and Bond: a delta equal to the owner-supplied known transactions is EXPLAINED_KNOWN; anything else is UNEXPLAINED. */
+export type StockDimension = "MATCH" | "EXPLAINED_KNOWN" | "UNEXPLAINED";
+/** Allocation: SOURCE_ONLY_ALLOCATION = the workbook commits stock that Cin7 has no allocation for at all (Cin7 allocated = 0), and the owner has accepted that as a known difference. */
+export type AllocationDimension = "MATCH" | "SOURCE_ONLY_ALLOCATION" | "UNEXPLAINED";
+export type UsableDimension = "MATCH" | "EXPLAINED" | "UNEXPLAINED";
 export interface ReconRow {
   sku: string; workbook: Side; cin7: Side;
   deltaPhysical: number; deltaBond: number; deltaAllocated: number; deltaUsable: number;
   explainedPhysical: number; residualPhysical: number; residualBond: number; refs: string[]; status: RowStatus;
+  physicalStatus: StockDimension; bondStatus: StockDimension; allocationStatus: AllocationDimension; usableStatus: UsableDimension;
+  /** Workbook-committed units with no Cin7 allocation, counted ONLY when the owner accepted source-only allocations; never added to any Cin7 quantity. */
+  sourceOnlyAllocation: number;
+  /** delta usable less the known non-Bond movement and the accepted source-only allocation. */
+  residualUsable: number;
+  /** What Cin7 itself reports as usable now (unchanged snapshot value). */
+  cin7OperationalAvailable: number;
+  /** DERIVED planning figure: Cin7 non-Bond stock now less the SOURCE WORKBOOK's committed units. Never written into Cin7 numbers. */
+  rwtsaPlanningAvailable: number;
 }
 const EPS = 1e-9;
 const z = (n: number) => Math.abs(n) < EPS;
@@ -39,9 +54,20 @@ const ZERO: Side = { physical: 0, bond: 0, allocated: 0, usable: 0 };
 const wbSide = (w: WorkbookStockRow): Side => ({ physical: w.jhb + w.durban + w.capeTown + w.factoryStore + w.bond, bond: w.bond, allocated: w.committed, usable: w.jhb + w.durban + w.capeTown + w.factoryStore - w.committed });
 const cinSide = (s: SkuStock): Side => ({ physical: s.physical, bond: s.bond, allocated: s.allocatedUnrestricted, usable: s.usable });
 
-/** Report only. Compares; never alters or substitutes workbook inputs, and never forces the two to agree. */
-export function reconcileSnapshot(i: { snapshotStock: readonly SkuStock[]; workbook: readonly WorkbookStockRow[]; knownTransactions: readonly KnownTransaction[] }) {
+function stockDimension(delta: number, known: number): { status: StockDimension; residual: number } {
+  const residual = z(delta - known) ? 0 : delta - known;
+  if (z(delta) && z(known)) return { status: "MATCH", residual: 0 };
+  return { status: residual === 0 ? "EXPLAINED_KNOWN" : "UNEXPLAINED", residual };
+}
+
+/**
+ * Report only. Compares; never alters or substitutes workbook inputs or Cin7 quantities, and never forces the two to agree.
+ * Separate verdicts for physical, Bond, allocation and usable stock. `acceptSourceOnlyAllocations` records the OWNER's decision that workbook
+ * commitments with no Cin7 allocation are a known planning-versus-operational difference; without it they stay UNEXPLAINED.
+ */
+export function reconcileSnapshot(i: { snapshotStock: readonly SkuStock[]; workbook: readonly WorkbookStockRow[]; knownTransactions: readonly KnownTransaction[]; acceptSourceOnlyAllocations?: boolean }) {
   if (new Set(i.workbook.map((w) => w.sku)).size !== i.workbook.length) throw new RwtsaLiveError("STORE", "The workbook has duplicate SKUs; refusing to overwrite one with another.");
+  const accept = i.acceptSourceOnlyAllocations === true;
   const wb = new Map(i.workbook.map((w) => [w.sku, w]));
   const cin = new Map(i.snapshotStock.map((s) => [s.sku, s]));
   const rows: ReconRow[] = [];
@@ -50,20 +76,50 @@ export function reconcileSnapshot(i: { snapshotStock: readonly SkuStock[]; workb
     const W = w ? wbSide(w) : ZERO, C = c ? cinSide(c) : ZERO;
     const tx = i.knownTransactions.filter((t) => t.sku === sku);
     const explainedPhysical = tx.reduce((t, x) => t + x.physicalDelta, 0), explainedBond = tx.reduce((t, x) => t + (x.bondDelta ?? 0), 0);
+    const knownNonBond = explainedPhysical - explainedBond;
     const d = { p: C.physical - W.physical, b: C.bond - W.bond, a: C.allocated - W.allocated, u: C.usable - W.usable };
-    const residualPhysical = z(d.p - explainedPhysical) ? 0 : d.p - explainedPhysical, residualBond = z(d.b - explainedBond) ? 0 : d.b - explainedBond;
+    const phys = stockDimension(d.p, explainedPhysical), bond = stockDimension(d.b, explainedBond);
+    const committed = w?.committed ?? 0;
+    const sourceOnly = accept && !z(committed) && committed > 0 && z(C.allocated);
+    const allocationStatus: AllocationDimension = z(d.a) ? "MATCH" : sourceOnly ? "SOURCE_ONLY_ALLOCATION" : "UNEXPLAINED";
+    const sourceOnlyAllocation = allocationStatus === "SOURCE_ONLY_ALLOCATION" ? committed : 0;
+    const residualUsable = z(d.u - knownNonBond - sourceOnlyAllocation) ? 0 : d.u - knownNonBond - sourceOnlyAllocation;
+    const usableStatus: UsableDimension = z(d.u) && z(knownNonBond) && z(sourceOnlyAllocation) ? "MATCH" : residualUsable === 0 ? "EXPLAINED" : "UNEXPLAINED";
+    const anyUnexplained = [phys.status, bond.status, allocationStatus, usableStatus].includes("UNEXPLAINED");
     const status: RowStatus = !c ? "ONLY_IN_WORKBOOK" : !w ? "ONLY_IN_CIN7"
-      : z(d.p) && z(d.b) && z(d.a) && z(d.u) ? "MATCH"
-      : residualPhysical === 0 && residualBond === 0 && z(d.a) && tx.length > 0 ? "EXPLAINED" : "UNEXPLAINED";
-    rows.push({ sku, workbook: W, cin7: C, deltaPhysical: d.p, deltaBond: d.b, deltaAllocated: d.a, deltaUsable: d.u, explainedPhysical, residualPhysical, residualBond, refs: tx.map((t) => t.ref), status });
+      : anyUnexplained ? "UNEXPLAINED"
+      : allocationStatus === "SOURCE_ONLY_ALLOCATION" ? "KNOWN_SOURCE_ONLY_ALLOCATION"
+      : phys.status === "MATCH" && bond.status === "MATCH" && allocationStatus === "MATCH" && usableStatus === "MATCH" ? "MATCH" : "EXPLAINED";
+    rows.push({
+      sku, workbook: W, cin7: C, deltaPhysical: d.p, deltaBond: d.b, deltaAllocated: d.a, deltaUsable: d.u, explainedPhysical, residualPhysical: phys.residual, residualBond: bond.residual, refs: tx.map((t) => t.ref), status,
+      physicalStatus: phys.status, bondStatus: bond.status, allocationStatus, usableStatus, sourceOnlyAllocation, residualUsable,
+      cin7OperationalAvailable: C.usable, rwtsaPlanningAvailable: C.physical - C.bond - committed,
+    });
   }
   const count = (s: RowStatus) => rows.filter((r) => r.status === s).length;
   const sum = (f: (r: ReconRow) => number) => rows.reduce((t, r) => t + f(r), 0);
+  const by = <T extends string>(f: (r: ReconRow) => T, v: T) => rows.filter((r) => f(r) === v).length;
+  const known = i.knownTransactions.filter((t) => cin.has(t.sku) || wb.has(t.sku));
+  const knownPhysical = known.reduce((t, x) => t + x.physicalDelta, 0), knownBond = known.reduce((t, x) => t + (x.bondDelta ?? 0), 0);
   return {
     rows,
     summary: {
-      skus: rows.length, match: count("MATCH"), explained: count("EXPLAINED"), unexplained: count("UNEXPLAINED"), onlyInWorkbook: count("ONLY_IN_WORKBOOK"), onlyInCin7: count("ONLY_IN_CIN7"),
-      totals: { workbookPhysical: sum((r) => r.workbook.physical), cin7Physical: sum((r) => r.cin7.physical), workbookBond: sum((r) => r.workbook.bond), cin7Bond: sum((r) => r.cin7.bond), workbookUsable: sum((r) => r.workbook.usable), cin7Usable: sum((r) => r.cin7.usable) },
+      skus: rows.length, match: count("MATCH"), explained: count("EXPLAINED"), knownSourceOnlyAllocation: count("KNOWN_SOURCE_ONLY_ALLOCATION"), unexplained: count("UNEXPLAINED"), onlyInWorkbook: count("ONLY_IN_WORKBOOK"), onlyInCin7: count("ONLY_IN_CIN7"),
+      sourceOnlyAllocationsAccepted: accept,
+      byDimension: {
+        physical: { match: by((r) => r.physicalStatus, "MATCH"), explainedKnown: by((r) => r.physicalStatus, "EXPLAINED_KNOWN"), unexplained: by((r) => r.physicalStatus, "UNEXPLAINED") },
+        bond: { match: by((r) => r.bondStatus, "MATCH"), explainedKnown: by((r) => r.bondStatus, "EXPLAINED_KNOWN"), unexplained: by((r) => r.bondStatus, "UNEXPLAINED") },
+        allocation: { match: by((r) => r.allocationStatus, "MATCH"), sourceOnly: by((r) => r.allocationStatus, "SOURCE_ONLY_ALLOCATION"), unexplained: by((r) => r.allocationStatus, "UNEXPLAINED") },
+        usable: { match: by((r) => r.usableStatus, "MATCH"), explained: by((r) => r.usableStatus, "EXPLAINED"), unexplained: by((r) => r.usableStatus, "UNEXPLAINED") },
+      },
+      totals: {
+        workbookPhysical: sum((r) => r.workbook.physical), cin7Physical: sum((r) => r.cin7.physical), workbookBond: sum((r) => r.workbook.bond), cin7Bond: sum((r) => r.cin7.bond),
+        workbookUsable: sum((r) => r.workbook.usable), cin7Usable: sum((r) => r.cin7.usable),
+        knownPhysical, knownBond, knownNonBond: knownPhysical - knownBond,
+        sourceOnlyAllocationUnits: sum((r) => r.sourceOnlyAllocation),
+        unexplainedPhysicalUnits: sum((r) => Math.abs(r.residualPhysical)), unexplainedBondUnits: sum((r) => Math.abs(r.residualBond)), unexplainedUsableUnits: sum((r) => Math.abs(r.residualUsable)),
+        cin7OperationalAvailable: sum((r) => r.cin7OperationalAvailable), rwtsaPlanningAvailable: sum((r) => r.rwtsaPlanningAvailable),
+      },
     },
   };
 }
