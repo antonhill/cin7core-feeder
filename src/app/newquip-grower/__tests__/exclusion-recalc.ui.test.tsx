@@ -347,7 +347,7 @@ describe("D3-C Solution Builder: visible selected / excluded states and a stable
       render(createElement(Page));
       await waitFor(() => expect(screen.getByText("Manager approval", { selector: "p" })).toBeTruthy(), { timeout: 8000 });
     }
-    const approve = () => screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement;
+    const approve = () => screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement;
     it("no sign-off: says it is waiting for the Estimator exactly once", async () => {
       await openAsManager("none");
       expect(screen.getAllByText(/Waiting for the Estimator/)).toHaveLength(1);
