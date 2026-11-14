@@ -117,6 +117,27 @@ describe("the page opens an approved quotation with ONE bundle call (no separate
     expect(panelSeeds.every((s) => !s?.delivery?.ok || !s?.documents?.ok)).toBe(true); // a failed part is not offered to the panel as data
   }, 60000);
 
+  it("documents failed but delivery fine: the gate still comes from the bundle (no individual delivery read) and the panel is offered a seed whose documents part is not ok, so it reads for itself", async () => {
+    vi.mocked(deliveryViewOf).mockResolvedValue(DELIVERY);
+    vi.mocked(documentsViewOf).mockRejectedValue(new Error("documents read failed"));
+    const delivery = vi.spyOn(da, "getQuoteDeliveryAction");
+    await openQuote(["MANAGER", "REP"], finalPatch);
+    await waitFor(() => expect(viewing()).toBe("4"), { timeout: 8000 });
+    expect(delivery).not.toHaveBeenCalled();
+    await waitFor(() => expect(panelSeeds.some((s) => s?.delivery?.ok && s?.documents && !s.documents.ok && s.documents.error === "documents read failed")).toBe(true));
+  }, 60000);
+
+  it("the seed carries the server's read time and the quotation-and-viewer binding", async () => {
+    vi.mocked(deliveryViewOf).mockResolvedValue(DELIVERY);
+    vi.mocked(documentsViewOf).mockResolvedValue(DOCS);
+    await openQuote(["MANAGER", "REP"], finalPatch);
+    await waitFor(() => expect(panelSeeds.some((s) => s?.delivery?.ok)).toBe(true));
+    const s = panelSeeds.find((x) => x?.delivery?.ok);
+    expect(typeof s.readAt).toBe("number");
+    expect(s.key).toContain(":r1:"); // ... : revision : organisation : roles : cost visibility
+    expect(s.key).toMatch(/:(cost|nocost)$/);
+  }, 60000);
+
   it("if the individual read also fails the page shows the same 'Try again' error as before", async () => {
     vi.mocked(deliveryViewOf).mockRejectedValue(new Error("boom"));
     vi.mocked(documentsViewOf).mockResolvedValue(DOCS);

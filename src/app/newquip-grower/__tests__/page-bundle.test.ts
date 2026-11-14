@@ -144,3 +144,90 @@ describe("getQuotePageBundleAction", () => {
     expect(deliveryViewOf).not.toHaveBeenCalled();
   });
 });
+
+/** Every object key anywhere in a serialised payload (deep). */
+const keysOf = (v: unknown, out: Set<string> = new Set()): Set<string> => {
+  if (Array.isArray(v)) v.forEach((x) => keysOf(x, out));
+  else if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) { out.add(k); keysOf(x, out); }
+  return out;
+};
+const CONFIDENTIAL_KEY = /cost|margin|supplier|markup|physical|freight|landed|fx|exchange|forwardcover|nativeunit/i;
+// the ONE allowed match: a Boolean flag of the customer-facing configuration that is in the Rep's own draft in getGrowerQuoteAction today (not a cost); the test below proves the bundle's quote equals that payload
+const ALLOWED_KEYS = new Set(["supplierQuoteRequired"]);
+const confidentialKeys = (v: unknown) => [...keysOf(v)].filter((k) => CONFIDENTIAL_KEY.test(k) && !ALLOWED_KEYS.has(k));
+
+describe("Rep confidentiality of the bundle and of the seed the page builds from it", () => {
+  it("the serialised bundle for a Rep has no cost, margin, supplier, markup, freight or FX key anywhere - for an unapproved AND an approved quotation", async () => {
+    for (const final of [false, true]) {
+      db = new FakeDb();
+      asRoles("REP");
+      vi.mocked(canSeeCosts).mockResolvedValue(false);
+      const id = await newQuote(final);
+      const r = await actions.getQuotePageBundleAction(id);
+      const serialised = JSON.parse(JSON.stringify(r.data));
+      expect(confidentialKeys(serialised)).toEqual([]);
+      expect(r.data?.quote.viewer.canViewCommercials).toBe(false);
+    }
+  });
+
+  it("positive control: the same scan DOES find confidential keys in an Estimator's bundle, so a clean Rep result is meaningful", async () => {
+    asRoles("ESTIMATOR");
+    vi.mocked(canSeeCosts).mockResolvedValue(true);
+    const id = await newQuote(true);
+    const r = await actions.getQuotePageBundleAction(id);
+    expect(confidentialKeys(JSON.parse(JSON.stringify(r.data))).length).toBeGreaterThan(0);
+  });
+
+  it("the seed the page keeps client-side holds only the delivery and documents parts: no quote, no cost or margin key", async () => {
+    const { seedKeyOf } = await import("../[id]/bundle-seed");
+    asRoles("REP");
+    const id = await newQuote(true);
+    const r = await actions.getQuotePageBundleAction(id);
+    const b = r.data!;
+    // exactly what page.tsx stores (see the bundle handler): key, arrival, read time, the two parts, and a flag - never the quote view
+    const seed = { key: seedKeyOf(b.quote.quote, b.quote.viewer), at: Date.now(), readAt: b.readAt, delivery: b.delivery, documents: b.documents, gateUsed: false };
+    expect(confidentialKeys(seed)).toEqual([]);
+    expect(Object.keys(seed).sort()).toEqual(["at", "delivery", "documents", "gateUsed", "key", "readAt"]);
+  });
+
+  it("a Rep's quote part equals the single action's redaction and an Estimator's shows commercials, so the bundle adds nothing the single action withholds", async () => {
+    for (const [roles, sees] of [[["REP"], false], [["ESTIMATOR"], true], [["MANAGER"], true]] as const) {
+      db = new FakeDb();
+      asRoles(...roles);
+      vi.mocked(canSeeCosts).mockResolvedValue(sees);
+      const id = await newQuote(true);
+      const single = await actions.getGrowerQuoteAction(id);
+      const bundle = await actions.getQuotePageBundleAction(id);
+      expect(bundle.data?.quote).toEqual(single.data);
+      expect(bundle.data?.quote.viewer.canViewCommercials).toBe(sees);
+    }
+  });
+});
+
+describe("the bundle carries the server read time and keeps the shared readers out of the server modules", () => {
+  it("readAt is the server clock at the read", async () => {
+    asRoles("REP");
+    const id = await newQuote(true);
+    const before = Date.now();
+    const r = await actions.getQuotePageBundleAction(id);
+    expect(r.data!.readAt).toBeGreaterThanOrEqual(before);
+    expect(r.data!.readAt).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('"use server" export rule: the action files export only async functions and types; the shared readers and the seed live in modules that are NOT "use server"', async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const dir = join(__dirname, "..");
+    const src = (f: string) => readFileSync(join(dir, f), "utf8");
+    for (const f of ["actions.ts", "delivery-actions.ts", "document-actions.ts"]) {
+      const text = src(f);
+      expect(text.slice(0, 200)).toMatch(/^\s*["']use server["'];/);
+      const bad = text.split("\n").filter((l) => /^export\s/.test(l) && !/^export\s+(async\s+function|interface|type)\b/.test(l));
+      expect(bad).toEqual([]);
+      expect(text).not.toMatch(/^export\s+(async\s+)?function\s+(deliveryViewOf|documentsViewOf)\b/m); // the unauthenticated readers must never be callable from the browser
+    }
+    expect(src("actions.ts")).toMatch(/^export async function getQuotePageBundleAction\b/m);
+    for (const f of ["page-reads.ts", "[id]/bundle-seed.ts"]) expect(src(f).slice(0, 200)).not.toMatch(/^\s*["']use server["'];/);
+    expect(src("page-reads.ts").slice(0, 60)).toMatch(/import "server-only"/);
+  });
+});

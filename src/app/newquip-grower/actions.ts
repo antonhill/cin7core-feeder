@@ -248,6 +248,8 @@ export interface BundlePart<T> { ok: boolean; error?: string; data?: T }
 /** Everything the quotation page reads when it opens. `delivery` and `documents` are present only for an approved quotation (the only state in which the page reads them). */
 export interface QuotePageBundle {
   quote: QuoteView;
+  /** Server clock (ms since the epoch) when the parts below were read: the page bounds how long it will reuse them from this. */
+  readAt: number;
   delivery?: BundlePart<import("./delivery-actions").DeliveryView>;
   documents?: BundlePart<import("./document-actions").QuoteDocumentsView>;
 }
@@ -267,12 +269,13 @@ export async function getQuotePageBundleAction(quoteId: string): Promise<GrowerA
     const q = await loadQuote(db, a.orgId, quoteId);
     if (!q) return { ok: false, error: "Quote not found." };
     const final = q.state === "MANAGER_APPROVED_FINAL";
+    const readAt = Date.now();
     const [quote, delivery, documents] = await Promise.all([
       view(db, q, a),
       final ? settled(deliveryViewOf(db, a, quoteId)) : Promise.resolve(undefined),
       final ? settled(documentsViewOf(db, a, quoteId)) : Promise.resolve(undefined),
     ]);
-    return { ok: true, data: { quote, ...(delivery ? { delivery } : {}), ...(documents ? { documents } : {}) } };
+    return { ok: true, data: { quote, readAt, ...(delivery ? { delivery } : {}), ...(documents ? { documents } : {}) } };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }

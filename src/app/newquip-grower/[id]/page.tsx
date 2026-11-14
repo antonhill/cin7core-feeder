@@ -76,7 +76,7 @@ import { describeAmountChanges, type AmountChange } from "@/newquip/quote/handov
 import { AcceptancePanel } from "./AcceptancePanel";
 import { computeStages, currentStage, parseStage, type CommercialState, type StageId } from "@/newquip/quote/stages";
 import { getQuoteDeliveryAction, type DeliveryView } from "../delivery-actions";
-import { gateKeyOf, seedFresh, type BundleSeed } from "./bundle-seed";
+import { gateKeyOf, seedFresh, seedIfBound, seedKeyOf, type BundleSeed } from "./bundle-seed";
 import { ScopePanel } from "./ScopePanel";
 import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
 import { ApprovalHistory } from "@/components/ApprovalHistory";
@@ -265,7 +265,7 @@ export default function QuoteEditorPage() {
     getQuotePageBundleAction(id).then((r) => {
       if (!(r.ok && r.data)) { setError(r.error ?? "Unknown error"); return; }
       const b = r.data, qq = b.quote.quote;
-      if (b.delivery || b.documents) { const seed: BundleSeed = { key: gateKeyOf(qq), at: Date.now(), delivery: b.delivery, documents: b.documents, gateUsed: false }; bundleSeed.current = seed; setPanelSeed(seed); }
+      if (b.delivery || b.documents) { const seed: BundleSeed = { key: seedKeyOf(qq, b.quote.viewer), at: Date.now(), readAt: b.readAt, delivery: b.delivery, documents: b.documents, gateUsed: false }; bundleSeed.current = seed; setPanelSeed(seed); }
       adopt(b.quote); setError(null);
     }).catch(() => setError("Unknown error"));
   }, [id]);
@@ -273,6 +273,7 @@ export default function QuoteEditorPage() {
   // The commercial status (documents / sends / customer responses) feeds the stage navigation, wherever the user is looking.
   const finalNow = view?.quote.state === "MANAGER_APPROVED_FINAL";
   const gateKey = view ? gateKeyOf(view.quote) : "::";
+  const seedKey = view ? seedKeyOf(view.quote, view.viewer) : ""; // the quotation version AND viewer a seed must have been read for
   useEffect(() => {
     if (!finalNow) return;
     let live = true;
@@ -285,11 +286,11 @@ export default function QuoteEditorPage() {
       setGateReady(true); // read (an unavailable feature before migration 0115 is a legitimate, settled answer)
     };
     // The opening bundle already read this exact version of the quotation: use its delivery part once (never after a retry, a change, or a minute; a part that failed is read again, the old way).
-    const seed = bundleSeed.current;
-    if (seed && seed.delivery?.ok && !seed.gateUsed && seed.key === gateKey && gateTry === 0 && seedFresh(seed)) { seed.gateUsed = true; settle(seed.delivery); return () => { live = false; }; }
+    const seed = seedIfBound(bundleSeed.current, seedKey);
+    if (seed && seed.delivery?.ok && !seed.gateUsed && gateTry === 0 && seedFresh(seed)) { seed.gateUsed = true; settle(seed.delivery); return () => { live = false; }; }
     void getQuoteDeliveryAction(id).then(settle).catch(() => { if (live) setGateError("The quotation's delivery status could not be loaded."); });
     return () => { live = false; };
-  }, [id, finalNow, gateKey, gateTry, applyGate, noteGateSig]);
+  }, [id, finalNow, gateKey, seedKey, gateTry, applyGate, noteGateSig]);
 
   // Live recalculation (writes nothing): the same server engine as Save, on the unsaved draft, after a short pause in typing.
   useEffect(() => {
@@ -1328,7 +1329,7 @@ export default function QuoteEditorPage() {
                 </div>
               )} />
           )}
-          {final && q.accepted_baseline && <DeliveryPanel seed={panelSeed?.key === gateKey ? panelSeed : null} onSeedUsed={dropPanelSeed} quoteId={id} contractCents={q.accepted_baseline.contractCents} onGate={applyGate} section="quotation" steps={{ current: step4Id, showAll: showAllSteps }} />}
+          {final && q.accepted_baseline && <DeliveryPanel seed={seedIfBound(panelSeed, seedKey)} onSeedUsed={dropPanelSeed} quoteId={id} contractCents={q.accepted_baseline.contractCents} onGate={applyGate} section="quotation" steps={{ current: step4Id, showAll: showAllSteps }} />}
           {final && q.accepted_baseline && !showAllSteps && (
             <div className="flex items-center justify-between gap-3" data-testid="step-buttons">
               {step4No > 1 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep4No(step4No - 1)}>Back</Button> : <span />}
@@ -1371,7 +1372,7 @@ export default function QuoteEditorPage() {
           {!final && <Alert tone="info">Customer acceptance is recorded against the issued, Manager-approved quotation. It becomes available once the quotation has been issued.</Alert>}
           {final && !gate.requires && !acceptanceBanner && <Alert tone="info">This quotation was approved before customer acceptance was introduced, so it is grandfathered: a Project does not depend on a recorded acceptance. A response can still be recorded if the customer gives one.</Alert>}
           {final && acceptanceBanner && <AcceptanceStatusBanner banner={acceptanceBanner} />}
-          {final && q.accepted_baseline && <AcceptancePanel seed={panelSeed?.key === gateKey ? panelSeed : null} onSeedUsed={dropPanelSeed} quoteId={id} onGate={applyGate} />}
+          {final && q.accepted_baseline && <AcceptancePanel seed={seedIfBound(panelSeed, seedKey)} onSeedUsed={dropPanelSeed} quoteId={id} onGate={applyGate} />}
         </div>
       )}
 
