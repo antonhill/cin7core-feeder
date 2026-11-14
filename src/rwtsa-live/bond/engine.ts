@@ -78,7 +78,8 @@ export function foldRegister(events: readonly RegisterEvent[], opts: { asOf: str
     if (ev === null || typeof ev !== "object") fail(`${at}: not a valid register event`);
     switch (ev.type) {
       case "REGISTER_BOUND": {
-        if (i !== 0) fail(`${at}: REGISTER_BOUND must be the first event (a register is bound to one account, once)`);
+        if (st.boundAccount !== undefined) fail(`${at}: the register is already bound to an account (it can be bound once)`);
+        if (st.proposals.size > 0 || st.releases.length > 0) fail(`${at}: the account must be bound before any transfer proposal or release is recorded`);
         if (!nonEmpty(ev.accountIdSha256) || !nonEmpty(ev.by)) fail(`${at}: the account hash and who bound it are required`);
         notFuture(ev.on, at, "binding date");
         st.boundAccount = trim(ev.accountIdSha256);
