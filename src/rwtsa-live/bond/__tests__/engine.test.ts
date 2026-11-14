@@ -266,12 +266,14 @@ describe("S2 review fixes in the engine", () => {
     expect(() => fold([add(), { ...verify(), verifiedAt: "garbage" } as RegisterEvent])).toThrow(/timestamp/i);
     expect(() => fold([add(), { ...verify(), verifiedOn: "2026-11-12", verifiedAt: "2026-11-13T00:00:00.000Z" } as RegisterEvent])).toThrow(/timestamp/i);
   });
-  it("REGISTER_BOUND must be the first event, only once, and exposes the bound account", () => {
+  it("REGISTER_BOUND binds the register to one account, once, before any proposal or release", () => {
     const b: RegisterEvent = { type: "REGISTER_BOUND", accountIdSha256: "abc123", by: "owner", on: "2026-11-11" };
     expect(fold([b, add()]).boundAccount).toBe("abc123");
+    expect(fold([add(), b]).boundAccount).toBe("abc123");
     expect(fold([add()]).boundAccount).toBeUndefined();
-    expect(() => fold([add(), b])).toThrow(/first event/i);
-    expect(() => fold([b, b])).toThrow(/first event|already/i);
+    expect(() => fold([b, b])).toThrow(/already bound/i);
+    expect(() => fold([add(), verify(), rel(), b])).toThrow(/before any transfer proposal or release/i);
     expect(() => fold([{ ...b, accountIdSha256: "" } as RegisterEvent])).toThrow(/account/i);
   });
+});
 });
