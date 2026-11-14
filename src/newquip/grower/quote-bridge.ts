@@ -152,6 +152,11 @@ const emptyLine = (g: GeneratedLine) => ({
 });
 
 const isAmount = (v: number | null | undefined): v is number => typeof v === "number" && Number.isFinite(v) && v > 0;
+/**
+ * A COMMERCIAL CHARGE (delivery, installation, slat delivery) is ENTERED when it is a finite number >= 0. Blank/unset (null/undefined) is NOT entered, so the Rep must still decide;
+ * an explicit 0 is a deliberate "no charge" and is kept visible (a warning, an "entered" status). A negative amount is never accepted. A PRODUCT price (isAmount) stays strictly positive.
+ */
+const isChargeEntered = (v: number | null | undefined): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
 const validResolution = (r: EstimatorResolution | undefined): r is EstimatorResolution => Boolean(r && isAmount(r.unitPriceExVat) && r.reason?.trim());
 
 /** The SKU an item is expected to map to (the feeder follows its variant; others use the source-backed recommendation). */
@@ -217,7 +222,7 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
 
     // A separate manual charge (e.g. slat delivery) is never folded into the SKU.
     for (const m of manualLinesFor(g.itemKey)) {
-      if (!isAmount(opts.estimatorCharges?.[m.id as ChargeKey])) blockers.push(`${m.description}: estimator-entered amount required (separate from the SKU)`);
+      if (!isChargeEntered(opts.estimatorCharges?.[m.id as ChargeKey])) blockers.push(`${m.description}: estimator-entered amount required (separate from the SKU)`);
     }
 
     const resolution = opts.priceResolutions?.[g.itemKey];
@@ -251,6 +256,7 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
       const unit = opts.estimatorUnitPrices?.[g.itemKey];
       const reference = pkg.components.map((c) => evaluateComponent(c, g.projectQuantity!, opts).comp)
         .map((c): BridgeComponent => (c.status === "priced" ? { ...c, status: "reference_only", reason: "Historic package reference — not priced (the estimator prices the M75 system)", unitPrice: null, revenueExTax: null, estimatedCost: null } : c));
+      // An included system is a PRODUCT: it needs a real (positive) price; a zero is never a way round that (deliberately NOT relaxed with the charges).
       if (!isAmount(unit)) {
         bridge.push({ ...emptyLine(g), status: "estimator_price_required", reason: "M75 is estimator input by design — enter the commercial price per system (ex VAT).", components: reference });
         blockers.push(`${g.label}: estimator commercial price required (manual by design)`);
@@ -330,11 +336,13 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
     .filter((k) => k !== "concrete_slat_delivery" || generated.some((g) => g.itemKey === "concrete_slat" && g.basis !== "not_selected" && g.projectQuantity != null))
     .map((k) => {
       const v = opts.estimatorCharges?.[k];
-      return { key: k, label: CHARGE_LABEL[k], amountExTax: isAmount(v) ? v : null, status: isAmount(v) ? ("entered" as const) : ("required" as const) };
+      return { key: k, label: CHARGE_LABEL[k], amountExTax: isChargeEntered(v) ? v : null, status: isChargeEntered(v) ? ("entered" as const) : ("required" as const) };
     });
   for (const c of charges) {
     if (c.amountExTax != null) {
-      engineLines.push({ quantity: 1, unitPrice: c.amountExTax, taxRatePct: sellRate, averageCost: null, excludedFromMargin: true });
+      // An explicit R0.00 is kept (visible, "entered") but is not a priced line: nothing is added to the total, the margin or the customer's quotation.
+      if (c.amountExTax > 0) engineLines.push({ quantity: 1, unitPrice: c.amountExTax, taxRatePct: sellRate, averageCost: null, excludedFromMargin: true });
+      else warnings.push(`${c.label}: R0.00 entered - no charge is quoted.`);
     } else if (c.key !== "concrete_slat_delivery" && anyQuantified) {
       blockers.push(`${c.label}: estimator-entered amount required`);
     }

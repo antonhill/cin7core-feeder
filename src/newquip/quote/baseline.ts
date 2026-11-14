@@ -192,7 +192,7 @@ export function buildAcceptedBaseline(i: BaselineInput): { baseline: AcceptedBas
     pricing: { source: b.priceSource, quoteType: b.quoteType, basis: b.pricingBasis },
     commercial: {
       lines,
-      charges: b.charges.filter((c) => c.amountExTax != null).map((c) => ({ key: c.key, label: c.label, amountCents: cents(c.amountExTax!) })),
+      charges: b.charges.filter((c) => c.amountExTax != null && c.amountExTax > 0).map((c) => ({ key: c.key, label: c.label, amountCents: cents(c.amountExTax!) })),
       subtotalCents,
       taxCents: cents(b.totals.taxTotal),
       totalCents: cents(b.totals.totalIncTax),
