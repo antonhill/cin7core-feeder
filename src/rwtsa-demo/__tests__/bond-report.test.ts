@@ -202,6 +202,7 @@ describe("independent review fixes (status vs evidence, references, real/synthet
     const c = clone(); row(c, "SYN-RAIN-L").releasedBeforeCover = 0; c.releases.find((l: any) => l.sku === "SYN-RAIN-L").releasedBeforeCoverUnits = 0; row(c, "SYN-RAIN-L").exceptions = ["OVER_RELEASED"]; c.summary.exceptionCount -= 1;
     expect(problems(c)).toContain("released-before-cover units are below the minimum implied by the release and the verified clearance");
     const d = clone(); row(d, "SYN-JKT-M").projectedUsableIfProposedCompleted += 1; expect(problems(d)).toContain("projected usable does not equal usable plus open proposals");
+    const g = clone(); delete row(g, "SYN-JKT-M").projectedUsableIfProposedCompleted; expect(problems(g)).toContain("usable and projected usable must both be present or both absent");
     const e = clone(); const o = e.observed.find((x: any) => x.uncleared > 0); o.eligibleBefore = 100000; o.uncleared = 0; o.exceptions = []; e.summary.unclearedObservedUnits -= 40; e.summary.exceptionCount -= 1;
     expect(problems(e)).toContain("an observed movement's eligible-before quantity exceeds all verified evidence");
     const f = clone(); f.observed[0].alreadyRecorded = 100000; expect(problems(f)).toContain("an observed movement claims more recorded releases than exist");
