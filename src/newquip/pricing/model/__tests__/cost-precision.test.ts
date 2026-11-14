@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculatePricing, cost7, fromCost7, landedCents, landedCentsE7, LEGACY_RULE_VERSION, micro, type PricingScenario } from "..";
+import { calculatePricing, cost7, formatCost7, fromCost7, landedCents, landedCentsE7, LEGACY_RULE_VERSION, micro, type PricingScenario } from "..";
 
 // NQ-008B follow-up: Cin7 reports supplier-native costs with up to 7 decimals (6.5454755, 26.8440995). They are held exactly (units of 1e-7), converted with exact BigInt arithmetic and rounded to cents
 // ONCE, half-up, by the model's existing rule. A cost with more than 7 decimals is refused: never truncated, never rounded. Every expected figure below was computed independently with exact decimals.
@@ -30,6 +30,15 @@ describe("cost7: 7-decimal supplier-native costs are parsed exactly and never ro
     for (const bad of ["6.54547551", "0.00000001", "-1", "1e-7", "", "abc", "1,5", "1.", ".5", " "]) expect(() => cost7(bad)).toThrow(/at most 7 decimals/);
     expect(() => cost7(Number.NaN)).toThrow();
     expect(() => cost7(Number.POSITIVE_INFINITY)).toThrow();
+  });
+  it("refuses a value too large to hold exactly (no silent precision loss)", () => {
+    expect(() => cost7("99999999999.9999999")).toThrow(/too large/);
+    expect(cost7("900719925.4740991")).toBe(Number.MAX_SAFE_INTEGER);
+  });
+  it("formatCost7 gives an exact plain decimal that cost7 parses back (never exponent text)", () => {
+    for (const t of ["6.5454755", "26.8440995", "100", "0.0000001", "0.5", "1234567.1"]) expect(formatCost7(cost7(t))).toBe(t);
+    expect(formatCost7(0)).toBe("0");
+    expect(formatCost7(1)).toBe("0.0000001");
   });
   it("round-trips for display", () => {
     expect(fromCost7(cost7("6.5454755"))).toBe(6.5454755);

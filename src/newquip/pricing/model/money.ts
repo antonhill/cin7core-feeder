@@ -23,10 +23,18 @@ export function cost7(v: string | number): number {
   const s = typeof v === "number" ? (Number.isFinite(v) ? String(v) : "") : v.trim();
   const m = /^(\d+)(?:\.(\d{1,7}))?$/.exec(s);
   if (!m) throw new Error(`"${String(v)}" is not a non-negative number with at most 7 decimals.`);
-  return Number(BigInt(m[1]) * COST_SCALE + BigInt((m[2] ?? "").padEnd(COST_DECIMALS, "0")));
+  const e7 = BigInt(m[1]) * COST_SCALE + BigInt((m[2] ?? "").padEnd(COST_DECIMALS, "0"));
+  if (e7 > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error(`"${String(v)}" is too large to hold exactly.`); // never lose precision silently
+  return Number(e7);
 }
-/** E7 units -> a number, for DISPLAY and form fields only (never fed back into arithmetic). */
+/** E7 units -> a number, for DISPLAY only (never fed back into arithmetic). */
 export const fromCost7 = (c: number): number => c / 10_000_000;
+/** E7 units -> an exact plain decimal string (no exponent, trailing zeros trimmed): 1 -> "0.0000001", 65454755 -> "6.5454755". For form fields, so what is shown can always be parsed back by `cost7`. */
+export function formatCost7(c: number): string {
+  const n = BigInt(c);
+  const whole = n / COST_SCALE, frac = (n % COST_SCALE).toString().padStart(COST_DECIMALS, "0").replace(/0+$/, "");
+  return frac ? `${whole}.${frac}` : String(whole);
+}
 
 /** Half-up integer division (all operands non-negative). */
 export function divRound(n: bigint, d: bigint): bigint {

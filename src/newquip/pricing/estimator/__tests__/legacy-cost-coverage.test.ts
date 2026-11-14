@@ -117,6 +117,10 @@ describe("NOT covered: missing, unverified, stale, unrelated or incomplete costs
       expect(covers(p, [eurOf(p)]), name).toEqual([]);
     }
   });
+  it("prototype-ish SKU names never match an inherited property", () => {
+    const p = base();
+    expect(covers(p, ["__proto__", "constructor", "toString", "hasOwnProperty"])).toEqual([]);
+  });
   it("an unknown or unusable rule version covers nothing", () => {
     const p = { ...base(), ruleVersionId: "no-such-rules" };
     expect(covers(p, Object.keys(p.skus))).toEqual([]);
