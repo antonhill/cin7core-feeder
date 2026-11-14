@@ -109,7 +109,7 @@ const COSTED = { estimator: { ...draft.estimator, costBasis: { incompleteAccepte
 const UNSIGNED = { state: "ESTIMATOR_REVIEW", row: { customer_confirmed_cents: 1000000000, customer_confirmed_by: "A Customer <a@c.co>", customer_confirmed_at: "2026-11-02T08:00:00Z", handoff_by_email: "rep@nq" } };
 const ws = () => screen.getByTestId("stage3-workspace");
 const viewedStage = () => document.querySelector('[data-testid="stage-nav"] [aria-current="step"]')!.getAttribute("data-stage");
-const approve = () => screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement;
+const approve = () => screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement;
 const patchRow = (id: string, patch: (r: Record<string, unknown>) => Record<string, unknown>) => { const arr = db.rows("newquip_quotes") as Array<Record<string, unknown>>; const i = arr.findIndex((r) => r.id === id); arr[i] = { ...arr[i], ...patch(arr[i]) }; };
 
 describe("UX-006i2 Stage 3: the Manager's signed-off workspace", () => {
@@ -202,7 +202,7 @@ describe("UX-006i2 Stage 3: the Manager's signed-off workspace", () => {
 
   it("a Rep draft: the decision is not available; the Manager reads that the quotation is with the Rep and the Rep is the next owner", async () => {
     await open({ stage: "3", roles: ["MANAGER"], commercials: true });
-    expect(screen.queryByRole("button", { name: "Manager: final approval" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
     expect(screen.getByTestId("stage3-status-line").textContent).toBe("The Rep has not submitted yet. Next responsible role: Rep.");
     expect(screen.getByText(/This quotation is with the Rep/)).toBeTruthy();
   }, 60000);
@@ -210,7 +210,7 @@ describe("UX-006i2 Stage 3: the Manager's signed-off workspace", () => {
   it("approved: the workspace is read-only history - 'Manager approved - final', no decision buttons", async () => {
     await open({ stage: "3", roles: ["MANAGER"], commercials: true, state: "MANAGER_APPROVED_FINAL", row: { ...SIGNED.row } });
     expect(screen.getByText("Manager approved — final")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /final approval|Return to/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Approve|Return to/ })).toBeNull();
   }, 60000);
 });
 
@@ -256,9 +256,15 @@ import { EstimatorResult } from "../[id]/Stage23Panels";
 import { BuildStamp } from "@/components/BuildStamp";
 describe("UX-006i2 review fixes: the Manager workspace", () => {
   it("after approval it says what is next and who: 'Approved. Next: Rep issues and sends the customer quotation (Stage 4).'", async () => {
-    await open({ stage: "3", roles: ["MANAGER"], commercials: true, state: "MANAGER_APPROVED_FINAL", row: { ...SIGNED.row } });
-    expect(screen.getByTestId("stage3-status-line").textContent).toBe("Approved. Next: Rep issues and sends the customer quotation (Stage 4).");
+    await open({ stage: "3", roles: ["MANAGER"], commercials: true, state: "MANAGER_APPROVED_FINAL", row: { ...SIGNED.row, requires_customer_acceptance: true } });
+    await waitFor(() => expect(screen.getByTestId("stage3-status-line").textContent).toBe("Approved. Next: Rep issues and sends the customer quotation (Stage 4)."));
     expect(screen.getByTestId("next-owner").textContent).toBe("Rep");
+  }, 60000);
+
+  it("once a Project exists the Stage 3 line no longer says the Rep still has to issue and send", async () => {
+    await open({ stage: "3", roles: ["MANAGER"], commercials: true, state: "MANAGER_APPROVED_FINAL", row: { ...SIGNED.row, project_id: "p-1" } });
+    const line = screen.getByTestId("stage3-status-line").textContent!;
+    expect(line).toContain("Project has been created"); expect(line).not.toContain("Rep issues and sends");
   }, 60000);
 
   it("a cost viewer sees the three largest lines (so an implausible line is noticeable); a Rep does not; nothing blocks", async () => {

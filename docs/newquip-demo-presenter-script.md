@@ -12,7 +12,7 @@ Everything here is a POC. The journey is the point, not the commercial data. Sig
 
 **Estimator / Manager / PDF**
 5. **Estimator**: **Next: Final review** > **Mark reviewed & continue** > **Sign off for Manager approval**.
-6. **Manager**: **Manager: final approval**.
+6. **Manager**: **Approve** (**Approve & Continue** in POC presentation mode).
 7. **Rep**: Stage 4 **Generate customer quotation PDF**, **Open PDF** (DEMONSTRATION ONLY terms apply to demonstration quotations).
 
 **Acceptance and project**

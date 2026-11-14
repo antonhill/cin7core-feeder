@@ -55,8 +55,8 @@ export default function NewquipGrowerPage() {
       <ModuleHeader variant="workspace" module={SOLUTION_BUILDER_MODULE}>NewQuip Agri Supplies — Grower House quotes</ModuleHeader>
       <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-3xl text-sm text-slate-600">
-          Grower House Template v1 → configuration → estimator review → quote → manager approval → accepted baseline → Project.
-          Quotes are kept in the Toolbox only — <strong>nothing is sent to Cin7 or Xero</strong>.
+          Grower House quotations: configure, cost and verify, approve, then send to the customer and hand over to a Project.
+          Nothing on this page posts to Cin7 or Xero. The customer is emailed only when a Rep sends the quotation.
         </p>
         <div className="flex gap-2">
           <Link href="/newquip-grower/project-templates" className="inline-flex min-h-11 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Project templates</Link>

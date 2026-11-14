@@ -94,7 +94,7 @@ describe("UX-006c Stage 3: the 'before you decide' checklist", () => {
     expect([...document.querySelectorAll("[data-check]")].map((e) => e.getAttribute("data-check")).slice(0, 5)).toEqual(["ready", "total", "confirmed", "signoff", "amount"]);
     expect(checks().signoff).toBe("Not met");
     expect(checks().confirmed).toBe("Met");
-    const approve = screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement;
+    const approve = screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement;
     expect(approve.disabled).toBe(true); // the existing gate, unchanged
     expect(screen.getByText(/Waiting for the Estimator.s sign-off/)).toBeTruthy(); // the existing Alert stays
     expect(screen.getByTestId("approval-checklist").compareDocumentPosition(approve) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -122,7 +122,7 @@ describe("UX-006c Stage 3: the 'before you decide' checklist", () => {
     await screen.findByTestId("approval-checklist", {}, { timeout: 8000 });
     expect(checks().signoff).toBe("Met");
     expect(screen.getByText("Final approval needs the Manager role.")).toBeTruthy();
-    expect((screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(true);
     const text = screen.getByTestId("approval-checklist").textContent ?? "";
     for (const leak of ["margin", "Margin", "cost", "GP"]) expect(text, leak).not.toContain(leak);
     shot("s3-nonmanager");
@@ -140,7 +140,7 @@ describe("UX-006c Stage 3: the 'before you decide' checklist", () => {
     await open({ stage: "3", roles: ["MANAGER"], row: { ...review, estimator_signoff_hash: "CURRENT" } });
     await screen.findByTestId("approval-checklist", {}, { timeout: 8000 });
     expect(checks().signoff).toBe("Met");
-    expect((screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement).disabled).toBe(false);
   }, 30000);
 });
 
@@ -312,7 +312,7 @@ describe("UX-006c interplay with the pinned landing stage", () => {
   }, 30000);
   it("after a real workflow transition (the Manager approves) the view moves on to the new current stage", async () => {
     await open({ stage: "3", roles: ["MANAGER"], row: { state: "ESTIMATOR_REVIEW", customer_confirmed_cents: 1_000_000_000, estimator_signoff_hash: "CURRENT" } });
-    const approve = await screen.findByRole("button", { name: "Manager: final approval" }, { timeout: 8000 });
+    const approve = await screen.findByRole("button", { name: "Approve" }, { timeout: 8000 });
     await waitFor(() => expect((approve as HTMLButtonElement).disabled).toBe(false), { timeout: 8000 });
     expect(document.querySelector('[data-stage="3"]')!.getAttribute("aria-current")).toBe("step");
     // UX-006 S1a: the real approval now also needs COMPLETE costing, which this fixture does not have; the action is stubbed to the approved state so the test keeps proving that the view follows the transition.

@@ -337,7 +337,7 @@ export default function QuoteEditorPage() {
   const costingIncomplete = poc ? false : costingSrv ? !costingSrv.complete : (marginInfo?.missing ?? 0) > 0;
   const costingReason = costingSrv?.reason ?? null;
   const marginNote = marginIncomplete ? (marginInfo!.missing > 0 ? `project margin not available: ${marginInfo!.missing} line${marginInfo!.missing === 1 ? " has" : "s have"} no cost` : marginInfo!.exempt.length > 0 ? `margin is indicative: ${marginInfo!.exempt.length} line${marginInfo!.exempt.length === 1 ? " is" : "s are"} Estimator-priced (no supplier cost by design)` : "margin is indicative (price-list basis)") : null;
-  // "Manager: final approval" is described by whichever of the existing messages currently applies (each is already on the page, so nothing is duplicated). Role/process wording only.
+  // "Approve" is described by whichever of the existing messages currently applies (each is already on the page, so nothing is duplicated). Role/process wording only.
   const approveSignoffMissing = q?.state === "ESTIMATOR_REVIEW" && !q.estimator_signoff_hash;
   const approveCostingOpen = q.state === "ESTIMATOR_REVIEW" && costingSrv != null && !costingSrv.complete;
   const approveNotReady = q.state === "ESTIMATOR_REVIEW" && (rd.state !== "READY" || approveCostingOpen);
@@ -615,7 +615,7 @@ export default function QuoteEditorPage() {
     <RepSubmittedSummary draft={draft} submitted={q.state !== "REP_DRAFT"} revision={q.revision} floorAreaM2={ev.calc.derived.floorAreaM2} totalCents={q.state === "REP_DRAFT" ? totalCents : (q.customer_confirmed_cents ?? totalCents)} quantities={repQuantities}
       confirmed={{ cents: q.customer_confirmed_cents, by: q.customer_confirmed_by, at: q.customer_confirmed_at }} />
   );
-  const wizard3 = deriveStage3Wizard({ state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", revision: q.revision, roles: { rep: roles.has("rep"), estimator: isEstimator, manager: roles.has("manager") }, signoff: s2Base.signoff, dirty });
+  const wizard3 = deriveStage3Wizard({ state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", revision: q.revision, roles: { rep: roles.has("rep"), estimator: isEstimator, manager: roles.has("manager") }, signoff: s2Base.signoff, dirty, ...(final && (q.project_id || gateReady) ? { after: { hasDocument: gate.hasDocument, commercial: gate.status, projectLinked: !!q.project_id, requiresAcceptance: q.requires_customer_acceptance === true } } : {}) });
 
   // Stage 4 steps: guidance only. Statuses come from the issued-document and sent records the page already reads (never from a visit); the Issue and Send actions keep their own gates.
   const stage4 = deriveStage4Steps({ hasDocument: gate.hasDocument, commercial: gate.status });
@@ -1263,7 +1263,7 @@ export default function QuoteEditorPage() {
                       <Button variant="primary" className="min-h-12 px-6 text-base" data-testid="poc-approve" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty}
                         onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. Continuing as the Rep.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL", undefined, OP.approveQuotation)}>Approve &amp; Continue</Button>
                     ) : (<Button variant={bxRequired ? "secondary" : "primary"} className="min-h-11" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty || approveNotReady || bxRequired || bxBlocking.length > 0} aria-describedby={[approveDescribedBy, bxRequired && `${uid}-approve-bx`, bxBlocking.length > 0 && `${uid}-approve-map`].filter(Boolean).join(" ") || undefined}
-                      onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL", undefined, OP.approveQuotation)}>Manager: final approval</Button>)}
+                      onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL", undefined, OP.approveQuotation)}>Approve</Button>)}
                     {roles.has("manager") && (<>
                       <Button variant="secondary" className="min-h-11" loading={acts.isPending("return-mgr")} aria-describedby={returnWhy ? "return-mgr-why" : undefined} disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "return-mgr", (v) => v.quote.state === "REP_DRAFT", undefined, OP.returnToRep)}>Return to rep (reject)</Button>
                       {q.estimator_signoff_hash && (
@@ -1343,7 +1343,7 @@ export default function QuoteEditorPage() {
               </table>
               {draft.estimator.assumptions.trim() && <p className="mt-4 text-xs text-slate-600"><strong>Assumptions:</strong> {draft.estimator.assumptions}</p>}
               {Object.entries(cfg.exclusions ?? {}).filter(([, r]) => r.trim()).length > 0 && <p className="mt-2 text-xs text-slate-600"><strong>Excluded at your request:</strong> {Object.keys(cfg.exclusions ?? {}).filter((k) => cfg.exclusions![k as GrowerItemKey]?.trim()).join(", ").replace(/_/g, " ")}</p>}
-              <p className="mt-6 text-xs text-slate-600">Summary view — individual stock lines are kept on the internal estimator view. Not an e-signature; acceptance is recorded by the manager&apos;s final approval.</p>
+              <p className="mt-6 text-xs text-slate-600">Summary view — individual stock lines are kept on the internal estimator view. Not an e-signature.</p>
             </div>
           )}
         </Panel>
