@@ -19,7 +19,7 @@ describe("read-only Cin7 client", () => {
   });
   it("makes no network call for a non-allowlisted path", async () => {
     const { f, c } = mk({});
-    await expect(c.get("/sale")).rejects.toThrow();
+    await expect(c.get("/sale/order")).rejects.toThrow();
     expect(f.calls).toHaveLength(0);
   });
   it("retries 503 then succeeds; gives up with a RATE_LIMITED error after the ceiling", async () => {
