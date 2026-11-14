@@ -1433,7 +1433,8 @@ export default function QuoteEditorPage() {
             <p className="mt-1">Seal (sha256) {(q.baseline_hash ?? "").slice(0, 16)}…</p>
           </div>
         )}
-        {view.viewer.previewTools && editable && stage <= 2 && (
+      </AuditDetails>
+      {view.viewer.previewTools && editable && stage <= 2 && (
           <details className="mt-8 max-w-4xl rounded-lg border border-dashed border-slate-400 px-3 py-1 text-sm" data-testid="preview-tools">
             <summary className="inline-flex min-h-11 cursor-pointer items-center font-semibold text-slate-800">Testing utility (Preview only)</summary>
             <p className="mt-2 text-slate-700">Replaces the inputs of this draft (the selected customer is kept) with the demonstration quotation. It is not saved, and it never submits, approves, signs off, creates a Project or writes to Cin7. It exists on Preview deployments only.</p>
@@ -1458,7 +1459,6 @@ export default function QuoteEditorPage() {
             )}
           </details>
         )}
-      </AuditDetails>
     </main>
   );
 }

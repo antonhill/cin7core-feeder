@@ -321,6 +321,7 @@ describe("nothing resets or jumps", () => {
     await open({ view: snapshotView(true), step: "2" });
     const tools = screen.getByTestId("preview-tools") as HTMLDetailsElement;
     expect(tools.open).toBe(false);
+    expect(tools.closest('[data-testid="audit-details"]')).toBeNull(); // a testing control is not audit evidence: it is reachable in one click, outside the Audit details
     expect(tools.textContent).toContain("Testing utility (Preview only)");
     expect(tools.textContent).toMatch(/never submits, approves, signs off, creates a Project or writes to Cin7/);
     cleanup();
