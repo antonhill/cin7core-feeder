@@ -256,8 +256,8 @@ import { EstimatorResult } from "../[id]/Stage23Panels";
 import { BuildStamp } from "@/components/BuildStamp";
 describe("UX-006i2 review fixes: the Manager workspace", () => {
   it("after approval it says what is next and who: 'Approved. Next: Rep issues and sends the customer quotation (Stage 4).'", async () => {
-    await open({ stage: "3", roles: ["MANAGER"], commercials: true, state: "MANAGER_APPROVED_FINAL", row: { ...SIGNED.row } });
-    expect(screen.getByTestId("stage3-status-line").textContent).toBe("Approved. Next: Rep issues and sends the customer quotation (Stage 4).");
+    await open({ stage: "3", roles: ["MANAGER"], commercials: true, state: "MANAGER_APPROVED_FINAL", row: { ...SIGNED.row, requires_customer_acceptance: true } });
+    await waitFor(() => expect(screen.getByTestId("stage3-status-line").textContent).toBe("Approved. Next: Rep issues and sends the customer quotation (Stage 4)."));
     expect(screen.getByTestId("next-owner").textContent).toBe("Rep");
   }, 60000);
 
