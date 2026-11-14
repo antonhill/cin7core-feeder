@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { SCENARIOS } from "@/rwtsa-demo/state/layers";
+import { scenarioHref } from "../lib/scenario-href";
 
 export function Nav() {
   const links = [
     { href: "/", label: "Overview" },
-    ...SCENARIOS.map((s) => ({ href: `/${s.slug}`, label: `Scenario ${s.id}` })),
+    ...SCENARIOS.map((s) => ({ href: scenarioHref(s.slug), label: `Scenario ${s.id}` })),
     { href: "/fast-react", label: "Fast React exchange" },
     { href: "/bond", label: "Bond stock" },
     { href: "/validation", label: "Validation" },

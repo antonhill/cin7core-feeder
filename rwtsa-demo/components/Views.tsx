@@ -1,3 +1,4 @@
+import { scenarioHref } from "../lib/scenario-href";
 import Link from "next/link";
 import { Alert } from "@/components/ui/Alert";
 import { Badge } from "@/components/ui/Badge";
@@ -47,7 +48,7 @@ export function OverviewPageView({ view }: { view: OverviewView }) {
               {view.scenarios.map((s) => (
                 <TR key={s.id}>
                   <TD>
-                    <Link href={`/${s.slug}`} className="text-primary hover:underline" prefetch={false}>
+                    <Link href={scenarioHref(s.slug)} className="text-primary hover:underline" prefetch={false}>
                       {s.id} · {s.title}
                     </Link>
                   </TD>
