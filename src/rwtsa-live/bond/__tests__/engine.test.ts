@@ -175,7 +175,7 @@ describe("independent review hardening (P1/P2)", () => {
       expect(() => assessBond(st, { bondBySku: bond({ A: v }) })).toThrow(/finite|non-negative/i);
       expect(() => validateProposal(st, { bondBySku: bond({ A: v }) }, { sku: "A", quantity: 1, destination: "JHB" })).toThrow(/finite|non-negative/i);
       expect(() => observeBondMovement(st, { bondBySku: bond({ A: v }), nonBondBySku: bond({}) }, { bondBySku: bond({ A: 1 }), nonBondBySku: bond({}) })).toThrow(/finite|non-negative/i);
-      expect(() => assessBond(st, { bondBySku: bond({ A: 1 }), operationalUsableBySku: bond({ A: v }) })).toThrow(/finite|non-negative/i);
+      if (v !== -1) expect(() => assessBond(st, { bondBySku: bond({ A: 1 }), operationalUsableBySku: bond({ A: v }) })).toThrow(/finite/i);
     }
   });
   it("late verification cannot retroactively legitimise a release: RELEASED_BEFORE_VERIFICATION stays flagged", () => {
@@ -228,5 +228,50 @@ describe("independent review hardening (P1/P2)", () => {
   it("null or malformed events fail with a register error, not a raw TypeError", () => {
     expect(() => fold([null as never])).toThrow(/event 1/i);
     expect(() => fold([{ type: "CLEARANCE_ADDED", entry: null } as never])).toThrow(/event 1/i);
+  });
+});
+
+describe("S2 review fixes in the engine", () => {
+  const cleared = [add(), verify()];
+  const snap = (b: Record<string, number>, nb: Record<string, number> = {}) => ({ bondBySku: bond(b), nonBondBySku: bond(nb) });
+  it("operational usable may legitimately be negative (oversold) and must not block the report; Bond and non-Bond stock still must not", () => {
+    const st = fold(cleared);
+    const r = assessBond(st, { bondBySku: bond({ A: 10 }), operationalUsableBySku: bond({ A: -3 }) })[0];
+    expect(r.operationalUsable).toBe(-3);
+    expect(() => assessBond(st, { bondBySku: bond({ A: 10 }), operationalUsableBySku: bond({ A: NaN }) })).toThrow(/finite/i);
+    expect(() => assessBond(st, { bondBySku: bond({ A: -1 }) })).toThrow(/non-negative/i);
+  });
+  it("a movement observed BEFORE the clearance was verified stays uncleared even though the entry is verified now", () => {
+    const st = fold([add(), { ...verify(), verifiedOn: "2026-11-10", verifiedAt: "2026-11-10T09:00:00.000Z" } as RegisterEvent]);
+    const pair = { fromSnapshotHash: "h1", toSnapshotHash: "h2", fromTakenAt: "2026-11-02T08:00:00.000Z" };
+    expect(observeBondMovement(st, snap({ A: 100 }), snap({ A: 90 }), pair)[0]).toMatchObject({ bondDecrease: 10, uncleared: 10, eligibleBefore: 0 });
+    const after = { ...pair, fromTakenAt: "2026-11-11T08:00:00.000Z" };
+    expect(observeBondMovement(st, snap({ A: 100 }), snap({ A: 90 }), after)[0]).toMatchObject({ uncleared: 0, eligibleBefore: 100 });
+  });
+  it("verification time decides precisely when stamped; with only a date it is judged conservatively (same-day counts as not yet verified)", () => {
+    const stamped = fold([add(), { ...verify(), verifiedOn: "2026-11-10", verifiedAt: "2026-11-10T09:00:00.000Z" } as RegisterEvent]);
+    expect(observeBondMovement(stamped, snap({ A: 50 }), snap({ A: 40 }), { fromSnapshotHash: "a", toSnapshotHash: "b", fromTakenAt: "2026-11-10T12:00:00.000Z" })[0].uncleared).toBe(0);
+    expect(observeBondMovement(stamped, snap({ A: 50 }), snap({ A: 40 }), { fromSnapshotHash: "a", toSnapshotHash: "b", fromTakenAt: "2026-11-10T08:00:00.000Z" })[0].uncleared).toBe(10);
+    const dateOnly = fold(cleared); // verifiedOn 2026-11-12, no timestamp
+    expect(observeBondMovement(dateOnly, snap({ A: 50 }), snap({ A: 40 }), { fromSnapshotHash: "a", toSnapshotHash: "b", fromTakenAt: "2026-11-12T20:00:00.000Z" })[0].uncleared).toBe(10);
+    expect(observeBondMovement(dateOnly, snap({ A: 50 }), snap({ A: 40 }), { fromSnapshotHash: "a", toSnapshotHash: "b", fromTakenAt: "2026-11-13T00:00:00.000Z" })[0].uncleared).toBe(0);
+  });
+  it("releases recorded for LATER intervals do not make an earlier movement look uncleared, but earlier ones do consume cover", () => {
+    const st = fold([...cleared, rel({ id: "R2", quantity: 100, fromSnapshotHash: "h5", toSnapshotHash: "h6", fromTakenAt: "2026-11-13T09:00:00.000Z", toTakenAt: "2026-11-13T18:00:00.000Z" })]);
+    expect(observeBondMovement(st, snap({ A: 100 }), snap({ A: 90 }), { fromSnapshotHash: "h1", toSnapshotHash: "h2", fromTakenAt: "2026-11-13T00:00:00.000Z" })[0].uncleared).toBe(0);
+    expect(observeBondMovement(st, snap({ A: 100 }), snap({ A: 90 }), { fromSnapshotHash: "h7", toSnapshotHash: "h8", fromTakenAt: "2026-11-14T08:00:00.000Z" })[0]).toMatchObject({ eligibleBefore: 0, uncleared: 10 });
+  });
+  it("ids are trimmed when referenced; a verification time stamp must be a real timestamp on the stated date", () => {
+    expect(() => fold([add(), { ...verify(), entryId: " CL-1 " } as RegisterEvent])).not.toThrow();
+    expect(() => fold([add(), { ...verify(), verifiedAt: "garbage" } as RegisterEvent])).toThrow(/timestamp/i);
+    expect(() => fold([add(), { ...verify(), verifiedOn: "2026-11-12", verifiedAt: "2026-11-13T00:00:00.000Z" } as RegisterEvent])).toThrow(/timestamp/i);
+  });
+  it("REGISTER_BOUND must be the first event, only once, and exposes the bound account", () => {
+    const b: RegisterEvent = { type: "REGISTER_BOUND", accountIdSha256: "abc123", by: "owner", on: "2026-11-11" };
+    expect(fold([b, add()]).boundAccount).toBe("abc123");
+    expect(fold([add()]).boundAccount).toBeUndefined();
+    expect(() => fold([add(), b])).toThrow(/first event/i);
+    expect(() => fold([b, b])).toThrow(/first event|already/i);
+    expect(() => fold([{ ...b, accountIdSha256: "" } as RegisterEvent])).toThrow(/account/i);
   });
 });

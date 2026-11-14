@@ -23,7 +23,8 @@ export interface ClearanceEntry {
 export interface TransferProposal { id: string; sku: string; quantity: number; destination: Destination; proposedBy: string; proposedOn: string; reason: string }
 export type RegisterEvent =
   | { type: "CLEARANCE_ADDED"; entry: ClearanceEntry }
-  | { type: "CLEARANCE_VERIFIED"; entryId: string; verifiedBy: string; verifiedOn: string; documentRef: string }
+  | { type: "REGISTER_BOUND"; accountIdSha256: string; by: string; on: string }
+  | { type: "CLEARANCE_VERIFIED"; entryId: string; verifiedBy: string; verifiedOn: string; documentRef: string; verifiedAt?: string }
   | { type: "CLEARANCE_WITHDRAWN"; entryId: string; by: string; on: string; reason: string }
   | { type: "TRANSFER_PROPOSED"; proposal: TransferProposal }
   | { type: "PROPOSAL_WITHDRAWN"; proposalId: string; by: string; on: string; reason: string }
@@ -36,9 +37,12 @@ const fail = (m: string): never => { throw new BondRegisterError(m); };
 const EPS = 1e-9;
 const sumBy = <T>(xs: readonly T[], f: (x: T) => number) => xs.reduce((t, x) => t + f(x), 0);
 const clean = (n: number) => (Math.abs(n) < EPS ? 0 : n);
-function checkMap(name: string, m: ReadonlyMap<string, number> | undefined): void {
+function checkMap(name: string, m: ReadonlyMap<string, number> | undefined, allowNegative = false): void {
   if (!m) return;
-  for (const v of m.values()) if (typeof v !== "number" || !Number.isFinite(v) || v < 0) fail(`${name}: every quantity must be a finite, non-negative number`);
+  for (const v of m.values()) {
+    if (typeof v !== "number" || !Number.isFinite(v)) fail(`${name}: every quantity must be a finite number`);
+    if (!allowNegative && v < 0) fail(`${name}: every quantity must be non-negative`);
+  }
 }
 const nonEmpty = (v: unknown): v is string => typeof v === "string" && v.trim().length > 0;
 const positive = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n > 0;
@@ -52,9 +56,11 @@ const isoTs = (s: unknown): s is string => typeof s === "string" && /^\d{4}-\d{2
 const trim = (s: string) => s.trim();
 const refKey = (s: string) => s.trim().toUpperCase();
 interface ReleaseState { id: string; sku: string; quantity: number; on: string; fromHash: string; toHash: string; fromTakenAt: string; toTakenAt: string; proposalId?: string; voided: boolean; uncovered: number }
-interface EntryState { entry: ClearanceEntry; verified?: { by: string; on: string; documentRef: string }; withdrawn?: { by: string; on: string; reason: string } }
+interface EntryState { entry: ClearanceEntry; verified?: { by: string; on: string; at?: string; documentRef: string }; withdrawn?: { by: string; on: string; reason: string } }
 export interface RegisterState {
   asOf: string;
+  /** SHA-256 of the Cin7 account the register is bound to (REGISTER_BOUND, first event only). Undefined until bound. */
+  boundAccount?: string;
   entries: Map<string, EntryState>;
   proposals: Map<string, { proposal: TransferProposal; withdrawn: boolean; completed: number }>;
   releases: ReleaseState[];
@@ -64,13 +70,20 @@ export interface RegisterState {
 export function foldRegister(events: readonly RegisterEvent[], opts: { asOf: string }): RegisterState {
   if (!validDate(opts.asOf)) fail("asOf must be a real YYYY-MM-DD date");
   const st: RegisterState = { asOf: opts.asOf, entries: new Map(), proposals: new Map(), releases: [] };
-  const live = (id: string): EntryState => { const e = st.entries.get(id); if (!e) fail(`unknown clearance entry`); const s = e as EntryState; if (s.withdrawn) fail("the clearance entry is withdrawn"); return s; };
+  const live = (id: string): EntryState => { const e = st.entries.get(typeof id === "string" ? id.trim() : id); if (!e) fail(`unknown clearance entry`); const s = e as EntryState; if (s.withdrawn) fail("the clearance entry is withdrawn"); return s; };
   const notFuture = (d: string, at: string, what: string) => { if (!validDate(d)) fail(`${at}: ${what} must be a real YYYY-MM-DD date`); if (d > opts.asOf) fail(`${at}: ${what} is in the future`); };
   const verifiedFor = (sku: string) => sumBy([...st.entries.values()].filter((s) => !s.withdrawn && s.verified), (s) => sumBy(s.entry.lines.filter((l) => l.sku === sku), (l) => l.quantity));
   events.forEach((ev, i) => {
     const at = `event ${i + 1}`;
     if (ev === null || typeof ev !== "object") fail(`${at}: not a valid register event`);
     switch (ev.type) {
+      case "REGISTER_BOUND": {
+        if (i !== 0) fail(`${at}: REGISTER_BOUND must be the first event (a register is bound to one account, once)`);
+        if (!nonEmpty(ev.accountIdSha256) || !nonEmpty(ev.by)) fail(`${at}: the account hash and who bound it are required`);
+        notFuture(ev.on, at, "binding date");
+        st.boundAccount = trim(ev.accountIdSha256);
+        break;
+      }
       case "CLEARANCE_ADDED": {
         if (ev.entry === null || typeof ev.entry !== "object") fail(`${at}: clearance entry missing`);
         const e = { ...ev.entry } as ClearanceEntry;
@@ -110,7 +123,8 @@ export function foldRegister(events: readonly RegisterEvent[], opts: { asOf: str
         if (ev.verifiedOn < s.entry.clearanceDate) fail(`${at}: verification date is before the clearance date`);
         if (!nonEmpty(ev.documentRef)) fail(`${at}: a document reference is required to verify`);
         if (s.entry.provenance === "OWNER_STATEMENT") fail(`${at}: an owner statement alone cannot be verified as customs clearance`);
-        s.verified = { by: trim(ev.verifiedBy), on: ev.verifiedOn, documentRef: trim(ev.documentRef) };
+        if (ev.verifiedAt !== undefined && (!isoTs(ev.verifiedAt) || ev.verifiedAt.slice(0, 10) !== ev.verifiedOn)) fail(`${at}: the verification timestamp must be a real UTC timestamp on the verification date`);
+        s.verified = { by: trim(ev.verifiedBy), on: ev.verifiedOn, at: ev.verifiedAt, documentRef: trim(ev.documentRef) };
         break;
       }
       case "CLEARANCE_WITHDRAWN": {
@@ -133,7 +147,7 @@ export function foldRegister(events: readonly RegisterEvent[], opts: { asOf: str
         break;
       }
       case "PROPOSAL_WITHDRAWN": {
-        const p = st.proposals.get(ev.proposalId);
+        const p = st.proposals.get(typeof ev.proposalId === "string" ? ev.proposalId.trim() : ev.proposalId);
         if (!p) fail(`${at}: unknown proposal`);
         if (!nonEmpty(ev.by) || !nonEmpty(ev.reason)) fail(`${at}: withdrawal needs who and a reason`);
         notFuture(ev.on, at, "withdrawal date");
@@ -166,7 +180,7 @@ export function foldRegister(events: readonly RegisterEvent[], opts: { asOf: str
         break;
       }
       case "RELEASE_VOIDED": {
-        const r = st.releases.find((x) => x.id === ev.releaseId);
+        const r = st.releases.find((x) => x.id === (typeof ev.releaseId === "string" ? ev.releaseId.trim() : ev.releaseId));
         if (!r) fail(`${at}: unknown release`);
         const rr = r as ReleaseState;
         if (rr.voided) fail(`${at}: the release is already voided`);
@@ -195,7 +209,7 @@ export interface AssessContext { bondBySku: ReadonlyMap<string, number>; operati
 
 
 export function assessBond(state: RegisterState, ctx: AssessContext): BondAssessment[] {
-  checkMap("bond stock", ctx.bondBySku); checkMap("operational usable", ctx.operationalUsableBySku);
+  checkMap("bond stock", ctx.bondBySku); checkMap("operational usable", ctx.operationalUsableBySku, true);
   const skus = new Set<string>(ctx.bondBySku.keys());
   for (const s of state.entries.values()) if (!s.withdrawn) s.entry.lines.forEach((l) => skus.add(l.sku));
   state.releases.filter((r) => !r.voided).forEach((r) => skus.add(r.sku));
@@ -236,6 +250,19 @@ export function validateProposal(state: RegisterState, ctx: AssessContext, p: { 
   return { ok: true };
 }
 
+/**
+ * The register as it stood when the movement began (the from-snapshot): a clearance verified AFTER that moment does not cover it, a verification with only a date
+ * is judged conservatively (same day = not yet verified), later releases are ignored, and releases recorded for this very pair are never counted against themselves.
+ */
+function stateAsAt(state: RegisterState, pair: { fromSnapshotHash: string; toSnapshotHash: string; fromTakenAt?: string }): RegisterState {
+  const T = pair.fromTakenAt === undefined ? undefined : Date.parse(pair.fromTakenAt);
+  if (T !== undefined && Number.isNaN(T)) fail("the from-snapshot timestamp is not a valid timestamp");
+  const inForce = (v: NonNullable<EntryState["verified"]>) => (T === undefined ? true : v.at ? Date.parse(v.at) <= T : v.on < new Date(T).toISOString().slice(0, 10));
+  const entries = new Map([...state.entries].map(([k, s]) => [k, s.verified && !inForce(s.verified) ? { entry: s.entry, withdrawn: s.withdrawn } : s] as const));
+  const releases = state.releases.filter((r) => !(r.fromHash === pair.fromSnapshotHash && r.toHash === pair.toSnapshotHash) && (T === undefined || Date.parse(r.toTakenAt) <= T));
+  return { ...state, entries, releases };
+}
+
 export interface MovementSnapshot { bondBySku: ReadonlyMap<string, number>; nonBondBySku: ReadonlyMap<string, number> }
 export interface ObservedMovement {
   sku: string; bondDecrease: number; bondIncrease: number; nonBondIncrease: number; eligibleBefore: number;
@@ -248,9 +275,9 @@ export interface ObservedMovement {
  * Compares two snapshots. Descriptive only. If the register may already hold releases for THIS snapshot pair, pass their hashes so those releases are
  * excluded from the eligibility the movement is judged against (otherwise a recorded release would be counted against itself).
  */
-export function observeBondMovement(state: RegisterState, prev: MovementSnapshot, curr: MovementSnapshot, pair?: { fromSnapshotHash: string; toSnapshotHash: string }): ObservedMovement[] {
+export function observeBondMovement(state: RegisterState, prev: MovementSnapshot, curr: MovementSnapshot, pair?: { fromSnapshotHash: string; toSnapshotHash: string; fromTakenAt?: string }): ObservedMovement[] {
   for (const m of [prev, curr]) { checkMap("bond stock", m.bondBySku); checkMap("non-Bond stock", m.nonBondBySku); }
-  const judged: RegisterState = pair ? { ...state, releases: state.releases.filter((r) => !(r.fromHash === pair.fromSnapshotHash && r.toHash === pair.toSnapshotHash)) } : state;
+  const judged = pair ? stateAsAt(state, pair) : state;
   const skus = new Set<string>([...prev.bondBySku.keys(), ...curr.bondBySku.keys(), ...prev.nonBondBySku.keys(), ...curr.nonBondBySku.keys()]);
   const before = new Map(assessBond(judged, { bondBySku: prev.bondBySku }).map((r) => [r.sku, r.eligible]));
   const out: ObservedMovement[] = [];
