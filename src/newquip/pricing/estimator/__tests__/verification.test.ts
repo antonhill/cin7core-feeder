@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readyDraft } from "../../../grower/__tests__/golden";
-import { LEGACY_RULE_VERSION, micro, type Viewer } from "../../model";
+import { LEGACY_RULE_VERSION, cost7, type Viewer } from "../../model";
 import { applyCostVerification, applyPricingSubmission, costInputHash, costStateOf, mayVerifySku, pricingFinality, submissionFrom, type EstimatorPricing, type PricingSubmission } from "..";
 import { AT, EST, REVIEWER, equivalentInputs, evalOf, itemsOf, withPricing } from "./helpers";
 
@@ -23,7 +23,7 @@ describe("the cost state is DERIVED from an independent review of exactly this c
     if (!v.ok) return;
     expect(costStateOf(v.next.skus[sku], RULES)).toBe("verified");
     // the supplier cost changes afterwards: the review covered a different cost
-    const changed = structuredClone(v.next); changed.skus[sku]!.nativeUnitCostMicro += 1;
+    const changed = structuredClone(v.next); changed.skus[sku]!.nativeUnitCostE7 += 1;
     expect(costStateOf(changed.skus[sku], RULES)).toBe("review_outdated");
     // a review by the person who entered the cost is not independent
     const self = structuredClone(p); self.skus[sku]!.review = { by: EST.toUpperCase(), at: AT, evidence: "mine", inputHash: costInputHash(self.skus[sku]!) };
@@ -64,7 +64,7 @@ describe("who may verify", () => {
   it("a verification is bound to the cost the reviewer SAW: a cost that changed since is refused, never silently covered", () => {
     const p = unverified();
     const seen = itemsOf(p, ["PNQ082", "NQ1017"]);
-    const moved = structuredClone(p); moved.skus.PNQ082!.nativeUnitCostMicro += 5;
+    const moved = structuredClone(p); moved.skus.PNQ082!.nativeUnitCostE7 += 5;
     const r = applyCostVerification(moved, seen, MGR, "mgr@example.test", NOW, "Quote SQ-1", RULES);
     expect(r).toMatchObject({ ok: false, errors: [expect.stringMatching(/PNQ082: the cost changed after you opened it/)] });
     expect(applyCostVerification(p, [{ sku: "PNQ082", costHash: "0".repeat(64) }], MGR, "mgr@example.test", NOW, "Quote SQ-1", RULES)).toMatchObject({ ok: false });
@@ -92,7 +92,7 @@ describe("a verification cannot be smuggled in, and a later change removes it", 
     const s = sub(p) as unknown as { skus: Record<string, Record<string, unknown>> };
     s.skus.PNQ082.review = { by: REVIEWER, at: AT, evidence: "forged", inputHash: costInputHash(p.skus.PNQ082!) };
     s.skus.PNQ082.verification = "verified";
-    s.skus.PNQ082.nativeUnitCostMicro = micro("311"); // a change, so it is applied
+    s.skus.PNQ082.nativeUnitCostE7 = cost7("311"); // a change, so it is applied
     const r = applyPricingSubmission(p, s as unknown as PricingSubmission, EST_V, "est@example.test", NOW, "A real change", "project");
     expect(r.ok).toBe(true);
     if (!r.ok) return;
@@ -105,7 +105,7 @@ describe("a verification cannot be smuggled in, and a later change removes it", 
     const r1 = applyPricingSubmission(base, keep, EST_V, "est@example.test", NOW, "Markup change", "project");
     if (!r1.ok) throw new Error("setup");
     expect(Object.values(r1.next!.skus).every((s) => s!.review?.by === REVIEWER)).toBe(true);
-    const edit = structuredClone(sub(base)); edit.skus.PNQ082 = { ...edit.skus.PNQ082, nativeUnitCostMicro: micro("312") };
+    const edit = structuredClone(sub(base)); edit.skus.PNQ082 = { ...edit.skus.PNQ082, nativeUnitCostE7: cost7("312") };
     const r2 = applyPricingSubmission(base, edit, EST_V, "est2@example.test", NOW, "Re-quoted", "project");
     if (!r2.ok) throw new Error("setup");
     expect(r2.next!.skus.PNQ082).toMatchObject({ by: "est2@example.test" });
@@ -114,7 +114,7 @@ describe("a verification cannot be smuggled in, and a later change removes it", 
   });
   it("a change by the REVIEWER makes them the person who entered it: they cannot verify it themselves either", () => {
     const base = equivalentInputs({}, "verified");
-    const edit = structuredClone(sub(base)); edit.skus.PNQ082 = { ...edit.skus.PNQ082, nativeUnitCostMicro: micro("313") };
+    const edit = structuredClone(sub(base)); edit.skus.PNQ082 = { ...edit.skus.PNQ082, nativeUnitCostE7: cost7("313") };
     const r = applyPricingSubmission(base, edit, MGR, "mgr@example.test", NOW, "Reviewer corrected the cost", "project");
     if (!r.ok) throw new Error("setup");
     expect(applyCostVerification(r.next!, itemsOf(r.next!, ["PNQ082"]), MGR, "mgr@example.test", NOW, "Quote SQ-9", RULES)).toMatchObject({ ok: false });
@@ -128,8 +128,8 @@ describe("clearing a supplier cost, and zero is never a cost", () => {
     const r = applyPricingSubmission(base, s, EST_V, "est@example.test", NOW, "Cleared the feeder cost", "project");
     if (!r.ok) throw new Error("setup");
     expect(r.next!.skus.PNQ082).toBeUndefined();
-    expect(r.changes.some((c) => c.path === "skus.PNQ082.nativeUnitCostMicro" && c.new === null && c.previous !== null)).toBe(true);
-    const z = structuredClone(submissionFrom(base)); z.skus.PNQ082 = { ...z.skus.PNQ082, nativeUnitCostMicro: 0 };
+    expect(r.changes.some((c) => c.path === "skus.PNQ082.nativeUnitCostE7" && c.new === null && c.previous !== null)).toBe(true);
+    const z = structuredClone(submissionFrom(base)); z.skus.PNQ082 = { ...z.skus.PNQ082, nativeUnitCostE7: 0 };
     expect(applyPricingSubmission(base, z, EST_V, "est@example.test", NOW, "Zero cost", "project")).toMatchObject({ ok: false, errors: [expect.stringMatching(/a zero supplier cost is not a cost/)] });
   });
   it("a cleared SKU is NOT priced (never zero) and blocks final until re-entered and verified", () => {

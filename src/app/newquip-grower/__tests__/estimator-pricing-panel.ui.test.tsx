@@ -85,6 +85,48 @@ describe("what the Estimator sees", () => {
   });
 });
 
+describe("an invalid supplier cost shows a message instead of silently disappearing", () => {
+  const typeCost = (v: string) => { const cost = screen.getAllByLabelText(/PNQ082 supplier cost/)[0] as HTMLInputElement; fireEvent.change(cost, { target: { value: v } }); fireEvent.blur(cost, { target: { value: v } }); return cost; };
+  it("more than 7 decimals: a clear message, the field is marked invalid, nothing is rounded", async () => {
+    mount(bundle(equivalentInputs()));
+    await waitFor(() => expect(screen.getByTestId("pricing-save")).toBeTruthy());
+    const cost = typeCost("6.54547551");
+    expect(await screen.findByText(/At most 7 decimal places are allowed.*Nothing was rounded/)).toBeTruthy();
+    expect(cost.getAttribute("aria-invalid")).toBe("true");
+    expect(cost.value).toBe("6.54547551"); // what was typed stays visible
+  });
+  it("a comma, units or text: a clear message", async () => {
+    mount(bundle(equivalentInputs()));
+    await waitFor(() => expect(screen.getByTestId("pricing-save")).toBeTruthy());
+    for (const bad of ["6,5", "R 12", "abc", "-1", "1e-7"]) {
+      const cost = typeCost(bad);
+      expect(await screen.findByText(/Enter the cost as a plain number/)).toBeTruthy();
+      expect(cost.getAttribute("aria-invalid")).toBe("true");
+    }
+  });
+  it("a valid 7-decimal cost clears the message and is what gets saved; an invalid entry never overwrote the saved value", async () => {
+    mount(bundle(equivalentInputs()));
+    await waitFor(() => expect(screen.getByTestId("pricing-save")).toBeTruthy());
+    typeCost("6.54547551");
+    expect(await screen.findByText(/At most 7 decimal places/)).toBeTruthy();
+    const cost = typeCost("6.5454755");
+    await waitFor(() => expect(screen.queryByText(/At most 7 decimal places/)).toBeNull());
+    expect(cost.getAttribute("aria-invalid")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Reason for this pricing revision"), { target: { value: "Cin7 cost" } });
+    vi.mocked(actions.applyEstimatorPricingAction).mockResolvedValue({ ok: true, data: { seq: 2, kind: "CHANGED", changedValues: 1, confirmation: { confirmationCleared: false, signoffCleared: false, returnedToRep: false, previousCents: 1, newCents: 1 } } });
+    fireEvent.click(screen.getByTestId("pricing-save"));
+    await waitFor(() => expect(actions.applyEstimatorPricingAction).toHaveBeenCalled());
+    const submission = vi.mocked(actions.applyEstimatorPricingAction).mock.calls.at(-1)![1];
+    expect(submission.skus.PNQ082.nativeUnitCostE7).toBe(65_454_755);
+  });
+  it("an empty field leaves the saved cost alone and shows no error", async () => {
+    mount(bundle(equivalentInputs()));
+    await waitFor(() => expect(screen.getByTestId("pricing-save")).toBeTruthy());
+    const cost = typeCost("");
+    expect(cost.getAttribute("aria-invalid")).toBeNull();
+  });
+});
+
 describe("saving", () => {
   it("needs a reason; saves the edited inputs as ONE submission with that reason; and tells the Estimator the Rep must reconfirm when the total moved", async () => {
     const reload = mount(bundle(equivalentInputs()));
@@ -100,7 +142,7 @@ describe("saving", () => {
     await waitFor(() => expect(actions.applyEstimatorPricingAction).toHaveBeenCalledTimes(1));
     const [qid, submission, reason] = vi.mocked(actions.applyEstimatorPricingAction).mock.calls[0];
     expect(qid).toBe("q1"); expect(reason).toBe("Supplier re-quoted");
-    expect(submission.skus.PNQ082.nativeUnitCostMicro).toBe(60_000_000);
+    expect(submission.skus.PNQ082.nativeUnitCostE7).toBe(600_000_000);
     expect(JSON.stringify(submission)).not.toMatch(/"by"|"at"/); // attribution is the server's, never the browser's
     await waitFor(() => expect(screen.getByTestId("pricing-note").textContent).toMatch(/Rep&apos;s|Rep's confirmation was withdrawn.*back with the Rep/));
     expect(reload).toHaveBeenCalled();
@@ -122,12 +164,12 @@ describe("saving", () => {
     expect(screen.getByText(/Approved: the pricing is frozen/)).toBeTruthy();
   });
   it("shows the immutable revision history with who, why and previous -> new", async () => {
-    mount(bundle(equivalentInputs(), { revisions: [{ id: "r1", seq: 1, quoteRevision: 1, kind: "ENABLED", ruleVersion: "legacy-poc-v1", reason: "Initial pricing", changes: [{ path: "skus.PNQ082.nativeUnitCostMicro", previous: null, new: 50_000_000 }], changedBy: "est@nq", at: "2026-11-12T08:00:00.000Z", newPricingHash: "a".repeat(64) }] }));
+    mount(bundle(equivalentInputs(), { revisions: [{ id: "r1", seq: 1, quoteRevision: 1, kind: "ENABLED", ruleVersion: "legacy-poc-v1", reason: "Initial pricing", changes: [{ path: "skus.PNQ082.nativeUnitCostE7", previous: null, new: 500_000_000 }], changedBy: "est@nq", at: "2026-11-12T08:00:00.000Z", newPricingHash: "a".repeat(64) }] }));
     await waitFor(() => expect(screen.getByTestId("pricing-history")).toBeTruthy());
     const h = screen.getByTestId("pricing-history").textContent!;
     expect(h).toMatch(/Revision 1.*enabled.*legacy-poc-v1.*est@nq/);
     expect(h).toMatch(/Why: Initial pricing/);
-    expect(h).toMatch(/skus\.PNQ082\.nativeUnitCostMicro: null → 50000000/);
+    expect(h).toMatch(/skus\.PNQ082\.nativeUnitCostE7: null → 500000000/);
   });
 });
 
@@ -219,7 +261,7 @@ describe("hardening: cost verification, expiry, clearing and rate fields (render
     await waitFor(() => expect(actions.applyEstimatorPricingAction).toHaveBeenCalledTimes(1));
     const submission = vi.mocked(actions.applyEstimatorPricingAction).mock.calls[0][1];
     expect(Object.keys(submission.skus)).not.toContain("PNQ082");
-    expect(Object.values(submission.skus).every((s) => s.nativeUnitCostMicro > 0)).toBe(true);
+    expect(Object.values(submission.skus).every((s) => s.nativeUnitCostE7 > 0)).toBe(true);
     expect(JSON.stringify(submission)).not.toMatch(/"review"|"verification"/);
   });
 });

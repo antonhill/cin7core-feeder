@@ -43,7 +43,7 @@ export interface CostingStatus {
  * cost estimate (supplier costs, captured by the cost actions) covers every SKU of the physical scope. An authorised, recorded `incompleteAccepted` exception on
  * the draft waives only the COST part (never an unresolved mapping or price) - the same exception the baseline freeze honours.
  */
-export function estimatorCostingComplete(draft: QuoteDraft, costEvaluation: QuoteEvaluation, library?: ReadonlyMap<string, LibraryMapping>, asOfIso: string = new Date().toISOString()): CostingStatus {
+export function estimatorCostingComplete(draft: QuoteDraft, costEvaluation: QuoteEvaluation, library?: ReadonlyMap<string, LibraryMapping>, asOfIso: string = new Date().toISOString(), phase2Coverage?: (missingSkus: readonly string[]) => ReadonlySet<string>): CostingStatus {
   const reasons: string[] = [...costEvaluation.readiness.estimatorReasons];
   const b = costEvaluation.budget;
   const cost: string[] = [];
@@ -57,7 +57,11 @@ export function estimatorCostingComplete(draft: QuoteDraft, costEvaluation: Quot
       if (est.incomplete) {
         // Only catalogue / physical SKUs with no supplier cost count. Items with no Cin7 SKU because the Estimator prices them by design (M75, penning, a manual
         // price) are resolved PRICING, not an unresolved supplier cost; the baseline freeze keeps its own, stricter package rule.
-        if (est.missingSkus.length) cost.push(`The cost estimate is incomplete: ${est.missingSkus.length} SKU(s) have no supplier cost selected (${est.missingSkus.slice(0, 5).join(", ")}${est.missingSkus.length > 5 ? ", ..." : ""}).`);
+        // A quotation that uses Estimator supplier pricing (NQ-008B Phase 2) satisfies this for a SKU only when its CURRENT pricing holds an independently verified, complete cost for exactly that SKU
+        // (see pricing/estimator/legacy-cost-coverage.ts). Any other SKU stays listed; no waiver is involved. Without supplier pricing `phase2Coverage` is absent and nothing changes.
+        const covered = phase2Coverage ? phase2Coverage(est.missingSkus) : undefined;
+        const missing = covered && covered.size ? est.missingSkus.filter((sku) => !covered.has(sku)) : est.missingSkus;
+        if (missing.length) cost.push(`The cost estimate is incomplete: ${missing.length} SKU(s) have no supplier cost selected (${missing.slice(0, 5).join(", ")}${missing.length > 5 ? ", ..." : ""}).`);
       }
     }
     try {

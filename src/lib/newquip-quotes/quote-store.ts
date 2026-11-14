@@ -8,6 +8,7 @@ import type { createServiceRoleClient } from "@/supabase/server";
 import { evaluateDraft, type EvaluationContext, type QuoteEvaluation } from "@/newquip/grower/evaluate";
 import { emptyDraft, type QuoteDraft } from "@/newquip/grower/draft";
 import { pricingFinality } from "@/newquip/pricing/estimator/finality";
+import { legacyCostCoverageFor } from "@/newquip/pricing/estimator/legacy-cost-coverage";
 import { keepServerOwnedPricing } from "@/newquip/pricing/estimator/ownership";
 import { buildAcceptedBaseline, baselineMatchesHash, commercialLinesOf, hashOf, type AcceptedBaseline } from "@/newquip/quote/baseline";
 import { baselineExceptionView, baselineMappingGate, validateExceptionReason, type BaselineExceptionRequest, type BaselineExceptionView } from "@/newquip/quote/baseline-exception";
@@ -78,7 +79,10 @@ const indicativeTotalCents = (ev: QuoteEvaluation): number | null => (ev.budget 
 export async function costingOf(db: Db, orgId: string, draft: QuoteDraft, ctx: EvaluationContext): Promise<CostingStatus> {
   const library = await listActiveMappings(db, orgId);
   const ev = evaluateDraft(draft, { ...ctx, withholdCost: false });
-  const base = estimatorCostingComplete(draft, ev, library ? libraryOf(library) : undefined);
+  const nowIso = new Date().toISOString();
+  // NQ-008B Phase 2: a SKU the legacy check lists as having no supplier cost is satisfied only by the CURRENT, independently verified supplier pricing of exactly that SKU (no waiver, nothing for a
+  // quotation that has not enabled supplier pricing). Every Phase 2 gate below still applies in full.
+  const base = estimatorCostingComplete(draft, ev, library ? libraryOf(library) : undefined, nowIso, legacyCostCoverageFor(draft.estimator.pricing, nowIso));
   // NQ-008B Phase 2 (owner decision 2): supplier pricing that is not verified is indicative only. It makes costing INCOMPLETE for sign-off and approval and the
   // accepted-incomplete exception does not waive it (so `acceptedIncomplete` is dropped). A draft without Estimator pricing is judged exactly as before.
   const fin = pricingFinality(draft.estimator.pricing, ev.budget);
@@ -97,7 +101,7 @@ export async function baselineExceptionOf(db: Db, orgId: string, draft: QuoteDra
   const scope = buildPhysicalScope(lines);
   const lib = library ? libraryOf(library) : undefined;
   const costEx = draft.estimator.costBasis?.incompleteAccepted;
-  return baselineExceptionView(baselineMappingGate({ lines, scope: lib && lib.size ? applyMappingLibrary(scope, lib, asOfIso) : scope, physicalCosts: draft.estimator.physicalCosts, costExceptionAccepted: !!costEx, pocWaiver: isPocQuote(draft) && pocPresentationEnabled(process.env as Record<string, string | undefined>, orgId) }), costEx ?? null);
+  return baselineExceptionView(baselineMappingGate({ lines, scope: lib && lib.size ? applyMappingLibrary(scope, lib, asOfIso) : scope, physicalCosts: draft.estimator.physicalCosts, costExceptionAccepted: !!costEx, pocWaiver: isPocQuote(draft) && pocPresentationEnabled(process.env as Record<string, string | undefined>, orgId), phase2Coverage: legacyCostCoverageFor(draft.estimator.pricing, asOfIso) }), costEx ?? null);
 }
 
 // ── reads ───────────────────────────────────────────────────────────────────
@@ -341,6 +345,7 @@ export async function managerApprove(db: Db, orgId: string, roles: ReadonlySet<Q
     quoteRef: q.quote_ref, revision: q.revision, draft: q.draft, evaluation: ev,
     ...(isPocQuote(q.draft) && pocPresentationEnabled(process.env as Record<string, string | undefined>, orgId) ? { pocPresentation: true } : {}),
     ...(bx ? { baselineException: { reason: bx.reason, draftHash: q.draft_hash } } : {}),
+    phase2Coverage: legacyCostCoverageFor(q.draft.estimator.pricing, now),
     // Cost-visible evaluation of the SAME draft, used only for the internal margin sheet frozen with the baseline.
     marginEvaluation: marginCtx ? evaluateDraft(q.draft, marginCtx) : undefined,
     approvals: {

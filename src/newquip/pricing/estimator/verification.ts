@@ -10,7 +10,7 @@ import type { CostReview, EstimatorPricing, SkuPricingInput } from "./types";
 
 /** The fields a review covers. Attribution (`by`, `at`) and the review itself are not part of the cost, so re-saving an unchanged cost keeps its review. */
 export function costInputHash(s: SkuPricingInput): string {
-  return hashOf({ supplierId: s.supplierId, supplierName: s.supplierName, currency: s.currency, nativeUnitCostMicro: s.nativeUnitCostMicro, source: s.source, freight: s.freight });
+  return hashOf({ supplierId: s.supplierId, supplierName: s.supplierName, currency: s.currency, nativeUnitCostE7: s.nativeUnitCostE7, source: s.source, freight: s.freight });
 }
 
 export type CostState =

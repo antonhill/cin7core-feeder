@@ -55,7 +55,7 @@ const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\
 const isRealDate = (s: string): boolean => ISO_DATE.test(s) && new Date(`${s}T00:00:00.000Z`).toISOString().slice(0, 10) === s;
 /** The longest a forward-cover contract may run (days): a "documented" rate cannot be made effectively permanent. */
 export const MAX_FORWARD_COVER_DAYS = 366;
-const MAX = { text: 200, reason: 500, costMicro: 1e12, rateMicro: 1e9, factorMicro: 1e8, addOnCents: 1e10, priceCents: 1e11, targetCents: 1e13, days: 3650, maps: 300, currencies: 20 } as const;
+const MAX = { text: 200, reason: 500, costE7: 1e13, rateMicro: 1e9, factorMicro: 1e8, addOnCents: 1e10, priceCents: 1e11, targetCents: 1e13, days: 3650, maps: 300, currencies: 20 } as const;
 const isObj = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 
 export function normaliseSubmission(raw: unknown, nowIso: string): { ok: true; value: PricingSubmission } | { ok: false; errors: string[] } {
@@ -90,7 +90,7 @@ export function normaliseSubmission(raw: unknown, nowIso: string): { ok: true; v
     if (!/^[A-Z]{3}$/.test(cur)) e.push(`${k}: the currency must be a three-letter code.`);
     out.skus[k] = {
       supplierId: text(v.supplierId, 64, `${k}: the supplier id`, { nullable: true }), supplierName: text(v.supplierName, 120, `${k}: the supplier`, { nullable: true }),
-      currency: cur, nativeUnitCostMicro: v.nativeUnitCostMicro === 0 ? (e.push(`${k}: a zero supplier cost is not a cost. Clear the cost to remove it, or enter the quoted cost.`), 0) : int(v.nativeUnitCostMicro, 1, MAX.costMicro, `${k}: the supplier cost`),
+      currency: cur, nativeUnitCostE7: v.nativeUnitCostE7 === 0 ? (e.push(`${k}: a zero supplier cost is not a cost. Clear the cost to remove it, or enter the quoted cost.`), 0) : int(v.nativeUnitCostE7, 1, MAX.costE7, `${k}: the supplier cost`),
       source: text(v.source, MAX.text, `${k}: the cost source`) ?? "",
       freight: isObj(f) ? { factorMicro: int(f.factorMicro, 1, MAX.factorMicro, `${k}: the freight factor`), ...(f.addOnCents === undefined || f.addOnCents === null ? {} : { addOnCents: int(f.addOnCents, 0, MAX.addOnCents, `${k}: the landed-cost add-on`) }), source: text(f.source, MAX.text, `${k}: the freight source`, { nullable: true }) ?? "" } : null,
     } as PricingSubmission["skus"][string];

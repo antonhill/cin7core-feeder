@@ -124,7 +124,9 @@ export interface BaselineMappingGate {
  */
 export function baselineMappingGate(i: { lines: readonly BaselineCommercialLine[]; scope: readonly ScopeItem[]; physicalCosts: Parameters<typeof buildCostEstimate>[1] | undefined; costExceptionAccepted: boolean;
   /** POC Presentation Mode, marked quotations only: EVERY unresolved mapping is covered by the Manager's recorded exception (listed, never represented as verified). Normal quotations leave this off. */
-  pocWaiver?: boolean }): BaselineMappingGate {
+  pocWaiver?: boolean;
+  /** NQ-008B Phase 2: which of the SKUs with no captured supplier cost the CURRENT, independently verified supplier pricing covers (see pricing/estimator/legacy-cost-coverage.ts). Absent = none. */
+  phase2Coverage?: (missingSkus: readonly string[]) => ReadonlySet<string> }): BaselineMappingGate {
   const captured = i.physicalCosts;
   const eff = effectiveScope(i.scope);
   // The frozen cost estimate exists only once costing has started (unchanged). The UNMAPPED-package rule below does NOT depend on that: an Estimator-priced system with no Cin7 SKU needs the
@@ -145,7 +147,9 @@ export function baselineMappingGate(i: { lines: readonly BaselineCommercialLine[
     const key = it.id.endsWith(UNMAPPED_SUFFIX) ? it.id.slice(0, -UNMAPPED_SUFFIX.length) : null;
     blocking.push({ label: it.description, pricedBy: (key && i.lines.find((l) => l.itemKey === key)?.pricedBy) || null });
   }
-  const missingSkus = i.costExceptionAccepted ? [] : (estimate?.missingSkus ?? []);
+  const rawMissing = estimate?.missingSkus ?? [];
+  const phase2Covered = i.phase2Coverage && rawMissing.length ? i.phase2Coverage(rawMissing) : undefined;
+  const missingSkus = i.costExceptionAccepted ? [] : (phase2Covered && phase2Covered.size ? rawMissing.filter((sku) => !phase2Covered.has(sku)) : rawMissing);
   const blocked = covered.length > 0 || remaining.length > 0 || missingSkus.length > 0;
   return {
     estimate, blocked, items: covered.map((w) => w.item), remainingPackages: remaining, blocking, missingSkus,

@@ -153,7 +153,7 @@ describe("server ownership", () => {
 describe("found in the isolated Preview run: a zero supplier cost is never shown as a price", () => {
   it("the workspace row is NOT priced (no R 0,00), says a supplier quote is required, and the attention list names it", async () => {
     const { buildPricingWorkspace } = await import("..");
-    const p = equivalentInputs(); p.skus.PNQ082 = { ...p.skus.PNQ082!, nativeUnitCostMicro: 0 };
+    const p = equivalentInputs(); p.skus.PNQ082 = { ...p.skus.PNQ082!, nativeUnitCostE7: 0 };
     const d = withPricing(p);
     const v = buildPricingWorkspace({ quoteType: "project", pricing: p, budget: evalOf(d).budget, originalTotalCents: null, originalCapturedAt: null });
     const row = v.rows.find((r) => r.sku === "PNQ082")!;

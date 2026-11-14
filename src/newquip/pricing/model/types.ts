@@ -50,8 +50,8 @@ export interface SupplierCostInput {
   supplierName: string | null;
   /** The currency the supplier invoices in (ISO 4217). ZAR means no conversion. */
   currency: string;
-  /** Supplier cost per unit in `currency`, micro units. */
-  nativeUnitCostMicro: number;
+  /** Supplier cost per unit in `currency`, in units of 1e-7 (E7; Cin7 reports up to 7 decimals). See `cost7` in money.ts. */
+  nativeUnitCostE7: number;
   /** "verified" only when someone has confirmed it against a supplier quote / invoice. */
   verification: "verified" | "unverified";
   /** Where the figure came from (workbook sheet, supplier quote reference, Cin7 supplier price...). */

@@ -16,7 +16,7 @@ describe("1. a ZAR customer quote with EUR and USD supplier products", () => {
     expect(line(r, "fixings")).toMatchObject({ unitLandedCostCents: 25_000, unitPriceCents: 30_000, revenueCents: 600_000, costCents: 500_000 });
   });
   it("records the supplier, currency, native cost, and the exchange rate used with its source and date", () => {
-    expect(line(r, "feeder")).toMatchObject({ supplier: "Euro Supplier BV", currency: "EUR", nativeUnitCostMicro: 100_000_000, rate: { kind: "spot", rateMicro: 20_000_000, source: "Fixture spot", asOf: "2026-11-11T08:00:00.000Z" } });
+    expect(line(r, "feeder")).toMatchObject({ supplier: "Euro Supplier BV", currency: "EUR", nativeUnitCostE7: 1_000_000_000, rate: { kind: "spot", rateMicro: 20_000_000, source: "Fixture spot", asOf: "2026-11-11T08:00:00.000Z" } });
     expect(r.ratesUsed.map((x) => `${x.currency}:${x.kind}`)).toEqual(["EUR:spot", "USD:spot", "ZAR:base"]);
   });
   it("totals, and SEPARATE markup and gross margin", () => {

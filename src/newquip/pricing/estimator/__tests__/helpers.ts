@@ -2,7 +2,7 @@ import { evaluateDraft, type QuoteEvaluation } from "../../../grower/evaluate";
 import { readyDraft } from "../../../grower/__tests__/golden";
 import { TEST_SNAPSHOT, testPriceSource } from "../../../grower/__tests__/test-snapshot";
 import type { QuoteDraft } from "../../../grower/draft";
-import { micro } from "../../model";
+import { micro, cost7 } from "../../model";
 import type { EstimatorPricing, ManualPriceEvidence, SkuPricingInput } from "../types";
 import { manualPriceHash, skuLessManualItems } from "../manual-evidence";
 import { costInputHash } from "../verification";
@@ -23,7 +23,7 @@ export function equivalentInputs(over: Partial<EstimatorPricing> = {}, verificat
     const currency = order[i % 3];
     const rate = currency === "ZAR" ? 1 : 20;
     const entry: SkuPricingInput = {
-      supplierId: `sup-${currency}`, supplierName: `${currency} Supplier`, currency, nativeUnitCostMicro: micro(String(e.cost / rate)),
+      supplierId: `sup-${currency}`, supplierName: `${currency} Supplier`, currency, nativeUnitCostE7: cost7(String(e.cost / rate)),
       source: "Fixture supplier sheet", freight: { factorMicro: micro(String(e.freight)), source: "Fixture" }, by: EST, at: AT,
     };
     // "verified" = an INDEPENDENT review (a different person from the one who entered it) of exactly this cost

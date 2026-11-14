@@ -125,6 +125,8 @@ export interface BaselineInput {
   baselineException?: { reason: string; draftHash: string };
   /** POC Presentation Mode (marked quotation only): unresolved mappings are listed in the exception as UNVERIFIED instead of blocking the freeze. */
   pocPresentation?: boolean;
+  /** NQ-008B Phase 2: which SKUs with no captured supplier cost the CURRENT, independently verified supplier pricing covers (supplied by the caller; this module never imports the pricing model). */
+  phase2Coverage?: (missingSkus: readonly string[]) => ReadonlySet<string>;
 }
 
 type Budget = NonNullable<QuoteEvaluation["budget"]>;
@@ -151,7 +153,7 @@ export function buildAcceptedBaseline(i: BaselineInput): { baseline: AcceptedBas
   const lines = commercialLinesOf(b);
 
   const physicalScope = i.mappingLibrary && i.mappingLibrary.size ? applyMappingLibrary(buildPhysicalScope(lines), i.mappingLibrary, i.approvals.managerApprovedAt) : buildPhysicalScope(lines);
-  const gate = baselineMappingGate({ lines, scope: physicalScope, physicalCosts: draft.estimator.physicalCosts, costExceptionAccepted: !!draft.estimator.costBasis?.incompleteAccepted, pocWaiver: i.pocPresentation === true });
+  const gate = baselineMappingGate({ lines, scope: physicalScope, physicalCosts: draft.estimator.physicalCosts, costExceptionAccepted: !!draft.estimator.costBasis?.incompleteAccepted, pocWaiver: i.pocPresentation === true, phase2Coverage: i.phase2Coverage });
   const builtEstimate = gate.estimate;
   // Unmapped packages block the freeze whether or not costing has started; a missing supplier cost blocks once costing has started. Neither can be frozen, unless an authorised user recorded an explicit, reasoned exception (frozen with it).
   // A Manager's baseline exception covers ONLY the Estimator-priced systems without a Cin7 SKU; any other unresolved package or missing supplier cost still refuses.
