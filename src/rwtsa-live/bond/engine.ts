@@ -27,12 +27,19 @@ export type RegisterEvent =
   | { type: "CLEARANCE_WITHDRAWN"; entryId: string; by: string; on: string; reason: string }
   | { type: "TRANSFER_PROPOSED"; proposal: TransferProposal }
   | { type: "PROPOSAL_WITHDRAWN"; proposalId: string; by: string; on: string; reason: string }
-  | { type: "RELEASE_RECORDED"; id: string; sku: string; quantity: number; on: string; recordedBy: string; fromSnapshotHash: string; toSnapshotHash: string };
+  | { type: "RELEASE_RECORDED"; id: string; sku: string; quantity: number; on: string; recordedBy: string; fromSnapshotHash: string; toSnapshotHash: string; fromTakenAt: string; toTakenAt: string; proposalId?: string }
+  | { type: "RELEASE_VOIDED"; releaseId: string; by: string; on: string; reason: string };
 
 export class BondRegisterError extends Error { constructor(message: string) { super(message); this.name = "BondRegisterError"; } }
 const fail = (m: string): never => { throw new BondRegisterError(m); };
 
 const EPS = 1e-9;
+const sumBy = <T>(xs: readonly T[], f: (x: T) => number) => xs.reduce((t, x) => t + f(x), 0);
+const clean = (n: number) => (Math.abs(n) < EPS ? 0 : n);
+function checkMap(name: string, m: ReadonlyMap<string, number> | undefined): void {
+  if (!m) return;
+  for (const v of m.values()) if (typeof v !== "number" || !Number.isFinite(v) || v < 0) fail(`${name}: every quantity must be a finite, non-negative number`);
+}
 const nonEmpty = (v: unknown): v is string => typeof v === "string" && v.trim().length > 0;
 const positive = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n > 0;
 function validDate(s: unknown): s is string {
@@ -41,12 +48,16 @@ function validDate(s: unknown): s is string {
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
 }
 
+const isoTs = (s: unknown): s is string => typeof s === "string" && /^\d{4}-\d{2}-\d{2}T/.test(s) && !Number.isNaN(Date.parse(s));
+const trim = (s: string) => s.trim();
+const refKey = (s: string) => s.trim().toUpperCase();
+interface ReleaseState { id: string; sku: string; quantity: number; on: string; fromHash: string; toHash: string; fromTakenAt: string; toTakenAt: string; proposalId?: string; voided: boolean; uncovered: number }
 interface EntryState { entry: ClearanceEntry; verified?: { by: string; on: string; documentRef: string }; withdrawn?: { by: string; on: string; reason: string } }
 export interface RegisterState {
   asOf: string;
   entries: Map<string, EntryState>;
-  proposals: Map<string, { proposal: TransferProposal; withdrawn: boolean }>;
-  releases: { id: string; sku: string; quantity: number; on: string }[];
+  proposals: Map<string, { proposal: TransferProposal; withdrawn: boolean; completed: number }>;
+  releases: ReleaseState[];
 }
 
 /** Validates and folds the append-only event list. Throws BondRegisterError (message names the rule, never echoes secrets) on any invalid event. */
@@ -54,72 +65,115 @@ export function foldRegister(events: readonly RegisterEvent[], opts: { asOf: str
   if (!validDate(opts.asOf)) fail("asOf must be a real YYYY-MM-DD date");
   const st: RegisterState = { asOf: opts.asOf, entries: new Map(), proposals: new Map(), releases: [] };
   const live = (id: string): EntryState => { const e = st.entries.get(id); if (!e) fail(`unknown clearance entry`); const s = e as EntryState; if (s.withdrawn) fail("the clearance entry is withdrawn"); return s; };
+  const notFuture = (d: string, at: string, what: string) => { if (!validDate(d)) fail(`${at}: ${what} must be a real YYYY-MM-DD date`); if (d > opts.asOf) fail(`${at}: ${what} is in the future`); };
+  const verifiedFor = (sku: string) => sumBy([...st.entries.values()].filter((s) => !s.withdrawn && s.verified), (s) => sumBy(s.entry.lines.filter((l) => l.sku === sku), (l) => l.quantity));
   events.forEach((ev, i) => {
     const at = `event ${i + 1}`;
+    if (ev === null || typeof ev !== "object") fail(`${at}: not a valid register event`);
     switch (ev.type) {
       case "CLEARANCE_ADDED": {
-        const e = ev.entry;
+        if (ev.entry === null || typeof ev.entry !== "object") fail(`${at}: clearance entry missing`);
+        const e = { ...ev.entry } as ClearanceEntry;
         if (!nonEmpty(e.id)) fail(`${at}: clearance id required`);
         if (st.entries.has(e.id)) fail(`${at}: duplicate clearance id`);
         if (!nonEmpty(e.shipmentRef)) fail(`${at}: shipment or PO reference required`);
         if (!nonEmpty(e.clearanceRef)) fail(`${at}: customs-clearance reference required`);
         if (!validDate(e.clearanceDate)) fail(`${at}: clearance date must be a real YYYY-MM-DD date`);
         if (e.clearanceDate > opts.asOf) fail(`${at}: clearance date is in the future`);
-        if (!validDate(e.recordedOn)) fail(`${at}: recordedOn must be a real YYYY-MM-DD date`);
+        notFuture(e.recordedOn, at, "recordedOn");
         if (!nonEmpty(e.attributedTo)) fail(`${at}: owner attribution required`);
         if (!(PROVENANCE as readonly string[]).includes(e.provenance)) fail(`${at}: evidence provenance must be one of ${PROVENANCE.join(", ")} (a transfer, posted duty or freight invoice is not clearance evidence)`);
         if (!Array.isArray(e.lines) || e.lines.length === 0) fail(`${at}: at least one SKU line required`);
+        const lines: ClearanceLine[] = [];
         const skus = new Set<string>();
         for (const l of e.lines) {
-          if (!nonEmpty(l.sku)) fail(`${at}: line SKU required`);
+          if (l === null || typeof l !== "object" || !nonEmpty(l.sku)) fail(`${at}: line SKU required`);
           if (!positive(l.quantity)) fail(`${at}: cleared quantity must be a positive number`);
-          if (skus.has(l.sku)) fail(`${at}: duplicate SKU within the entry`);
-          skus.add(l.sku);
+          const sku = trim(l.sku);
+          if (skus.has(sku)) fail(`${at}: duplicate SKU within the entry`);
+          skus.add(sku); lines.push({ sku, quantity: l.quantity });
         }
+        e.id = trim(e.id); e.shipmentRef = trim(e.shipmentRef); e.clearanceRef = trim(e.clearanceRef); e.attributedTo = trim(e.attributedTo); e.lines = lines;
+        if (st.entries.has(e.id)) fail(`${at}: duplicate clearance id`);
         for (const other of st.entries.values()) {
-          if (other.withdrawn || other.entry.clearanceRef !== e.clearanceRef) continue;
+          if (other.withdrawn || refKey(other.entry.clearanceRef) !== refKey(e.clearanceRef)) continue;
           if (other.entry.lines.some((l) => skus.has(l.sku))) fail(`${at}: duplicate clearance reference for a SKU already recorded (would count it twice)`);
         }
-        st.entries.set(e.id, { entry: { ...e, lines: e.lines.map((l) => ({ ...l })) } });
+        st.entries.set(e.id, { entry: e });
         break;
       }
       case "CLEARANCE_VERIFIED": {
         const s = live(ev.entryId);
         if (s.verified) fail(`${at}: the clearance entry is already verified`);
         if (!nonEmpty(ev.verifiedBy)) fail(`${at}: verifier required`);
-        if (!validDate(ev.verifiedOn)) fail(`${at}: verification date must be a real YYYY-MM-DD date`);
+        notFuture(ev.verifiedOn, at, "verification date");
+        if (ev.verifiedOn < s.entry.clearanceDate) fail(`${at}: verification date is before the clearance date`);
         if (!nonEmpty(ev.documentRef)) fail(`${at}: a document reference is required to verify`);
         if (s.entry.provenance === "OWNER_STATEMENT") fail(`${at}: an owner statement alone cannot be verified as customs clearance`);
-        s.verified = { by: ev.verifiedBy, on: ev.verifiedOn, documentRef: ev.documentRef };
+        s.verified = { by: trim(ev.verifiedBy), on: ev.verifiedOn, documentRef: trim(ev.documentRef) };
         break;
       }
       case "CLEARANCE_WITHDRAWN": {
         const s = live(ev.entryId);
-        if (!nonEmpty(ev.by) || !nonEmpty(ev.reason) || !validDate(ev.on)) fail(`${at}: withdrawal needs who, a real date and a reason`);
+        if (!nonEmpty(ev.by) || !nonEmpty(ev.reason)) fail(`${at}: withdrawal needs who and a reason`);
+        notFuture(ev.on, at, "withdrawal date");
         s.withdrawn = { by: ev.by, on: ev.on, reason: ev.reason };
         break;
       }
       case "TRANSFER_PROPOSED": {
-        const p = ev.proposal;
-        if (!nonEmpty(p.id) || st.proposals.has(p.id)) fail(`${at}: proposal id required and unique`);
+        if (ev.proposal === null || typeof ev.proposal !== "object") fail(`${at}: proposal missing`);
+        const p = { ...ev.proposal };
+        if (!nonEmpty(p.id) || st.proposals.has(trim(p.id))) fail(`${at}: proposal id required and unique`);
         if (!nonEmpty(p.sku) || !positive(p.quantity)) fail(`${at}: proposal needs a SKU and a positive quantity`);
         if (!(DESTINATIONS as readonly string[]).includes(p.destination)) fail(`${at}: destination must be a non-Bond location role`);
-        if (!nonEmpty(p.proposedBy) || !nonEmpty(p.reason) || !validDate(p.proposedOn)) fail(`${at}: proposal needs who, a real date and a reason`);
-        st.proposals.set(p.id, { proposal: { ...p }, withdrawn: false });
+        if (!nonEmpty(p.proposedBy) || !nonEmpty(p.reason)) fail(`${at}: proposal needs who and a reason`);
+        notFuture(p.proposedOn, at, "proposal date");
+        p.id = trim(p.id); p.sku = trim(p.sku);
+        st.proposals.set(p.id, { proposal: p, withdrawn: false, completed: 0 });
         break;
       }
       case "PROPOSAL_WITHDRAWN": {
         const p = st.proposals.get(ev.proposalId);
         if (!p) fail(`${at}: unknown proposal`);
-        if (!nonEmpty(ev.by) || !nonEmpty(ev.reason) || !validDate(ev.on)) fail(`${at}: withdrawal needs who, a real date and a reason`);
+        if (!nonEmpty(ev.by) || !nonEmpty(ev.reason)) fail(`${at}: withdrawal needs who and a reason`);
+        notFuture(ev.on, at, "withdrawal date");
         (p as { withdrawn: boolean }).withdrawn = true;
         break;
       }
       case "RELEASE_RECORDED": {
-        if (!nonEmpty(ev.id) || st.releases.some((r) => r.id === ev.id)) fail(`${at}: release id required and unique`);
-        if (!nonEmpty(ev.sku) || !positive(ev.quantity) || !validDate(ev.on) || !nonEmpty(ev.recordedBy)) fail(`${at}: release needs a SKU, a positive quantity, a real date and who recorded it`);
+        if (!nonEmpty(ev.id) || st.releases.some((r) => r.id === trim(ev.id))) fail(`${at}: release id required and unique`);
+        if (!nonEmpty(ev.sku) || !positive(ev.quantity) || !nonEmpty(ev.recordedBy)) fail(`${at}: release needs a SKU, a positive quantity and who recorded it`);
+        notFuture(ev.on, at, "release date");
         if (!nonEmpty(ev.fromSnapshotHash) || !nonEmpty(ev.toSnapshotHash)) fail(`${at}: a release must cite the snapshots it was observed between`);
-        st.releases.push({ id: ev.id, sku: ev.sku, quantity: ev.quantity, on: ev.on });
+        if (!isoTs(ev.fromTakenAt) || !isoTs(ev.toTakenAt)) fail(`${at}: a release must cite the snapshot timestamps`);
+        if (Date.parse(ev.fromTakenAt) >= Date.parse(ev.toTakenAt)) fail(`${at}: the from-snapshot must be before the to-snapshot`);
+        if (ev.toTakenAt.slice(0, 10) > opts.asOf) fail(`${at}: snapshot timestamp is in the future`);
+        const sku = trim(ev.sku);
+        const live = st.releases.filter((r) => r.sku === sku && !r.voided);
+        for (const o of live) {
+          const same = o.fromHash === ev.fromSnapshotHash && o.toHash === ev.toSnapshotHash;
+          if (!same && Date.parse(ev.fromTakenAt) < Date.parse(o.toTakenAt) && Date.parse(ev.toTakenAt) > Date.parse(o.fromTakenAt)) fail(`${at}: this release overlaps the snapshot interval of an earlier release for the same SKU (it would count one movement twice)`);
+        }
+        if (ev.proposalId !== undefined) {
+          const pr = st.proposals.get(trim(ev.proposalId));
+          if (!pr) fail(`${at}: unknown proposal`);
+          const prop = pr as { proposal: TransferProposal; withdrawn: boolean; completed: number };
+          if (prop.proposal.sku !== sku) fail(`${at}: the proposal is for a different SKU`);
+          prop.completed += ev.quantity;
+        }
+        const cover = Math.max(0, verifiedFor(sku) - sumBy(live, (r) => r.quantity));
+        st.releases.push({ id: trim(ev.id), sku, quantity: ev.quantity, on: ev.on, fromHash: ev.fromSnapshotHash, toHash: ev.toSnapshotHash, fromTakenAt: ev.fromTakenAt, toTakenAt: ev.toTakenAt, proposalId: ev.proposalId === undefined ? undefined : trim(ev.proposalId), voided: false, uncovered: Math.max(0, ev.quantity - cover) });
+        break;
+      }
+      case "RELEASE_VOIDED": {
+        const r = st.releases.find((x) => x.id === ev.releaseId);
+        if (!r) fail(`${at}: unknown release`);
+        const rr = r as ReleaseState;
+        if (rr.voided) fail(`${at}: the release is already voided`);
+        if (!nonEmpty(ev.by) || !nonEmpty(ev.reason)) fail(`${at}: voiding a release needs who and a reason`);
+        notFuture(ev.on, at, "void date");
+        rr.voided = true;
+        if (rr.proposalId) { const pr = st.proposals.get(rr.proposalId); if (pr) pr.completed = Math.max(0, pr.completed - rr.quantity); }
         break;
       }
       default: fail(`${at}: unknown event type`);
@@ -129,39 +183,41 @@ export function foldRegister(events: readonly RegisterEvent[], opts: { asOf: str
 }
 
 export type ClearanceStatus = "NOT_CLEARED" | "PARTIALLY_CLEARED" | "CLEARED" | "NO_BOND_STOCK";
-export type BondException = "OVER_RELEASED" | "PROPOSAL_EXCEEDS_ELIGIBLE";
+export type BondException = "OVER_RELEASED" | "RELEASED_BEFORE_VERIFICATION" | "PROPOSAL_EXCEEDS_ELIGIBLE";
 export interface BondAssessment {
   sku: string; inSnapshot: boolean;
-  bondPhysical: number; verifiedCleared: number; unverifiedClaimed: number; released: number; remainingCleared: number;
+  bondPhysical: number; verifiedCleared: number; unverifiedClaimed: number; released: number; releasedBeforeCover: number; remainingCleared: number;
   eligible: number; clearedExceedsBond: boolean; clearanceStatus: ClearanceStatus;
   activeProposed: number; exceptions: BondException[];
   operationalUsable?: number; projectedUsableIfProposedCompleted?: number;
 }
 export interface AssessContext { bondBySku: ReadonlyMap<string, number>; operationalUsableBySku?: ReadonlyMap<string, number> }
 
-const sumBy = <T>(xs: readonly T[], f: (x: T) => number) => xs.reduce((t, x) => t + f(x), 0);
-const clean = (n: number) => (Math.abs(n) < EPS ? 0 : n);
 
 export function assessBond(state: RegisterState, ctx: AssessContext): BondAssessment[] {
+  checkMap("bond stock", ctx.bondBySku); checkMap("operational usable", ctx.operationalUsableBySku);
   const skus = new Set<string>(ctx.bondBySku.keys());
   for (const s of state.entries.values()) if (!s.withdrawn) s.entry.lines.forEach((l) => skus.add(l.sku));
-  state.releases.forEach((r) => skus.add(r.sku));
-  for (const p of state.proposals.values()) if (!p.withdrawn) skus.add(p.proposal.sku);
+  state.releases.filter((r) => !r.voided).forEach((r) => skus.add(r.sku));
+  for (const p of state.proposals.values()) if (!p.withdrawn && p.proposal.quantity - p.completed > EPS) skus.add(p.proposal.sku);
   return [...skus].sort().map((sku) => {
     const lines = [...state.entries.values()].filter((s) => !s.withdrawn).map((s) => ({ s, qty: sumBy(s.entry.lines.filter((l) => l.sku === sku), (l) => l.quantity) })).filter((x) => x.qty > 0);
     const verifiedCleared = sumBy(lines.filter((x) => x.s.verified), (x) => x.qty);
     const unverifiedClaimed = sumBy(lines.filter((x) => !x.s.verified), (x) => x.qty);
-    const released = sumBy(state.releases.filter((r) => r.sku === sku), (r) => r.quantity);
+    const liveReleases = state.releases.filter((r) => r.sku === sku && !r.voided);
+    const released = sumBy(liveReleases, (r) => r.quantity);
+    const releasedBeforeCover = sumBy(liveReleases, (r) => r.uncovered);
     const inSnapshot = ctx.bondBySku.has(sku);
     const bondPhysical = Math.max(0, ctx.bondBySku.get(sku) ?? 0);
     const remainingCleared = clean(Math.max(0, verifiedCleared - released));
     const eligible = clean(Math.min(bondPhysical, remainingCleared));
-    const activeProposed = sumBy([...state.proposals.values()].filter((p) => !p.withdrawn && p.proposal.sku === sku), (p) => p.proposal.quantity);
+    const activeProposed = sumBy([...state.proposals.values()].filter((p) => !p.withdrawn && p.proposal.sku === sku), (p) => Math.max(0, p.proposal.quantity - p.completed));
     const exceptions: BondException[] = [];
     if (released - verifiedCleared > EPS) exceptions.push("OVER_RELEASED");
+    if (releasedBeforeCover > EPS) exceptions.push("RELEASED_BEFORE_VERIFICATION");
     if (activeProposed - eligible > EPS) exceptions.push("PROPOSAL_EXCEEDS_ELIGIBLE");
     const clearanceStatus: ClearanceStatus = bondPhysical <= EPS ? "NO_BOND_STOCK" : remainingCleared <= EPS ? "NOT_CLEARED" : remainingCleared + EPS >= bondPhysical ? "CLEARED" : "PARTIALLY_CLEARED";
-    const row: BondAssessment = { sku, inSnapshot, bondPhysical, verifiedCleared, unverifiedClaimed, released, remainingCleared, eligible, clearedExceedsBond: inSnapshot && remainingCleared - bondPhysical > EPS, clearanceStatus, activeProposed, exceptions };
+    const row: BondAssessment = { sku, inSnapshot, bondPhysical, verifiedCleared, unverifiedClaimed, released, releasedBeforeCover, remainingCleared, eligible, clearedExceedsBond: inSnapshot && remainingCleared - bondPhysical > EPS, clearanceStatus, activeProposed, exceptions };
     const usable = ctx.operationalUsableBySku?.get(sku);
     if (usable !== undefined) { row.operationalUsable = usable; row.projectedUsableIfProposedCompleted = usable + activeProposed; }
     return row;
@@ -185,11 +241,18 @@ export interface ObservedMovement {
   sku: string; bondDecrease: number; bondIncrease: number; nonBondIncrease: number; eligibleBefore: number;
   /** Bond decrease beyond what was eligible: no verified clearance covers it. Never promoted to cleared. */
   uncleared: number; exceptions: "TRANSFER_WITHOUT_CLEARANCE_EVIDENCE"[];
+  /** Units of this decrease the register already holds as releases for exactly this snapshot pair (added back to eligibility, never double-counted). */
+  alreadyRecorded: number;
 }
-/** Compares two snapshots. `state` must be the register as it stood BEFORE any release for this movement was recorded. Descriptive only. */
-export function observeBondMovement(state: RegisterState, prev: MovementSnapshot, curr: MovementSnapshot): ObservedMovement[] {
+/**
+ * Compares two snapshots. Descriptive only. If the register may already hold releases for THIS snapshot pair, pass their hashes so those releases are
+ * excluded from the eligibility the movement is judged against (otherwise a recorded release would be counted against itself).
+ */
+export function observeBondMovement(state: RegisterState, prev: MovementSnapshot, curr: MovementSnapshot, pair?: { fromSnapshotHash: string; toSnapshotHash: string }): ObservedMovement[] {
+  for (const m of [prev, curr]) { checkMap("bond stock", m.bondBySku); checkMap("non-Bond stock", m.nonBondBySku); }
+  const judged: RegisterState = pair ? { ...state, releases: state.releases.filter((r) => !(r.fromHash === pair.fromSnapshotHash && r.toHash === pair.toSnapshotHash)) } : state;
   const skus = new Set<string>([...prev.bondBySku.keys(), ...curr.bondBySku.keys(), ...prev.nonBondBySku.keys(), ...curr.nonBondBySku.keys()]);
-  const before = new Map(assessBond(state, { bondBySku: prev.bondBySku }).map((r) => [r.sku, r.eligible]));
+  const before = new Map(assessBond(judged, { bondBySku: prev.bondBySku }).map((r) => [r.sku, r.eligible]));
   const out: ObservedMovement[] = [];
   for (const sku of [...skus].sort()) {
     const b0 = prev.bondBySku.get(sku) ?? 0, b1 = curr.bondBySku.get(sku) ?? 0;
@@ -198,7 +261,8 @@ export function observeBondMovement(state: RegisterState, prev: MovementSnapshot
     if (bondDecrease === 0 && bondIncrease === 0 && nonBondIncrease === 0) continue;
     const eligibleBefore = before.get(sku) ?? 0;
     const uncleared = clean(Math.max(0, bondDecrease - eligibleBefore));
-    out.push({ sku, bondDecrease, bondIncrease, nonBondIncrease, eligibleBefore, uncleared, exceptions: uncleared > 0 ? ["TRANSFER_WITHOUT_CLEARANCE_EVIDENCE"] : [] });
+    const alreadyRecorded = pair ? sumBy(state.releases.filter((r) => r.sku === sku && !r.voided && r.fromHash === pair.fromSnapshotHash && r.toHash === pair.toSnapshotHash), (r) => r.quantity) : 0;
+    out.push({ sku, bondDecrease, bondIncrease, nonBondIncrease, eligibleBefore, uncleared, exceptions: uncleared > 0 ? ["TRANSFER_WITHOUT_CLEARANCE_EVIDENCE"] : [], alreadyRecorded });
   }
   return out;
 }
