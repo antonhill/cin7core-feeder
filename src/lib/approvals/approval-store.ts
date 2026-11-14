@@ -13,6 +13,7 @@ import { applyEmailPolicy, approvalBaseUrl, SUPPRESSED_MARK, type EmailEnv } fro
 import { evaluationContext } from "@/lib/newquip-quotes/context";
 import type { BaselineExceptionRequest } from "@/newquip/quote/baseline-exception";
 import { managerApprove, returnToRep, returnToEstimator, estimatorSignOff, loadQuote } from "@/lib/newquip-quotes/quote-store";
+import { UNPRICED_HANDOFF_BASIS } from "@/newquip/quote/workflow";
 import { rolesFor, type QuoteRole } from "@/newquip/quote/roles";
 import type { ReturnBy } from "@/lib/newquip-quotes/return-store";
 import { approveClaim, cancelDraftClaim, returnClaimToDraft } from "@/lib/projects/project-store";
@@ -101,8 +102,12 @@ export async function loadSnapshot(db: Db, orgId: string, docType: ApprovalDocTy
     const confirmed = q.state === "ESTIMATOR_REVIEW" && q.customer_confirmed_cents != null;
     const rep = (q.handoff_by_email ?? q.created_by_email ?? "unknown").toLowerCase();
     // ESTIMATOR stage: the quote waits for the estimator's sign-off. MANAGER stage: it waits for the manager, and only after a sign-off of THIS content.
+    // An initial handoff with NO customer price (customer_confirmed_cents NULL, the explicit marker) is actionable for the ESTIMATOR stage only: the Estimator must be able to price it or return it
+    // to the Rep for the price confirmation. It is never "signed" (that needs a confirmed amount) and the MANAGER stage below is untouched, so no Manager request can open for it; the sign-off and
+    // approval gates (checkSignOff / checkApproval) still refuse a NULL confirmation whatever request is open.
+    const awaitingPrice = q.state === "ESTIMATOR_REVIEW" && q.customer_confirmed_cents == null && q.customer_confirmed_by === UNPRICED_HANDOFF_BASIS;
     const state: DocState = stage === "ESTIMATOR"
-      ? (confirmed ? (signed ? "APPROVED" : "SUBMITTABLE") : q.state === "REP_DRAFT" ? "RETURNED" : "OTHER")
+      ? (confirmed ? (signed ? "APPROVED" : "SUBMITTABLE") : awaitingPrice ? "SUBMITTABLE" : q.state === "REP_DRAFT" ? "RETURNED" : "OTHER")
       : (signed ? "SUBMITTABLE" : q.state === "MANAGER_APPROVED_FINAL" ? "APPROVED" : q.state === "REP_DRAFT" ? "RETURNED" : q.state === "ESTIMATOR_REVIEW" ? "UNSIGNED" : "OTHER");
     return {
       docType, docId, docRef: q.quote_ref, projectId: q.project_id, projectRef: proj?.ref ?? null, customer: q.customer_name, amountCents: q.customer_confirmed_cents ?? q.contract_cents ?? 0,

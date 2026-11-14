@@ -971,7 +971,7 @@ export default function QuoteEditorPage() {
                 {unpricedHandoffAvailable ? (
                   <div className="mt-3">
                     <UnpricedHandoffPanel canAct={roles.has("rep") && q.state === "REP_DRAFT"} ready={repReady} loading={acts.isPending("send")} otherBusy={isWorking && !acts.isPending("send")}
-                      onSubmit={(ackd) => act(() => sendGrowerQuoteUnpricedToEstimatorAction(id, ackd), "Submitted to the Estimator: no customer price is recorded yet; the Estimator will establish the price and the Estimator has been notified.", "send", (v) => v.quote.state === "ESTIMATOR_REVIEW", 1, OP.submitToEstimator)} />
+                      onSubmit={(ackd) => act(() => sendGrowerQuoteUnpricedToEstimatorAction(id, ackd), "Submitted to the Estimator: no customer price is recorded yet. The Estimator will establish the price, then you confirm the calculated amount with the customer.", "send", (v) => v.quote.state === "ESTIMATOR_REVIEW", 1, OP.submitToEstimator)} />
                   </div>
                 ) : (
                 <div className="mt-3">
