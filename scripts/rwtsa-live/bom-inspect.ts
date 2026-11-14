@@ -24,6 +24,7 @@ async function main(): Promise<number> {
   const { file } = writeTextAtomic({ home, name: `bom-evidence-${sku}-${e.takenAt.replace(/[:.]/g, "-")}.json`, text });
   console.log(`BOM EVIDENCE · ${e.requests} GET request(s) (${e.methodsUsed.join(",")}) · ${sku} · ${e.status}`);
   e.versions.forEach((v, n) => console.log(`  version ${n + 1}: ${v.version ?? "(unnamed)"} · default ${v.isDefault ?? "unknown"} · operations ${v.operations ?? "not in response"} · components ${v.components ?? "not in response"}`));
+  if (e.status === "UNVERIFIED") console.log(`  UNVERIFIED: ${e.unverifiedReason} · response top-level fields: ${e.responseTopLevelFields.join(", ") || "(none)"}`);
   console.log(`  written: ${file.split("/").pop()} (in ~/rwtsa-local/cin7-snapshots)`);
   return 0;
 }

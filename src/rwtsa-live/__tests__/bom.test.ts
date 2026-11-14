@@ -23,8 +23,17 @@ describe("inspectProductionBom", () => {
   it("records the response top-level key names so an unrecognised shape is distinguishable from no BOM", async () => {
     const { c } = fake({ "/product": prod, "/production/productionBOM": { Other: [] } });
     const e = await inspectProductionBom(c, "X");
-    expect(e.status).toBe("NO_BOM_FOUND");
+    expect(e.status).toBe("UNVERIFIED");
+    expect(e.unverifiedReason).toMatch(/ProductionBOMs/);
     expect(e.responseTopLevelFields).toEqual(["Other"]);
+  });
+  it.each([{}, { ProductionBOMs: null }, { ProductionBOMs: "x" }, { ProductionBOMs: {} }])("unrecognised BOM shape %j is UNVERIFIED, never NO_BOM_FOUND", async (body) => {
+    const { c } = fake({ "/product": prod, "/production/productionBOM": body });
+    expect((await inspectProductionBom(c, "X")).status).toBe("UNVERIFIED");
+  });
+  it("a BOM row for a different product is UNVERIFIED, not BOM_PRESENT", async () => {
+    const { c } = fake({ "/product": prod, "/production/productionBOM": { ProductionBOMs: [{ Version: "1", ProductID: "99999999-9999-9999-9999-999999999999" }] } });
+    expect((await inspectProductionBom(c, "X")).status).toBe("UNVERIFIED");
   });
   it("unknown product stops after one request", async () => {
     const { c, calls } = fake({ "/product": { Products: [{ SKU: "OTHER", ID: "a" }] } });
