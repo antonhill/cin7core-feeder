@@ -363,3 +363,51 @@ describe("UX-006 phase 2: the Stage 3 model mirrors the server's costing conditi
     expect(items.every((x) => x.met)).toBe(true);
   });
 });
+
+describe("Stage 3 status line follows the quotation after approval (wording only)", () => {
+  const approved = (after?: { hasDocument: boolean; commercial: string | null; projectLinked: boolean; requiresAcceptance?: boolean }) => deriveStage3Wizard({ state: "MANAGER_APPROVED_FINAL", revision: 1, roles: { rep: true, estimator: false, manager: false }, signoff: "none", dirty: false, ...(after ? { after } : {}) });
+  it("unknown (still loading) keeps the generic next step", () => {
+    expect(approved().statusLine).toBe("Approved. Next: Rep issues and sends the customer quotation (Stage 4).");
+  });
+  it("approved with nothing issued yet: Rep issues and sends", () => {
+    const w = approved({ hasDocument: false, commercial: "APPROVED_INTERNALLY", projectLinked: false });
+    expect(w.statusLine).toContain("Rep issues and sends"); expect(w.nextOwner).toBe("Rep");
+  });
+  it("issued, not sent: Rep sends", () => {
+    const w = approved({ hasDocument: true, commercial: "APPROVED_INTERNALLY", projectLinked: false });
+    expect(w.statusLine).toBe("Approved. The quotation PDF is issued. Next: Rep sends it to the customer (Stage 4)."); expect(w.nextOwner).toBe("Rep");
+  });
+  it("sent: never says issue-and-send again", () => {
+    const w = approved({ hasDocument: true, commercial: "SENT_TO_CUSTOMER", projectLinked: false });
+    expect(w.statusLine).toBe("Approved and sent to the customer. Next: record the customer's response (Stage 5)."); expect(w.nextOwner).toBe("Rep");
+  });
+  it("each customer response has its own accurate wording", () => {
+    expect(approved({ hasDocument: true, commercial: "ACCEPTANCE_PENDING_VERIFICATION", projectLinked: false }).statusLine).toContain("awaiting verification");
+    expect(approved({ hasDocument: true, commercial: "ACCEPTANCE_REJECTED", projectLinked: false }).statusLine).toContain("rejected during verification");
+    for (const c of ["CUSTOMER_DECLINED", "CHANGES_REQUESTED"]) {
+      const l = approved({ hasDocument: true, commercial: c, projectLinked: false }).statusLine;
+      expect(l).toContain("responded without accepting"); expect(l).not.toContain("sent to the customer");
+    }
+  });
+  it("customer accepted: the Manager creates the Project", () => {
+    const w = approved({ hasDocument: true, commercial: "CUSTOMER_ACCEPTED", projectLinked: false });
+    expect(w.statusLine).toContain("Manager creates the Project"); expect(w.nextOwner).toBe("Manager");
+  });
+  it("a quotation that does not require customer acceptance never tells the Rep to record or verify a response", () => {
+    for (const c of ["APPROVED_INTERNALLY", "SENT_TO_CUSTOMER"]) {
+      const w = approved({ hasDocument: c === "SENT_TO_CUSTOMER", commercial: c, projectLinked: false, requiresAcceptance: false });
+      expect(w.statusLine).toContain("not required"); expect(w.nextOwner).toBe("Manager");
+    }
+    expect(approved({ hasDocument: true, commercial: "SENT_TO_CUSTOMER", projectLinked: false, requiresAcceptance: true }).statusLine).toContain("Stage 5");
+  });
+  it("Project created: nothing is next in this quotation, whatever the commercial status", () => {
+    for (const c of [null, "APPROVED_INTERNALLY", "CUSTOMER_ACCEPTED"]) {
+      const w = approved({ hasDocument: false, commercial: c, projectLinked: true });
+      expect(w.statusLine).toContain("Project has been created"); expect(w.statusLine).not.toContain("Rep issues"); expect(w.nextOwner).toBeNull();
+    }
+  });
+  it("is presentation only: steps, access and submitted flag are the same with or without it", () => {
+    const a = approved(), b = approved({ hasDocument: true, commercial: "CUSTOMER_ACCEPTED", projectLinked: true });
+    expect(b.steps).toEqual(a.steps); expect(b.submitted).toBe(a.submitted); expect(b.entryStepId).toBe(a.entryStepId);
+  });
+});
