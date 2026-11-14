@@ -30,7 +30,7 @@ import type { QuoteDraft } from "@/newquip/grower/draft";
 import type { QuoteEvaluation } from "@/newquip/grower/evaluate";
 import type { GrowerItemKey, OptionalItemKey, PenningPigSize } from "@/newquip/grower/types";
 import {
-  approveGrowerQuoteAction, createProjectFromGrowerQuoteAction, getGrowerQuoteAction, previewGrowerDraftAction, returnGrowerQuoteToEstimatorAction, returnGrowerQuoteToRepAction,
+  approveGrowerQuoteAction, createProjectFromGrowerQuoteAction, getGrowerQuoteAction, getQuotePageBundleAction, previewGrowerDraftAction, returnGrowerQuoteToEstimatorAction, returnGrowerQuoteToRepAction,
   saveGrowerDraftAction, sendGrowerQuoteToEstimatorAction, signOffGrowerQuoteAction, type QuoteView,
 } from "../actions";
 import { formatSast } from "@/lib/approvals/time";
@@ -74,7 +74,8 @@ import { demoSwitchAvailableAction, selectDemoIdentityAction } from "@/app/demo-
 import { describeAmountChanges, type AmountChange } from "@/newquip/quote/handover";
 import { AcceptancePanel } from "./AcceptancePanel";
 import { computeStages, currentStage, parseStage, type CommercialState, type StageId } from "@/newquip/quote/stages";
-import { getQuoteDeliveryAction } from "../delivery-actions";
+import { getQuoteDeliveryAction, type DeliveryView } from "../delivery-actions";
+import { gateKeyOf, seedFresh, type BundleSeed } from "./bundle-seed";
 import { ScopePanel } from "./ScopePanel";
 import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
 import { ApprovalHistory } from "@/components/ApprovalHistory";
@@ -254,24 +255,38 @@ export default function QuoteEditorPage() {
       if (r.ok) { announceNavigation(); window.location.replace(window.location.pathname); } // same path (same quotation); opens at the Rep's next stage (customer quotation)
     })();
   }, [pocContinue]);
+  // ONE call reads the quotation and, once approved, its delivery status and issued documents (server actions queue one after another and each pays the authorisation chain, so the
+  // separate reads added up to ~20 s). The delivery / documents parts seed the gate below and the Stage 4 / 5 panels; a part that failed is simply not seeded, so it is read the old way.
+  const bundleSeed = useRef<BundleSeed | null>(null); // read only by the gate effect below
+  const [panelSeed, setPanelSeed] = useState<BundleSeed | null>(null); // handed to the Stage 4 / 5 panels (they report back when they have used it)
+  const dropPanelSeed = useCallback(() => setPanelSeed(null), []);
   useEffect(() => {
-    getGrowerQuoteAction(id).then((r) => (r.ok && r.data ? (adopt(r.data), setError(null)) : setError(r.error ?? "Unknown error")));
+    getQuotePageBundleAction(id).then((r) => {
+      if (!(r.ok && r.data)) { setError(r.error ?? "Unknown error"); return; }
+      const b = r.data, qq = b.quote.quote;
+      if (b.delivery || b.documents) { const seed: BundleSeed = { key: gateKeyOf(qq), at: Date.now(), delivery: b.delivery, documents: b.documents, gateUsed: false }; bundleSeed.current = seed; setPanelSeed(seed); }
+      adopt(b.quote); setError(null);
+    }).catch(() => setError("Unknown error"));
   }, [id]);
 
   // The commercial status (documents / sends / customer responses) feeds the stage navigation, wherever the user is looking.
   const finalNow = view?.quote.state === "MANAGER_APPROVED_FINAL";
-  const gateKey = `${view?.quote.id ?? ""}:${view?.quote.updated_at ?? ""}:${view?.quote.project_id ?? ""}`;
+  const gateKey = view ? gateKeyOf(view.quote) : "::";
   useEffect(() => {
     if (!finalNow) return;
     let live = true;
-    void getQuoteDeliveryAction(id).then((r) => {
+    const settle = (r: { ok: boolean; error?: string; data?: DeliveryView }) => {
       if (!live) return;
       if (!r.ok) { setGateError(r.error ?? "The quotation's delivery status could not be loaded."); return; }
       setGateError(null);
       if (r.data?.available) applyGate({ requires: r.data.requiresAcceptance, accepted: r.data.accepted, status: r.data.status, hasDocument: r.data.latestDocumentId != null, linkState: r.data.links.state });
       else noteGateSig("unavailable");
       setGateReady(true); // read (an unavailable feature before migration 0115 is a legitimate, settled answer)
-    }).catch(() => { if (live) setGateError("The quotation's delivery status could not be loaded."); });
+    };
+    // The opening bundle already read this exact version of the quotation: use its delivery part once (never after a retry, a change, or a minute; a part that failed is read again, the old way).
+    const seed = bundleSeed.current;
+    if (seed && seed.delivery?.ok && !seed.gateUsed && seed.key === gateKey && gateTry === 0 && seedFresh(seed)) { seed.gateUsed = true; settle(seed.delivery); return () => { live = false; }; }
+    void getQuoteDeliveryAction(id).then(settle).catch(() => { if (live) setGateError("The quotation's delivery status could not be loaded."); });
     return () => { live = false; };
   }, [id, finalNow, gateKey, gateTry, applyGate, noteGateSig]);
 
@@ -1312,7 +1327,7 @@ export default function QuoteEditorPage() {
                 </div>
               )} />
           )}
-          {final && q.accepted_baseline && <DeliveryPanel quoteId={id} contractCents={q.accepted_baseline.contractCents} onGate={applyGate} section="quotation" steps={{ current: step4Id, showAll: showAllSteps }} />}
+          {final && q.accepted_baseline && <DeliveryPanel seed={panelSeed?.key === gateKey ? panelSeed : null} onSeedUsed={dropPanelSeed} quoteId={id} contractCents={q.accepted_baseline.contractCents} onGate={applyGate} section="quotation" steps={{ current: step4Id, showAll: showAllSteps }} />}
           {final && q.accepted_baseline && !showAllSteps && (
             <div className="flex items-center justify-between gap-3" data-testid="step-buttons">
               {step4No > 1 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep4No(step4No - 1)}>Back</Button> : <span />}
@@ -1355,7 +1370,7 @@ export default function QuoteEditorPage() {
           {!final && <Alert tone="info">Customer acceptance is recorded against the issued, Manager-approved quotation. It becomes available once the quotation has been issued.</Alert>}
           {final && !gate.requires && !acceptanceBanner && <Alert tone="info">This quotation was approved before customer acceptance was introduced, so it is grandfathered: a Project does not depend on a recorded acceptance. A response can still be recorded if the customer gives one.</Alert>}
           {final && acceptanceBanner && <AcceptanceStatusBanner banner={acceptanceBanner} />}
-          {final && q.accepted_baseline && <AcceptancePanel quoteId={id} onGate={applyGate} />}
+          {final && q.accepted_baseline && <AcceptancePanel seed={panelSeed?.key === gateKey ? panelSeed : null} onSeedUsed={dropPanelSeed} quoteId={id} onGate={applyGate} />}
         </div>
       )}
 

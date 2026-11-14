@@ -3,6 +3,7 @@
 import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { logActivity } from "@/lib/activity-log";
+import { deliveryViewOf, documentsViewOf } from "./page-reads";
 import { createServiceRoleClient } from "@/supabase/server";
 import { QUOTES_MODULE } from "@/app/module-nav";
 import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
@@ -237,6 +238,41 @@ export async function getGrowerQuoteAction(quoteId: string): Promise<GrowerActio
     const q = await loadQuote(db, a.orgId, quoteId);
     if (!q) return { ok: false, error: "Quote not found." };
     return { ok: true, data: await view(db, q, a) };
+  } catch (e) {
+    return { ok: false, error: errMsg(e) };
+  }
+}
+
+/** One part of the page bundle: the same ok / error / data shape as the individual action it replaces, so a failure degrades exactly as it did when the page called that action itself. */
+export interface BundlePart<T> { ok: boolean; error?: string; data?: T }
+/** Everything the quotation page reads when it opens. `delivery` and `documents` are present only for an approved quotation (the only state in which the page reads them). */
+export interface QuotePageBundle {
+  quote: QuoteView;
+  delivery?: BundlePart<import("./delivery-actions").DeliveryView>;
+  documents?: BundlePart<import("./document-actions").QuoteDocumentsView>;
+}
+
+const settled = async <T,>(p: Promise<T>): Promise<BundlePart<T>> => { try { return { ok: true, data: await p }; } catch (e) { return { ok: false, error: errMsg(e) }; } };
+
+/**
+ * READ-ONLY. The quotation page's opening reads in ONE server call: authorised ONCE (the same authorise() as getGrowerQuoteAction), then the quote view and - for an approved
+ * quotation - the delivery status and issued documents are read in parallel, through the same view() / deliveryViewOf() / documentsViewOf() the individual actions use, so every
+ * redaction is identical. Next.js runs server actions one after another and each pays the full authorisation chain, so four separate calls cost four times the wait.
+ * The quote itself failing fails the call (as getGrowerQuoteAction does); the delivery and documents parts fail independently and are reported per part.
+ */
+export async function getQuotePageBundleAction(quoteId: string): Promise<GrowerActionResult<QuotePageBundle>> {
+  try {
+    const a = await authorise();
+    const db = createServiceRoleClient();
+    const q = await loadQuote(db, a.orgId, quoteId);
+    if (!q) return { ok: false, error: "Quote not found." };
+    const final = q.state === "MANAGER_APPROVED_FINAL";
+    const [quote, delivery, documents] = await Promise.all([
+      view(db, q, a),
+      final ? settled(deliveryViewOf(db, a, quoteId)) : Promise.resolve(undefined),
+      final ? settled(documentsViewOf(db, a, quoteId)) : Promise.resolve(undefined),
+    ]);
+    return { ok: true, data: { quote, ...(delivery ? { delivery } : {}), ...(documents ? { documents } : {}) } };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }

@@ -30,6 +30,15 @@ vi.mock("../document-actions", () => ({
   getQuoteDocumentsAction: vi.fn(async () => ({ ok: true, data: (globalThis as { __DOCS?: unknown }).__DOCS })),
   issueQuoteDocumentAction: vi.fn(),
 }));
+// The page's opening bundle reads delivery / documents through page-reads; these tests drive those reads through the (mocked or spied) individual actions, so route the bundle's parts to them.
+vi.mock("../page-reads", async () => {
+  const da = await import("../delivery-actions");
+  const docs = await import("../document-actions");
+  return {
+    deliveryViewOf: async (_db: unknown, _a: unknown, id: string) => { const r = await da.getQuoteDeliveryAction(id); if (!r.ok) throw new Error(r.error); return r.data; },
+    documentsViewOf: async (_db: unknown, _a: unknown, id: string) => { const r = await docs.getQuoteDocumentsAction(id); if (!r.ok) throw new Error(r.error); return r.data; },
+  };
+});
 vi.mock("@/lib/activity-log", () => ({ logActivity: vi.fn(() => Promise.resolve()) }));
 const ORG = "org-nq";
 const SESSION = { orgId: ORG, userId: "u1", email: "u@nq" };
