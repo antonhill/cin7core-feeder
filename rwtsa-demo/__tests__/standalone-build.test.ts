@@ -119,7 +119,7 @@ describe("the standalone shell builds and runs without Toolbox middleware, Supab
   });
 
   it("every page is server-rendered on demand (dynamic), not prerendered at build time", () => {
-    for (const route of ["/", "/scenario-a", "/scenario-b", "/scenario-c", "/scenario-d", "/validation"]) {
+    for (const route of ["/", "/scenario-a", "/scenario-b", "/scenario-c", "/scenario-d", "/validation", "/bond"]) {
       expect(buildLog, route).toMatch(new RegExp(`ƒ ${route === "/" ? "/" : route}\\s*$`, "m"));
     }
   });
@@ -137,6 +137,14 @@ describe("the standalone shell builds and runs without Toolbox middleware, Supab
     expect(buildLog).not.toContain(tmp);
     expect(serverLog).not.toContain(S);
     expect(serverLog).not.toContain(tmp);
+  });
+
+  it("serves the offline Bond page with HTTP 200 and NO DATA until an owner-selected report is configured (never a placeholder result)", () => {
+    const r = get("/bond");
+    expect(r.status).toBe(200);
+    expect(text(r.body)).toContain("NO DATA");
+    expect(text(r.body)).not.toMatch(/Eligible for release\s*\d/);
+    expect(r.body).not.toContain(tmp);
   });
 
   it("serves all six pages with HTTP 200 and the local-workbook provenance, with no credentials in the environment", () => {

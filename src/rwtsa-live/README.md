@@ -107,3 +107,8 @@ began (a verification dated the same day without a time is treated as not yet in
 | `withdraw-proposal --id --by --reason` | withdraws a draft. |
 | `record-release --from-snapshot --to-snapshot --sku --qty --by [--proposal]` | records a movement observed as a Bond decrease between two saved snapshots (never more than the observed decrease). It is not clearance evidence; a release without cover is flagged `RELEASED_BEFORE_VERIFICATION` / `OVER_RELEASED` permanently. |
 | `report --snapshot [--previous-snapshot]` | per-SKU Bond stock, verified-cleared, eligible, proposed, operational usable and exceptions; with a previous snapshot, observed transfers and `TRANSFER_WITHOUT_CLEARANCE_EVIDENCE`. Snapshots must be COMPLETE with a VERIFIED identity. |
+
+## Phase 2 S3: report schema v2 and the synthetic demonstration
+The report carries `schemaVersion: 2`, `dataClass` (`REAL_CIN7_SNAPSHOT` / `SYNTHETIC_DEMONSTRATION`) and the evidence, proposals and releases behind every figure, so the offline dashboard
+(`rwtsa-demo` `/bond`) can show provenance. `scripts/rwtsa-live/bond-synthetic.ts` writes an invented example to `~/rwtsa-local/bond-synthetic/` (never the real register); the same example is the
+committed fixture `src/rwtsa-demo/fixtures/bond-report.synthetic.json` (a test fails if the generator and the fixture drift). It runs the real engine over invented `SYN-` data and is never a real customs event.

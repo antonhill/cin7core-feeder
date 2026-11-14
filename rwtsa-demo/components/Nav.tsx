@@ -6,6 +6,7 @@ export function Nav() {
     { href: "/", label: "Overview" },
     ...SCENARIOS.map((s) => ({ href: `/${s.slug}`, label: `Scenario ${s.id}` })),
     { href: "/fast-react", label: "Fast React exchange" },
+    { href: "/bond", label: "Bond stock" },
     { href: "/validation", label: "Validation" },
   ];
   return (

@@ -202,3 +202,10 @@ Deliberately deferred (not part of this PR): allowlisting bare `next` imports as
 `X-Forwarded-Host` is too; state-changing requests also need a matching same-origin `Origin` (or `Sec-Fetch-Site: same-origin`). Anything else gets
 a bare 403: no redirect and no echo of the header. The exclusion route repeats the check. The same file shadows the Toolbox middleware (see
 above). Note that a server started before this change keeps the old behaviour until it is rebuilt and restarted.
+
+## Bond stock page (`/bond`, offline)
+Displays a validated, owner-selected local report built by `scripts/rwtsa-live/bond.ts report` (physical Bond stock, verified-cleared quantities, eligible release quantities, proposed
+transfers, clearance exceptions and evidence provenance). It reads ONE file: set `RWTSA_BOND_REPORT_PATH` (outside every git working tree, max 5 MB). The shell does not import the
+live Cin7 module and makes no network call; the report contract is re-declared in `src/rwtsa-demo/bond/report-schema.ts` and every total and cross-check is re-derived on load, so a report
+whose numbers do not follow from its own evidence is rejected (REPORT INVALID, with value-free reasons) rather than shown. Nothing configured shows NO DATA. A configured path never falls back
+to the example. `RWTSA_BOND_SOURCE=synthetic` shows a built-in, clearly labelled INVENTED example (`SYN-` identifiers): it is not a real customs event and is not RWTSA data. Scenarios A-D are unchanged.
