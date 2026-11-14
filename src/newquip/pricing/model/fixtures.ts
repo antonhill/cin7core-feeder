@@ -1,4 +1,4 @@
-import { micro } from "./money";
+import { micro, cost7 } from "./money";
 import type { PricingLineInput, PricingRuleVersion, PricingScenario } from "./types";
 
 // DEVELOPMENT FIXTURES (NQ-008B Phase 1). Invented figures that exercise the model; they are not NewQuip prices, costs, rates or rules. The shapes are exactly what a completed
@@ -24,17 +24,17 @@ const SRC = "Fixture supplier sheet";
 
 export const eurLine = (qty = 10): PricingLineInput => ({
   key: "feeder", label: "Feeder trough", sku: "FX-EUR-1", quantity: qty,
-  cost: { supplierId: "sup-eu", supplierName: "Euro Supplier BV", currency: "EUR", nativeUnitCostMicro: micro("100"), verification: "verified", source: SRC },
+  cost: { supplierId: "sup-eu", supplierName: "Euro Supplier BV", currency: "EUR", nativeUnitCostE7: cost7("100"), verification: "verified", source: SRC },
   freight: { factorMicro: micro("1.15"), source: SRC },
 });
 export const usdLine = (qty = 40): PricingLineInput => ({
   key: "drinker", label: "Drinker unit", sku: "FX-USD-1", quantity: qty,
-  cost: { supplierId: "sup-us", supplierName: "US Supplier Inc", currency: "USD", nativeUnitCostMicro: micro("50"), verification: "verified", source: SRC },
+  cost: { supplierId: "sup-us", supplierName: "US Supplier Inc", currency: "USD", nativeUnitCostE7: cost7("50"), verification: "verified", source: SRC },
   freight: { factorMicro: micro("1.10"), source: SRC },
 });
 export const zarLine = (qty = 20): PricingLineInput => ({
   key: "fixings", label: "Fixing kit", sku: "FX-ZAR-1", quantity: qty,
-  cost: { supplierId: "sup-za", supplierName: "Local Supplier (Pty) Ltd", currency: "ZAR", nativeUnitCostMicro: micro("250"), verification: "verified", source: SRC },
+  cost: { supplierId: "sup-za", supplierName: "Local Supplier (Pty) Ltd", currency: "ZAR", nativeUnitCostE7: cost7("250"), verification: "verified", source: SRC },
   freight: { factorMicro: micro("1"), source: SRC },
 });
 export const missingCostLine = (): PricingLineInput => ({ key: "controller", label: "Controller", sku: "FX-CTL-1", quantity: 1, cost: null, freight: null });

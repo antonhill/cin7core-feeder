@@ -6,7 +6,7 @@ import { readyDraft } from "../../../grower/__tests__/golden";
 import { testPriceSource } from "../../../grower/__tests__/test-snapshot";
 import { hashOf } from "../../../quote/baseline";
 import { snapshotOf } from "../../__tests__/helpers";
-import { calculatePricing, DEFAULT_RULE_VERSION_ID, LEGACY_RULE_VERSION, micro, selectRuleVersion, type PricingScenario } from "..";
+import { calculatePricing, DEFAULT_RULE_VERSION_ID, LEGACY_RULE_VERSION, micro, cost7, selectRuleVersion, type PricingScenario } from "..";
 import { FIXTURE_DRAFT_RULE_VERSION } from "../fixtures";
 
 const snap = snapshot as unknown as PriceSnapshot;
@@ -28,7 +28,7 @@ describe("the legacy rule version reproduces the existing POC price source, SKU 
       const s: PricingScenario = {
         pricingDate: at, forwardCover: {}, itemOverrides: {}, projectMarkup: null, projectAdjustment: null,
         fxQuotes: { EUR: { rateMicro: micro(e.roe), source: "workbook ROE", asOf: at } },
-        lines: [{ key: e.sku, label: e.sku, sku: e.sku, quantity: 1, cost: { supplierId: null, supplierName: null, currency: "EUR", nativeUnitCostMicro: micro(e.cost), verification: "verified", source: "workbook" }, freight: { factorMicro: micro(e.freight), source: "workbook" } }],
+        lines: [{ key: e.sku, label: e.sku, sku: e.sku, quantity: 1, cost: { supplierId: null, supplierName: null, currency: "EUR", nativeUnitCostE7: cost7(e.cost), verification: "verified", source: "workbook" }, freight: { factorMicro: micro(e.freight), source: "workbook" } }],
       };
       const got = calculatePricing(s, LEGACY_RULE_VERSION).lines[0];
       expect(got.unitPriceCents).toBe(Math.round(expected.unitPriceExVat * 100));

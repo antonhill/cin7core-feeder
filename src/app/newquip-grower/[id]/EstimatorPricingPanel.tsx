@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Status } from "@/components/ui/Status";
 import { formatSast } from "@/lib/approvals/time";
-import { fromMicro, micro, LEGACY_RULE_VERSION, type PricingSubmission, type SkuRow } from "@/newquip/pricing/estimator";
+import { cost7, fromCost7, fromMicro, micro, LEGACY_RULE_VERSION, type PricingSubmission, type SkuRow } from "@/newquip/pricing/estimator";
 import type { WorkspaceBundle } from "@/lib/newquip-quotes/pricing-service";
 import { applyEstimatorPricingAction, disableEstimatorPricingAction, attestEstimatorRatesAction, getEstimatorPricingAction, recordManualPriceEvidenceAction, verifyEstimatorCostsAction } from "../pricing-actions";
 import { fmtCents } from "../fields";
@@ -21,11 +21,12 @@ const rand = (cents: number | null | undefined) => (cents == null ? "Not priced"
 const pct = (v: number | null | undefined) => (v == null ? "n/a" : `${v.toFixed(2)}%`);
 const signed = (c: number) => (c === 0 ? fmtCents(0) : `${c > 0 ? "+" : "-"}${fmtCents(Math.abs(c))}`);
 const dec = (m: number | null | undefined) => (m == null ? "" : String(fromMicro(m)));
+const toCost7 = (s: string): number | null => { try { return s.trim() === "" ? null : cost7(s.trim()); } catch { return null; } };
 const toMicro = (s: string): number | null => { try { return s.trim() === "" ? null : micro(s.trim()); } catch { return null; } };
 const toCents = (s: string): number | null => { const n = Number(s.replace(/\s/g, "").replace(",", ".")); return s.trim() !== "" && Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null; };
 
 type Draft = PricingSubmission;
-const blankSku = (): Draft["skus"][string] => ({ supplierId: null, supplierName: "", currency: "ZAR", nativeUnitCostMicro: 0, source: "", freight: { factorMicro: 1_000_000, source: "" } });
+const blankSku = (): Draft["skus"][string] => ({ supplierId: null, supplierName: "", currency: "ZAR", nativeUnitCostE7: 0, source: "", freight: { factorMicro: 1_000_000, source: "" } });
 
 export function EstimatorPricingPanel({ quoteId, reload, unsaved }: { quoteId: string; reload?: () => void; unsaved?: boolean }) {
   const [b, setB] = useState<WorkspaceBundle | null>(null);
@@ -305,7 +306,7 @@ function Row({ r, edit, input, override, set, canPick, picked, onPick, onClear }
         <td className="px-2 py-1 tabular-nums">{r.quantity}</td>
         <td className="px-2 py-1"><Input hideLabel label={`${r.sku} supplier`} disabled={!edit} defaultValue={input?.supplierName ?? ""} className="w-32" onBlur={(e) => upd((s) => { s.supplierName = e.target.value; })} /></td>
         <td className="px-2 py-1"><Input hideLabel label={`${r.sku} currency`} disabled={!edit} defaultValue={input?.currency ?? "ZAR"} className="w-16" onBlur={(e) => upd((s) => { s.currency = e.target.value.trim().toUpperCase(); })} /></td>
-        <td className="px-2 py-1"><Input hideLabel label={`${r.sku} supplier cost`} disabled={!edit} defaultValue={dec(input?.nativeUnitCostMicro)} className="w-24" onBlur={(e) => { const m = toMicro(e.target.value); if (m !== null) upd((s) => { s.nativeUnitCostMicro = m; }); }} /></td>
+        <td className="px-2 py-1"><Input hideLabel label={`${r.sku} supplier cost`} disabled={!edit} defaultValue={input?.nativeUnitCostE7 == null ? "" : String(fromCost7(input.nativeUnitCostE7))} className="w-24" onBlur={(e) => { const m = toCost7(e.target.value); if (m !== null) upd((s) => { s.nativeUnitCostE7 = m; }); }} /></td>
         <td className="px-2 py-1"><Input hideLabel label={`${r.sku} cost source`} disabled={!edit} defaultValue={input?.source ?? ""} className="w-32" onBlur={(e) => upd((s) => { s.source = e.target.value; })} /></td>
         <td className="px-2 py-1 text-xs" data-testid="cost-state" data-cost-state={r.costState}>
           <Status tone={r.costState === "verified" ? "success" : r.costState === "missing" ? "danger" : "warning"}>{r.costState === "verified" ? "Verified" : r.costState === "missing" ? "No cost" : r.costState === "review_outdated" ? "Changed since verified" : r.costState === "self_reviewed" ? "Not independent" : "Unverified"}</Status>

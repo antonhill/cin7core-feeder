@@ -69,7 +69,7 @@ describe("independent verification, end to end", () => {
     expect((await listPricingRevisions(db as never, ORG, id)).length).toBe(1);
     // manager1 corrects a cost: they become the person who last changed it
     const q = await loaded(id);
-    const edit = submissionFrom(q.draft.estimator.pricing!); edit.skus.PNQ082 = { ...edit.skus.PNQ082, nativeUnitCostMicro: edit.skus.PNQ082.nativeUnitCostMicro + 1_000_000 };
+    const edit = submissionFrom(q.draft.estimator.pricing!); edit.skus.PNQ082 = { ...edit.skus.PNQ082, nativeUnitCostE7: edit.skus.PNQ082.nativeUnitCostE7 + 1_000_000 };
     expect(await applyPricingChange(db as never, manager1, id, edit, "Corrected the feeder cost")).toMatchObject({ ok: true });
     const mine = await verifyCosts(db as never, manager1, id, await itemsFor(id, ["PNQ082"]), "Quote SQ-2");
     expect(mine).toMatchObject({ ok: false, errors: [expect.stringMatching(/you entered or last changed this cost/)] });
@@ -109,11 +109,11 @@ describe("a cost change after verification, and clearing a cost", () => {
     const clear = sub((s) => { delete s.skus.SYSH; delete s.skus["SYSH-2750-3"]; });
     expect(await applyPricingChange(db as never, estimator, id, clear, "Cleared the bulk tank cost: the supplier withdrew the quote")).toMatchObject({ ok: true });
     const revs = await listPricingRevisions(db as never, ORG, id);
-    expect(revs[1].changes.some((c) => c.path === "skus.SYSH-2750-3.nativeUnitCostMicro" && c.new === null && c.previous !== null)).toBe(true);
+    expect(revs[1].changes.some((c) => c.path === "skus.SYSH-2750-3.nativeUnitCostE7" && c.new === null && c.previous !== null)).toBe(true);
     const ws = await loadPricingWorkspace(db as never, estimator, id);
     expect(ws.view.rows.find((r) => r.sku === "SYSH-2750-3")).toMatchObject({ status: "no_input", costState: "missing", unitPriceCents: null });
     expect(ws.view.totals.totalCents).toBeNull();
-    const zero = sub((s) => { s.skus["SYSH-2750-3"] = { ...s.skus.PNQ082, nativeUnitCostMicro: 0 }; });
+    const zero = sub((s) => { s.skus["SYSH-2750-3"] = { ...s.skus.PNQ082, nativeUnitCostE7: 0 }; });
     expect(await applyPricingChange(db as never, estimator, id, zero, "Zero cost attempt")).toMatchObject({ ok: false, errors: [expect.stringMatching(/a zero supplier cost is not a cost/)] });
   });
 });
@@ -132,7 +132,7 @@ describe("concurrent updates", () => {
     const { id } = await inReview();
     await applyPricingChange(db as never, estimator, id, sub(), "Indicative supplier pricing");
     const seen = await itemsFor(id); // what the reviewer has on screen
-    const edit = submissionFrom((await loaded(id)).draft.estimator.pricing!); edit.skus.PNQ082 = { ...edit.skus.PNQ082, nativeUnitCostMicro: edit.skus.PNQ082.nativeUnitCostMicro + 2_000_000 };
+    const edit = submissionFrom((await loaded(id)).draft.estimator.pricing!); edit.skus.PNQ082 = { ...edit.skus.PNQ082, nativeUnitCostE7: edit.skus.PNQ082.nativeUnitCostE7 + 2_000_000 };
     expect(await applyPricingChange(db as never, estimator, id, edit, "Re-quoted feeder")).toMatchObject({ ok: true });
     const r = await verifyCosts(db as never, manager1, id, seen, "Quote SQ-1");
     expect(r).toMatchObject({ ok: false, errors: [expect.stringMatching(/PNQ082: the cost changed after you opened it/)] });
@@ -145,7 +145,7 @@ describe("concurrent updates", () => {
     const { id } = await inReview();
     await applyPricingChange(db as never, estimator, id, sub(), "Indicative supplier pricing");
     const seen = await itemsFor(id);
-    const edit = submissionFrom((await loaded(id)).draft.estimator.pricing!); edit.skus.PNQ082 = { ...edit.skus.PNQ082, nativeUnitCostMicro: edit.skus.PNQ082.nativeUnitCostMicro + 3_000_000 };
+    const edit = submissionFrom((await loaded(id)).draft.estimator.pricing!); edit.skus.PNQ082 = { ...edit.skus.PNQ082, nativeUnitCostE7: edit.skus.PNQ082.nativeUnitCostE7 + 3_000_000 };
     const [v, e] = await Promise.all([verifyCosts(db as never, manager1, id, seen, "Quote SQ-1"), applyPricingChange(db as never, estimator, id, edit, "Re-quoted feeder")]);
     const st = (await loaded(id)).draft.estimator.pricing!.skus.PNQ082!;
     // a verification of the OLD cost can never end up attached to the NEW cost
@@ -220,7 +220,7 @@ describe("a manual price never conceals a missing or unverified supplier cost", 
     expect(await err(managerApprove(db as never, ORG, admin, "mgr1@nq", id, ctx))).toMatch(/manual price|Costing is incomplete|has not signed off/);
     // recording the cost and having it verified independently clears it
     const q = await loaded(id);
-    const add = submissionFrom(q.draft.estimator.pricing!); add.skus.ERT053 = { ...add.skus.PNQ082, supplierName: "Mat supplier", nativeUnitCostMicro: 90_000_000, source: "Quote SQ-MAT" };
+    const add = submissionFrom(q.draft.estimator.pricing!); add.skus.ERT053 = { ...add.skus.PNQ082, supplierName: "Mat supplier", nativeUnitCostE7: 90_000_000, source: "Quote SQ-MAT" };
     expect(await applyPricingChange(db as never, estimator, id, add, "Recorded the mat supplier cost")).toMatchObject({ ok: true });
     expect(await verifyCosts(db as never, manager1, id, await itemsFor(id, ["ERT053"]), "Quote SQ-MAT")).toMatchObject({ ok: true });
   });

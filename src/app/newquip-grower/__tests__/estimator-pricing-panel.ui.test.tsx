@@ -100,7 +100,7 @@ describe("saving", () => {
     await waitFor(() => expect(actions.applyEstimatorPricingAction).toHaveBeenCalledTimes(1));
     const [qid, submission, reason] = vi.mocked(actions.applyEstimatorPricingAction).mock.calls[0];
     expect(qid).toBe("q1"); expect(reason).toBe("Supplier re-quoted");
-    expect(submission.skus.PNQ082.nativeUnitCostMicro).toBe(60_000_000);
+    expect(submission.skus.PNQ082.nativeUnitCostE7).toBe(600_000_000);
     expect(JSON.stringify(submission)).not.toMatch(/"by"|"at"/); // attribution is the server's, never the browser's
     await waitFor(() => expect(screen.getByTestId("pricing-note").textContent).toMatch(/Rep&apos;s|Rep's confirmation was withdrawn.*back with the Rep/));
     expect(reload).toHaveBeenCalled();
@@ -122,12 +122,12 @@ describe("saving", () => {
     expect(screen.getByText(/Approved: the pricing is frozen/)).toBeTruthy();
   });
   it("shows the immutable revision history with who, why and previous -> new", async () => {
-    mount(bundle(equivalentInputs(), { revisions: [{ id: "r1", seq: 1, quoteRevision: 1, kind: "ENABLED", ruleVersion: "legacy-poc-v1", reason: "Initial pricing", changes: [{ path: "skus.PNQ082.nativeUnitCostMicro", previous: null, new: 50_000_000 }], changedBy: "est@nq", at: "2026-11-12T08:00:00.000Z", newPricingHash: "a".repeat(64) }] }));
+    mount(bundle(equivalentInputs(), { revisions: [{ id: "r1", seq: 1, quoteRevision: 1, kind: "ENABLED", ruleVersion: "legacy-poc-v1", reason: "Initial pricing", changes: [{ path: "skus.PNQ082.nativeUnitCostE7", previous: null, new: 500_000_000 }], changedBy: "est@nq", at: "2026-11-12T08:00:00.000Z", newPricingHash: "a".repeat(64) }] }));
     await waitFor(() => expect(screen.getByTestId("pricing-history")).toBeTruthy());
     const h = screen.getByTestId("pricing-history").textContent!;
     expect(h).toMatch(/Revision 1.*enabled.*legacy-poc-v1.*est@nq/);
     expect(h).toMatch(/Why: Initial pricing/);
-    expect(h).toMatch(/skus\.PNQ082\.nativeUnitCostMicro: null → 50000000/);
+    expect(h).toMatch(/skus\.PNQ082\.nativeUnitCostE7: null → 500000000/);
   });
 });
 
@@ -219,7 +219,7 @@ describe("hardening: cost verification, expiry, clearing and rate fields (render
     await waitFor(() => expect(actions.applyEstimatorPricingAction).toHaveBeenCalledTimes(1));
     const submission = vi.mocked(actions.applyEstimatorPricingAction).mock.calls[0][1];
     expect(Object.keys(submission.skus)).not.toContain("PNQ082");
-    expect(Object.values(submission.skus).every((s) => s.nativeUnitCostMicro > 0)).toBe(true);
+    expect(Object.values(submission.skus).every((s) => s.nativeUnitCostE7 > 0)).toBe(true);
     expect(JSON.stringify(submission)).not.toMatch(/"review"|"verification"/);
   });
 });

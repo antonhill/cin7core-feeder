@@ -26,7 +26,7 @@ export interface SkuRow {
   sku: string; usedBy: string[]; quantity: number;
   /** "priced" | "no_input" (no supplier cost entered: the line is NOT priced) | "not_priced" (an input exists but cannot be priced, e.g. a rate is missing). */
   status: "priced" | "no_input" | "not_priced";
-  supplier: string | null; currency: string | null; nativeUnitCostMicro: number | null; costSource: string | null;
+  supplier: string | null; currency: string | null; nativeUnitCostE7: number | null; costSource: string | null;
   /** COST verification (separate from price completeness): derived from an independent review, never from a flag a person set. */
   costState: CostState; costStateText: string;
   /** Who entered / last changed the cost, and the independent review of exactly that cost, if any. */
@@ -116,7 +116,7 @@ export function buildPricingWorkspace(i: {
     return {
       sku, usedBy: need?.usedBy ?? [], quantity: qty,
       status: !input ? "no_input" : priced ? "priced" : "not_priced",
-      supplier: input?.supplierName ?? null, currency: input?.currency ?? null, nativeUnitCostMicro: input?.nativeUnitCostMicro ?? null, costSource: input?.source ?? null,
+      supplier: input?.supplierName ?? null, currency: input?.currency ?? null, nativeUnitCostE7: input?.nativeUnitCostE7 ?? null, costSource: input?.source ?? null,
       costHash: input ? costInputHash(input) : null, costState, costStateText: COST_STATE_TEXT[costState], enteredBy: input?.by ?? null, enteredAt: input?.at ?? null,
       review: input?.review ? { by: input.review.by, at: input.review.at, evidence: input.review.evidence } : null,
       priceBasis: priced ? (ov ? "price_override" : "supplier_pricing") : need?.manual ? "manual_price" : "none",

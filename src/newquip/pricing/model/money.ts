@@ -13,6 +13,21 @@ export function micro(v: string | number): number {
 }
 export const fromMicro = (m: number): number => m / 1_000_000;
 
+// SUPPLIER-NATIVE UNIT COSTS are held in units of 1e-7 of the supplier's currency ("E7"), because Cin7 reports supplier costs with up to 7 decimals (for example 6.5454755). Exchange
+// rates and freight factors stay in micro units (6 decimals). A cost with more than 7 decimals is REFUSED, never rounded or truncated.
+export const COST_DECIMALS = 7;
+const COST_SCALE = BigInt(10_000_000);
+
+/** A decimal string or number with at most 7 decimals -> E7 units (1e-7). Throws on anything else (never rounds silently). */
+export function cost7(v: string | number): number {
+  const s = typeof v === "number" ? (Number.isFinite(v) ? String(v) : "") : v.trim();
+  const m = /^(\d+)(?:\.(\d{1,7}))?$/.exec(s);
+  if (!m) throw new Error(`"${String(v)}" is not a non-negative number with at most 7 decimals.`);
+  return Number(BigInt(m[1]) * COST_SCALE + BigInt((m[2] ?? "").padEnd(COST_DECIMALS, "0")));
+}
+/** E7 units -> a number, for DISPLAY and form fields only (never fed back into arithmetic). */
+export const fromCost7 = (c: number): number => c / 10_000_000;
+
 /** Half-up integer division (all operands non-negative). */
 export function divRound(n: bigint, d: bigint): bigint {
   return (n * BigInt(2) + d) / (d * BigInt(2));
@@ -21,6 +36,15 @@ export function divRound(n: bigint, d: bigint): bigint {
 /** Native unit cost x ROE (ZAR per 1 unit) x freight factor -> whole cents. All three are micro units: the product carries 1e18, and x100 for cents leaves 1e16. */
 export function landedCents(nativeCostMicro: number, rateMicro: number, freightFactorMicro: number): number {
   return Number(divRound(BigInt(nativeCostMicro) * BigInt(rateMicro) * BigInt(freightFactorMicro) * BigInt(100), BigInt("1000000000000000000")));
+}
+
+/**
+ * Native unit cost (E7 units, 1e-7) x ROE (micro) x freight factor (micro) -> whole cents, half-up, in exact BigInt arithmetic. For the same cost it gives exactly what `landedCents`
+ * gives for the micro-unit cost (cost7("100") and micro("100") price identically); the extra digit only matters when a cost really has a 7th decimal.
+ * Carries 1e7 x 1e6 x 1e6 = 1e19, and x100 for cents leaves 1e17.
+ */
+export function landedCentsE7(nativeCostE7: number, rateMicro: number, freightFactorMicro: number): number {
+  return Number(divRound(BigInt(nativeCostE7) * BigInt(rateMicro) * BigInt(freightFactorMicro) * BigInt(100), BigInt("10000000000000000000")));
 }
 
 /** cents x (10000 + bps) / 10000, half-up. */

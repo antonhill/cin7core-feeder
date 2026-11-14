@@ -144,14 +144,14 @@ describe("evidence is internal: it never reaches a Rep or the customer", () => {
     const quote = { draft: d, accepted_baseline: { estimator: { pricing: q } } };
     const rep = JSON.stringify(redactInternalFinancials(quote as never, false));
     expect(rep).not.toContain(SECRET);
-    expect(rep).not.toMatch(/manualEvidence|nativeUnitCostMicro|forwardCover|fxQuotes|priceHash/);
+    expect(rep).not.toMatch(/manualEvidence|nativeUnitCostE7|forwardCover|fxQuotes|priceHash/);
     expect(JSON.stringify(redactInternalFinancials(quote as never, true))).toContain(SECRET); // a cost-entitled viewer keeps it (the Manager sees it at approval)
   });
   it("the Rep's evaluation and the finality reasons a Rep could see carry no evidence text, supplier cost or rate", () => {
     const d = withPricing(q);
     const rep = JSON.stringify(redactEvaluationFinancials(evalOf(d, true), false));
     expect(rep).not.toContain(SECRET);
-    expect(rep).not.toMatch(/supplier cost|manualEvidence|nativeUnitCostMicro/);
+    expect(rep).not.toMatch(/supplier cost|manualEvidence|nativeUnitCostE7/);
     const blocked = JSON.stringify(finalOf(unverified()).reasons);
     expect(blocked).not.toContain(SECRET);
   });

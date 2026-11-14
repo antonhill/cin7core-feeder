@@ -1,5 +1,5 @@
 import type { MarginFigures } from "@/lib/projects/margin-figures";
-import { isInt, isQty, landedCents, lineCents, pct2, quantityMilli, withMarkupBps } from "./money";
+import { isInt, isQty, landedCentsE7, lineCents, pct2, quantityMilli, withMarkupBps } from "./money";
 import type { ItemOverride, PricingRuleVersion, PricingScenario, ProjectAdjustment } from "./types";
 
 // THE PRICING CALCULATION (NQ-008B Phase 1). Pure: scenario + rule version in, result out. No I/O, no clock, no role, no UI. Everything it shows is derived from its inputs,
@@ -33,7 +33,7 @@ export interface CalculatedLine {
   quantityOverridden: boolean;
   supplier: string | null;
   currency: string | null;
-  nativeUnitCostMicro: number | null;
+  nativeUnitCostE7: number | null;
   costVerification: "verified" | "unverified" | null;
   rate: RateUsed | null;
   freightFactorMicro: number | null;
@@ -113,7 +113,7 @@ export function validateScenario(s: PricingScenario): string[] {
     if (!isQty(l.quantity) || quantityMilli(l.quantity) === null) e.push(`${l.label}: the quantity must be greater than zero, with at most 3 decimals.`);
     if (l.cost) {
       if (!ISO.test(l.cost.currency)) e.push(`${l.label}: the supplier currency must be a three-letter code.`);
-      if (!isInt(l.cost.nativeUnitCostMicro) || l.cost.nativeUnitCostMicro < 0) e.push(`${l.label}: the supplier cost must be a non-negative number.`);
+      if (!isInt(l.cost.nativeUnitCostE7) || l.cost.nativeUnitCostE7 < 0) e.push(`${l.label}: the supplier cost must be a non-negative number.`);
       if (!l.cost.source.trim()) e.push(`${l.label}: say where the supplier cost comes from.`);
     }
     if (l.freight) {
@@ -215,7 +215,7 @@ export function calculatePricing(scenario: PricingScenario, rules: PricingRuleVe
         else { freightFactor = 1_000_000; addOn = 0; add("freight_unspecified", "no freight or landed-cost adjustment is recorded (none assumed)."); }
       }
       if (rate && freightFactor !== null) {
-        unitLanded = landedCents(c.nativeUnitCostMicro, rate.rateMicro, freightFactor) + (addOn ?? 0);
+        unitLanded = landedCentsE7(c.nativeUnitCostE7, rate.rateMicro, freightFactor) + (addOn ?? 0);
         used.set(`${rate.currency}|${rate.kind}|${rate.rateMicro}`, rate);
       }
     }
@@ -231,7 +231,7 @@ export function calculatePricing(scenario: PricingScenario, rules: PricingRuleVe
     return {
       key: l.key, label: l.label, sku: l.sku, status: priced ? "priced" : "not_priced",
       quantity, baseQuantity: l.quantity, quantityOverridden: ov?.quantity !== undefined,
-      supplier: l.cost?.supplierName ?? null, currency: l.cost?.currency ?? null, nativeUnitCostMicro: l.cost?.nativeUnitCostMicro ?? null, costVerification: l.cost?.verification ?? null,
+      supplier: l.cost?.supplierName ?? null, currency: l.cost?.currency ?? null, nativeUnitCostE7: l.cost?.nativeUnitCostE7 ?? null, costVerification: l.cost?.verification ?? null,
       rate, freightFactorMicro: freightFactor, freightAddOnCents: addOn,
       unitLandedCostCents: unitLanded, calculatedUnitPriceCents: calculated, unitPriceCents: unitPrice, priceOrigin: origin,
       revenueCents: revenue, costCents: cost, margin: revenue === null ? null : figures(revenue, cost), override: ov && (ov.price || ov.quantity) ? structuredClone(ov) : null, issues,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { micro, type Viewer } from "../../model";
+import { micro, cost7, type Viewer } from "../../model";
 import { applyPricingSubmission, diffPricing, disablePricing, type PricingSubmission } from "..";
 import { AT, EST, equivalentInputs } from "./helpers";
 
@@ -42,7 +42,7 @@ describe("who may change pricing, and what a valid change looks like", () => {
     if (!first.ok) throw new Error("setup");
     const sub = strip(first.next!);
     const sku = "PNQ082";
-    sub.skus[sku] = { ...sub.skus[sku], nativeUnitCostMicro: micro("60") } as never;
+    sub.skus[sku] = { ...sub.skus[sku], nativeUnitCostE7: cost7("60") } as never;
     sub.forwardCover = { EUR: { rateMicro: micro("19"), coverDays: 90, validFrom: "2026-11-01", validUntil: "2026-12-31", reference: "FEC-9", reason: "  90-day forward contract  " } };
     const second = applyPricingSubmission(first.next!, sub, EST_V, "mgr@nq", "2026-11-14T09:00:00.000Z", "Forward cover booked", "project");
     expect(second.ok).toBe(true);
@@ -54,7 +54,7 @@ describe("who may change pricing, and what a valid change looks like", () => {
     expect(second.next!.skus[other]).toMatchObject({ by: "est@nq", at: NOW }); // untouched: original attribution
     expect(second.next!.forwardCover.EUR).toMatchObject({ reason: "90-day forward contract", coverDays: 90, by: "mgr@nq" });
     const c = Object.fromEntries(second.changes.map((x) => [x.path, x]));
-    expect(c[`skus.${sku}.nativeUnitCostMicro`]).toMatchObject({ new: 60_000_000 });
+    expect(c[`skus.${sku}.nativeUnitCostE7`]).toMatchObject({ new: 600_000_000 });
     expect(c["forwardCover.EUR.rateMicro"]).toMatchObject({ previous: null, new: 19_000_000 });
     expect(second.changes.some((x) => x.path.startsWith("skus.") && !x.path.startsWith(`skus.${sku}.`))).toBe(false); // nothing else counts as changed
   });
@@ -107,10 +107,10 @@ describe("strict submission shape (independent security review)", () => {
   });
   it("refuses wrong types, non-integers, out-of-bound numbers, overlong text, a zero cost and a future rate date", () => {
     expect(errs(run((s) => { Object.values<any>(s.skus)[0].supplierName = 12345; }))).toMatch(/supplier must be text/); // eslint-disable-line @typescript-eslint/no-explicit-any
-    expect(errs(run((s) => { Object.values<any>(s.skus)[0].nativeUnitCostMicro = 1.5; }))).toMatch(/supplier cost must be a whole number/); // eslint-disable-line @typescript-eslint/no-explicit-any
-    expect(errs(run((s) => { Object.values<any>(s.skus)[0].nativeUnitCostMicro = 1e15; }))).toMatch(/supplier cost must be a whole number between 1 and 1000000000000/); // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(errs(run((s) => { Object.values<any>(s.skus)[0].nativeUnitCostE7 = 1.5; }))).toMatch(/supplier cost must be a whole number/); // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(errs(run((s) => { Object.values<any>(s.skus)[0].nativeUnitCostE7 = 1e15; }))).toMatch(/supplier cost must be a whole number between 1 and 10000000000000/); // eslint-disable-line @typescript-eslint/no-explicit-any
     expect(errs(run((s) => { Object.values<any>(s.skus)[0].source = "x".repeat(201); }))).toMatch(/too long/); // eslint-disable-line @typescript-eslint/no-explicit-any
-    expect(errs(run((s) => { Object.values<any>(s.skus)[0].nativeUnitCostMicro = 0; }))).toMatch(/a zero supplier cost is not a cost/); // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(errs(run((s) => { Object.values<any>(s.skus)[0].nativeUnitCostE7 = 0; }))).toMatch(/a zero supplier cost is not a cost/); // eslint-disable-line @typescript-eslint/no-explicit-any
     expect(errs(run((s) => { s.fxQuotes.EUR.asOf = "2030-01-01T00:00:00.000Z"; }))).toMatch(/cannot be dated in the future/);
     expect(errs(run((s) => { s.fxQuotes.EUR.rateMicro = 1e12; }))).toMatch(/exchange rate must be a whole number/);
     expect(errs(run(() => undefined, "x".repeat(501)))).toMatch(/3 to 500 characters/);
@@ -120,7 +120,7 @@ describe("strict submission shape (independent security review)", () => {
     for (const bad of [null, [], "x", 5]) expect(applyPricingSubmission(undefined, bad as never, EST_V, "e", NOW, "A valid reason", "project")).toMatchObject({ ok: false });
   });
   it("the largest allowed inputs still calculate exactly (no overflow)", () => {
-    const r = run((s) => { const k = Object.keys(s.skus)[0]; s.skus[k].nativeUnitCostMicro = 1e12; s.skus[k].currency = "EUR"; s.fxQuotes.EUR.rateMicro = 1e9; s.skus[k].freight = { factorMicro: 1e8, source: "max" }; });
+    const r = run((s) => { const k = Object.keys(s.skus)[0]; s.skus[k].nativeUnitCostE7 = 1e13; s.skus[k].currency = "EUR"; s.fxQuotes.EUR.rateMicro = 1e9; s.skus[k].freight = { factorMicro: 1e8, source: "max" }; });
     expect(r.ok).toBe(true);
   });
 });
