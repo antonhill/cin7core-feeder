@@ -31,7 +31,7 @@ import type { QuoteEvaluation } from "@/newquip/grower/evaluate";
 import type { GrowerItemKey, OptionalItemKey, PenningPigSize } from "@/newquip/grower/types";
 import {
   approveGrowerQuoteAction, createProjectFromGrowerQuoteAction, getGrowerQuoteAction, getQuotePageBundleAction, previewGrowerDraftAction, returnGrowerQuoteToEstimatorAction, returnGrowerQuoteToRepAction,
-  saveGrowerDraftAction, sendGrowerQuoteToEstimatorAction, signOffGrowerQuoteAction, type QuoteView,
+  saveGrowerDraftAction, sendGrowerQuoteToEstimatorAction, sendGrowerQuoteUnpricedToEstimatorAction, signOffGrowerQuoteAction, type QuoteView,
 } from "../actions";
 import { formatSast } from "@/lib/approvals/time";
 import { isOptionalItemKey } from "@/newquip/grower/types";
@@ -63,6 +63,7 @@ import { IndicativeComparisonPanel } from "./IndicativeComparisonPanel";
 import { ManualEvidencePanel } from "./ManualEvidencePanel";
 import { EstimatorReturnNotice, returnNoticeText } from "./ReturnNotice";
 import { ConfirmationPanel } from "./ConfirmationPanel";
+import { UnpricedHandoffPanel } from "./UnpricedHandoffPanel";
 import { DeliveryPanel, type DeliveryGate } from "./DeliveryPanel";
 import { ApprovalChecklist, AcceptanceStatusBanner, HandoverChecklist } from "./Stage36Guidance";
 import { costingAcceptedIncompleteText, deriveApprovalChecklist } from "@/newquip/quote/stage3-approval";
@@ -509,7 +510,9 @@ export default function QuoteEditorPage() {
   const exclChip = blankExclusionKeys.length > 0 ? "a reason is needed - needs attention" : exclCount > 0 ? `${exclCount} excluded - complete` : "None excluded";
   const fe = fieldErrors({ siteName: draft.siteName, penningPigSize: cfg.penningPigSize, calcIssues: ev.calc.issues });
   const err = (k: string) => (touched.has(k) ? fe[k] : undefined);
-  const wizard = deriveWizard({ state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", revision: q.revision, stage1Status: stages[0].status, roles: { rep: roles.has("rep"), estimator: roles.has("estimator"), manager: roles.has("manager") }, canViewCommercials: view.viewer.canViewCommercials, stage1, customer: customerFacts, repReady, estimatorOpen: estItems.length, totalAvailable: totalCents != null && totalCents > 0 });
+  // No indicative price yet, but the Rep's part is complete, a chargeable product is included and what is unpriced is the Estimator's: the Rep may submit with an explicit acknowledgement (never an amount). The server decides again.
+  const unpricedHandoffAvailable = (totalCents == null || totalCents <= 0) && repReady && rd.estimatorReasons.length > 0 && ev.calc.lines.some((l) => l.basis !== "not_selected" && (l.projectQuantity ?? 0) > 0);
+  const wizard = deriveWizard({ state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", revision: q.revision, stage1Status: stages[0].status, roles: { rep: roles.has("rep"), estimator: roles.has("estimator"), manager: roles.has("manager") }, canViewCommercials: view.viewer.canViewCommercials, stage1, customer: customerFacts, repReady, estimatorOpen: estItems.length, totalAvailable: totalCents != null && totalCents > 0, unpricedHandoffAvailable });
   // Resolve the entry step ONCE, after the customer facts have settled (read, failed or unavailable), and latch it: no later change of the facts can move the viewer (React's render-phase initialisation, as for `landing`).
   const factsSettled = customerFactsSettled(customerFacts) || factsGiveUp;
   if (stage === 1 && factsSettled && entry === null) setEntry(resolveEntryStep(wizard, reqStep));
@@ -965,10 +968,17 @@ export default function QuoteEditorPage() {
               <div className="mt-2">
                 <p className="text-sm text-slate-700 max-sm:hidden">Final step for the Rep. The Estimator reviews the costing next.</p>
                 {awaitingLines > 0 && <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950" data-testid="indicative-note">This total is indicative while {awaitingLines} line{awaitingLines === 1 ? "" : "s"} await{awaitingLines === 1 ? "s" : ""} the Estimator. If the Estimator&apos;s pricing changes it, the quotation returns to you to reconfirm the amount with the customer.</p>}
+                {unpricedHandoffAvailable ? (
+                  <div className="mt-3">
+                    <UnpricedHandoffPanel canAct={roles.has("rep") && q.state === "REP_DRAFT"} ready={repReady} loading={acts.isPending("send")} otherBusy={isWorking && !acts.isPending("send")}
+                      onSubmit={(ackd) => act(() => sendGrowerQuoteUnpricedToEstimatorAction(id, ackd), "Submitted to the Estimator: no customer price is recorded yet; the Estimator will establish the price and the Estimator has been notified.", "send", (v) => v.quote.state === "ESTIMATOR_REVIEW", 1, OP.submitToEstimator)} />
+                  </div>
+                ) : (
                 <div className="mt-3">
                   <ConfirmationPanel quoteId={id} amountLabel={totalCents == null ? null : fmtCents(totalCents)} canAct={roles.has("rep") && q.state === "REP_DRAFT"} ready={repReady} indicativeLines={totalIndicative ? awaiting.lines : 0} loading={acts.isPending("send")} otherBusy={isWorking && !acts.isPending("send")} refreshKey={`${q.revision}:${q.state}:${q.updated_at}`} recorded={false}
                     onConfirm={(c) => act(() => sendGrowerQuoteToEstimatorAction(id, totalCents!, c), "Submitted to the Estimator: the customer's price confirmation is recorded and the Estimator has been notified.", "send", (v) => v.quote.state === "ESTIMATOR_REVIEW", 1, OP.submitToEstimator)} />
                 </div>
+                )}
               </div>
             )}
             <ActionFeedback state={acts.stateOf("send")} />

@@ -68,6 +68,28 @@ export function checkHandoff(i: { readiness: Readiness; totalExVatCents: number 
   return { ok: true };
 }
 
+/** What customer_confirmed_by holds for an initial handoff that carried NO customer price (customer_confirmed_cents stays NULL: R0.00 is never recorded as a confirmed price). */
+export const UNPRICED_HANDOFF_BASIS = "Pricing to be established by the Estimator (no customer price confirmed; acknowledged by the Rep)";
+
+/**
+ * Rep → Estimator for a quotation that has NO indicative selling price yet (the Estimator establishes the first prices). A narrow, explicit exception to checkHandoff, not a way round it:
+ *   - it is STRUCTURALLY unavailable once the indicative total is > 0: from then on the Rep must confirm that amount with the customer through checkHandoff, so an acknowledgement can never
+ *     replace the confirmation after the first priced revision;
+ *   - the Rep's own work must be complete (no Rep-owned reason, which includes every required Rep charge; an explicit R0.00 for a service that is not required counts as entered);
+ *   - at least one chargeable product must be INCLUDED (not excluded, quantity > 0), and what is still unpriced must be Estimator-owned (otherwise there is nothing for the Estimator to establish);
+ *   - the Rep must explicitly acknowledge that no customer price has been established.
+ * It records NO amount: the caller stores customer_confirmed_cents = NULL, so sign-off and approval still require a real, confirmed, equal amount (checkSignOff / checkApproval).
+ */
+export function checkUnpricedHandoff(i: { readiness: Readiness; totalExVatCents: number | null; acknowledgedUnpriced: boolean; hasChargeableProduct: boolean }): Check {
+  const rep = repConfigurationReady(i.readiness);
+  if (!rep.ready) return fail(`The quote is ${i.readiness.state} (configuration not complete) — resolve ${rep.reasons[0] ?? "the outstanding items"} before it can be submitted.`);
+  if (i.totalExVatCents != null && i.totalExVatCents > 0) return fail("An indicative price exists: the customer must confirm that amount. Submit it with the customer's price confirmation instead.");
+  if (!i.hasChargeableProduct) return fail("No chargeable product is included, so there is nothing for the Estimator to price. Include at least one product.");
+  if (i.readiness.estimatorReasons.length === 0) return fail("There is no commercial amount for the customer to confirm.");
+  if (!i.acknowledgedUnpriced) return fail("Acknowledge that no customer price has been established yet before submitting.");
+  return { ok: true };
+}
+
 /**
  * Estimator sign-off. Fails closed unless the FULL readiness holds (every mapping / package / manual price resolved), costing is complete, and the total is still
  * the amount the customer confirmed at handoff (the Estimator learns of a changed amount here, not at approval).
@@ -76,7 +98,8 @@ export function checkSignOff(i: { readiness: Readiness; totalExVatCents: number 
   if (i.readiness.state !== "READY") return fail(`The quote is ${i.readiness.state}; resolve ${i.readiness.reasons[0] ?? "the outstanding items"} before signing off.`);
   if (!i.costing.complete) return fail(incompleteCostingMessage(i.costing.reasons[0], " Complete it (or record an authorised incomplete-cost exception) before signing off."));
   if (i.totalExVatCents == null || i.totalExVatCents <= 0) return fail("There is no contract value to sign off.");
-  if (i.customerConfirmedCents == null || i.customerConfirmedCents !== i.totalExVatCents) return fail(AMOUNT_CHANGED_AT_SIGNOFF);
+  if (i.customerConfirmedCents == null) return fail(NO_CUSTOMER_PRICE_AT_SIGNOFF);
+  if (i.customerConfirmedCents !== i.totalExVatCents) return fail(AMOUNT_CHANGED_AT_SIGNOFF);
   return { ok: true };
 }
 /**
@@ -87,6 +110,7 @@ export function incompleteCostingMessage(reason: string | undefined, nextStep: s
   const r = (reason ?? "supplier costs are unresolved").replace(/\.+$/, "");
   return `Costing is incomplete: ${r}.${/cannot be waived/i.test(r) && /exception/.test(nextStep) ? "" : nextStep}`;
 }
+export const NO_CUSTOMER_PRICE_AT_SIGNOFF = "No customer price has been confirmed yet - return it to the Rep to confirm the calculated amount.";
 export const AMOUNT_CHANGED_AT_SIGNOFF = "The amount changed since the customer confirmed it. Return it to the Rep to reconfirm.";
 
 /**

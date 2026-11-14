@@ -61,6 +61,8 @@ export interface WizardInput {
   estimatorOpen: number;
   /** The INDICATIVE total (ex VAT, the server's own figure even while Estimator items are open) is available (> 0). */
   totalAvailable: boolean;
+  /** No indicative price exists yet, but the Rep's work is complete, a chargeable product is included and the rest is the Estimator's: the Rep may submit with an explicit acknowledgement (checkUnpricedHandoff). */
+  unpricedHandoffAvailable?: boolean;
 }
 
 export interface Wizard<I extends string = WizardStepId> {
@@ -111,7 +113,7 @@ export function deriveWizard(i: WizardInput): Wizard {
   if (c.loaded && c.available && c.hasSnapshot && !c.hasContact) serverBlocks.push("Rep: choose the quotation contact in step 1.");
   // The server's handoff gate is REP_CONFIGURATION_READY plus an amount to confirm: Estimator-owned items never lock the Rep out (S1a).
   if (!i.repReady) serverBlocks.push("Rep: finish the items still listed in Review (step 4) before you can submit.");
-  else if (!i.totalAvailable) serverBlocks.push(i.estimatorOpen > 0 || estimatorOpen.length > 0
+  else if (!i.totalAvailable && !i.unpricedHandoffAvailable) serverBlocks.push(i.estimatorOpen > 0 || estimatorOpen.length > 0
     ? "No amount can be confirmed yet: nothing is priced and the remaining items are for the Estimator. Enter the delivery / installation charges and any M75 price that are yours to supply, then confirm the amount."
     : "There is no commercial amount for the customer to confirm.");
   const submitStatus: StepStatus = submitted ? "complete" : "incomplete";

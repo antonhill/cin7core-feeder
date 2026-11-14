@@ -17,7 +17,7 @@ import { applyMappingLibrary } from "@/lib/projects/product-scope";
 import { quoteToProjectBaseline } from "@/newquip/quote/to-project";
 import type { ScheduleStageTemplate } from "@/newquip/quote/billing-schedule";
 import type { ScheduleSource } from "@/newquip/quote/project-template";
-import { authoriseTransition, canEditDraft, checkApproval, checkHandoff, checkSignOff, type QuoteState } from "@/newquip/quote/workflow";
+import { authoriseTransition, canEditDraft, checkApproval, checkHandoff, checkSignOff, checkUnpricedHandoff, UNPRICED_HANDOFF_BASIS, type QuoteState } from "@/newquip/quote/workflow";
 import { estimatorCostingComplete, type CostingStatus } from "@/newquip/quote/readiness-concepts";
 import { hasAny, COMMERCIAL_APPROVAL_ROLES, type QuoteRole } from "@/newquip/quote/roles";
 import { createProjectFromBaseline } from "@/lib/projects/project-store";
@@ -256,6 +256,36 @@ export async function sendToEstimator(
   }
   const r = await db.from("newquip_quotes").update({
     state: auth.to, customer_confirmed_cents: input.confirmedAmountCents, customer_confirmed_by: input.confirmedBy.trim(),
+    customer_confirmed_at: new Date().toISOString(), handoff_by_email: email,
+    estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null,
+  }).eq("org_id", orgId).eq("id", quoteId).eq("state", "REP_DRAFT").eq("draft_hash", q.draft_hash).select("id");
+  if (r.error) fail(r.error.message);
+  if (!r.data || r.data.length === 0) fail("The quote changed while sending; refresh and try again.");
+}
+
+/**
+ * Rep → Estimator for a quotation with NO indicative price yet (checkUnpricedHandoff). Same transition, same compare-and-set, same snapshot capture as sendToEstimator, but NO amount is
+ * recorded: customer_confirmed_cents stays NULL (never 0), customer_confirmed_by carries UNPRICED_HANDOFF_BASIS, handoff_by_email is the Rep. Sign-off and approval still demand a confirmed amount
+ * equal to the total, so the Rep must confirm the Estimator's calculated amount (after a return) before the quotation can proceed.
+ */
+export async function sendToEstimatorUnpriced(
+  db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, email: string, quoteId: string, ctx: EvaluationContext,
+  input: { acknowledged: boolean },
+): Promise<void> {
+  const q = await mustLoad(db, orgId, quoteId);
+  const auth = authoriseTransition(roles, q.state, "SEND_TO_ESTIMATOR");
+  if (!auth.ok) fail(auth.error);
+  const ev = evaluateDraft(q.draft, ctx);
+  const hasChargeableProduct = ev.calc.lines.some((l) => l.basis !== "not_selected" && (l.projectQuantity ?? 0) > 0);
+  const chk = checkUnpricedHandoff({ readiness: ev.readiness, totalExVatCents: indicativeTotalCents(ev), acknowledgedUnpriced: input.acknowledged === true, hasChargeableProduct });
+  if (!chk.ok) fail(chk.error);
+  const built = ev.budget ? buildIndicativeSnapshot({ quoteRef: q.quote_ref, revision: q.revision, draft: q.draft, repEvaluation: ev, internalEvaluation: evaluateDraft(q.draft, { ...ctx, withholdCost: false }) }) : null;
+  if (built) {
+    const cap = await handoffWithSnapshot(db, orgId, quoteId, { draftHash: q.draft_hash, confirmedCents: null, confirmedBy: UNPRICED_HANDOFF_BASIS, handoffBy: email, snapshot: built.snapshot, snapshotHash: built.hash, index: built.index });
+    if (cap.captured) return;
+  }
+  const r = await db.from("newquip_quotes").update({
+    state: auth.to, customer_confirmed_cents: null, customer_confirmed_by: UNPRICED_HANDOFF_BASIS,
     customer_confirmed_at: new Date().toISOString(), handoff_by_email: email,
     estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null,
   }).eq("org_id", orgId).eq("id", quoteId).eq("state", "REP_DRAFT").eq("draft_hash", q.draft_hash).select("id");
