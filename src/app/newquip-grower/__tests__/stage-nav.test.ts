@@ -15,26 +15,41 @@ const html = (over: Partial<StageInput> = {}, viewing?: number) => {
   return renderToStaticMarkup(createElement(StageNav, { stages, current: currentStage(stages), viewing: (viewing ?? currentStage(stages)) as never, onSelect: () => undefined }));
 };
 
-describe("six-stage navigation", () => {
-  it("shows all six stages in order with their status, highlights the stage being viewed, and states the next action", () => {
+describe("four-phase navigation (the six workflow stages are unchanged underneath)", () => {
+  it("shows the four phases in order with their owner and status, highlights the phase being viewed, and states the next action", () => {
     const h = html();
-    const labels = ["Configuration", "Costing &amp; Estimator Review", "Manager Approval", "Customer Quotation", "Customer Acceptance", "Project Handover"];
-    const list = h.indexOf('id="stage-nav-list"'); // the narrow-screen disclosure above the list repeats the viewed stage's name, so order is checked within the list
+    const labels = ["Configure &amp; Submit", "Cost &amp; Verify", "Approve or Return", "Customer &amp; Handover"];
+    const list = h.indexOf('id="stage-nav-list"'); // the narrow-screen disclosure above the list repeats the viewed phase's name, so order is checked within the list
     let at = list; for (const l of labels) { const i = h.indexOf(l, list); expect(i, l).toBeGreaterThan(at); at = i; }
-    for (const n of [1, 2, 3, 4, 5, 6]) expect(h).toContain(`data-stage="${n}"`);
-    expect(h).toContain("Complete"); expect(h).toContain("Awaiting action"); expect(h).toContain("Not yet available");
-    expect(h.match(/aria-current="step"/g)).toHaveLength(1);
-    expect(h).toContain("Stage 4 · you are here");
+    for (const n of [1, 2, 3, 4]) expect(h).toContain(`data-phase="${n}"`);
+    for (const owner of ["Rep", "Estimator", "Manager", "Rep and Manager"]) expect(h).toContain(`>${owner}`);
+    expect(h).toContain("Complete"); expect(h).toContain("Awaiting action");
+    expect(h.match(/aria-current="(?:step|true)" data-phase/g)).toHaveLength(1); // exactly one phase is highlighted
+    expect(h.match(/aria-current="step"/g)).toHaveLength(1); // inside Customer & Handover only the active step is "step"; the phase card is "true"
+    expect(h).toMatch(/aria-current="true" data-phase="4" data-stage="4"/);
+    expect(h).toContain("Rep and Manager · you are here");
+    expect(h).toContain("Phase 4 of 4 · Customer &amp; Handover");
     expect(h).toMatch(/Next: Rep: choose the payment schedule and generate the customer quotation PDF/);
+    expect(h).not.toMatch(/Stage \d of 6/);
   });
-  it("lets a user inspect a different stage than the current one (the highlight follows the viewed stage, 'you are here' stays on the current one)", () => {
-    const h = html({}, 2);
-    expect(h).toMatch(/data-stage="2" aria-current="step"|aria-current="step" data-stage="2"/);
-    expect(h).toContain("Stage 4 · you are here");
-  });
-  it("is responsive: one column on a phone, two on a tablet, six on a desktop", () => {
+  it("Customer & Handover keeps stages 4, 5 and 6 reachable as steps (existing stage ids) while it is viewed, and only then", () => {
     const h = html();
-    expect(h).toContain("grid-cols-1"); expect(h).toContain("sm:grid-cols-2"); expect(h).toContain("lg:grid-cols-6");
+    expect(h).toContain('data-testid="phase4-steps"');
+    for (const n of [4, 5, 6]) expect(h).toContain(`data-stage="${n}"`);
+    for (const l of ["Customer Quotation", "Customer Acceptance", "Project Handover"]) expect(h).toContain(l);
+    expect(h).toContain("Not yet available"); // stage 6 waits for the verified acceptance
+    const early = html({}, 2);
+    expect(early).not.toContain('data-testid="phase4-steps"');
+    expect(early).not.toMatch(/<button[^>]*aria-current="step"[^>]*data-stage="[456]"/);
+  });
+  it("lets a user inspect a different phase than the current one (the highlight follows the viewed phase, 'you are here' stays on the current one)", () => {
+    const h = html({}, 2);
+    expect(h).toMatch(/aria-current="step" data-phase="2" data-stage="2"/);
+    expect(h).toContain("Rep and Manager · you are here");
+  });
+  it("is responsive: one column on a phone, two on a tablet, four on a desktop", () => {
+    const h = html();
+    expect(h).toContain("grid-cols-1"); expect(h).toContain("sm:grid-cols-2"); expect(h).toContain("lg:grid-cols-4"); expect(h).not.toContain("lg:grid-cols-6");
   });
   it("reports returned work and not-required (grandfathered) stages", () => {
     expect(html({ state: "REP_DRAFT", revision: 2, signedOff: false, commercial: "NOT_APPROVED", confirmed: false })).toContain("Returned");
@@ -73,11 +88,11 @@ describe("UX-006c viewer-relative Stage 2 chip (presentation only)", () => {
   });
 });
 
-describe("UX-006c equal-height cards", () => {
+describe("UX-006c equal-height phase cards", () => {
   it("each card pins its status chip to the bottom, keeps a fixed header zone for the title offset and never truncates", () => {
     const h = html();
-    expect(h.match(/mt-auto/g)).toHaveLength(6);
-    expect(h.match(/lg:min-h-8/g)).toHaveLength(6);
+    expect(h.match(/mt-auto/g)).toHaveLength(4);
+    expect(h.match(/lg:min-h-8/g)).toHaveLength(4);
     for (const cut of ["line-clamp", "truncate", "overflow-hidden", "text-ellipsis"]) expect(h, cut).not.toContain(cut);
     expect(h).toContain("h-full"); // the card fills its grid cell, so a row is as tall as its tallest card
   });

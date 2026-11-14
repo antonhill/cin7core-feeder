@@ -470,7 +470,7 @@ describe("UX-006i2 Stage 2: Sign-off or return (only the actions valid for the a
     expect(button.disabled).toBe(false);
     fireEvent.click(button);
     await waitFor(() => expect(spy).toHaveBeenCalledWith(id, "Delivery charge is wrong"), { timeout: 8000 });
-    await waitFor(() => expect(document.querySelector('[data-testid="stage-nav"] [aria-current="step"]')!.getAttribute("data-stage")).toBe("1"), { timeout: 8000 }); // a real workflow change moves the view
+    await waitFor(() => expect(document.querySelector('[data-testid="stage-nav"] [data-stage][aria-current="step"]')!.getAttribute("data-stage")).toBe("1"), { timeout: 8000 }); // a real workflow change moves the view
   }, 60000);
 
   it("sign-off: inline success naming the Manager as the next owner, with an obvious next-stage action; the editor STAYS on Stage 2", async () => {
@@ -485,11 +485,11 @@ describe("UX-006i2 Stage 2: Sign-off or return (only the actions valid for the a
     expect(ok.textContent).toContain("Estimator sign-off complete");
     expect(screen.getByTestId("signoff-next-owner").textContent).toMatch(/Next responsible role: Manager/);
     expect(screen.getByTestId("next-manager-cue").textContent).toBe("Next: Manager approval (Stage 3).");
-    expect(document.querySelector('[data-testid="stage-nav"] [aria-current="step"]')!.getAttribute("data-stage")).toBe("2");
+    expect(document.querySelector('[data-testid="stage-nav"] [data-stage][aria-current="step"]')!.getAttribute("data-stage")).toBe("2");
     expect(screen.queryByRole("button", { name: /Sign off for Manager approval/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "Return to rep" })).toBeNull(); // the Manager owns the next decision
     fireEvent.click(within(ok).getByRole("button", { name: "Open Manager approval (Stage 3)" }));
-    expect(document.querySelector('[data-testid="stage-nav"] [aria-current="step"]')!.getAttribute("data-stage")).toBe("3");
+    expect(document.querySelector('[data-testid="stage-nav"] [data-stage][aria-current="step"]')!.getAttribute("data-stage")).toBe("3");
     expect(screen.getByTestId("stage3-workspace")).toBeTruthy();
   }, 60000);
 
@@ -679,7 +679,7 @@ describe("UX-006i2 Stage 2: statuses come from data, never from a visit", () => 
     await act(async () => { fireEvent.change(reason, { target: { value: "Supplier quote dated today" } }); });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save draft" })); });
     await waitFor(() => expect(screen.getByText("All changes saved")).toBeTruthy(), { timeout: 8000 });
-    expect(document.querySelector('[data-testid="stage-nav"] [aria-current="step"]')!.getAttribute("data-stage")).toBe("2");
+    expect(document.querySelector('[data-testid="stage-nav"] [data-stage][aria-current="step"]')!.getAttribute("data-stage")).toBe("2");
     expect(current()).toBe("mapping");
   }, 60000);
 
@@ -692,7 +692,7 @@ describe("UX-006i2 Stage 2: statuses come from data, never from a visit", () => 
 
 describe("UX-006i2 Stage 2: the view follows real workflow transitions and nothing else (#176's pin, on READY fixtures)", () => {
   const SUB = SUBMITTED;
-  const viewedStage = () => document.querySelector('[data-testid="stage-nav"] [aria-current="step"]')!.getAttribute("data-stage");
+  const viewedStage = () => document.querySelector('[data-testid="stage-nav"] [data-stage][aria-current="step"]')!.getAttribute("data-stage");
   // The fake database hands out its rows by reference, so a change must REPLACE the row (as a real database would), or the page's earlier view would change under it.
   const patchRow = (id: string, patch: (r: Record<string, unknown>) => Record<string, unknown>) => { const arr = db.rows("newquip_quotes") as Array<Record<string, unknown>>; const i = arr.findIndex((r) => r.id === id); arr[i] = { ...arr[i], ...patch(arr[i]) }; };
   const reread = async (id: string) => actions.getGrowerQuoteAction(id);
@@ -830,7 +830,7 @@ describe("UX-006i2 review fixes: wording that is true to the current state (revi
     const bar = await screen.findByTestId("step-buttons", {}, { timeout: 8000 });
     expect(within(bar).queryByRole("button", { name: /^Next/ })).toBeNull();
     fireEvent.click(within(bar).getByRole("button", { name: "Return to Stage 1" }));
-    expect(document.querySelector('[data-testid="stage-nav"] [aria-current="step"]')!.getAttribute("data-stage")).toBe("1");
+    expect(document.querySelector('[data-testid="stage-nav"] [data-stage][aria-current="step"]')!.getAttribute("data-stage")).toBe("1");
   }, 60000);
 
   it("a Manager inspecting Stage 2 gets a SECONDARY Next that records nothing (not the primary action)", async () => {

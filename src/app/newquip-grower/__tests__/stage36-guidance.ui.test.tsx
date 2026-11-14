@@ -303,11 +303,11 @@ describe("UX-006c interplay with the pinned landing stage", () => {
   }, 60000);
   it("Preview only and the narrow-screen disclosure still work on the pinned stage", async () => {
     await open({ stage: "3", roles: ["REP"] });
-    expect(stageChip(4)).toContain("Preview only");
+    expect(document.querySelector('[data-phase="4"]')!.textContent).toContain("Preview only");
     const t = screen.getByTestId("stage-nav-toggle");
-    expect(t.textContent).toContain("Stage 3 of 6");
-    fireEvent.click(t); fireEvent.click(document.querySelector('[data-stage="4"]')!);
-    expect(t.textContent).toContain("Stage 4 of 6");
+    expect(t.textContent).toContain("Phase 3 of 4");
+    fireEvent.click(t); fireEvent.click(document.querySelector('[data-phase="4"]')!);
+    expect(t.textContent).toContain("Phase 4 of 4");
     expect(document.activeElement).toBe(t);
   }, 30000);
   it("after a real workflow transition (the Manager approves) the view moves on to the new current stage", async () => {
@@ -318,7 +318,7 @@ describe("UX-006c interplay with the pinned landing stage", () => {
     // UX-006 S1a: the real approval now also needs COMPLETE costing, which this fixture does not have; the action is stubbed to the approved state so the test keeps proving that the view follows the transition.
     vi.spyOn(actions, "approveGrowerQuoteAction").mockImplementation((async () => { const rows = db.rows("newquip_quotes") as Array<Record<string, unknown>>; rows[0].state = "MANAGER_APPROVED_FINAL"; rows[0].approved_by_email = "m@nq"; return actions.getGrowerQuoteAction(g.__QID!); }) as never);
     fireEvent.click(approve);
-    await waitFor(() => expect(document.querySelector('[data-stage="4"]')!.getAttribute("aria-current")).toBe("step"), { timeout: 15000 });
+    await waitFor(() => expect(document.querySelector('[data-testid="phase4-steps"] [data-stage="4"]')!.getAttribute("aria-current")).toBe("step"), { timeout: 15000 });
   }, 60000);
 });
 
@@ -330,10 +330,10 @@ describe("UX-006c Stage 4 wiring follows the stable gate callback", () => {
     }) as never);
     await open({ stage: "4", roles: ["REP"], row: FINAL, delivery: delivery({ latestDocumentId: "d0" }), docs: docs(1), step: "2" });
     const box = await screen.findByLabelText(/I have opened and reviewed the PDF/, {}, { timeout: 8000 });
-    expect(document.querySelector('[data-stage="4"]')!.getAttribute("aria-current")).toBe("step");
+    expect(document.querySelector('[data-testid="phase4-steps"] [data-stage="4"]')!.getAttribute("aria-current")).toBe("step");
     fireEvent.click(box);
     fireEvent.click(screen.getByRole("button", { name: "Send quotation to customer" }));
-    await waitFor(() => expect(document.querySelector('[data-stage="5"]')!.getAttribute("aria-current")).toBe("step"), { timeout: 15000 });
+    await waitFor(() => expect(document.querySelector('[data-testid="phase4-steps"] [data-stage="5"]')!.getAttribute("aria-current")).toBe("step"), { timeout: 15000 });
   }, 60000);
 });
 
@@ -349,17 +349,34 @@ describe("a recorded send that FAILED or was SUPPRESSED is never reported as sen
 });
 
 describe("UX-006c stage navigation", () => {
+  it("Customer & Handover groups stages 4-6: the phase stays highlighted and its steps move between the existing stages (?stage= unchanged)", async () => {
+    await open({ stage: "4", roles: ["REP"], row: FINAL, delivery: delivery({ latestDocumentId: "d0" }), docs: docs(1) });
+    expect(document.querySelector('[data-phase="4"]')!.getAttribute("aria-current")).toBe("true"); // the phase is current; the one "step" is the active step below it
+    expect(document.querySelectorAll('[data-stage][aria-current="step"]').length).toBe(1);
+    expect(document.querySelectorAll('[data-testid="phase4-steps"] [data-stage]').length).toBe(3);
+    const toggle = screen.getByTestId("stage-nav-toggle");
+    fireEvent.click(toggle); expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(document.querySelector('[data-testid="phase4-steps"] [data-stage="5"]')!);
+    expect(toggle.getAttribute("aria-expanded")).toBe("false"); // choosing a step closes the open phase list (and returns focus to the toggle)
+    await waitFor(() => expect(document.querySelector('[data-testid="phase4-steps"] [data-stage="5"]')!.getAttribute("aria-current")).toBe("step"));
+    expect(document.querySelector('[data-phase="4"]')!.getAttribute("aria-current")).toBe("true");
+    expect(document.querySelector('[data-phase="4"]')!.getAttribute("data-stage")).toBe("4"); // the phase card keeps its representative stage as an anchor
+    expect(document.querySelector('[data-testid="phase4-steps"] [data-stage="4"]')!.getAttribute("aria-current")).toBeNull();
+    expect(new URL(window.location.href).searchParams.get("stage")).toBe("5");
+    fireEvent.click(document.querySelector('[data-phase="3"]')!);
+    expect(document.querySelector('[data-testid="phase4-steps"]')).toBeNull(); // the steps only show inside the phase
+  }, 60000);
   it("Preview only appears on Stage 4 only when the customer summary can be inspected (READY, not approved); Stages 5 and 6 stay Not yet available", async () => {
     await open({ stage: "4", roles: ["REP"] });
     const label = (n: number) => document.querySelector(`[data-stage="${n}"]`)!.textContent ?? "";
     expect(label(4)).toContain("Preview only"); expect(label(5)).toContain("Not yet available"); expect(label(6)).toContain("Not yet available");
     expect(label(4)).not.toContain("Not yet available");
   }, 30000);
-  it("selecting a stage from the open list moves focus to the toggle (the list collapses); Escape closes it and returns focus there", async () => {
+  it("selecting a phase from the open list moves focus to the toggle (the list collapses); Escape closes it and returns focus there", async () => {
     await open({ stage: "3", roles: ["REP"] });
     const t = screen.getByTestId("stage-nav-toggle");
     fireEvent.click(t);
-    const five = document.querySelector('[data-stage="5"]') as HTMLElement; five.focus();
+    const five = document.querySelector('[data-phase="4"]') as HTMLElement; five.focus();
     fireEvent.click(five);
     expect(document.activeElement).toBe(t);
     fireEvent.click(t);
@@ -368,17 +385,17 @@ describe("UX-006c stage navigation", () => {
     expect(t.getAttribute("aria-expanded")).toBe("false");
     expect(document.activeElement).toBe(t);
   }, 30000);
-  it("on a narrow screen the disclosure reads 'Stage n of 6 · name', toggles aria-expanded, lists all six and selecting one closes it", async () => {
+  it("on a narrow screen the disclosure reads 'Phase n of 4 · name', toggles aria-expanded, lists all four and selecting one closes it", async () => {
     await open({ stage: "3", roles: ["REP"] });
     const t = screen.getByTestId("stage-nav-toggle");
-    expect(t.textContent).toContain("Stage 3 of 6 · Manager Approval");
+    expect(t.textContent).toContain("Phase 3 of 4 · Approve or Return");
     expect(t.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(t);
     expect(t.getAttribute("aria-expanded")).toBe("true");
-    expect(document.querySelectorAll("#stage-nav-list > li button").length).toBe(6);
-    fireEvent.click(document.querySelector('[data-stage="5"]')!);
+    expect(document.querySelectorAll("#stage-nav-list > li button").length).toBe(4);
+    fireEvent.click(document.querySelector('[data-phase="4"]')!);
     expect(t.getAttribute("aria-expanded")).toBe("false");
-    expect(t.textContent).toContain("Stage 5 of 6 · Customer Acceptance");
+    expect(t.textContent).toContain("Phase 4 of 4 · Customer & Handover");
     shot("nav-disclosure");
   }, 30000);
 });
