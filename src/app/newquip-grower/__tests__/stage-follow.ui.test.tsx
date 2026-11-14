@@ -23,6 +23,16 @@ vi.mock("@/lib/require-org-admin", () => ({ requireOrgAdmin: vi.fn() }));
 vi.mock("@/newquip/require-newquip-poc-org", () => ({ requireNewquipPocOrg: vi.fn() }));
 vi.mock("@/lib/approvals/role-store", () => ({ resolveRoles: vi.fn(), canSeeCosts: vi.fn() }));
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: () => db }));
+// The page's opening bundle reads delivery / documents through page-reads; these tests drive those reads through the (mocked or spied) individual actions, so route the bundle's parts to them.
+// (the imports are lazy: delivery-actions itself imports page-reads, so loading it inside the factory would deadlock)
+vi.mock("../page-reads", () => {
+  const actual = () => vi.importActual<typeof import("../page-reads")>("../page-reads");
+  return {
+    // A spied getQuoteDeliveryAction supplies the delivery view (the real reader would answer from the empty FakeDb); otherwise the real reader runs (never via the action, which calls this).
+    deliveryViewOf: async (db: any, a: any, id: string) => { const da = await import("../delivery-actions"); if (!vi.isMockFunction(da.getQuoteDeliveryAction)) return (await actual()).deliveryViewOf(db, a, id); const r = await da.getQuoteDeliveryAction(id); if (!r.ok) throw new Error(r.error); return r.data; },
+    documentsViewOf: async (db: any, a: any, id: string) => (await actual()).documentsViewOf(db, a, id),
+  };
+});
 vi.mock("@/lib/activity-log", () => ({ logActivity: vi.fn(() => Promise.resolve()) }));
 const ORG = "org-nq";
 const SESSION = { orgId: ORG, userId: "u1", email: "u@nq" };

@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { formatSast } from "@/lib/approvals/time";
 import { getQuoteDocumentsAction, issueQuoteDocumentAction, type QuoteDocumentsView } from "../document-actions";
+import { seedFresh, type BundleSeed } from "./bundle-seed";
 import { getQuoteDeliveryAction, retryQuoteSendAction, sendQuoteToCustomerAction, type DeliveryView } from "../delivery-actions";
 import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/billing-schedule";
 import { DisabledReason } from "@/components/ApprovalDisabledReason";
@@ -34,15 +35,17 @@ function Sec({ steps, id, number, title, children }: { steps?: DeliverySteps; id
 export interface DeliveryGate { requires: boolean; accepted: boolean; status: string | null; hasDocument: boolean; linkState?: "NONE" | "ACTIVE" | "EXPIRED" | "REVOKED" }
 
 /** `section`: Stage 4 (Customer Quotation) shows the PDF and the send; Stage 5 (Customer Acceptance) shows the customer's response. The same data and server actions serve both. */
-export function DeliveryPanel({ quoteId, contractCents, onGate, section, steps }: { quoteId: string; contractCents: number; onGate: (g: DeliveryGate) => void; section: "quotation"; steps?: DeliverySteps }) {
-  const [docs, setDocs] = useState<QuoteDocumentsView | null>(null);
-  const [d, setD] = useState<DeliveryView | null>(null);
+export function DeliveryPanel({ quoteId, contractCents, onGate, section, steps, seed, onSeedUsed }: { /** The opening page bundle (see bundle-seed.ts): used once, only while fresh, so the panel does not read what the page just read. */ seed?: BundleSeed | null; /** Called once when the panel has taken the seed, so a later remount reads afresh. */ onSeedUsed?: () => void; quoteId: string; contractCents: number; onGate: (g: DeliveryGate) => void; section: "quotation"; steps?: DeliverySteps }) {
+  const [init] = useState(() => (seed && seedFresh(seed) && seed.documents?.ok && seed.documents.data && seed.delivery?.ok && seed.delivery.data ? { docs: seed.documents.data, d: seed.delivery.data } : null));
+  const seededOnce = useRef(false);
+  const [docs, setDocs] = useState<QuoteDocumentsView | null>(init?.docs ?? null);
+  const [d, setD] = useState<DeliveryView | null>(init?.d ?? null);
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null); // UX-007: the operation in flight, by its label (null when idle)
   const inFlight = useRef(false);
   const [choice, setChoice] = useState<ScheduleChoice | undefined>(undefined);
-  const [to, setTo] = useState(""); const [cc, setCc] = useState(""); const [message, setMessage] = useState(""); const [reviewed, setReviewed] = useState(false);
+  const [to, setTo] = useState(init?.d.defaultTo ?? ""); const [cc, setCc] = useState(""); const [message, setMessage] = useState(""); const [reviewed, setReviewed] = useState(false);
   const [key, setKey] = useState(newKey); const [altReason, setAltReason] = useState(""); const [resendOf, setResendOf] = useState<string | null>(null); const [resendReason, setResendReason] = useState("");
 
   const reload = useCallback(async () => {
@@ -51,7 +54,12 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section, steps }
     if (b.ok && b.data) { setD(b.data); onGate({ requires: b.data.requiresAcceptance, accepted: b.data.accepted, status: b.data.status, hasDocument: b.data.latestDocumentId != null, linkState: b.data.links.state }); if (!to && b.data.defaultTo) setTo(b.data.defaultTo); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quoteId, onGate]);
-  useEffect(() => { let live = true; void (async () => { if (live) await reload(); })(); return () => { live = false; }; }, [reload]);
+  useEffect(() => {
+    let live = true;
+    if (init && !seededOnce.current) { seededOnce.current = true; onSeedUsed?.(); return () => { live = false; }; } // seeded by the page's opening read: nothing to fetch now
+    void (async () => { if (live) await reload(); })();
+    return () => { live = false; };
+  }, [reload, init, onSeedUsed]);
 
   const run = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: string, label: string, lost: string = "We could not confirm whether this completed. The latest status is shown below: check it before trying again.") => {
     if (inFlight.current) return; // a second click in the same tick (before React re-renders) is a no-op: the guard is a ref, not state

@@ -4,12 +4,10 @@
 // action. Manager approval authorises issue; issuing needs the Rep or Manager role. Company details are controlled configuration changed by a Manager only.
 // Only async functions and erased types are exported.
 import { authoriseActor, auditActor, errText, ownerEmailOf, type Actor } from "./actor";
+import { documentsViewOf } from "./page-reads";
 import { createServiceRoleClient } from "@/supabase/server";
-import { loadQuote } from "@/lib/newquip-quotes/quote-store";
-import { latestSnapshot } from "@/lib/newquip-quotes/customer-store";
-import { snapshotIssues } from "@/lib/newquip-quotes/customer-snapshot";
 import { missingProfileFields, type CompanyProfile } from "@/lib/newquip-quotes/company-profile";
-import { defaultDeps, documentsAvailable, issueQuotationDocument, latestProfile, listDocuments, saveProfile } from "@/lib/newquip-quotes/document-store";
+import { defaultDeps, documentsAvailable, issueQuotationDocument, latestProfile, saveProfile } from "@/lib/newquip-quotes/document-store";
 import { resolveProjectSchedule } from "@/lib/newquip-quotes/schedule-resolve";
 import type { ScheduleChoice } from "@/newquip/quote/billing-schedule";
 
@@ -43,24 +41,7 @@ export async function saveCompanyProfileAction(input: Partial<CompanyProfile>): 
 }
 
 export async function getQuoteDocumentsAction(quoteId: string): Promise<DocumentActionResult<QuoteDocumentsView>> {
-  try {
-    const a = await authoriseActor();
-    const db = createServiceRoleClient();
-    const q = await loadQuote(db, a.orgId, quoteId);
-    if (!q) throw new Error("Quote not found.");
-    if (!(await documentsAvailable(db))) return { ok: true, data: { available: false, documents: [], blockers: [], canIssue: false } };
-    const docs = await listDocuments(db, a.orgId, quoteId);
-    const blockers: string[] = [];
-    if (q.state !== "MANAGER_APPROVED_FINAL") blockers.push("The quotation must be approved by a Manager before a customer document can be issued.");
-    else {
-      const s = await latestSnapshot(db, a.orgId, quoteId);
-      blockers.push(...(s ? snapshotIssues(s.snapshot) : ["Select the customer from Cin7."]));
-      const missing = missingProfileFields((await latestProfile(db, a.orgId))?.profile);
-      if (missing.length) blockers.push(`NewQuip company details are incomplete: ${missing.join(", ")}.`);
-    }
-    return { ok: true, data: { available: true, blockers, canIssue: (a.roles.has("rep") || a.roles.has("manager")) && blockers.length === 0,
-      documents: docs.map((d) => ({ id: d.id, version: d.version, revision: d.revision, issuedAt: d.created_at, issuedBy: d.issued_by_email, byteSize: d.byte_size, contentHash: d.content_hash })) } };
-  } catch (e) { return { ok: false, error: errText(e) }; }
+  try { return { ok: true, data: await documentsViewOf(createServiceRoleClient(), await authoriseActor(), quoteId) }; } catch (e) { return { ok: false, error: errText(e) }; }
 }
 
 /** Generates the customer PDF from the approved baseline (Rep or Manager). Re-issuing identical inputs returns the same document; a changed input creates the next version. */

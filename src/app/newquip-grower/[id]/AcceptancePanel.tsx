@@ -11,6 +11,7 @@ import type { BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { formatSast } from "@/lib/approvals/time";
+import { seedFresh, type BundleSeed } from "./bundle-seed";
 import { getQuoteDeliveryAction, recordCustomerResponseAction, reviewCustomerResponseAction, revokeResponseLinksAction, type DeliveryView, type ResponseRow } from "../delivery-actions";
 import { EVIDENCE_ACCEPT, EVIDENCE_MAX_BYTES, EVIDENCE_MAX_FILES, EVIDENCE_MAX_TOTAL } from "@/lib/newquip-quotes/response-evidence-limits";
 import type { DeliveryGate } from "./DeliveryPanel";
@@ -29,8 +30,10 @@ const kb = (n: number) => `${Math.max(1, Math.round(n / 1024))} KB`;
 /** The operation name for a busy key (ids carry the response they act on). */
 const busyLabel = (b: string): string => b === "revoke" ? OP.revokeLinks : b === "record" ? OP.recordCustomerResponse : b.startsWith("attach-") ? OP.attachEvidence : b.startsWith("v-") || b.startsWith("r-") ? OP.verifyCustomerResponse : OP.loadCustomerResponse;
 
-export function AcceptancePanel({ quoteId, onGate }: { quoteId: string; onGate: (g: DeliveryGate) => void }) {
-  const [d, setD] = useState<DeliveryView | null>(null);
+export function AcceptancePanel({ quoteId, onGate, seed, onSeedUsed }: { quoteId: string; onGate: (g: DeliveryGate) => void; /** The opening page bundle (see bundle-seed.ts): used once, only while fresh. */ seed?: BundleSeed | null; onSeedUsed?: () => void }) {
+  const [init] = useState(() => (seed && seedFresh(seed) && seed.delivery?.ok && seed.delivery.data ? seed.delivery.data : null));
+  const seededOnce = useRef(false);
+  const [d, setD] = useState<DeliveryView | null>(init);
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -48,7 +51,12 @@ export function AcceptancePanel({ quoteId, onGate }: { quoteId: string; onGate: 
     const b = await getQuoteDeliveryAction(quoteId);
     if (b.ok && b.data) { setD(b.data); onGate({ requires: b.data.requiresAcceptance, accepted: b.data.accepted, status: b.data.status, hasDocument: b.data.latestDocumentId != null, linkState: b.data.links.state }); } else setErr(b.error ?? "Could not load the customer responses.");
   }, [quoteId, onGate]);
-  useEffect(() => { let live = true; void (async () => { if (live) await reload(); })(); return () => { live = false; }; }, [reload]);
+  useEffect(() => {
+    let live = true;
+    if (init && !seededOnce.current) { seededOnce.current = true; onSeedUsed?.(); return () => { live = false; }; } // seeded by the page's opening read: nothing to fetch now
+    void (async () => { if (live) await reload(); })();
+    return () => { live = false; };
+  }, [reload, init, onSeedUsed]);
 
   const work = async (what: string, fn: () => Promise<{ ok: boolean; error?: string }>, done: string) => {
     if (inFlight.current) return; // a second click in the same tick (before React re-renders) is a no-op: the guard is a ref, not state
