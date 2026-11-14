@@ -111,7 +111,7 @@ const SIGNED = { state: "ESTIMATOR_REVIEW", row: { customer_confirmed_cents: 100
 const COSTED = { estimator: { ...draft.estimator, costBasis: { incompleteAccepted: { reason: "Test exception", by: "e@nq", at: "2026-11-02T08:00:00Z" } } } };
 const UNSIGNED = { state: "ESTIMATOR_REVIEW", row: { customer_confirmed_cents: 1000000000, customer_confirmed_by: "A Customer <a@c.co>", customer_confirmed_at: "2026-11-02T08:00:00Z", handoff_by_email: "rep@nq" } };
 const ws = () => screen.getByTestId("stage3-workspace");
-const viewedStage = () => document.querySelector('[data-testid="stage-nav"] [aria-current="step"]')!.getAttribute("data-stage");
+const viewedStage = () => document.querySelector('[data-testid="stage-nav"] [data-stage][aria-current="step"]')!.getAttribute("data-stage");
 const approve = () => screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement;
 const patchRow = (id: string, patch: (r: Record<string, unknown>) => Record<string, unknown>) => { const arr = db.rows("newquip_quotes") as Array<Record<string, unknown>>; const i = arr.findIndex((r) => r.id === id); arr[i] = { ...arr[i], ...patch(arr[i]) }; };
 const REF = "pnzwjqjovxxdikxtfngq";
