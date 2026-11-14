@@ -179,3 +179,21 @@ describe("the contract imports no server action, store or React", () => {
     expect(src).not.toMatch(/from "react"|actions|quote-store|supabase|"use client"|"use server"/);
   });
 });
+
+describe("deriveWizard: initial handoff with no indicative price", () => {
+  it("the Submit step stays LOCKED with the existing message unless the unpriced handoff is available", () => {
+    const w = wiz({ totalAvailable: false, estimatorOpen: 2 });
+    expect(by(w, "submit").access).toBe("locked");
+    expect(by(w, "submit").blockedBy[0]).toMatch(/^No amount can be confirmed yet/);
+  });
+  it("opens the Submit step when the unpriced handoff is available (Rep work complete, chargeable product, Estimator-owned rest)", () => {
+    const w = wiz({ totalAvailable: false, estimatorOpen: 2, unpricedHandoffAvailable: true });
+    expect(by(w, "submit").access).toBe("edit");
+    expect(by(w, "submit").blockedBy).toEqual([]);
+  });
+  it("never bypasses the other Submit gates: Rep work unfinished, or no customer contact, still lock it", () => {
+    expect(by(wiz({ totalAvailable: false, estimatorOpen: 2, unpricedHandoffAvailable: true, ready: false }), "submit").access).toBe("locked");
+    const noContact = wiz({ totalAvailable: false, estimatorOpen: 2, unpricedHandoffAvailable: true, s1: { customer: { ...full, hasContact: false, contactName: null } } });
+    expect(by(noContact, "submit").access).not.toBe("edit");
+  });
+});

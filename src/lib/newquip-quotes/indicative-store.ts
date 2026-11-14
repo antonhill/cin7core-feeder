@@ -38,7 +38,7 @@ export type CaptureResult = { captured: true; id: string } | { captured: false; 
  */
 export async function handoffWithSnapshot(
   db: Db, orgId: string, quoteId: string,
-  i: { draftHash: string; confirmedCents: number; confirmedBy: string; handoffBy: string; snapshot: IndicativeSnapshot; snapshotHash: string; index: IndicativeSnapshotIndex },
+  i: { draftHash: string; confirmedCents: number | null; confirmedBy: string; handoffBy: string; snapshot: IndicativeSnapshot; snapshotHash: string; index: IndicativeSnapshotIndex },
 ): Promise<CaptureResult> {
   const r = await db.rpc("newquip_handoff_with_snapshot", {
     p_org: orgId, p_quote: quoteId, p_draft_hash: i.draftHash,

@@ -42,7 +42,7 @@ import { BASELINE_EXCEPTION_TITLE, exceptionDecisionText, validateExceptionReaso
 import type { ScheduleChoice } from "@/newquip/quote/billing-schedule";
 import { resolveProjectSchedule } from "@/lib/newquip-quotes/schedule-resolve";
 import {
-  baselineExceptionOf, createProjectFromAcceptedQuote, costingOf, createQuote, estimatorSignOff, listQuotes, loadQuote, managerApprove, returnToRep, saveDraft, sendToEstimator,
+  baselineExceptionOf, createProjectFromAcceptedQuote, costingOf, createQuote, estimatorSignOff, listQuotes, loadQuote, managerApprove, returnToRep, saveDraft, sendToEstimator, sendToEstimatorUnpriced,
   type QuoteRecord,
 } from "@/lib/newquip-quotes/quote-store";
 
@@ -383,6 +383,25 @@ export async function sendGrowerQuoteToEstimatorAction(quoteId: string, confirme
     // The estimator stage opens now: the policy's named estimator (or every estimator) is notified in the app and by email.
     if (await stagedAvailable(db)) await resyncQuoteApprovals(db, ctxOf(a), quoteId);
     return { confirmationContact: { source: resolved.source, name: resolved.name, email: resolved.email, reason: resolved.reason, origin: resolved.origin }, amountCents: confirmedAmountCents, confirmedBy: a.email, deliveryContactUnchanged: snap?.snapshot.chosenContact?.email ?? null };
+  });
+}
+
+/**
+ * Rep → Estimator when NO indicative price exists yet (the Estimator establishes the first prices). Rep-only; takes NO amount and records NO customer confirmation:
+ * customer_confirmed_cents stays NULL, so the Estimator's sign-off and the Manager's approval still need the Rep to confirm the calculated amount first. Unavailable once an
+ * indicative price exists (checkUnpricedHandoff). The customer and contact must already be selected (same Step 1 gate); no confirmation-contact record is written.
+ */
+export async function sendGrowerQuoteUnpricedToEstimatorAction(quoteId: string, acknowledged: boolean) {
+  return step(quoteId, "Sent a NewQuip quote to the estimator with no customer price yet (pricing to be established by the Estimator)", "newquip.quote_sent_to_estimator_unpriced", async (a, db) => {
+    if (!a.roles.has("rep")) throw new Error("Only a Rep can submit a quotation to the Estimator.");
+    const available = await customerFeaturesAvailable(db);
+    const snap = available ? await latestSnapshot(db, a.orgId, quoteId) : null;
+    if (available && !snap) throw new Error("Select the Cin7 customer and quotation contact in Step 1 (Customer & site) before the quotation can be submitted.");
+    if (snap) { const cur = await loadQuote(db, a.orgId, quoteId); if (cur) assertNameMatchesSnapshot(cur.draft.customerName, cur.customer_name, snap.snapshot); }
+    if (available && snap && !snap.snapshot.chosenContact) throw new Error("Choose the quotation contact in Step 1 (Customer & site) before the quotation can be submitted.");
+    await sendToEstimatorUnpriced(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true), { acknowledged: acknowledged === true });
+    if (await stagedAvailable(db)) await resyncQuoteApprovals(db, ctxOf(a), quoteId);
+    return { basis: "Pricing to be established by Estimator", acknowledgedBy: a.email, at: new Date().toISOString(), total: null };
   });
 }
 
