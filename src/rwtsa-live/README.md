@@ -93,6 +93,11 @@ The register is `~/rwtsa-local/bond/register.jsonl` (dir 0700, file 0600, outsid
 the S1 engine and every read verifies the chain, so an edited, deleted, reordered or injected line fails closed. Terminal output is counts and ids only; detail goes to
 `bond-report-<hash>.json` (0600, never overwritten).
 
+Integrity: appends take a lock (`.register.lock`; if a crashed run left one behind and no bond command is running, delete it); `register.tip` records the last (count, tip hash) so
+deleting the end of the register is detected (the report prints the tip hash too: keep a copy). Snapshots in one comparison must come from the same Cin7 account, and the register
+binds to the first account used (`REGISTER_BOUND`); a different account is refused. `verify` stamps a UTC time, and an observed movement is judged against what was verified when it
+began (a verification dated the same day without a time is treated as not yet in force). A partial last line (crash mid-write) is an integrity failure that needs manual repair.
+
 | Command | Purpose |
 |---|---|
 | `add-clearance --shipment --clearance-ref --date --provenance --attributed-to --line SKU=qty [--line ...] [--document-ref]` | records a clearance claim. It is UNVERIFIED, i.e. NOT CLEARED. Provenance is `CUSTOMS_DOCUMENT`, `BROKER_CONFIRMATION` or `OWNER_STATEMENT`; anything else (a transfer, posted duty, a freight invoice) is refused. |
