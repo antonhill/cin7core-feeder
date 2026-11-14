@@ -82,7 +82,7 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved }: { quoteId: s
   const verifiable = new Set(b.verification.verifiableSkus);
 
   async function save() {
-    if (!draft) return;
+    if (!draft || Object.keys(costProblems).length > 0) return; // belt and braces: the button is disabled too
     setBusy(true); setErrors([]); setNote(null);
     const r = await applyEstimatorPricingAction(quoteId, draft, reason);
     setBusy(false);
@@ -280,7 +280,7 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved }: { quoteId: s
           {note && <Alert tone="info"><span data-testid="pricing-note">{note}</span></Alert>}
           <Input label="Reason for this pricing revision" value={reason} onChange={(e) => setReason(e.target.value)} className="w-full sm:w-[28rem]" />
           {Object.keys(costProblems).length > 0 && (
-            <Alert tone="warning"><span data-testid="pricing-invalid-cost-block">Saving is blocked: {Object.keys(costProblems).length === 1 ? "1 supplier cost value has" : `${Object.keys(costProblems).length} supplier cost values have`} NOT been saved because {Object.keys(costProblems).length === 1 ? "it is" : "they are"} not valid ({Object.keys(costProblems).sort().join(", ")}). Correct or clear {Object.keys(costProblems).length === 1 ? "it" : "them"}, then save.</span></Alert>
+            <Alert tone="warning"><span data-testid="pricing-invalid-cost-block">Saving is blocked: {Object.keys(costProblems).length === 1 ? "1 supplier cost value has" : `${Object.keys(costProblems).length} supplier cost values have`} NOT been saved because {Object.keys(costProblems).length === 1 ? "it is" : "they are"} not valid ({Object.keys(costProblems).sort().join(", ")}). Correct {Object.keys(costProblems).length === 1 ? "it" : "them"} (or use &quot;Clear supplier cost&quot; to remove the cost), then save.</span></Alert>
           )}
           <div className="flex flex-wrap gap-2">
             <Button size="sm" onClick={save} disabled={busy || unsaved || reason.trim().length < 3 || Object.keys(costProblems).length > 0} loading={busy} data-testid="pricing-save">{v.enabled ? "Save pricing revision" : "Switch on supplier pricing"}</Button>
@@ -327,7 +327,7 @@ function Row({ r, edit, input, override, set, canPick, picked, onPick, onClear, 
         <td className="px-2 py-1 tabular-nums">{r.quantity}</td>
         <td className="px-2 py-1"><Input hideLabel label={`${r.sku} supplier`} disabled={!edit} defaultValue={input?.supplierName ?? ""} className="w-32" onBlur={(e) => upd((s) => { s.supplierName = e.target.value; })} /></td>
         <td className="px-2 py-1"><Input hideLabel label={`${r.sku} currency`} disabled={!edit} defaultValue={input?.currency ?? "ZAR"} className="w-16" onBlur={(e) => upd((s) => { s.currency = e.target.value.trim().toUpperCase(); })} /></td>
-        <td className="px-2 py-1"><Input hideLabel label={`${r.sku} supplier cost`} disabled={!edit} defaultValue={input?.nativeUnitCostE7 == null ? "" : formatCost7(input.nativeUnitCostE7)} error={costError ?? undefined} className="w-24" onBlur={(e) => { const c = parseCost(e.target.value); if (c.kind === "bad") { onCostError(r.sku, c.message); return; } onCostError(r.sku, null); if (c.kind === "ok") upd((s) => { s.nativeUnitCostE7 = c.value; }); }} /></td>
+        <td className="px-2 py-1"><Input hideLabel label={`${r.sku} supplier cost`} disabled={!edit} defaultValue={input?.nativeUnitCostE7 == null ? "" : formatCost7(input.nativeUnitCostE7)} error={costError ?? undefined} className="w-24" onBlur={(e) => { const c = parseCost(e.target.value); if (c.kind === "bad") { onCostError(r.sku, c.message); return; } if (c.kind === "empty" && costError) e.target.value = input?.nativeUnitCostE7 == null ? "" : formatCost7(input.nativeUnitCostE7); /* an emptied invalid field shows the kept value again */ onCostError(r.sku, null); if (c.kind === "ok") upd((s) => { s.nativeUnitCostE7 = c.value; }); }} /></td>
         <td className="px-2 py-1"><Input hideLabel label={`${r.sku} cost source`} disabled={!edit} defaultValue={input?.source ?? ""} className="w-32" onBlur={(e) => upd((s) => { s.source = e.target.value; })} /></td>
         <td className="px-2 py-1 text-xs" data-testid="cost-state" data-cost-state={r.costState}>
           <Status tone={r.costState === "verified" ? "success" : r.costState === "missing" ? "danger" : "warning"}>{r.costState === "verified" ? "Verified" : r.costState === "missing" ? "No cost" : r.costState === "review_outdated" ? "Changed since verified" : r.costState === "self_reviewed" ? "Not independent" : "Unverified"}</Status>

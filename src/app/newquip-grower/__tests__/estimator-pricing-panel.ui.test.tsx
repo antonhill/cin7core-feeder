@@ -191,6 +191,29 @@ describe("an invalid supplier cost blocks Save, says it was NOT saved, and never
     expect((screen.getAllByLabelText(/PNQ082 supplier cost/)[0] as HTMLInputElement).value).toBe(saved);
     expect((screen.getAllByLabelText(/PNQ082 supplier cost/)[0] as HTMLInputElement).getAttribute("aria-invalid")).toBeNull();
   });
+  it("emptying an invalid field shows the KEPT saved value again (it never looks cleared while the saved cost is unchanged), and Save is allowed", async () => {
+    await ready();
+    const saved = (screen.getAllByLabelText(/PNQ082 supplier cost/)[0] as HTMLInputElement).value;
+    typeCost("PNQ082", "6,5");
+    await screen.findByTestId("pricing-invalid-cost-block");
+    // React listens to focusout; testing-library's fireEvent.blur would ALSO dispatch a second 'blur' that re-applies the typed value, so empty the field and fire focusout only
+    const cost = screen.getAllByLabelText(/PNQ082 supplier cost/)[0] as HTMLInputElement;
+    fireEvent.change(cost, { target: { value: "" } }); fireEvent.focusOut(cost);
+    await waitFor(() => expect(screen.queryByTestId("pricing-invalid-cost-block")).toBeNull());
+    expect(cost.value).toBe(saved);
+    expect(save().disabled).toBe(false);
+  });
+  it("a FAILED save keeps the flags and what was typed (nothing is cleared); the banner points to Clear supplier cost as the only way to remove a cost", async () => {
+    await ready();
+    typeCost("ERT053", "1.12345678");
+    expect((await screen.findByTestId("pricing-invalid-cost-block")).textContent).toMatch(/Clear supplier cost/);
+    expect(save().disabled).toBe(true);
+    // a different, valid field is fine; the invalid one still blocks
+    typeCost("PNQ082", "10");
+    expect(save().disabled).toBe(true);
+    expect(actions.applyEstimatorPricingAction).not.toHaveBeenCalled();
+    expect((screen.getAllByLabelText(/ERT053 supplier cost/)[0] as HTMLInputElement).value).toBe("1.12345678");
+  });
   it("Clear supplier cost drops that SKU's invalid state", async () => {
     await ready();
     typeCost("PNQ082", "6,5");
