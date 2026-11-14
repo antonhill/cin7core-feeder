@@ -249,7 +249,7 @@ export function buildDataset(read: ReadResult, opts: BuildOptions): BuildResult 
 
   // Scenario readiness is SEPARATE from overall validity (see workbook/readiness.ts): ready = valid workbook + needed tabs
   // have data + critical columns present AND populated + (scenario A) a complete recent sales window for every SKU.
-  const readiness = computeReadiness({ ok, read, parsed, findings, config: readinessConfig });
+  const readiness = computeReadiness({ ok, read, parsed, findings, config: readinessConfig, routingCosts: read.routingCosts });
 
   if (!ok) return { ok: false, dataset: null, findings, parsedRowCounts, readiness, readinessConfig, layout: layoutOut };
 
