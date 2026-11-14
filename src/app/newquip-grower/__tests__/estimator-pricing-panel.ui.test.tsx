@@ -514,4 +514,17 @@ describe("editable={false} (a viewer who may verify but not edit): verification 
     expect(screen.queryAllByLabelText(/^Verify .* cost$/)).toHaveLength(0);
     expect(screen.queryByTestId("evidence-save")).toBeNull();
   });
+  it("a verify-only viewer (editable=false) sees the success note after verifying and the server's reason after a refusal", async () => {
+    renderPanel(reviewer(), false);
+    await waitFor(() => expect(screen.getByTestId("verify-block")).toBeTruthy());
+    fireEvent.click(screen.getByLabelText("Verify PNQ082 cost"));
+    fireEvent.change(screen.getByLabelText("Evidence checked (for example the supplier quote reference)"), { target: { value: "Supplier quote SQ-9" } });
+    vi.mocked(actions.verifyEstimatorCostsAction).mockResolvedValueOnce({ ok: false, error: "You entered this cost.", errors: ["You entered this cost."] });
+    fireEvent.click(screen.getByTestId("verify-save"));
+    await waitFor(() => expect(screen.getByTestId("pricing-errors").textContent).toMatch(/You entered this cost/));
+    vi.mocked(actions.verifyEstimatorCostsAction).mockResolvedValueOnce({ ok: true, data: { seq: 3, verified: 1 } });
+    fireEvent.click(screen.getByTestId("verify-save"));
+    await waitFor(() => expect(screen.getByTestId("pricing-note").textContent).toMatch(/1 supplier cost independently verified/));
+    expect(screen.queryByTestId("pricing-save")).toBeNull();
+  });
 });

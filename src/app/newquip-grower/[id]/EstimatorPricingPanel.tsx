@@ -279,10 +279,16 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = tru
         </div>
       )}
 
-      {edit && (
-        <div className="space-y-2 border-t border-slate-200 pt-3">
+      {/* The outcome of an action is shown to WHOEVER ran it: a verify-only viewer (a Manager) has no editing block, but must still see that a verification succeeded or why it was refused. */}
+      {(errors.length > 0 || note) && (
+        <div className="space-y-2">
           {errors.length > 0 && <Alert tone="danger"><ul data-testid="pricing-errors" className="list-disc pl-5">{errors.map((e) => <li key={e}>{e}</li>)}</ul></Alert>}
           {note && <Alert tone="info"><span data-testid="pricing-note">{note}</span></Alert>}
+        </div>
+      )}
+
+      {edit && (
+        <div className="space-y-2 border-t border-slate-200 pt-3">
           <Input label="Reason for this pricing revision" value={reason} onChange={(e) => setReason(e.target.value)} className="w-full sm:w-[28rem]" />
           {Object.keys(costProblems).length > 0 && (
             <Alert tone="warning"><span data-testid="pricing-invalid-cost-block">Saving is blocked: {Object.keys(costProblems).length === 1 ? "1 supplier cost value has" : `${Object.keys(costProblems).length} supplier cost values have`} NOT been saved because {Object.keys(costProblems).length === 1 ? "it is" : "they are"} not valid ({Object.keys(costProblems).sort().join(", ")}). Correct {Object.keys(costProblems).length === 1 ? "it" : "them"} (or use &quot;Clear supplier cost&quot; to remove the cost), then save.</span></Alert>

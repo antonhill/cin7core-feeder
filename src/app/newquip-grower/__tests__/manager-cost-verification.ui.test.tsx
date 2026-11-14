@@ -111,10 +111,34 @@ describe("a genuine Manager (no Estimator role) on the REAL Stage 2 page", () =>
     await open({ roles: ["MANAGER"], commercials: true, enteredBy: "estimator@example.test" });
     await screen.findByTestId("verify-block", {}, { timeout: 15000 });
     const costs = document.querySelector('[data-step-panel="costs"]')!;
-    const stray = enabledControls(costs).filter((e) => e.tagName !== "BUTTON" && !ALLOWED(e)).map(name);
+    // EVERY enabled control in the costs step - buttons included - must be one of the verify / attest controls (verify ticks, evidence input, Verify, Select-all, attest controls)
+    const stray = enabledControls(costs).filter((e) => !ALLOWED(e)).map(name);
     expect(stray).toEqual([]);
     expect(screen.queryByRole("button", { name: /Confirm source-backed mappings/ })).toBeNull();
     expect(screen.queryAllByRole("button", { name: /Capture latest costs from Cin7/ }).every((b) => b.matches(":disabled"))).toBe(true); // the Cin7 capture stays Estimator-only (inside the disabled fieldset)
+  }, 60000);
+});
+
+describe("a verify-only Manager sees the outcome of the verification", () => {
+  const tickAndSubmit = async () => {
+    await screen.findByTestId("verify-block", {}, { timeout: 15000 });
+    fireEvent.click(screen.getAllByLabelText(/^Verify .* cost$/)[0]);
+    fireEvent.change(screen.getByLabelText("Evidence checked (for example the supplier quote reference)"), { target: { value: "Supplier quote SQ-77" } });
+    fireEvent.click(screen.getByTestId("verify-save"));
+  };
+  it("success: the confirmation note is shown (and no editing block appears)", async () => {
+    await open({ roles: ["MANAGER"], commercials: true, enteredBy: "estimator@example.test" });
+    vi.spyOn(pricingActions, "verifyEstimatorCostsAction").mockResolvedValue({ ok: true, data: { seq: 2, verified: 1 } });
+    await tickAndSubmit();
+    await waitFor(() => expect(screen.getByTestId("pricing-note").textContent).toMatch(/1 supplier cost independently verified. No price changed/));
+    expect(screen.queryByTestId("pricing-save")).toBeNull();
+  }, 60000);
+  it("refused (stale cost, entered by you, already verified ...): the server's reason is shown, not silence", async () => {
+    await open({ roles: ["MANAGER"], commercials: true, enteredBy: "estimator@example.test" });
+    vi.spyOn(pricingActions, "verifyEstimatorCostsAction").mockResolvedValue({ ok: false, error: "The cost changed since you looked at it.", errors: ["The cost changed since you looked at it."] });
+    await tickAndSubmit();
+    await waitFor(() => expect(screen.getByTestId("pricing-errors").textContent).toMatch(/The cost changed since you looked at it/));
+    expect(screen.queryByTestId("pricing-note")).toBeNull();
   }, 60000);
 });
 
@@ -124,8 +148,15 @@ describe("separation of duties", () => {
     await waitFor(() => expect(screen.getByTestId("estimator-pricing-panel")).toBeTruthy(), { timeout: 15000 });
     await waitFor(() => expect(screen.getAllByTestId("pricing-row").length).toBeGreaterThan(0));
     expect(screen.queryAllByLabelText(/^Verify .* cost$/)).toHaveLength(0);
-    const r = await pricingActions.verifyEstimatorCostsAction(id, [{ sku: Object.keys(equivalentInputs({}, "unverified").skus)[0], costHash: "x" }], "Supplier quote SQ-1");
+    // use the REAL cost hash the server shows, so the refusal can only come from the independence rule (a wrong hash would fail regardless)
+    const bundle = await pricingActions.getEstimatorPricingAction(id);
+    expect(bundle.ok).toBe(true);
+    const row = bundle.ok ? bundle.data!.view.rows.find((x) => x.costHash) : undefined;
+    expect(row).toBeTruthy();
+    expect(bundle.ok && bundle.data!.verification.verifiableSkus).not.toContain(row!.sku);
+    const r = await pricingActions.verifyEstimatorCostsAction(id, [{ sku: row!.sku, costHash: row!.costHash }], "Supplier quote SQ-1");
     expect(r.ok).toBe(false);
+    expect(r.ok === false && r.error).toMatch(/entered|independent|yourself|another/i);
   }, 60000);
 
   it("a viewer with no reviewer role (Estimator only) sees no verification block and the server refuses to verify", async () => {
