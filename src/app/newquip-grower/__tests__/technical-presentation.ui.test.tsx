@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
-import { readFileSync } from "node:fs";
 import { splitEvidence } from "../technical-text";
 import { AuditDetails } from "../[id]/AuditDetails";
 
@@ -29,18 +28,9 @@ describe("UX-006 PR B: technical identifiers are one disclosure away, never dele
     expect(d.textContent).toContain("Seal (sha256)");
     cleanup();
   });
-  it("the Stage 6 baseline list no longer shows the seal, rule set, price source or counts; the audit block does", () => {
-    const page = readFileSync(`${__dirname}/../[id]/page.tsx`, "utf8");
-    const dl = page.slice(page.indexOf("Accepted commercial baseline (frozen)"), page.indexOf("<BaselineExceptionsSummary"));
-    for (const label of ["Seal (sha256)", '"Rule set"', '"Price source"', "Overrides · exclusions"]) expect(dl).not.toContain(label);
-    const audit = page.slice(page.indexOf('data-testid="baseline-audit"'));
-    for (const t of ["Seal (sha256)", "rulesetVersion", "pricing.source.label", "priceResolutions"]) expect(audit).toContain(t);
-  });
-  it("the Stage 4 and Stage 5 panels keep hashes only inside an Audit details disclosure", () => {
-    const rd = (f: string) => readFileSync(`${__dirname}/../[id]/${f}`, "utf8");
-    expect(rd("DeliveryPanel.tsx")).toMatch(/<AuditDetails[^>]*>[^<]*<p>Issued PDF fingerprint: sha256/);
-    const acc = rd("AcceptancePanel.tsx");
-    expect(acc).toContain("splitEvidence(r.evidence).plain");
-    expect(acc).not.toMatch(/uploaded by \{x\.uploadedBy\} · sha256/);
+  it("a row's disclosure can carry its own accessible name, starting with the visible words", () => {
+    render(<AuditDetails label="Audit details for revision 2, version 1"><p>x</p></AuditDetails>);
+    expect(screen.getByText("Audit details").getAttribute("aria-label")).toBe("Audit details for revision 2, version 1");
+    cleanup();
   });
 });

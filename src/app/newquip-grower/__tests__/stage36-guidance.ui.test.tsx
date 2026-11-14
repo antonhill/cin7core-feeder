@@ -382,3 +382,56 @@ describe("UX-006c stage navigation", () => {
     shot("nav-disclosure");
   }, 30000);
 });
+
+// UX-006 PR B, rendered through the real page: ids, hashes, seals and rule sets sit inside collapsed "Audit details" only, and the Stage 6 baseline audit block appears on Stage 6 alone.
+const UUID = "e3cbb8a4-aefb-4e5c-86eb-01c9b02a51b8";
+const SHA = "8714a8424bb3bb04eac4dab11835597e17d9352d346793f3098ef256216eee6c";
+const response = { id: "r1", documentId: "d0", response: "ACCEPTED", contact: "Anton", respondedOn: "2026-11-05", at: "2026-11-05T12:28:00Z", recordedBy: "anton@x.co", note: "", origin: "CUSTOMER_LINK", standing: "VERIFIED", contactEmail: "anton@x.co", contactSource: "DELIVERY_CONTACT", company: "Spark", exceptionReason: null, authorityConfirmed: true,
+  evidence: `Customer response link · Anton accepted quotation NQ-Q-0029, revision 1 (document ${UUID}, SHA-256 ${SHA}) and confirmed being authorised.`,
+  files: [{ id: "f1", fileName: "signed.pdf", bytes: 2048, uploadedBy: "anton@x.co", sha256: "0123456789abcdef0123456789abcdef" }], review: { decision: "VERIFIED", note: "", by: "m@nq", at: "2026-11-05T12:29:00Z" } };
+const inAudit = (el: Element) => el.closest("details[data-testid^=audit-details]") as HTMLDetailsElement | null;
+describe("UX-006 PR B: technical identifiers live in collapsed Audit details", () => {
+  it("Stage 6: the baseline list shows no seal, rule set, source or counts; the single page Audit details (closed) holds them", async () => {
+    await open({ stage: "6", roles: ["MANAGER"], row: FINAL, delivery: delivery({ status: "CUSTOMER_ACCEPTED", accepted: true, latestDocumentId: "d0" }) });
+    await screen.findByText("Accepted commercial baseline (frozen)", {}, { timeout: 8000 });
+    for (const label of ["Seal (sha256)", "Rule set", "Price source", "Overrides · exclusions · price resolutions"]) expect(screen.queryByText(label), label).toBeNull();
+    const audit = screen.getByTestId("audit-details") as HTMLDetailsElement;
+    expect(audit.open).toBe(false);
+    expect(screen.getAllByTestId("audit-details")).toHaveLength(1);
+    const block = screen.getByTestId("baseline-audit");
+    expect(audit.contains(block)).toBe(true);
+    expect(block.textContent).toContain("Seal (sha256)");
+    expect(block.textContent).toContain("rule set r1");
+  }, 60000);
+  it("the baseline audit block is not on Stages 1 to 5", async () => {
+    await open({ stage: "3", roles: ["MANAGER"], row: FINAL });
+    expect(screen.queryByTestId("baseline-audit")).toBeNull();
+    expect(screen.getByTestId("provenance")).toBeTruthy(); // the non-final provenance stays at the foot
+  }, 60000);
+  it("Stage 4: the issued PDF fingerprint is only inside the row's own Audit details", async () => {
+    await open({ stage: "4", roles: ["REP"], row: FINAL, delivery: delivery({ status: "APPROVED_INTERNALLY", latestDocumentId: "d0" }), docs: docs(1) });
+    const fp = await screen.findByText(/Issued PDF fingerprint: sha256 abcdef123456/, {}, { timeout: 8000 });
+    const d = inAudit(fp)!;
+    expect(d.open).toBe(false);
+    expect(d.querySelector("summary")!.getAttribute("aria-label")).toBe("Audit details for revision 1, version 1");
+    const line = d.parentElement!.querySelector("span")!;
+    expect(line.textContent).toContain("2 KB");
+    expect(line.textContent).not.toMatch(/sha256|abcdef/);
+  }, 60000);
+  it("Stage 5: the evidence sentence is plain; the document id and every hash are inside that response's Audit details", async () => {
+    await open({ stage: "5", roles: ["MANAGER"], row: FINAL, delivery: delivery({ status: "CUSTOMER_ACCEPTED", accepted: true, latestDocumentId: "d0", responses: [response] }) });
+    const list = await screen.findByTestId("response-history", {}, { timeout: 8000 });
+    const ev = [...list.querySelectorAll("div")].find((n) => n.textContent?.startsWith("Evidence:"))!;
+    expect(ev.textContent).toContain("accepted quotation NQ-Q-0029, revision 1 and confirmed being authorised.");
+    expect(ev.textContent).not.toContain(UUID);
+    expect(ev.textContent).not.toContain(SHA);
+    const d = screen.getByTestId("audit-details-r1") as HTMLDetailsElement;
+    expect(d.open).toBe(false);
+    expect(d.querySelector("summary")!.getAttribute("aria-label")).toBe("Audit details for accepted response of 2026-11-05");
+    expect(d.textContent).toContain(UUID);
+    expect(d.textContent).toContain(SHA);
+    expect(d.textContent).toContain("signed.pdf: sha256 0123456789ab");
+    const fileLine = [...list.querySelectorAll("li")].find((n) => n.textContent?.startsWith("signed.pdf"))!;
+    expect(fileLine.textContent).not.toContain("sha256");
+  }, 60000);
+});

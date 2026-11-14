@@ -942,7 +942,7 @@ describe("touch targets on the primary journey are class-contracted at 44px", ()
     const page = rd("[id]/page.tsx");
     expect(page).toContain("[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 [&_select]:min-h-11 [&_textarea]:min-h-11"); // additive, Stage 1 form only
     expect(page).toContain('data-testid="provenance"');
-    expect(rd("[id]/AuditDetails.tsx")).toMatch(/summary className="[^"]*min-h-11/);
+    expect(rd("[id]/AuditDetails.tsx")).toMatch(/<summary[^>]*className="[^"]*min-h-11/);
     expect(rd("../NewquipShell.tsx")).not.toContain("md:min-h-9");
     expect(rd("page.tsx")).not.toContain("h-9 items-center");
     expect(rd("[id]/Stage1Review.tsx")).toContain("inline-flex min-h-11 cursor-pointer items-center");

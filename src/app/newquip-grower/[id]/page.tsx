@@ -1425,7 +1425,7 @@ export default function QuoteEditorPage() {
           <p className="mt-1">Grower House Template v1 · {view.viewer.canViewCommercials ? QUOTE_TYPE_LABEL[draft.quoteType] : QUOTE_TYPE_NEUTRAL[draft.quoteType]} · {budget?.priceSource.label ?? "NewQuip Master workbook – POC controlled snapshot"}</p>
           {budget && <p className="mt-1">{budget.priceSource.notice} Provenance: {budget.priceSource.provenance}</p>}
         </div>
-        {final && q.accepted_baseline && (
+        {stage === 6 && !hold(6) && final && q.accepted_baseline && (
           <div data-testid="baseline-audit">
             <p className="font-medium text-slate-700">Accepted baseline</p>
             <p className="mt-1">Template version v{q.accepted_baseline.template.version} · rule set {q.accepted_baseline.template.rulesetVersion} · price source {q.accepted_baseline.pricing.source.label}</p>

@@ -92,7 +92,7 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section, steps }
             <li key={x.id} className="flex flex-wrap items-center justify-between gap-2 p-2">
               <span>Revision {x.revision} · version {x.version} · issued {formatSast(x.issuedAt)} by {x.issuedBy} · {(x.byteSize / 1024).toFixed(0)} KB</span>
               <a className="text-indigo-700 underline" href={`/api/newquip-quote-documents/${x.id}`} target="_blank" rel="noreferrer">Open PDF</a>
-              <AuditDetails testId={`audit-details-${x.id}`} className="w-full text-xs text-slate-600"><p>Issued PDF fingerprint: sha256 {x.contentHash.slice(0, 12)}…</p></AuditDetails>
+              <AuditDetails testId={`audit-details-${x.id}`} label={`Audit details for revision ${x.revision}, version ${x.version}`} className="w-full text-xs text-slate-600"><p>Issued PDF fingerprint: sha256 {x.contentHash.slice(0, 12)}…</p></AuditDetails>
             </li>
           ))}
         </ul>

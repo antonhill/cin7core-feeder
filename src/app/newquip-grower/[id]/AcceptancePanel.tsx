@@ -201,7 +201,7 @@ export function AcceptancePanel({ quoteId, onGate }: { quoteId: string; onGate: 
                 </ul>
               )}
               {(splitEvidence(r.evidence).technical || r.files.length > 0) && (
-                <AuditDetails testId={`audit-details-${r.id}`} className="text-xs text-slate-600">
+                <AuditDetails testId={`audit-details-${r.id}`} label={`Audit details for ${RESPONSE_LABEL[r.response].toLowerCase()} response of ${r.respondedOn}`} className="text-xs text-slate-600">
                   {splitEvidence(r.evidence).technical && <p>Quotation document: {splitEvidence(r.evidence).technical}</p>}
                   {r.files.map((x) => <p key={x.id}>{x.fileName}: sha256 {x.sha256.slice(0, 12)}…</p>)}
                 </AuditDetails>
