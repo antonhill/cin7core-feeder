@@ -103,7 +103,7 @@ describe("an invalid supplier cost shows a message instead of silently disappear
       expect(await screen.findByText(/Enter the cost as a plain number/)).toBeTruthy();
       expect(cost.getAttribute("aria-invalid")).toBe("true");
     }
-  });
+  }, 30000); // five sequential entries: close to the 5s default on a loaded CI runner (it timed out at 5.4s there); the assertions are unchanged
   it("a valid 7-decimal cost clears the message and is what gets saved; an invalid entry never overwrote the saved value", async () => {
     mount(bundle(equivalentInputs()));
     await waitFor(() => expect(screen.getByTestId("pricing-save")).toBeTruthy());

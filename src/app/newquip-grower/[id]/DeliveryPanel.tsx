@@ -15,6 +15,7 @@ import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/bill
 import { DisabledReason } from "@/components/ApprovalDisabledReason";
 import { ScheduleChooser } from "./ScheduleChooser";
 import { StepPanel } from "@/components/ui/StepRail";
+import { AuditDetails } from "./AuditDetails";
 
 // The customer-facing half of an APPROVED quotation: issue the PDF, review it, send it (Rep), then record the customer's response. Manager approval authorises issue;
 // it is NOT customer acceptance. "Accepted by the email provider" means the provider took the message - it is not proof that the customer received it. Nothing here
@@ -89,8 +90,9 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section, steps }
         <ul className="mt-2 divide-y rounded-md border border-slate-200 text-sm">
           {docs.documents.map((x) => (
             <li key={x.id} className="flex flex-wrap items-center justify-between gap-2 p-2">
-              <span>Revision {x.revision} · version {x.version} · issued {formatSast(x.issuedAt)} by {x.issuedBy} · {(x.byteSize / 1024).toFixed(0)} KB · sha256 {x.contentHash.slice(0, 12)}…</span>
+              <span>Revision {x.revision} · version {x.version} · issued {formatSast(x.issuedAt)} by {x.issuedBy} · {(x.byteSize / 1024).toFixed(0)} KB</span>
               <a className="text-indigo-700 underline" href={`/api/newquip-quote-documents/${x.id}`} target="_blank" rel="noreferrer">Open PDF</a>
+              <AuditDetails testId={`audit-details-${x.id}`} label={`Audit details for revision ${x.revision}, version ${x.version}`} className="w-full text-xs text-slate-600"><p>Issued PDF fingerprint: sha256 {x.contentHash.slice(0, 12)}…</p></AuditDetails>
             </li>
           ))}
         </ul>

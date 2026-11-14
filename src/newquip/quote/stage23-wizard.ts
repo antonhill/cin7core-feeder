@@ -176,8 +176,23 @@ export interface Stage3WizardInput {
   roles: { rep: boolean; estimator: boolean; manager: boolean };
   signoff: "none" | "current" | "stale";
   dirty: boolean;
+  /** What has happened since approval, from records the page already reads (issued document, commercial status, linked Project). Wording only: omit while it is still loading and the line stays the generic "next: issue and send". */
+  after?: { hasDocument: boolean; commercial: string | null; projectLinked: boolean; /** False for a quotation approved before customer acceptance existed: a Project does not depend on the customer's response. Default true. */ requiresAcceptance?: boolean };
 }
 export type Stage3WizardStep = WizardStep<Stage3WizardId>;
+
+function postApprovalLine(a: Stage3WizardInput["after"]): { line: string; owner: WizardRole | null } | null {
+  if (!a) return null;
+  if (a.projectLinked) return { line: "Approved. The Project has been created from the accepted quotation. Next: run billing and fulfilment in the Project.", owner: null };
+  if (a.requiresAcceptance === false) return { line: "Approved. Customer acceptance is not required for this quotation. Next responsible role: Manager creates the Project (Stage 6).", owner: "Manager" };
+  if (a.commercial === "CUSTOMER_ACCEPTED") return { line: "Approved and accepted by the customer. Next responsible role: Manager creates the Project (Stage 6).", owner: "Manager" };
+  if (a.commercial === "ACCEPTANCE_PENDING_VERIFICATION") return { line: "Approved. The customer's acceptance is awaiting verification (Stage 5). Next: Rep or Manager verifies it.", owner: "Rep" };
+  if (a.commercial === "ACCEPTANCE_REJECTED") return { line: "Approved. The customer's emailed acceptance was rejected during verification. Next: Rep contacts the customer and records their response (Stage 5).", owner: "Rep" };
+  if (a.commercial === "CUSTOMER_DECLINED" || a.commercial === "CHANGES_REQUESTED") return { line: "Approved. The customer has responded without accepting. Next: Rep prepares a revised quotation or records the outcome (Stage 5).", owner: "Rep" };
+  if (a.commercial === "SENT_TO_CUSTOMER") return { line: "Approved and sent to the customer. Next: record the customer's response (Stage 5).", owner: "Rep" };
+  if (a.hasDocument) return { line: "Approved. The quotation PDF is issued. Next: Rep sends it to the customer (Stage 4).", owner: "Rep" };
+  return null;
+}
 
 export function deriveStage3Wizard(i: Stage3WizardInput): StageWizard<Stage3WizardId> {
   const final = i.state === "MANAGER_APPROVED_FINAL";
@@ -192,8 +207,10 @@ export function deriveStage3Wizard(i: Stage3WizardInput): StageWizard<Stage3Wiza
   const decision: Stage3WizardStep = repDraft
     ? { id: "decision", label: STAGE3_WIZARD_LABEL.decision, owner: "Manager", status: "incomplete", access: "locked", blockedBy: [NOT_SUBMITTED_REASON], blockKind: "server", note: decisionNote }
     : { id: "decision", label: STAGE3_WIZARD_LABEL.decision, owner: "Manager", status: final ? "complete" : "incomplete", access: !final && manager ? "edit" : "readonly", blockedBy: [], note: decisionNote };
-  const nextOwner: WizardRole | null = final ? "Rep" : repDraft ? "Rep" : signed ? "Manager" : "Estimator";
-  const statusLine = final ? "Approved. Next: Rep issues and sends the customer quotation (Stage 4)."
+  // After approval the line follows the real position of the quotation (presentation only; no state or gate depends on it).
+  const post = final ? postApprovalLine(i.after) : null;
+  const nextOwner: WizardRole | null = final ? (post ? post.owner : "Rep") : repDraft ? "Rep" : signed ? "Manager" : "Estimator";
+  const statusLine = final ? (post ? post.line : "Approved. Next: Rep issues and sends the customer quotation (Stage 4).")
     : repDraft ? (i.revision > 1 ? `Returned to the Rep (revision ${i.revision}). Next responsible role: Rep: reconfirm the amount with the customer, then submit again.` : "The Rep has not submitted yet. Next responsible role: Rep.")
     : signed ? (manager ? "Signed off by the Estimator. Your decision: approve, or return it. Next responsible role: Manager." : "Signed off by the Estimator. Next responsible role: Manager.")
     : i.signoff === "stale" ? "The Estimator's sign-off is out of date. Next responsible role: Estimator."

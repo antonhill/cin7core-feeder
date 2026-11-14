@@ -45,6 +45,7 @@ import { BuildStamp } from "@/components/BuildStamp";
 import { ScheduleChooser } from "./ScheduleChooser";
 import { CostPanel } from "./CostPanel";
 import { EstimatorPricingPanel } from "./EstimatorPricingPanel";
+import { AuditDetails } from "./AuditDetails";
 import { BaselineExceptionBlock, BaselineExceptionNote, BaselineExceptionsSummary, UnmappedTypedPriceNote } from "./BaselineExceptionBlock";
 import { CustomerPanel } from "./CustomerPanel";
 import { Stage1Review } from "./Stage1Review";
@@ -336,7 +337,7 @@ export default function QuoteEditorPage() {
   const costingIncomplete = poc ? false : costingSrv ? !costingSrv.complete : (marginInfo?.missing ?? 0) > 0;
   const costingReason = costingSrv?.reason ?? null;
   const marginNote = marginIncomplete ? (marginInfo!.missing > 0 ? `project margin not available: ${marginInfo!.missing} line${marginInfo!.missing === 1 ? " has" : "s have"} no cost` : marginInfo!.exempt.length > 0 ? `margin is indicative: ${marginInfo!.exempt.length} line${marginInfo!.exempt.length === 1 ? " is" : "s are"} Estimator-priced (no supplier cost by design)` : "margin is indicative (price-list basis)") : null;
-  // "Manager: final approval" is described by whichever of the existing messages currently applies (each is already on the page, so nothing is duplicated). Role/process wording only.
+  // "Approve" is described by whichever of the existing messages currently applies (each is already on the page, so nothing is duplicated). Role/process wording only.
   const approveSignoffMissing = q?.state === "ESTIMATOR_REVIEW" && !q.estimator_signoff_hash;
   const approveCostingOpen = q.state === "ESTIMATOR_REVIEW" && costingSrv != null && !costingSrv.complete;
   const approveNotReady = q.state === "ESTIMATOR_REVIEW" && (rd.state !== "READY" || approveCostingOpen);
@@ -614,7 +615,7 @@ export default function QuoteEditorPage() {
     <RepSubmittedSummary draft={draft} submitted={q.state !== "REP_DRAFT"} revision={q.revision} floorAreaM2={ev.calc.derived.floorAreaM2} totalCents={q.state === "REP_DRAFT" ? totalCents : (q.customer_confirmed_cents ?? totalCents)} quantities={repQuantities}
       confirmed={{ cents: q.customer_confirmed_cents, by: q.customer_confirmed_by, at: q.customer_confirmed_at }} />
   );
-  const wizard3 = deriveStage3Wizard({ state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", revision: q.revision, roles: { rep: roles.has("rep"), estimator: isEstimator, manager: roles.has("manager") }, signoff: s2Base.signoff, dirty });
+  const wizard3 = deriveStage3Wizard({ state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", revision: q.revision, roles: { rep: roles.has("rep"), estimator: isEstimator, manager: roles.has("manager") }, signoff: s2Base.signoff, dirty, ...(final && (q.project_id || gateReady) ? { after: { hasDocument: gate.hasDocument, commercial: gate.status, projectLinked: !!q.project_id, requiresAcceptance: q.requires_customer_acceptance === true } } : {}) });
 
   // Stage 4 steps: guidance only. Statuses come from the issued-document and sent records the page already reads (never from a visit); the Issue and Send actions keep their own gates.
   const stage4 = deriveStage4Steps({ hasDocument: gate.hasDocument, commercial: gate.status });
@@ -1262,7 +1263,7 @@ export default function QuoteEditorPage() {
                       <Button variant="primary" className="min-h-12 px-6 text-base" data-testid="poc-approve" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty}
                         onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. Continuing as the Rep.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL", undefined, OP.approveQuotation)}>Approve &amp; Continue</Button>
                     ) : (<Button variant={bxRequired ? "secondary" : "primary"} className="min-h-11" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty || approveNotReady || bxRequired || bxBlocking.length > 0} aria-describedby={[approveDescribedBy, bxRequired && `${uid}-approve-bx`, bxBlocking.length > 0 && `${uid}-approve-map`].filter(Boolean).join(" ") || undefined}
-                      onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL", undefined, OP.approveQuotation)}>Manager: final approval</Button>)}
+                      onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL", undefined, OP.approveQuotation)}>Approve</Button>)}
                     {roles.has("manager") && (<>
                       <Button variant="secondary" className="min-h-11" loading={acts.isPending("return-mgr")} aria-describedby={returnWhy ? "return-mgr-why" : undefined} disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "return-mgr", (v) => v.quote.state === "REP_DRAFT", undefined, OP.returnToRep)}>Return to rep (reject)</Button>
                       {q.estimator_signoff_hash && (
@@ -1342,7 +1343,7 @@ export default function QuoteEditorPage() {
               </table>
               {draft.estimator.assumptions.trim() && <p className="mt-4 text-xs text-slate-600"><strong>Assumptions:</strong> {draft.estimator.assumptions}</p>}
               {Object.entries(cfg.exclusions ?? {}).filter(([, r]) => r.trim()).length > 0 && <p className="mt-2 text-xs text-slate-600"><strong>Excluded at your request:</strong> {Object.keys(cfg.exclusions ?? {}).filter((k) => cfg.exclusions![k as GrowerItemKey]?.trim()).join(", ").replace(/_/g, " ")}</p>}
-              <p className="mt-6 text-xs text-slate-600">Summary view — individual stock lines are kept on the internal estimator view. Not an e-signature; acceptance is recorded by the manager&apos;s final approval.</p>
+              <p className="mt-6 text-xs text-slate-600">Summary view — individual stock lines are kept on the internal estimator view. Not an e-signature.</p>
             </div>
           )}
         </Panel>
@@ -1376,14 +1377,10 @@ export default function QuoteEditorPage() {
               <dl className="mt-3 grid gap-x-8 gap-y-3 text-sm md:grid-cols-2 xl:grid-cols-4">
                 {[
                   ["Total contract value (ex VAT)", fmtCents(q.accepted_baseline.contractCents)],
-                  ["Template", `${q.accepted_baseline.template.name} v${q.accepted_baseline.template.version}`],
-                  ["Rule set", q.accepted_baseline.template.rulesetVersion],
+                  ["Template", q.accepted_baseline.template.name],
                   ["Quote revision", String(q.accepted_baseline.quote.revision)],
-                  ["Price source", q.accepted_baseline.pricing.source.label],
                   ["Pricing basis", view.viewer.canViewCommercials ? q.accepted_baseline.pricing.basis : QUOTE_TYPE_NEUTRAL[draft.quoteType]],
-                  ["Overrides · exclusions · price resolutions", `${q.accepted_baseline.overrides.length} · ${q.accepted_baseline.exclusions.length} · ${q.accepted_baseline.priceResolutions.length}`],
                   ...(view.viewer.canViewCommercials && q.accepted_baseline.physicalCostEstimate?.incomplete && q.accepted_baseline.physicalCostEstimate.costBasis?.incompleteAccepted ? [["Costing", costingAcceptedIncompleteText(q.accepted_baseline.physicalCostEstimate.costBasis.incompleteAccepted)]] : []),
-                  ["Seal (sha256)", `${(q.baseline_hash ?? "").slice(0, 16)}…`],
                 ].map(([k, v]) => <div key={k}><dt className="text-xs text-slate-600">{k}</dt><dd className="mt-0.5 break-words font-medium text-slate-900">{v}</dd></div>)}
               </dl>
               <BaselineExceptionsSummary exceptions={q.accepted_baseline.exceptions} />
@@ -1422,34 +1419,46 @@ export default function QuoteEditorPage() {
           <p className="text-xs"><BuildStamp /></p>
         </div>
       )}
-      <details className="mt-6 text-xs text-slate-600" data-testid="provenance"><summary className="inline-flex min-h-11 cursor-pointer items-center font-medium text-slate-700">Price source &amp; provenance</summary>
-        <p className="mt-1">Grower House Template v1 · {view.viewer.canViewCommercials ? QUOTE_TYPE_LABEL[draft.quoteType] : QUOTE_TYPE_NEUTRAL[draft.quoteType]} · {budget?.priceSource.label ?? "NewQuip Master workbook – POC controlled snapshot"}</p>
-        {budget && <p className="mt-1">{budget.priceSource.notice} Provenance: {budget.priceSource.provenance}</p>}</details>
+      <AuditDetails testId="audit-details" className="mt-6 text-xs text-slate-600">
+        <div data-testid="provenance">
+          <p className="font-medium text-slate-700">Price source &amp; provenance</p>
+          <p className="mt-1">Grower House Template v1 · {view.viewer.canViewCommercials ? QUOTE_TYPE_LABEL[draft.quoteType] : QUOTE_TYPE_NEUTRAL[draft.quoteType]} · {budget?.priceSource.label ?? "NewQuip Master workbook – POC controlled snapshot"}</p>
+          {budget && <p className="mt-1">{budget.priceSource.notice} Provenance: {budget.priceSource.provenance}</p>}
+        </div>
+        {stage === 6 && !hold(6) && final && q.accepted_baseline && (
+          <div data-testid="baseline-audit">
+            <p className="font-medium text-slate-700">Accepted baseline</p>
+            <p className="mt-1">Template version v{q.accepted_baseline.template.version} · rule set {q.accepted_baseline.template.rulesetVersion} · price source {q.accepted_baseline.pricing.source.label}</p>
+            <p className="mt-1">Overrides · exclusions · price resolutions: {q.accepted_baseline.overrides.length} · {q.accepted_baseline.exclusions.length} · {q.accepted_baseline.priceResolutions.length}</p>
+            <p className="mt-1">Seal (sha256) {(q.baseline_hash ?? "").slice(0, 16)}…</p>
+          </div>
+        )}
+      </AuditDetails>
       {view.viewer.previewTools && editable && stage <= 2 && (
-        <details className="mt-8 max-w-4xl rounded-lg border border-dashed border-slate-400 px-3 py-1 text-sm" data-testid="preview-tools">
-          <summary className="inline-flex min-h-11 cursor-pointer items-center font-semibold text-slate-800">Testing utility (Preview only)</summary>
-          <p className="mt-2 text-slate-700">Replaces the inputs of this draft (the selected customer is kept) with the demonstration quotation. It is not saved, and it never submits, approves, signs off, creates a Project or writes to Cin7. It exists on Preview deployments only.</p>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            {!confirmDemo && <Button variant="secondary" className="min-h-11" onClick={() => (hasEntries(draft) ? setConfirmDemo(true) : loadDemo())}>Load whole demonstration quote</Button>}
-            {confirmDemo && (
-              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
-                <span>This replaces the values in this draft with the demonstration quotation (nothing is saved until you press Save draft). The customer you selected is kept.</span>
-                <Button size="sm" className="min-h-11" onClick={loadDemo}>Replace with demo</Button>
-                <Button size="sm" variant="secondary" className="min-h-11" onClick={() => setConfirmDemo(false)}>Cancel</Button>
+          <details className="mt-8 max-w-4xl rounded-lg border border-dashed border-slate-400 px-3 py-1 text-sm" data-testid="preview-tools">
+            <summary className="inline-flex min-h-11 cursor-pointer items-center font-semibold text-slate-800">Testing utility (Preview only)</summary>
+            <p className="mt-2 text-slate-700">Replaces the inputs of this draft (the selected customer is kept) with the demonstration quotation. It is not saved, and it never submits, approves, signs off, creates a Project or writes to Cin7. It exists on Preview deployments only.</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {!confirmDemo && <Button variant="secondary" className="min-h-11" onClick={() => (hasEntries(draft) ? setConfirmDemo(true) : loadDemo())}>Load whole demonstration quote</Button>}
+              {confirmDemo && (
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
+                  <span>This replaces the values in this draft with the demonstration quotation (nothing is saved until you press Save draft). The customer you selected is kept.</span>
+                  <Button size="sm" className="min-h-11" onClick={loadDemo}>Replace with demo</Button>
+                  <Button size="sm" variant="secondary" className="min-h-11" onClick={() => setConfirmDemo(false)}>Cancel</Button>
+                </div>
+              )}
+            </div>
+            {demoLoaded && (
+              <div className="mt-3">
+                <Alert tone={rd.state === "READY" ? "success" : "warning"}>
+                  Demo defaults loaded into this draft ({DEMO_DEFAULTS_SOURCE}) {demoLoaded.length ? `Replaced: ${demoLoaded.join(", ")}.` : "The draft already matched the demonstration; nothing changed."}{" "}
+                  Status: {READINESS_LABEL[rd.state]}.{rd.reasons.length ? ` Open: ${rd.reasons.join("; ")}.` : ""}
+                  {" "}Prices marked MANUAL QUOTATION PRICE are the demonstration quote&apos;s own estimator values. Not saved, approved, frozen or sent anywhere.
+                </Alert>
               </div>
             )}
-          </div>
-          {demoLoaded && (
-            <div className="mt-3">
-              <Alert tone={rd.state === "READY" ? "success" : "warning"}>
-                Demo defaults loaded into this draft ({DEMO_DEFAULTS_SOURCE}) {demoLoaded.length ? `Replaced: ${demoLoaded.join(", ")}.` : "The draft already matched the demonstration; nothing changed."}{" "}
-                Status: {READINESS_LABEL[rd.state]}.{rd.reasons.length ? ` Open: ${rd.reasons.join("; ")}.` : ""}
-                {" "}Prices marked MANUAL QUOTATION PRICE are the demonstration quote&apos;s own estimator values. Not saved, approved, frozen or sent anywhere.
-              </Alert>
-            </div>
-          )}
-        </details>
-      )}
+          </details>
+        )}
     </main>
   );
 }
