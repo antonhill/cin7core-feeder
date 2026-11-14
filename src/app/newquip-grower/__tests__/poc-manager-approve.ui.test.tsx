@@ -112,7 +112,7 @@ const COSTED = { estimator: { ...draft.estimator, costBasis: { incompleteAccepte
 const UNSIGNED = { state: "ESTIMATOR_REVIEW", row: { customer_confirmed_cents: 1000000000, customer_confirmed_by: "A Customer <a@c.co>", customer_confirmed_at: "2026-11-02T08:00:00Z", handoff_by_email: "rep@nq" } };
 const ws = () => screen.getByTestId("stage3-workspace");
 const viewedStage = () => document.querySelector('[data-testid="stage-nav"] [aria-current="step"]')!.getAttribute("data-stage");
-const approve = () => screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement;
+const approve = () => screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement;
 const patchRow = (id: string, patch: (r: Record<string, unknown>) => Record<string, unknown>) => { const arr = db.rows("newquip_quotes") as Array<Record<string, unknown>>; const i = arr.findIndex((r) => r.id === id); arr[i] = { ...arr[i], ...patch(arr[i]) }; };
 const REF = "pnzwjqjovxxdikxtfngq";
 const pocOn = () => { vi.stubEnv("VERCEL_ENV", "preview"); vi.stubEnv("NEWQUIP_POC_PRESENTATION", "true"); vi.stubEnv("SUPABASE_URL", `https://${REF}.supabase.co`); vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", `https://${REF}.supabase.co`); };
@@ -127,7 +127,7 @@ describe("POC Presentation Mode: the Manager has ONE Approve & Continue action a
     const btn = await screen.findByTestId("poc-approve", {}, { timeout: 8000 }) as HTMLButtonElement;
     await waitFor(() => expect(btn.disabled).toBe(false), { timeout: 8000 });
     expect(btn.textContent).toMatch(/Approve & Continue/);
-    expect(screen.queryByRole("button", { name: "Manager: final approval" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
     const t = ws().textContent ?? "";
     expect(t).not.toMatch(/recorded exception|Mapping unresolved|library mapping|Costing is complete|costing is incomplete/i);
     expect(screen.queryByTestId("approval-checklist")).toBeNull();
@@ -145,7 +145,7 @@ describe("POC Presentation Mode: the Manager has ONE Approve & Continue action a
     pocOn(); demoAvail.mockResolvedValue(true);
     db.rows("newquip_package_mappings").length = 0;
     await open({ stage: "3", roles: ["MANAGER"], commercials: true, ...SIGNED, draftOver: COSTED });
-    const b = await screen.findByRole("button", { name: "Manager: final approval" }, { timeout: 8000 }) as HTMLButtonElement;
+    const b = await screen.findByRole("button", { name: "Approve" }, { timeout: 8000 }) as HTMLButtonElement;
     await waitFor(() => expect(b.disabled).toBe(true), { timeout: 8000 });
     expect(screen.queryByTestId("poc-approve")).toBeNull();
   }, 60000);
