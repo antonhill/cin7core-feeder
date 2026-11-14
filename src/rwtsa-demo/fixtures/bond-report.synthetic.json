@@ -1,0 +1,276 @@
+{
+  "schemaVersion": 2,
+  "dataClass": "SYNTHETIC_DEMONSTRATION",
+  "generatedAt": "2026-11-14T08:00:00.000Z",
+  "snapshotHash": "SYNTHETIC-SNAPSHOT-CURRENT",
+  "snapshotTakenAt": "2026-11-13T08:00:00.000Z",
+  "previousSnapshotHash": "SYNTHETIC-SNAPSHOT-PREVIOUS",
+  "registerTipHash": "SYNTHETIC",
+  "registerEvents": 12,
+  "statements": [
+    "SYNTHETIC DEMONSTRATION: every value below is invented. A synthetic clearance is not a real customs event and is not RWTSA data.",
+    "Unverified clearance means NOT CLEARED.",
+    "A stock transfer, posted customs duty or a freight invoice is never evidence of customs clearance.",
+    "Eligible stock is the lesser of physical Bond stock and verified-cleared quantity not yet released.",
+    "Proposed transfers are drafts: no Cin7 transaction has been or will be created by this report.",
+    "Operational usable is Cin7's own figure; the projection assumes proposals complete and is not a fact."
+  ],
+  "summary": {
+    "skusWithBondStock": 5,
+    "bondUnits": 600,
+    "verifiedClearedUnits": 280,
+    "unverifiedClaimedUnits": 150,
+    "notClearedSkus": 2,
+    "eligibleUnits": 240,
+    "proposedUnits": 80,
+    "exceptionCount": 3,
+    "unclearedObservedUnits": 40
+  },
+  "rows": [
+    {
+      "sku": "SYN-CAP-XL",
+      "inSnapshot": true,
+      "bondPhysical": 60,
+      "verifiedCleared": 60,
+      "unverifiedClaimed": 0,
+      "released": 0,
+      "releasedBeforeCover": 0,
+      "remainingCleared": 60,
+      "eligible": 60,
+      "clearedExceedsBond": false,
+      "clearanceStatus": "CLEARED",
+      "activeProposed": 0,
+      "exceptions": [],
+      "operationalUsable": 15,
+      "projectedUsableIfProposedCompleted": 15
+    },
+    {
+      "sku": "SYN-JKT-L",
+      "inSnapshot": true,
+      "bondPhysical": 150,
+      "verifiedCleared": 0,
+      "unverifiedClaimed": 150,
+      "released": 0,
+      "releasedBeforeCover": 0,
+      "remainingCleared": 0,
+      "eligible": 0,
+      "clearedExceedsBond": false,
+      "clearanceStatus": "NOT_CLEARED",
+      "activeProposed": 0,
+      "exceptions": [],
+      "operationalUsable": 30,
+      "projectedUsableIfProposedCompleted": 30
+    },
+    {
+      "sku": "SYN-JKT-M",
+      "inSnapshot": true,
+      "bondPhysical": 200,
+      "verifiedCleared": 120,
+      "unverifiedClaimed": 0,
+      "released": 0,
+      "releasedBeforeCover": 0,
+      "remainingCleared": 120,
+      "eligible": 120,
+      "clearedExceedsBond": false,
+      "clearanceStatus": "PARTIALLY_CLEARED",
+      "activeProposed": 80,
+      "exceptions": [],
+      "operationalUsable": 40,
+      "projectedUsableIfProposedCompleted": 120
+    },
+    {
+      "sku": "SYN-RAIN-L",
+      "inSnapshot": true,
+      "bondPhysical": 90,
+      "verifiedCleared": 0,
+      "unverifiedClaimed": 0,
+      "released": 40,
+      "releasedBeforeCover": 40,
+      "remainingCleared": 0,
+      "eligible": 0,
+      "clearedExceedsBond": false,
+      "clearanceStatus": "NOT_CLEARED",
+      "activeProposed": 0,
+      "exceptions": [
+        "OVER_RELEASED",
+        "RELEASED_BEFORE_VERIFICATION"
+      ],
+      "operationalUsable": 60,
+      "projectedUsableIfProposedCompleted": 60
+    },
+    {
+      "sku": "SYN-RAIN-M",
+      "inSnapshot": true,
+      "bondPhysical": 100,
+      "verifiedCleared": 100,
+      "unverifiedClaimed": 0,
+      "released": 40,
+      "releasedBeforeCover": 0,
+      "remainingCleared": 60,
+      "eligible": 60,
+      "clearedExceedsBond": false,
+      "clearanceStatus": "PARTIALLY_CLEARED",
+      "activeProposed": 0,
+      "exceptions": [],
+      "operationalUsable": 50,
+      "projectedUsableIfProposedCompleted": 50
+    }
+  ],
+  "observed": [
+    {
+      "sku": "SYN-RAIN-L",
+      "bondDecrease": 40,
+      "bondIncrease": 0,
+      "nonBondIncrease": 40,
+      "eligibleBefore": 0,
+      "uncleared": 40,
+      "exceptions": [
+        "TRANSFER_WITHOUT_CLEARANCE_EVIDENCE"
+      ],
+      "alreadyRecorded": 40
+    },
+    {
+      "sku": "SYN-RAIN-M",
+      "bondDecrease": 40,
+      "bondIncrease": 0,
+      "nonBondIncrease": 40,
+      "eligibleBefore": 100,
+      "uncleared": 0,
+      "exceptions": [],
+      "alreadyRecorded": 40
+    }
+  ],
+  "evidence": [
+    {
+      "id": "CL-1",
+      "shipmentRef": "SYN-SHIP-1",
+      "clearanceRef": "SYN-BOE-1",
+      "clearanceDate": "2026-11-10",
+      "attributedTo": "synthetic-owner",
+      "provenance": "CUSTOMS_DOCUMENT",
+      "documentRef": "SYN-DOC-1",
+      "recordedOn": "2026-11-10",
+      "status": "VERIFIED",
+      "verifiedBy": "synthetic-owner",
+      "verifiedOn": "2026-11-11",
+      "verifiedAt": "2026-11-11T08:00:00.000Z",
+      "verificationDocumentRef": "SYN-DOC-1",
+      "lines": [
+        {
+          "sku": "SYN-JKT-M",
+          "quantity": 120
+        },
+        {
+          "sku": "SYN-RAIN-M",
+          "quantity": 100
+        }
+      ]
+    },
+    {
+      "id": "CL-2",
+      "shipmentRef": "SYN-SHIP-2",
+      "clearanceRef": "SYN-BOE-2",
+      "clearanceDate": "2026-11-10",
+      "attributedTo": "synthetic-owner",
+      "provenance": "OWNER_STATEMENT",
+      "recordedOn": "2026-11-10",
+      "status": "UNVERIFIED_NOT_CLEARED",
+      "lines": [
+        {
+          "sku": "SYN-JKT-L",
+          "quantity": 150
+        }
+      ]
+    },
+    {
+      "id": "CL-3",
+      "shipmentRef": "SYN-SHIP-3",
+      "clearanceRef": "SYN-BOE-3",
+      "clearanceDate": "2026-11-10",
+      "attributedTo": "synthetic-owner",
+      "provenance": "BROKER_CONFIRMATION",
+      "documentRef": "SYN-DOC-3",
+      "recordedOn": "2026-11-10",
+      "status": "WITHDRAWN",
+      "verifiedBy": "synthetic-owner",
+      "verifiedOn": "2026-11-11",
+      "verifiedAt": "2026-11-11T10:00:00.000Z",
+      "verificationDocumentRef": "SYN-DOC-3",
+      "withdrawnReason": "synthetic: entered against the wrong shipment reference",
+      "lines": [
+        {
+          "sku": "SYN-RAIN-L",
+          "quantity": 90
+        }
+      ]
+    },
+    {
+      "id": "CL-4",
+      "shipmentRef": "SYN-SHIP-4",
+      "clearanceRef": "SYN-BOE-4",
+      "clearanceDate": "2026-11-10",
+      "attributedTo": "synthetic-owner",
+      "provenance": "BROKER_CONFIRMATION",
+      "documentRef": "SYN-DOC-4",
+      "recordedOn": "2026-11-10",
+      "status": "VERIFIED",
+      "verifiedBy": "synthetic-owner",
+      "verifiedOn": "2026-11-11",
+      "verifiedAt": "2026-11-11T09:00:00.000Z",
+      "verificationDocumentRef": "SYN-DOC-4",
+      "lines": [
+        {
+          "sku": "SYN-CAP-XL",
+          "quantity": 60
+        }
+      ]
+    }
+  ],
+  "proposals": [
+    {
+      "id": "P-1",
+      "sku": "SYN-JKT-M",
+      "quantity": 80,
+      "destination": "JHB",
+      "proposedBy": "synthetic-owner",
+      "proposedOn": "2026-11-12",
+      "reason": "synthetic: replenish the Johannesburg store",
+      "status": "OPEN",
+      "completedQuantity": 0
+    },
+    {
+      "id": "P-2",
+      "sku": "SYN-RAIN-M",
+      "quantity": 40,
+      "destination": "DURBAN",
+      "proposedBy": "synthetic-owner",
+      "proposedOn": "2026-11-12",
+      "reason": "synthetic: Durban order",
+      "status": "COMPLETED",
+      "completedQuantity": 40
+    }
+  ],
+  "releases": [
+    {
+      "id": "R-1",
+      "sku": "SYN-RAIN-M",
+      "quantity": 40,
+      "on": "2026-11-13",
+      "fromTakenAt": "2026-11-12T08:00:00.000Z",
+      "toTakenAt": "2026-11-13T08:00:00.000Z",
+      "proposalId": "P-2",
+      "voided": false,
+      "releasedBeforeCoverUnits": 0
+    },
+    {
+      "id": "R-2",
+      "sku": "SYN-RAIN-L",
+      "quantity": 40,
+      "on": "2026-11-13",
+      "fromTakenAt": "2026-11-12T08:00:00.000Z",
+      "toTakenAt": "2026-11-13T08:00:00.000Z",
+      "voided": false,
+      "releasedBeforeCoverUnits": 40
+    }
+  ]
+}
