@@ -33,8 +33,10 @@ export async function inspectProductionBom(client: ReadOnlyClient, sku: string, 
   if (!isRow(res)) bad("Unexpected response shape from the production BOM request.");
   const top = Object.keys(res).sort();
   // Only a genuine array under the expected key can prove presence or absence. Anything else is UNVERIFIED, never 'no BOM'.
-  if (!Array.isArray(res.ProductionBOMs)) return done("UNVERIFIED", [], [], true, top, "The response has no ProductionBOMs array, so absence cannot be concluded.");
-  const list = rows(res.ProductionBOMs);
+  const listKey = top.find((k) => k.toLowerCase() === "productionboms"); // live response key verified on 2026-11-14 as "ProductionBoms"
+  const rawList = listKey ? res[listKey] : undefined;
+  if (!Array.isArray(rawList)) return done("UNVERIFIED", [], [], true, top, "The response has no production BOM list array (ProductionBoms), so absence cannot be concluded.");
+  const list = rows(rawList);
   const otherProduct = list.some((v) => (typeof v.ProductID === "string" && v.ProductID !== ids[0]) || (typeof v.SKU === "string" && v.SKU !== sku));
   if (otherProduct) return done("UNVERIFIED", [], [], true, top, "A returned BOM row names a different product than the one requested.");
   const count = (v: unknown, f: (x: Row) => number): number | null => (Array.isArray(v) ? rows(v).reduce((n, x) => n + f(x), 0) : null);

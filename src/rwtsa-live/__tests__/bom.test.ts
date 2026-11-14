@@ -16,6 +16,12 @@ describe("inspectProductionBom", () => {
     expect(calls).toEqual(["/product", "/production/productionBOM"]);
     expect(e).toMatchObject({ status: "BOM_PRESENT", requests: 2, versions: [{ version: "1", operations: 2, components: 3, isDefault: true }] });
   });
+  it("recognises the LIVE response key ProductionBoms (verified 2026-11-14) as well as ProductionBOMs", async () => {
+    for (const key of ["ProductionBoms", "ProductionBOMs"]) {
+      const { c } = fake({ "/product": prod, "/production/productionBOM": { ProductID: "x", [key]: [{ Version: "1", Operations: [{ Components: [{}] }] }] } });
+      expect((await inspectProductionBom(c, "X"))).toMatchObject({ status: "BOM_PRESENT", versions: [{ operations: 1, components: 1 }] });
+    }
+  });
   it("no versions is NO_BOM_FOUND (never created or assumed)", async () => {
     const { c } = fake({ "/product": prod, "/production/productionBOM": { ProductionBOMs: [] } });
     expect((await inspectProductionBom(c, "X")).status).toBe("NO_BOM_FOUND");
@@ -24,7 +30,7 @@ describe("inspectProductionBom", () => {
     const { c } = fake({ "/product": prod, "/production/productionBOM": { Other: [] } });
     const e = await inspectProductionBom(c, "X");
     expect(e.status).toBe("UNVERIFIED");
-    expect(e.unverifiedReason).toMatch(/ProductionBOMs/);
+    expect(e.unverifiedReason).toMatch(/ProductionBoms/);
     expect(e.responseTopLevelFields).toEqual(["Other"]);
   });
   it.each([{}, { ProductionBOMs: null }, { ProductionBOMs: "x" }, { ProductionBOMs: {} }])("unrecognised BOM shape %j is UNVERIFIED, never NO_BOM_FOUND", async (body) => {
