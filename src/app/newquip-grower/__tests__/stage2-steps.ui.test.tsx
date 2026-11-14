@@ -265,7 +265,8 @@ describe("UX-006i2 Stage 2: Rep, Manager and observer inspect it read-only", () 
     fireEvent.click(rail().querySelector('[data-step="final"]')!);
     expect(screen.queryByRole("button", { name: /Mark reviewed/ })).toBeNull();
     expect(screen.getByTestId("cost-ack-blocked").textContent).toBe("You can view the costing and margin, but only the Estimator can mark it reviewed.");
-    expect(panel("costs")!.closest("fieldset")!.disabled).toBe(true);
+    // the costing detail is read-only for a Manager: it sits in a disabled fieldset inside the step. (The supplier-pricing workspace is deliberately OUTSIDE it so a Manager can run the independent cost verification; every editing control there is gated separately - see manager-cost-verification.ui.test.tsx.)
+    expect(panel("costs")!.querySelector("fieldset")!.disabled).toBe(true);
     expect(screen.queryByRole("button", { name: /Sign off for Manager approval/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "Save draft" })).toBeNull();
   }, 30000);

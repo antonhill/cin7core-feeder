@@ -38,7 +38,12 @@ const toCents = (s: string): number | null => { const n = Number(s.replace(/\s/g
 type Draft = PricingSubmission;
 const blankSku = (): Draft["skus"][string] => ({ supplierId: null, supplierName: "", currency: "ZAR", nativeUnitCostE7: 0, source: "", freight: { factorMicro: 1_000_000, source: "" } });
 
-export function EstimatorPricingPanel({ quoteId, reload, unsaved }: { quoteId: string; reload?: () => void; unsaved?: boolean }) {
+/**
+ * `editable` is the PAGE's own verdict on whether this viewer may edit Stage 2 (the Estimator, on a quotation that is not final). The panel is rendered OUTSIDE the Stage 2 disabled fieldset so
+ * that a reviewer who may only VERIFY (a Manager) can operate the verification / attestation blocks, so every editing control here is gated explicitly by `edit` (= server canEdit AND `editable`)
+ * and no longer relies on an ancestor fieldset. Defaults to true so any other caller behaves exactly as before.
+ */
+export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = true }: { quoteId: string; reload?: () => void; unsaved?: boolean; editable?: boolean }) {
   const [b, setB] = useState<WorkspaceBundle | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -73,7 +78,7 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved }: { quoteId: s
   if (!b || !draft) return (<Panel><PanelTitle>Supplier pricing</PanelTitle><p className="text-sm text-slate-800" data-testid="pricing-loading">Loading supplier pricing…</p></Panel>);
 
   const v = b.view;
-  const edit = b.canEdit;
+  const edit = b.canEdit && editable;
   const set = (f: (d: Draft) => void) => setDraft((d) => { const n = structuredClone(d!); f(n); return n; });
   const rowsToShow = v.rows;
   // Exchange-rate rows appear as soon as a SKU is in a foreign currency (not only after a save).
@@ -158,7 +163,7 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved }: { quoteId: s
           <thead><tr className="text-xs text-slate-700">{["SKU / used by", "Qty", "Supplier", "Cur", "Supplier cost", "Source", "Cost verification", "Rate used", "Freight ×", "Landed / unit", "Unit price", "Line total", "Margin / markup"].map((h) => <th key={h} className="px-2 py-1 font-medium">{h}</th>)}</tr></thead>
           <tbody>
             {rowsToShow.map((r) => <Row key={`${r.sku}:${clears[r.sku] ?? 0}:${epoch}`} costError={costProblems[r.sku] ?? null} onCostError={flagCost} r={r} edit={edit} input={draft.skus[r.sku]} override={draft.skuPriceOverrides[r.sku]} set={set}
-              canPick={verifiable.has(r.sku)} picked={picked.includes(r.sku)} onPick={(on) => setPicked((p) => (on ? [...new Set([...p, r.sku])] : p.filter((x) => x !== r.sku)))}
+              canPick={verifiable.has(r.sku) && b.state !== "MANAGER_APPROVED_FINAL"} picked={picked.includes(r.sku)} onPick={(on) => setPicked((p) => (on ? [...new Set([...p, r.sku])] : p.filter((x) => x !== r.sku)))}
               onClear={() => { flagCost(r.sku, null); set((d) => { delete d.skus[r.sku]; }); setClears((c) => ({ ...c, [r.sku]: (c[r.sku] ?? 0) + 1 })); setPicked((p) => p.filter((x) => x !== r.sku)); }} />)}
           </tbody>
         </table>
