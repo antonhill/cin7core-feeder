@@ -42,7 +42,7 @@ export const overdueRule = (units: number): UnresolvedRule => ({
 export const historyGapRule = (lastMonth: string | null, gap: readonly string[]): UnresolvedRule => ({
   id: "sales-history-gap",
   title: "Sales history ends before the stock month",
-  detail: `History ends in ${lastMonth ?? "an unknown month"}; ${gap.length} month(s) before the stock date have no data and none is invented. The forecast uses the latest observed months, which is also how the workbook's own six- and twelve-month averages are built. Confirming that basis is an owner decision.`,
+  detail: `History ends in ${lastMonth ?? "an unknown month"}; ${gap.length} month(s) before the stock date have no data and none is invented${gap.length > 0 ? ` (missing: ${gap.join(", ")})` : ""}. The forecast uses the latest six available months, which is also how the workbook's own six- and twelve-month averages are built. Owner direction: use the latest available months; RWTSA has not confirmed that basis.`,
   withholds: "Nothing: the forecast is shown on the latest observed months with a stale-history warning",
   how: "owner",
 });

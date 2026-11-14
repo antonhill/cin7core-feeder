@@ -59,7 +59,7 @@ export const SCENARIOS: readonly ScenarioMeta[] = [
       { status: "Open", text: "Shipments past their ETA but still on the water are never counted as received. A DEMONSTRATION ASSUMPTION (not customer policy) applies: excluded from usable projected inbound by default, switchable to week 1. Owner decision outstanding." },
       { status: "Open", text: "Sales history ends before the stock date. The forecast uses the latest observed months (also how the workbook's own 6- and 12-month averages are built), with a stale-history warning; missing months are never invented. Owner confirmation outstanding." },
       { status: "Brief", text: "Style-level purchase orders are split to sizes with the Rev2 size curve (10/20/24/20/12/8/4/2 %), labelled with its source; the split reconciles exactly to the style quantity (largest remainder, ties to the earlier size)." },
-      { status: "Open", text: "Replenishment: the approved minimum-shortfall rule is unchanged; the RFP DP-13 net requirement is shown beside it for 13 and 26 weeks. Which formula drives purchasing is an owner decision. Months of cover includes usable inbound (RFP DP-17), with opening cover shown separately." },
+      { status: "Open", text: "Replenishment: the minimum-shortfall rule is a previously defined demonstration formula (not RWTSA-approved policy) and is unchanged; the RFP DP-13 net requirement is shown beside it for 13 and 26 weeks. Which formula drives purchasing is an owner decision. Months of cover includes usable inbound (RFP DP-17), with opening cover shown separately." },
     ],
     engine: { name: "Red Flag projection engine", implemented: true },
   },

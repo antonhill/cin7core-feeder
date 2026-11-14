@@ -120,10 +120,10 @@ export function ScenarioACorePanels({ model }: { model: RedFlagModel }) {
             <THead>
               <TR>
                 <TH>{model.settings.view === "sku" ? "SKU" : "Style"}</TH>
-                <TH align="right">13 wk: approved</TH>
-                <TH align="right">13 wk: RFP net</TH>
-                <TH align="right">26 wk: approved</TH>
-                <TH align="right">26 wk: RFP net</TH>
+                <TH align="right">13 wk: min-shortfall (demo formula)</TH>
+                <TH align="right">13 wk: RFP DP-13 net</TH>
+                <TH align="right">26 wk: min-shortfall (demo formula)</TH>
+                <TH align="right">26 wk: RFP DP-13 net</TH>
               </TR>
             </THead>
             <TBody>

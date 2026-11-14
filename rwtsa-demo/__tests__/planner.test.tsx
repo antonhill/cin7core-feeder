@@ -201,7 +201,7 @@ describe("DP-15: proposed-order override", () => {
     await act(SKU, "classify", [["value", "ordinary"]]);
     const a = await sel(SKU);
     const n = await sel(SKU, { formula: "net-requirement" });
-    expect(text(a)).toContain("Formula: approved minimum-shortfall rule");
+    expect(text(a)).toContain("Formula: minimum-shortfall demonstration formula");
     expect(text(n)).toContain("Formula: RFP DP-13 net requirement");
   });
 });
