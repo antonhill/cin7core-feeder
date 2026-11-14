@@ -27,9 +27,9 @@ function parseCost(text: string): CostParse {
   const t = text.trim();
   if (t === "") return { kind: "empty" };
   try { return { kind: "ok", value: cost7(t) }; } catch (e) {
-    if (/^\d+\.\d{8,}$/.test(t)) return { kind: "bad", message: "At most 7 decimal places are allowed (Cin7 supplies up to 7). Nothing was rounded: shorten or correct the value. The previous value is kept." };
-    if (e instanceof Error && /too large/.test(e.message)) return { kind: "bad", message: "That cost is too large. The previous value is kept." };
-    return { kind: "bad", message: "Enter the cost as a plain number such as 6.5454755 (digits and one decimal point, no commas or units). The previous value is kept." };
+    if (/^\d+\.\d{8,}$/.test(t)) return { kind: "bad", message: "This value has not been saved. At most 7 decimal places are allowed (Cin7 supplies up to 7). Nothing was rounded: shorten or correct the value. The previous value is kept." };
+    if (e instanceof Error && /too large/.test(e.message)) return { kind: "bad", message: "This value has not been saved. That cost is too large. The previous value is kept." };
+    return { kind: "bad", message: "This value has not been saved. Enter the cost as a plain number such as 6.5454755 (digits and one decimal point, no commas or units). The previous value is kept." };
   }
 }
 const toMicro = (s: string): number | null => { try { return s.trim() === "" ? null : micro(s.trim()); } catch { return null; } };
@@ -52,10 +52,18 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved }: { quoteId: s
   const [pickedRates, setPickedRates] = useState<string[]>([]);
   const [rateEvidence, setRateEvidence] = useState("");
   const [notes, setNotes] = useState<Record<string, { note: string; reference: string }>>({});
+  // Supplier-cost fields holding a value that was NOT accepted (by SKU -> why). Saving is blocked while any exists. Cleared whenever the draft is replaced (load / reload / save / verify / attest),
+  // and `epoch` remounts the rows then, so a field never shows text or a message that no longer matches the draft.
+  const [costProblems, setCostProblems] = useState<Record<string, string>>({});
+  const [epoch, setEpoch] = useState(0);
+  const flagCost = useCallback((sku: string, message: string | null) => setCostProblems((p) => {
+    if (message === null) { if (!(sku in p)) return p; const n = { ...p }; delete n[sku]; return n; }
+    return p[sku] === message ? p : { ...p, [sku]: message };
+  }), []);
 
   const load = useCallback(() => {
     void getEstimatorPricingAction(quoteId).then((r) => {
-      if (r.ok && r.data) { setB(r.data); setDraft(r.data.current ?? { ruleVersionId: LEGACY_RULE_VERSION.id, skus: {}, fxQuotes: {}, forwardCover: {}, skuPriceOverrides: {}, projectMarkup: null, targetAdjustment: null }); }
+      if (r.ok && r.data) { setCostProblems({}); setEpoch((e) => e + 1); setB(r.data); setDraft(r.data.current ?? { ruleVersionId: LEGACY_RULE_VERSION.id, skus: {}, fxQuotes: {}, forwardCover: {}, skuPriceOverrides: {}, projectMarkup: null, targetAdjustment: null }); }
       else setError(r.error ?? "Supplier pricing could not be loaded.");
     });
   }, [quoteId]);
@@ -149,9 +157,9 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved }: { quoteId: s
         <table className="w-full min-w-[1100px] text-left text-sm" data-testid="pricing-table">
           <thead><tr className="text-xs text-slate-700">{["SKU / used by", "Qty", "Supplier", "Cur", "Supplier cost", "Source", "Cost verification", "Rate used", "Freight ×", "Landed / unit", "Unit price", "Line total", "Margin / markup"].map((h) => <th key={h} className="px-2 py-1 font-medium">{h}</th>)}</tr></thead>
           <tbody>
-            {rowsToShow.map((r) => <Row key={`${r.sku}:${clears[r.sku] ?? 0}`} r={r} edit={edit} input={draft.skus[r.sku]} override={draft.skuPriceOverrides[r.sku]} set={set}
+            {rowsToShow.map((r) => <Row key={`${r.sku}:${clears[r.sku] ?? 0}:${epoch}`} costError={costProblems[r.sku] ?? null} onCostError={flagCost} r={r} edit={edit} input={draft.skus[r.sku]} override={draft.skuPriceOverrides[r.sku]} set={set}
               canPick={verifiable.has(r.sku)} picked={picked.includes(r.sku)} onPick={(on) => setPicked((p) => (on ? [...new Set([...p, r.sku])] : p.filter((x) => x !== r.sku)))}
-              onClear={() => { set((d) => { delete d.skus[r.sku]; }); setClears((c) => ({ ...c, [r.sku]: (c[r.sku] ?? 0) + 1 })); setPicked((p) => p.filter((x) => x !== r.sku)); }} />)}
+              onClear={() => { flagCost(r.sku, null); set((d) => { delete d.skus[r.sku]; }); setClears((c) => ({ ...c, [r.sku]: (c[r.sku] ?? 0) + 1 })); setPicked((p) => p.filter((x) => x !== r.sku)); }} />)}
           </tbody>
         </table>
       </div>
@@ -271,8 +279,11 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved }: { quoteId: s
           {errors.length > 0 && <Alert tone="danger"><ul data-testid="pricing-errors" className="list-disc pl-5">{errors.map((e) => <li key={e}>{e}</li>)}</ul></Alert>}
           {note && <Alert tone="info"><span data-testid="pricing-note">{note}</span></Alert>}
           <Input label="Reason for this pricing revision" value={reason} onChange={(e) => setReason(e.target.value)} className="w-full sm:w-[28rem]" />
+          {Object.keys(costProblems).length > 0 && (
+            <Alert tone="warning"><span data-testid="pricing-invalid-cost-block">Saving is blocked: {Object.keys(costProblems).length === 1 ? "1 supplier cost value has" : `${Object.keys(costProblems).length} supplier cost values have`} NOT been saved because {Object.keys(costProblems).length === 1 ? "it is" : "they are"} not valid ({Object.keys(costProblems).sort().join(", ")}). Correct or clear {Object.keys(costProblems).length === 1 ? "it" : "them"}, then save.</span></Alert>
+          )}
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" onClick={save} disabled={busy || unsaved || reason.trim().length < 3} loading={busy} data-testid="pricing-save">{v.enabled ? "Save pricing revision" : "Switch on supplier pricing"}</Button>
+            <Button size="sm" onClick={save} disabled={busy || unsaved || reason.trim().length < 3 || Object.keys(costProblems).length > 0} loading={busy} data-testid="pricing-save">{v.enabled ? "Save pricing revision" : "Switch on supplier pricing"}</Button>
             {v.enabled && <Button size="sm" variant="secondary" onClick={off} disabled={busy || unsaved || reason.trim().length < 3} data-testid="pricing-off">Switch off (back to POC prices)</Button>}
           </div>
           <p className="text-xs text-slate-700">Saving withdraws any Estimator sign-off. If the customer-facing total changes, the Rep&apos;s confirmation is withdrawn and the quotation returns to the Rep to reconfirm; the amount the Rep confirmed at handoff is kept as it was.</p>
@@ -306,9 +317,8 @@ function AddSku({ onAdd }: { onAdd: (sku: string) => void }) {
   );
 }
 
-function Row({ r, edit, input, override, set, canPick, picked, onPick, onClear }: { r: SkuRow; edit: boolean; input: Draft["skus"][string] | undefined; override: Draft["skuPriceOverrides"][string] | undefined; set: (f: (d: Draft) => void) => void; canPick: boolean; picked: boolean; onPick: (on: boolean) => void; onClear: () => void }) {
+function Row({ r, edit, input, override, set, canPick, picked, onPick, onClear, costError, onCostError }: { costError: string | null; onCostError: (sku: string, message: string | null) => void; r: SkuRow; edit: boolean; input: Draft["skus"][string] | undefined; override: Draft["skuPriceOverrides"][string] | undefined; set: (f: (d: Draft) => void) => void; canPick: boolean; picked: boolean; onPick: (on: boolean) => void; onClear: () => void }) {
   const tone = r.status === "priced" ? "success" : "danger";
-  const [costError, setCostError] = useState<string | null>(null);
   const upd = (f: (s: Draft["skus"][string]) => void) => set((d) => { d.skus[r.sku] = d.skus[r.sku] ?? blankSku(); f(d.skus[r.sku]); });
   return (
     <>
@@ -317,7 +327,7 @@ function Row({ r, edit, input, override, set, canPick, picked, onPick, onClear }
         <td className="px-2 py-1 tabular-nums">{r.quantity}</td>
         <td className="px-2 py-1"><Input hideLabel label={`${r.sku} supplier`} disabled={!edit} defaultValue={input?.supplierName ?? ""} className="w-32" onBlur={(e) => upd((s) => { s.supplierName = e.target.value; })} /></td>
         <td className="px-2 py-1"><Input hideLabel label={`${r.sku} currency`} disabled={!edit} defaultValue={input?.currency ?? "ZAR"} className="w-16" onBlur={(e) => upd((s) => { s.currency = e.target.value.trim().toUpperCase(); })} /></td>
-        <td className="px-2 py-1"><Input hideLabel label={`${r.sku} supplier cost`} disabled={!edit} defaultValue={input?.nativeUnitCostE7 == null ? "" : formatCost7(input.nativeUnitCostE7)} error={costError ?? undefined} className="w-24" onBlur={(e) => { const c = parseCost(e.target.value); if (c.kind === "bad") { setCostError(c.message); return; } setCostError(null); if (c.kind === "ok") upd((s) => { s.nativeUnitCostE7 = c.value; }); }} /></td>
+        <td className="px-2 py-1"><Input hideLabel label={`${r.sku} supplier cost`} disabled={!edit} defaultValue={input?.nativeUnitCostE7 == null ? "" : formatCost7(input.nativeUnitCostE7)} error={costError ?? undefined} className="w-24" onBlur={(e) => { const c = parseCost(e.target.value); if (c.kind === "bad") { onCostError(r.sku, c.message); return; } onCostError(r.sku, null); if (c.kind === "ok") upd((s) => { s.nativeUnitCostE7 = c.value; }); }} /></td>
         <td className="px-2 py-1"><Input hideLabel label={`${r.sku} cost source`} disabled={!edit} defaultValue={input?.source ?? ""} className="w-32" onBlur={(e) => upd((s) => { s.source = e.target.value; })} /></td>
         <td className="px-2 py-1 text-xs" data-testid="cost-state" data-cost-state={r.costState}>
           <Status tone={r.costState === "verified" ? "success" : r.costState === "missing" ? "danger" : "warning"}>{r.costState === "verified" ? "Verified" : r.costState === "missing" ? "No cost" : r.costState === "review_outdated" ? "Changed since verified" : r.costState === "self_reviewed" ? "Not independent" : "Unverified"}</Status>

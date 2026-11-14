@@ -127,6 +127,80 @@ describe("an invalid supplier cost shows a message instead of silently disappear
   });
 });
 
+describe("an invalid supplier cost blocks Save, says it was NOT saved, and never goes stale", () => {
+  const typeCost = (sku: string, v: string) => { const cost = screen.getAllByLabelText(new RegExp(`${sku} supplier cost`))[0] as HTMLInputElement; fireEvent.change(cost, { target: { value: v } }); fireEvent.blur(cost, { target: { value: v } }); return cost; };
+  const reasonIn = () => fireEvent.change(screen.getByLabelText("Reason for this pricing revision"), { target: { value: "Cin7 cost" } });
+  const save = () => screen.getByTestId("pricing-save") as HTMLButtonElement;
+  const ready = async () => { mount(bundle(equivalentInputs())); await waitFor(() => expect(screen.getByTestId("pricing-save")).toBeTruthy()); reasonIn(); };
+
+  it("while an invalid cost is displayed Save is disabled, the field says the value has NOT been saved, and a banner names the SKU; no save is possible", async () => {
+    await ready();
+    expect(save().disabled).toBe(false); // a reason is enough when every cost is valid
+    const cost = typeCost("PNQ082", "6.54547551");
+    expect(await screen.findByText(/This value has not been saved\. At most 7 decimal places/)).toBeTruthy();
+    expect(cost.getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByTestId("pricing-invalid-cost-block").textContent).toMatch(/Saving is blocked.*NOT been saved.*PNQ082/);
+    expect(save().disabled).toBe(true);
+    fireEvent.click(save());
+    expect(actions.applyEstimatorPricingAction).not.toHaveBeenCalled();
+  });
+  it("correcting the value clears the message and the banner and re-enables Save; the corrected 7-decimal value is what is saved, the invalid one never was", async () => {
+    await ready();
+    typeCost("PNQ082", "6,5");
+    await screen.findByTestId("pricing-invalid-cost-block");
+    expect(save().disabled).toBe(true);
+    typeCost("PNQ082", "6.5454755");
+    await waitFor(() => expect(screen.queryByTestId("pricing-invalid-cost-block")).toBeNull());
+    expect(screen.queryByText(/has not been saved/)).toBeNull();
+    expect(save().disabled).toBe(false);
+    vi.mocked(actions.applyEstimatorPricingAction).mockResolvedValue({ ok: true, data: { seq: 2, kind: "CHANGED", changedValues: 1, confirmation: { confirmationCleared: false, signoffCleared: false, returnedToRep: false, previousCents: 1, newCents: 1 } } });
+    fireEvent.click(save());
+    await waitFor(() => expect(actions.applyEstimatorPricingAction).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(actions.applyEstimatorPricingAction).mock.calls[0][1].skus.PNQ082.nativeUnitCostE7).toBe(65_454_755);
+  });
+  it("two invalid fields: Save stays blocked until BOTH are fixed, and the banner counts them", async () => {
+    await ready();
+    typeCost("PNQ082", "abc"); typeCost("ERT053", "1.12345678");
+    expect((await screen.findByTestId("pricing-invalid-cost-block")).textContent).toMatch(/2 supplier cost values have NOT been saved.*ERT053, PNQ082/);
+    typeCost("PNQ082", "10");
+    await waitFor(() => expect(screen.getByTestId("pricing-invalid-cost-block").textContent).toMatch(/1 supplier cost value has NOT been saved.*ERT053/));
+    expect(save().disabled).toBe(true);
+    typeCost("ERT053", "10");
+    await waitFor(() => expect(screen.queryByTestId("pricing-invalid-cost-block")).toBeNull());
+    expect(save().disabled).toBe(false);
+  });
+  it("an empty field is not invalid: the saved cost is kept and Save is not blocked", async () => {
+    await ready();
+    typeCost("PNQ082", "");
+    expect(screen.queryByTestId("pricing-invalid-cost-block")).toBeNull();
+    expect(save().disabled).toBe(false);
+  });
+  it("when the draft is replaced (reload / a different load) the message, the banner and the typed text are cleared and the field shows the saved cost again", async () => {
+    const b = bundle(equivalentInputs());
+    vi.mocked(actions.getEstimatorPricingAction).mockResolvedValue({ ok: true, data: b });
+    const r = render(createElement(EstimatorPricingPanel, { quoteId: "q1", reload: vi.fn() }));
+    await waitFor(() => expect(screen.getByTestId("pricing-save")).toBeTruthy());
+    reasonIn();
+    const saved = (screen.getAllByLabelText(/PNQ082 supplier cost/)[0] as HTMLInputElement).value;
+    expect(saved).not.toBe("");
+    typeCost("PNQ082", "6,5");
+    await screen.findByTestId("pricing-invalid-cost-block");
+    r.rerender(createElement(EstimatorPricingPanel, { quoteId: "q2", reload: vi.fn() })); // load() runs again and replaces the draft
+    await waitFor(() => expect(screen.queryByTestId("pricing-invalid-cost-block")).toBeNull());
+    expect(screen.queryByText(/has not been saved/)).toBeNull();
+    expect((screen.getAllByLabelText(/PNQ082 supplier cost/)[0] as HTMLInputElement).value).toBe(saved);
+    expect((screen.getAllByLabelText(/PNQ082 supplier cost/)[0] as HTMLInputElement).getAttribute("aria-invalid")).toBeNull();
+  });
+  it("Clear supplier cost drops that SKU's invalid state", async () => {
+    await ready();
+    typeCost("PNQ082", "6,5");
+    await screen.findByTestId("pricing-invalid-cost-block");
+    const row = screen.getAllByTestId("pricing-row").find((x) => x.getAttribute("data-sku") === "PNQ082")!;
+    fireEvent.click(within(row.nextElementSibling as HTMLElement).getByTestId("clear-cost")); // the detail row under the SKU
+    await waitFor(() => expect(screen.queryByTestId("pricing-invalid-cost-block")).toBeNull());
+  });
+});
+
 describe("saving", () => {
   it("needs a reason; saves the edited inputs as ONE submission with that reason; and tells the Estimator the Rep must reconfirm when the total moved", async () => {
     const reload = mount(bundle(equivalentInputs()));
