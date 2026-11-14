@@ -1,7 +1,7 @@
 import { normaliseQuoteStatus } from "@/rwtsa-demo/contracts/quote-status";
 import type { ScenarioId } from "@/rwtsa-demo/contracts/fields";
 import { SCENARIO_TABS, TAB_CONTRACTS, TAB_NAMES, type TabName } from "@/rwtsa-demo/contracts/tabs";
-import { DEFAULT_FORECAST_WINDOW_MONTHS, type ReadinessConfig, type ScenarioReadiness } from "@/rwtsa-demo/dataset";
+import { DEFAULT_FORECAST_WINDOW_MONTHS, type ReadinessConfig, type RoutingCostKind, type RoutingCostReport, type ScenarioReadiness } from "@/rwtsa-demo/dataset";
 import { RwtsaSafeError, type Finding } from "@/rwtsa-demo/findings";
 import type { ParsedRow, ParsedTab } from "@/rwtsa-demo/workbook/parse-tab";
 import type { ReadResult } from "@/rwtsa-demo/workbook/read";
@@ -58,10 +58,23 @@ export interface ReadinessInput {
   readonly parsed: Partial<Record<TabName, ParsedTab>>;
   readonly findings: readonly Finding[];
   readonly config: ReadinessConfig;
+  /** The cost build-up lines stated under the routing table, when the sheet has them. */
+  readonly routingCosts?: RoutingCostReport;
 }
 
+/**
+ * The routing overhead/efficiency/margin figures can be supplied either as a column or as an explicit labelled amount line
+ * under the routing table. A stated line with a finite amount satisfies the PRESENCE rule for that field only. It does not
+ * resolve the unit or whether the amount enters product cost: those owner rules stay open in the scenario B layers.
+ */
+const ROUTING_LINE_KIND: Record<string, RoutingCostKind> = { "Routing_SMV.overhead": "overhead", "Routing_SMV.efficiency": "efficiency", "Routing_SMV.margin": "margin" };
+const statedAsLine = (key: string, costs: RoutingCostReport | undefined): boolean => {
+  const kind = ROUTING_LINE_KIND[key];
+  return kind !== undefined && (costs?.lines ?? []).some((l) => l.kind === kind && Number.isFinite(l.amount));
+};
+
 export function computeReadiness(input: ReadinessInput): ScenarioReadiness[] {
-  const { ok, read, parsed, findings, config } = input;
+  const { ok, read, parsed, findings, config, routingCosts } = input;
   const emptyTabs = new Set<TabName>(TAB_NAMES.filter((t) => !read.tables[t] || read.tables[t]!.rows.length === 0));
   const absent = new Set(findings.filter((f) => f.code === "optional_header_absent" && f.severity === "warning" && f.tab && f.field).map((f) => `${f.tab}.${f.field}`));
 
@@ -78,7 +91,7 @@ export function computeReadiness(input: ReadinessInput): ScenarioReadiness[] {
   return (Object.keys(SCENARIO_TABS) as ScenarioId[]).map((scenario): ScenarioReadiness => {
     const missingTabs = SCENARIO_TABS[scenario].filter((t) => emptyTabs.has(t));
     const critical = TAB_NAMES.flatMap((tab) => TAB_CONTRACTS[tab].fields.filter((f) => f.critical === scenario).map((f) => ({ tab, key: f.key })));
-    const missingFields = critical.filter((c) => absent.has(`${c.tab}.${c.key}`)).map((c) => `${c.tab}.${c.key}`);
+    const missingFields = critical.filter((c) => absent.has(`${c.tab}.${c.key}`) && !statedAsLine(`${c.tab}.${c.key}`, routingCosts)).map((c) => `${c.tab}.${c.key}`);
     const unpopulatedFields = critical
       .filter((c) => !absent.has(`${c.tab}.${c.key}`) && !emptyTabs.has(c.tab) && parsed[c.tab])
       .map((c) => ({ field: `${c.tab}.${c.key}`, missing: populationGap(c.tab, c.key, parsed[c.tab]!.rows) }))

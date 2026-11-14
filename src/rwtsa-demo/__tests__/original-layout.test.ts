@@ -603,3 +603,27 @@ describe("original-shaped Payments_FEC: settlement is evidenced or unknown, neve
     expect(r.totals.potentialUsdCents).toBe(runFxExposure(b.dataset!, { asOf: "2026-10-31" }).totals.potentialUsdCents);
   });
 });
+
+describe("Scenario B readiness with the routing build-up stated as amount lines (not columns)", () => {
+  const b = (r: Awaited<ReturnType<typeof load>>) => r.readiness.find((x) => x.scenario === "B")!;
+  it("stated overhead, efficiency and margin lines satisfy the PRESENCE rule: no absent-column gap for them", async () => {
+    const r = await load();
+    expect(b(r).missingFields.filter((f) => f.startsWith("Routing_SMV."))).toEqual([]);
+  });
+  it("a missing stated line leaves its own field absent, so B is not ready for that reason alone", async () => {
+    const r = await load((wb) => void (wb.getWorksheet("Routing_SMV")!.getCell("B14").value = "Freight surcharge"));
+    expect(b(r).missingFields).toContain("Routing_SMV.efficiency");
+    expect(b(r).missingFields).not.toContain("Routing_SMV.overhead");
+    expect(b(r).missingFields).not.toContain("Routing_SMV.margin");
+    expect(b(r).ready).toBe(false);
+  });
+  it("no build-up heading means no lines, so all three stay absent (nothing is inferred)", async () => {
+    const r = await load((wb) => void (wb.getWorksheet("Routing_SMV")!.getCell("B11").value = "Notes:"));
+    expect(b(r).missingFields).toEqual(expect.arrayContaining(["Routing_SMV.overhead", "Routing_SMV.efficiency", "Routing_SMV.margin"]));
+    expect(b(r).ready).toBe(false);
+  });
+  it("the unit and inclusion rule stays an OPEN owner rule regardless of readiness", async () => {
+    const r = await load();
+    expect(r.dataset!.routingCosts!.lines.map((l) => l.kind)).toEqual(["labour", "overhead", "efficiency", "margin"]);
+  });
+});

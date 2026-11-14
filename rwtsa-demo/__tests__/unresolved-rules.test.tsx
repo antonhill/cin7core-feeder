@@ -64,10 +64,14 @@ describe("the original-shaped workbook loads directly as a LOCAL workbook", () =
       expect(t).not.toContain("SYNTHETIC");
     }
   });
-  it("the validator-only READY flags are separate: A and B are NOT READY (tender marker, overhead and efficiency absent), C and D READY", async () => {
+  it("the validator-only READY flags are separate: A is NOT READY (tender marker absent); B, C and D are READY on data presence, and B still lists its open overhead/efficiency/margin owner rule", async () => {
     local();
     expect(text(await A())).toContain("NOT READY");
-    expect(text(await B())).toContain("NOT READY");
+    const b = text(await B());
+    expect(b).not.toContain("NOT READY");
+    expect(b).toContain("Unresolved commercial rules");
+    expect(b).toContain("Withheld: Fully loaded product cost");
+    expect(b).toContain("does not check units or the percentage scale");
     expect(/data-testid="readiness"[^>]*>(?:<[^>]*>)*READY</.test(await C())).toBe(true);
     expect(/data-testid="readiness"[^>]*>(?:<[^>]*>)*READY</.test(await D())).toBe(true);
   });
