@@ -7,10 +7,10 @@ const fake = (responses: Record<string, unknown>) => {
   const c: ReadOnlyClient = { get: async (path, query) => { calls.push({ path, query }); return responses[path] as never; }, requests: () => calls.length, methodsUsed: () => ["GET"] };
   return { c, calls };
 };
-const EXP: SaleExpectations = { orderNumber: "SO-T1", customer: "Test Customer", sourceReference: "Q-T1", lineCount: 3, totalExTax: 1000 };
+const EXP: SaleExpectations = { orderNumber: "SO-T1", customer: "Test Customer", sourceReference: "Q-T1", lines: [0, 1, 2].map((i) => ({ sku: `S${i}`, quantity: 2, unitPrice: 98 })), totalExTax: 1000 };
 const ID = "11111111-1111-4111-8111-111111111111";
 const list = { SaleList: [{ SaleID: ID, OrderNumber: "SO-T1" }] };
-const lines = (n = 3, extra: Record<string, unknown> = {}) => Array.from({ length: n }, (_, i) => ({ SKU: `S${i}`, Quantity: 2, BackorderQuantity: 0, Total: 10, ...extra }));
+const lines = (n = 3, extra: Record<string, unknown> = {}) => Array.from({ length: n }, (_, i) => ({ SKU: `S${i}`, Quantity: 2, BackorderQuantity: 0, Total: 10, Price: 98, ...extra }));
 const sale = (o: Record<string, unknown> = {}, order: Record<string, unknown> = {}) => ({ ID: ID, Customer: "Test Customer", CustomerReference: "Q-T1", Order: { SaleOrderNumber: "SO-T1", Status: "AUTHORISED", TotalBeforeTax: 1000, Lines: lines(), ...order }, Fulfilments: [], ...o });
 const run = (s: unknown, l: unknown = list) => { const f = fake({ "/saleList": l, "/sale": s }); return inspectSale(f.c, EXP).then((e) => ({ e, ...f })); };
 const status = (e: Awaited<ReturnType<typeof inspectSale>>, id: string) => e.checks.find((c) => c.id === id)?.status;
@@ -21,17 +21,21 @@ describe("inspectSale", () => {
     expect(calls.map((c) => c.path)).toEqual(["/saleList", "/sale"]);
     expect(calls[1].query).toEqual({ ID: ID });
     expect(e.verdict).toBe("MATCH_ALLOCATION_INDIRECT");
-    expect(e.checks.map((c) => c.status)).toEqual(["PASS", "PASS", "PASS", "PASS", "PASS"]);
+    expect(e.checks.map((c) => c.status)).toEqual(["PASS", "PASS", "PASS", "PASS", "PASS", "PASS"]);
     expect(e.allocation?.status).toBe("NO_BACKORDER_INDIRECT_EVIDENCE");
     expect(e.requests).toBe(2);
   });
-  it("a missing sale in a short list is NOT_FOUND; a full list without a match is UNVERIFIED (never absence)", async () => {
-    const f = fake({ "/saleList": { SaleList: [] } });
-    expect((await inspectSale(f.c, EXP)).verdict).toBe("NOT_FOUND");
-    expect(f.calls).toHaveLength(1);
+  it("REGRESSION: an unmatched list is UNVERIFIED in every case (empty, short, or full), never NOT_FOUND, and no detail request is made", async () => {
     const full = { SaleList: Array.from({ length: 50 }, (_, i) => ({ SaleID: `x${i}`, OrderNumber: `SO-${i}` })) };
-    const g = fake({ "/saleList": full });
-    expect((await inspectSale(g.c, EXP))).toMatchObject({ verdict: "UNVERIFIED", status: "UNVERIFIED" });
+    const short = { SaleList: [{ SaleID: "x1", OrderNumber: "SO-OTHER" }] };
+    for (const l of [{ SaleList: [] }, short, full]) {
+      const f = fake({ "/saleList": l });
+      const e = await inspectSale(f.c, EXP);
+      expect(e).toMatchObject({ verdict: "UNVERIFIED", status: "UNVERIFIED", saleId: null, checks: [] });
+      expect(e.unverifiedReason).toMatch(/unverified/i);
+      expect(JSON.stringify(e)).not.toMatch(/NOT_FOUND/);
+      expect(f.calls).toHaveLength(1);
+    }
   });
   it("an unrecognised list shape fails closed (throws), and an ambiguous order number makes no detail request", async () => {
     await expect(inspectSale(fake({ "/saleList": { Foo: [] } }).c, EXP)).rejects.toThrow(/SaleList is missing/);
@@ -57,6 +61,27 @@ describe("inspectSale", () => {
     expect(status((await run(sale({ CustomerReference: "Q-OTHER" }))).e, "sourceReference")).toBe("FAIL");
     expect(status((await run(sale({ CustomerReference: null, Note: "from Q-T1" }))).e, "sourceReference")).toBe("UNVERIFIED");
     expect(status((await run(sale({ CustomerReference: null }))).e, "sourceReference")).toBe("UNVERIFIED");
+  });
+  it("REGRESSION line pairs: all expected SKU/quantity/unit-price pairs must match exactly", async () => {
+    const ok = (await run(sale())).e;
+    expect(status(ok, "linePairs")).toBe("PASS");
+    expect(ok.linePairs).toEqual({ missing: [], quantityDiffers: [], priceDiffers: [], unexpected: [], unpriced: [] });
+    const swap = (f: (l: Record<string, unknown>, i: number) => Record<string, unknown>) => (run(sale({}, { Lines: lines().map(f) })));
+    const qty = (await swap((l, i) => (i === 1 ? { ...l, Quantity: 3 } : l))).e;
+    expect(status(qty, "linePairs")).toBe("FAIL"); expect(qty.linePairs?.quantityDiffers).toEqual(["S1"]); expect(qty.verdict).toBe("MISMATCH");
+    const price = (await swap((l, i) => (i === 2 ? { ...l, Price: 98.01 } : l))).e;
+    expect(status(price, "linePairs")).toBe("FAIL"); expect(price.linePairs?.priceDiffers).toEqual(["S2"]);
+    expect(status((await swap((l, i) => (i === 0 ? { ...l, Price: 98.004 } : l))).e, "linePairs")).toBe("PASS");
+    const wrongSku = (await swap((l, i) => (i === 0 ? { ...l, SKU: "OTHER" } : l))).e;
+    expect(wrongSku.linePairs).toMatchObject({ missing: ["S0"], unexpected: ["OTHER"] }); expect(status(wrongSku, "linePairs")).toBe("FAIL");
+  });
+  it("line pairs: a missing or non-numeric unit price is UNVERIFIED (never a pass); malformed lines are UNVERIFIED; an extra line FAILs", async () => {
+    const noPrice = (await run(sale({}, { Lines: lines().map((l, i) => { const r: Record<string, unknown> = { ...l }; if (i === 0) delete r.Price; return r; }) }))).e;
+    expect(status(noPrice, "linePairs")).toBe("UNVERIFIED"); expect(noPrice.linePairs?.unpriced).toEqual(["S0"]); expect(noPrice.verdict).toBe("UNVERIFIED");
+    expect(status((await run(sale({}, { Lines: lines().map((l) => ({ ...l, Price: "98" })) }))).e, "linePairs")).toBe("UNVERIFIED");
+    expect(status((await run(sale({}, { Lines: [...lines(2), { SKU: "", Quantity: 1, Price: 98 }] }))).e, "linePairs")).toBe("UNVERIFIED");
+    const extra = (await run(sale({}, { Lines: [...lines(), { SKU: "EXTRA", Quantity: 1, Price: 98, BackorderQuantity: 0 }] }))).e;
+    expect(extra.linePairs?.unexpected).toEqual(["EXTRA"]); expect(status(extra, "linePairs")).toBe("FAIL");
   });
   it("line count: wrong count and duplicate SKUs FAIL; malformed or missing lines are UNVERIFIED", async () => {
     expect(status((await run(sale({}, { Lines: lines(2) }))).e, "lineCount")).toBe("FAIL");

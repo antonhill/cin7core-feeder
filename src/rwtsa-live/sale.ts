@@ -13,35 +13,40 @@ const bad = (m: string): never => { throw new RwtsaLiveError("BAD_RESPONSE", m);
 const fold = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
 const LIST_LIMIT = 50;
 
-export interface SaleExpectations { orderNumber: string; customer: string; sourceReference: string; lineCount: number; totalExTax: number }
+/** Owner-supplied expectation for one order line (never hard-coded in the repo): exact SKU, quantity and unit price excluding tax. */
+export interface ExpectedLine { sku: string; quantity: number; unitPrice: number }
+export interface SaleExpectations { orderNumber: string; customer: string; sourceReference: string; lines: readonly ExpectedLine[]; totalExTax: number }
 export type CheckStatus = "PASS" | "FAIL" | "UNVERIFIED";
-export interface SaleCheck { id: "customer" | "sourceReference" | "lineCount" | "totalExTax" | "orderStatus"; status: CheckStatus; detail: string }
+export interface SaleCheck { id: "customer" | "sourceReference" | "lineCount" | "linePairs" | "totalExTax" | "orderStatus"; status: CheckStatus; detail: string }
+/** SKU names only (local evidence file, never printed): which expected lines were missing, wrong, or unexpected. */
+export interface LinePairDiff { missing: string[]; quantityDiffers: string[]; priceDiffers: string[]; unexpected: string[]; unpriced: string[] }
 export interface SaleAllocation { status: "NO_BACKORDER_INDIRECT_EVIDENCE" | "BACKORDER_PRESENT" | "UNVERIFIED"; backorderUnits: number | null; linesWithBackorder: number; fulfilmentCount: number | null; note: string }
 export interface SaleEvidence {
   takenAt: string; requests: number; methodsUsed: string[]; expectations: SaleExpectations;
-  status: "SALE_FOUND" | "SALE_NOT_FOUND" | "UNVERIFIED";
+  status: "SALE_FOUND" | "UNVERIFIED";
   unverifiedReason: string | null;
   saleId: string | null;
   observed: { customer: string | null; orderStatus: string | null; totalBeforeTax: number | null; lineCount: number | null; distinctSkus: number | null; linesTotalSum: number | null; additionalChargesTotalSum: number | null; sourceReferenceField: string | null } | null;
   checks: SaleCheck[];
+  linePairs: LinePairDiff | null;
   allocation: SaleAllocation | null;
   /** MATCH only if every check PASSes; allocation stays INDIRECT evidence so the strongest verdict is MATCH_ALLOCATION_INDIRECT. */
-  verdict: "MATCH_ALLOCATION_INDIRECT" | "MISMATCH" | "UNVERIFIED" | "NOT_FOUND";
+  verdict: "MATCH_ALLOCATION_INDIRECT" | "MISMATCH" | "UNVERIFIED";
   responseTopLevelFields: string[]; orderFields: string[];
 }
 
 export async function inspectSale(client: ReadOnlyClient, exp: SaleExpectations, opts: { takenAt?: string } = {}): Promise<SaleEvidence> {
   const takenAt = opts.takenAt ?? new Date().toISOString();
   const base = (status: SaleEvidence["status"], verdict: SaleEvidence["verdict"], extra: Partial<SaleEvidence> = {}): SaleEvidence =>
-    ({ takenAt, requests: client.requests(), methodsUsed: client.methodsUsed(), expectations: exp, status, unverifiedReason: null, saleId: null, observed: null, checks: [], allocation: null, verdict, responseTopLevelFields: [], orderFields: [], ...extra });
+    ({ takenAt, requests: client.requests(), methodsUsed: client.methodsUsed(), expectations: exp, status, unverifiedReason: null, saleId: null, observed: null, checks: [], linePairs: null, allocation: null, verdict, responseTopLevelFields: [], orderFields: [], ...extra });
 
   const list = await client.get<Row>("/saleList", { Search: exp.orderNumber, Page: 1, Limit: LIST_LIMIT });
   if (!isRow(list) || !Array.isArray(list.SaleList)) bad("Unexpected response shape from the sale list (SaleList is missing).");
   const listRows = rows(list.SaleList);
   const hits = listRows.filter((r) => str(r.OrderNumber) === exp.orderNumber);
   if (hits.length === 0) {
-    if (listRows.length >= LIST_LIMIT) return base("UNVERIFIED", "UNVERIFIED", { unverifiedReason: "The sale list was full without a match, so it may be truncated or the search filter ignored; absence cannot be concluded." });
-    return base("SALE_NOT_FOUND", "NOT_FOUND");
+    // The /saleList Search filter and pagination behaviour are NOT verified live, so an unmatched result is never "not found".
+    return base("UNVERIFIED", "UNVERIFIED", { unverifiedReason: `No sale in the first page of ${listRows.length} row(s) matched the order number. Search filtering and pagination are unverified, so absence cannot be concluded.` });
   }
   const ids = [...new Set(hits.map((r) => str(r.SaleID)).filter((x): x is string => !!x))];
   if (hits.length > 1 || ids.length !== 1) return base("UNVERIFIED", "UNVERIFIED", { unverifiedReason: "The order number did not resolve to exactly one sale ID; no detail request was made." });
@@ -70,6 +75,22 @@ export async function inspectSale(client: ReadOnlyClient, exp: SaleExpectations,
   const refInNote = typeof sale.Note === "string" && fold(sale.Note).includes(fold(exp.sourceReference));
   const refPresent = (["CustomerReference", "ExternalID"] as const).some((k) => str(sale[k]) !== null && str(sale[k]) !== "");
 
+  // Exact SKU/quantity/unit-price pairs against the owner-supplied expectation.
+  const exSkus = new Set(exp.lines.map((l) => l.sku.trim()));
+  const pairs: LinePairDiff | null = !linesWellFormed || lines === null ? null : (() => {
+    const d: LinePairDiff = { missing: [], quantityDiffers: [], priceDiffers: [], unexpected: [], unpriced: [] };
+    for (const e of exp.lines) {
+      const got = lines.filter((l) => str(l.SKU) === e.sku.trim());
+      if (got.length !== 1) { d.missing.push(e.sku); continue; }
+      if (Math.abs((fin(got[0].Quantity) as number) - e.quantity) > 1e-9) d.quantityDiffers.push(e.sku);
+      const price = fin(got[0].Price);
+      if (price === null) d.unpriced.push(e.sku); else if (Math.abs(price - e.unitPrice) >= 0.005) d.priceDiffers.push(e.sku);
+    }
+    for (const l of lines) if (!exSkus.has(str(l.SKU) as string)) d.unexpected.push(str(l.SKU) as string);
+    return d;
+  })();
+  const pairFail = pairs !== null && (pairs.missing.length + pairs.quantityDiffers.length + pairs.priceDiffers.length + pairs.unexpected.length) > 0;
+
   const checks: SaleCheck[] = [
     customer === null ? { id: "customer", status: "UNVERIFIED", detail: "The sale detail carries no customer name." }
       : fold(customer) === fold(exp.customer) ? { id: "customer", status: "PASS", detail: "Customer name matches." } : { id: "customer", status: "FAIL", detail: "Customer name differs from the expected customer." },
@@ -78,8 +99,12 @@ export async function inspectSale(client: ReadOnlyClient, exp: SaleExpectations,
       : refPresent ? { id: "sourceReference", status: "FAIL", detail: "A reference field is set but does not equal the expected source reference." }
       : { id: "sourceReference", status: "UNVERIFIED", detail: "No reference field (CustomerReference, ExternalID) is set, so the source quotation cannot be tied to this order." },
     !linesWellFormed || lines === null ? { id: "lineCount", status: "UNVERIFIED", detail: "Order lines are missing or malformed (blank SKU or non-positive quantity)." }
-      : lines.length === exp.lineCount && distinctSkus === exp.lineCount ? { id: "lineCount", status: "PASS", detail: `${lines.length} lines, ${distinctSkus} distinct SKUs.` }
-      : { id: "lineCount", status: "FAIL", detail: `${lines.length} lines, ${distinctSkus} distinct SKUs; expected ${exp.lineCount} distinct.` },
+      : lines.length === exp.lines.length && distinctSkus === exp.lines.length ? { id: "lineCount", status: "PASS", detail: `${lines.length} lines, ${distinctSkus} distinct SKUs.` }
+      : { id: "lineCount", status: "FAIL", detail: `${lines.length} lines, ${distinctSkus} distinct SKUs; expected ${exp.lines.length} distinct.` },
+    pairs === null ? { id: "linePairs", status: "UNVERIFIED", detail: "Order lines are missing or malformed, so SKU/quantity/price pairs cannot be compared." }
+      : pairFail ? { id: "linePairs", status: "FAIL", detail: `${pairs.missing.length} expected SKU(s) missing or duplicated, ${pairs.quantityDiffers.length} quantity difference(s), ${pairs.priceDiffers.length} price difference(s), ${pairs.unexpected.length} unexpected SKU(s).` }
+      : pairs.unpriced.length > 0 ? { id: "linePairs", status: "UNVERIFIED", detail: `${pairs.unpriced.length} line(s) carry no numeric unit price, so prices are not verified.` }
+      : { id: "linePairs", status: "PASS", detail: `All ${exp.lines.length} SKU/quantity/unit-price pairs match.` },
     total === null ? { id: "totalExTax", status: "UNVERIFIED", detail: "Order.TotalBeforeTax is missing or not a number." }
       : Math.abs(total - exp.totalExTax) < 0.005 ? { id: "totalExTax", status: "PASS", detail: "Total excluding tax matches." } : { id: "totalExTax", status: "FAIL", detail: `Total excluding tax is ${total}; expected ${exp.totalExTax}.` },
     orderStatus === null ? { id: "orderStatus", status: "UNVERIFIED", detail: "Order.Status is missing." }
@@ -99,7 +124,7 @@ export async function inspectSale(client: ReadOnlyClient, exp: SaleExpectations,
   const anyFail = checks.some((c) => c.status === "FAIL") || allocation.status === "BACKORDER_PRESENT";
   const anyUnv = checks.some((c) => c.status === "UNVERIFIED") || allocation.status === "UNVERIFIED";
   return base("SALE_FOUND", anyFail ? "MISMATCH" : anyUnv ? "UNVERIFIED" : "MATCH_ALLOCATION_INDIRECT", {
-    saleId, checks, allocation, responseTopLevelFields: top, orderFields,
+    saleId, checks, linePairs: pairs, allocation, responseTopLevelFields: top, orderFields,
     observed: { customer, orderStatus, totalBeforeTax: total, lineCount: lines ? lines.length : null, distinctSkus, linesTotalSum: lines ? sum(lines, "Total") : null, additionalChargesTotalSum: sum(charges, "Total"), sourceReferenceField: refField },
   });
 }
