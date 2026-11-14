@@ -210,7 +210,7 @@ describe("UX-006i2 Stage 3: the Manager's signed-off workspace", () => {
   it("approved: the workspace is read-only history - 'Manager approved - final', no decision buttons", async () => {
     await open({ stage: "3", roles: ["MANAGER"], commercials: true, state: "MANAGER_APPROVED_FINAL", row: { ...SIGNED.row } });
     expect(screen.getByText("Manager approved — final")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /final approval|Return to/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Approve|Return to/ })).toBeNull();
   }, 60000);
 });
 

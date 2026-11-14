@@ -177,16 +177,19 @@ export interface Stage3WizardInput {
   signoff: "none" | "current" | "stale";
   dirty: boolean;
   /** What has happened since approval, from records the page already reads (issued document, commercial status, linked Project). Wording only: omit while it is still loading and the line stays the generic "next: issue and send". */
-  after?: { hasDocument: boolean; commercial: string | null; projectLinked: boolean };
+  after?: { hasDocument: boolean; commercial: string | null; projectLinked: boolean; /** False for a quotation approved before customer acceptance existed: a Project does not depend on the customer's response. Default true. */ requiresAcceptance?: boolean };
 }
 export type Stage3WizardStep = WizardStep<Stage3WizardId>;
 
-const SENT_STATES: ReadonlySet<string> = new Set(["SENT_TO_CUSTOMER", "ACCEPTANCE_PENDING_VERIFICATION", "ACCEPTANCE_REJECTED", "CUSTOMER_DECLINED", "CHANGES_REQUESTED"]);
 function postApprovalLine(a: Stage3WizardInput["after"]): { line: string; owner: WizardRole | null } | null {
   if (!a) return null;
   if (a.projectLinked) return { line: "Approved. The Project has been created from the accepted quotation. Next: run billing and fulfilment in the Project.", owner: null };
+  if (a.requiresAcceptance === false) return { line: "Approved. Customer acceptance is not required for this quotation. Next responsible role: Manager creates the Project (Stage 6).", owner: "Manager" };
   if (a.commercial === "CUSTOMER_ACCEPTED") return { line: "Approved and accepted by the customer. Next responsible role: Manager creates the Project (Stage 6).", owner: "Manager" };
-  if (a.commercial != null && SENT_STATES.has(a.commercial)) return { line: "Approved and sent to the customer. Next: record and verify the customer's response (Stage 5).", owner: "Rep" };
+  if (a.commercial === "ACCEPTANCE_PENDING_VERIFICATION") return { line: "Approved. The customer's acceptance is awaiting verification (Stage 5). Next: Rep or Manager verifies it.", owner: "Rep" };
+  if (a.commercial === "ACCEPTANCE_REJECTED") return { line: "Approved. The customer's emailed acceptance was rejected during verification. Next: Rep contacts the customer and records their response (Stage 5).", owner: "Rep" };
+  if (a.commercial === "CUSTOMER_DECLINED" || a.commercial === "CHANGES_REQUESTED") return { line: "Approved. The customer has responded without accepting. Next: Rep prepares a revised quotation or records the outcome (Stage 5).", owner: "Rep" };
+  if (a.commercial === "SENT_TO_CUSTOMER") return { line: "Approved and sent to the customer. Next: record the customer's response (Stage 5).", owner: "Rep" };
   if (a.hasDocument) return { line: "Approved. The quotation PDF is issued. Next: Rep sends it to the customer (Stage 4).", owner: "Rep" };
   return null;
 }
