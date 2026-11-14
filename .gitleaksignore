@@ -1,0 +1,3 @@
+# Reviewed false positive: the NAMES of the three allowed credential-file keys (no value) in src/rwtsa-live/credentials.ts as first committed.
+# Fixed in the next commit; history is not rewritten.
+12c53389339605410d4f70106a5b0b08af0e7a02:src/rwtsa-live/credentials.ts:generic-api-key:7
