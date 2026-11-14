@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { appendRegisterEvent, readRegister, registerFile } from "@/rwtsa-live/bond/register-store";
+import { appendRegisterEvent, bondDir, readRegister, registerFile } from "@/rwtsa-live/bond/register-store";
 import type { ClearanceEntry, RegisterEvent } from "@/rwtsa-live/bond/engine";
 
 const home = () => mkdtempSync(path.join(tmpdir(), "bond-home-"));
@@ -74,5 +74,35 @@ describe("clearance register store (append-only, hash-chained, owner-only)", () 
     l0.hash = createHash("sha256").update(JSON.stringify({ seq: l0.seq, at: l0.at, prevHash: l0.prevHash, event: l0.event })).digest("hex");
     writeFileSync(f, [JSON.stringify(l0), lines[1]].join("\n") + "\n"); chmodSync(f, 0o600);
     expect(() => readRegister({ home: h })).toThrow(/integrity/i);
+  });
+  it("refuses to append while another update holds the lock, leaves the file untouched, and always releases its own lock", () => {
+    const h = home();
+    appendRegisterEvent({ home: h, event: add(), ...T });
+    const lock = path.join(bondDir(h), ".register.lock"), before = readFileSync(registerFile(h), "utf8");
+    writeFileSync(lock, "held", { mode: 0o600 });
+    expect(() => appendRegisterEvent({ home: h, event: ver, ...T })).toThrow(/in progress/i);
+    expect(readFileSync(registerFile(h), "utf8")).toBe(before);
+    rmSync(lock);
+    appendRegisterEvent({ home: h, event: ver, ...T });
+    expect(existsSync(lock)).toBe(false);
+    expect(() => appendRegisterEvent({ home: h, event: ver, ...T })).toThrow(/already verified/i);
+    expect(existsSync(lock)).toBe(false); // released even when the event was invalid
+  });
+  it("detects truncation of the tail against the tip file, and an emptied register, but tolerates a crash between append and tip update", () => {
+    const h = home();
+    appendRegisterEvent({ home: h, event: add(), ...T });
+    appendRegisterEvent({ home: h, event: ver, ...T });
+    const f = registerFile(h), tip = path.join(bondDir(h), "register.tip"), lines = readFileSync(f, "utf8").trimEnd().split("\n");
+    expect(statSync(tip).mode & 0o777).toBe(0o600);
+    const full = readFileSync(f, "utf8");
+    writeFileSync(f, lines[0] + "\n"); chmodSync(f, 0o600);
+    expect(() => readRegister({ home: h })).toThrow(/truncat/i);
+    writeFileSync(f, ""); chmodSync(f, 0o600);
+    expect(() => readRegister({ home: h })).toThrow(/truncat/i);
+    writeFileSync(f, full); chmodSync(f, 0o600);
+    writeFileSync(tip, JSON.stringify({ count: 1, tipHash: JSON.parse(lines[0]).hash })); chmodSync(tip, 0o600); // crash window: file is one line ahead of the tip file
+    expect(readRegister({ home: h }).count).toBe(2);
+    writeFileSync(tip, JSON.stringify({ count: 1, tipHash: "f".repeat(64) })); chmodSync(tip, 0o600); // tip disagrees with the chain
+    expect(() => readRegister({ home: h })).toThrow(/integrity|truncat/i);
   });
 });

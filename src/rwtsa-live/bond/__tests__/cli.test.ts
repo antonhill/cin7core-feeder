@@ -12,13 +12,13 @@ const SKU = "SKU-XYZ-123";
 const mkHome = () => mkdtempSync(path.join(tmpdir(), "bond-cli-"));
 const names = { JHB: "Jhb", DURBAN: "Dbn", CAPE_TOWN: "Cpt", FACTORY_STORE: "Fac", BOND: "Bond" } as const;
 const col = (rows: unknown[]) => ({ rows: rows as Record<string, unknown>[], pages: 1, reportedTotal: rows.length, complete: true, problems: [], observedFields: ["ID", "Name", "SKU", "Location", "OnHand", "Allocated"] });
-function snap(home: string, takenAt: string, o: { bond: number; jhb: number; allocated?: number; identity?: "VERIFIED" | "NOT_APPROVED"; sku?: string }): string {
+function snap(home: string, takenAt: string, o: { bond: number; jhb: number; allocated?: number; identity?: "VERIFIED" | "NOT_APPROVED"; sku?: string; acct?: string; usableNegative?: boolean }): string {
   const sku = o.sku ?? SKU;
   const s = buildSnapshot({
     creds: { accountId: ACCOUNT, applicationKey: APPKEY, instanceLabel: "i" }, locationMap: LOC, takenAt,
-    identity: { status: o.identity ?? "VERIFIED", fingerprint: "f", locationCount: 5, accountIdSha256: "a" },
+    identity: { status: o.identity ?? "VERIFIED", fingerprint: "f", locationCount: 5, accountIdSha256: o.acct ?? "a" },
     locations: col(Object.entries(names).map(([r, n]) => ({ ID: LOC[r as keyof typeof LOC], Name: n }))),
-    availability: col([{ SKU: sku, Location: "Bond", OnHand: o.bond, Allocated: 0 }, { SKU: sku, Location: "Jhb", OnHand: o.jhb, Allocated: o.allocated ?? 0 }]),
+    availability: col([{ SKU: sku, Location: "Bond", OnHand: o.bond, Allocated: 0 }, { SKU: sku, Location: "Jhb", OnHand: o.jhb, Allocated: o.allocated ?? (o.usableNegative ? o.jhb + 3 : 0) }]),
     products: col([]),
   });
   return writeSnapshotAtomic({ home, snapshot: s, creds: { accountId: ACCOUNT, applicationKey: APPKEY } }).file;
@@ -109,5 +109,44 @@ describe("bond CLI (offline, local register, no Cin7)", () => {
     const h = mkHome(); const s = snap(h, "2026-11-13T08:00:00.000Z", { bond: 100, jhb: 0 });
     expect(run(h, ["report", "--snapshot", s]).code).toBe(0);
     expect(run(h, ["report", "--snapshot", s]).code).toBe(0);
+  });
+  it("an oversold SKU (negative usable) does not block the report", () => {
+    const h = mkHome(); const s = snap(h, "2026-11-13T08:00:00.000Z", { bond: 100, jhb: 5, usableNegative: true });
+    expect(run(h, ["report", "--snapshot", s]).code).toBe(0);
+  });
+  it("snapshots from different Cin7 accounts can never be paired, and the register binds to the first account used", () => {
+    const h = mkHome();
+    const a1 = snap(h, "2026-11-13T08:00:00.000Z", { bond: 100, jhb: 0, acct: "acctA" }), b2 = snap(h, "2026-11-14T07:00:00.000Z", { bond: 60, jhb: 40, acct: "acctB" });
+    const a2 = snap(h, "2026-11-14T07:30:00.000Z", { bond: 60, jhb: 40, acct: "acctA" });
+    run(h, addArgs()); run(h, verifyArgs);
+    const mixed = run(h, ["record-release", "--from-snapshot", a1, "--to-snapshot", b2, "--sku", SKU, "--qty", "10", "--by", "owner"]);
+    expect(mixed.code).toBe(1); expect(mixed.lines.join(" ")).toMatch(/account/i);
+    expect(run(h, ["report", "--snapshot", b2, "--previous-snapshot", a1]).code).toBe(1);
+    expect(run(h, ["record-release", "--from-snapshot", a1, "--to-snapshot", a2, "--sku", SKU, "--qty", "10", "--by", "owner"]).code).toBe(0); // binds to acctA
+    expect(readRegister({ home: h }).events.find((e) => e.type === "REGISTER_BOUND")).toMatchObject({ accountIdSha256: "acctA" });
+    const other = run(h, ["report", "--snapshot", b2]);
+    expect(other.code).toBe(1); expect(other.lines.join(" ")).toMatch(/bound to a different/i);
+    expect(run(h, ["propose", "--snapshot", b2, "--sku", SKU, "--qty", "1", "--to", "JHB", "--by", "o", "--reason", "r"]).code).toBe(1);
+  });
+  it("verify stamps a UTC time, so an observed movement before it is flagged uncleared", () => {
+    const h = mkHome();
+    const s1 = snap(h, "2026-11-13T07:00:00.000Z", { bond: 100, jhb: 0 }), s2 = snap(h, "2026-11-13T07:30:00.000Z", { bond: 60, jhb: 40 });
+    run(h, addArgs()); run(h, verifyArgs); // stamped 2026-11-14T08:00, after the movement
+    const rep = reportRows(h, run(h, ["report", "--snapshot", s2, "--previous-snapshot", s1]));
+    expect(rep.observed[0]).toMatchObject({ bondDecrease: 40, uncleared: 40 });
+    expect(rep.observed[0].exceptions).toContain("TRANSFER_WITHOUT_CLEARANCE_EVIDENCE");
+  });
+  it("quantities must be plain decimal numbers (no hex, exponent or binary forms)", () => {
+    const h = mkHome();
+    for (const q of ["0x10", "1e3", "0b11", "-5", "Infinity", "", "5."]) expect(run(h, addArgs().map((x) => (x === `${SKU}=100` ? `${SKU}=${q}` : x))).code).toBe(2);
+  });
+  it("a verification stamped earlier the same day DOES cover a later movement (the stamp, not just the date, decides)", () => {
+    const h = mkHome();
+    const s1 = snap(h, "2026-11-14T09:00:00.000Z", { bond: 100, jhb: 0 }), s2 = snap(h, "2026-11-14T10:00:00.000Z", { bond: 60, jhb: 40 });
+    runBondCli(addArgs(), { home: h, today: "2026-11-14", now: "2026-11-14T07:00:00.000Z" });
+    runBondCli(verifyArgs, { home: h, today: "2026-11-14", now: "2026-11-14T08:00:00.000Z" });
+    const out = runBondCli(["report", "--snapshot", s2, "--previous-snapshot", s1], { home: h, today: "2026-11-14", now: "2026-11-14T11:00:00.000Z" });
+    expect(out.code).toBe(0);
+    expect(reportRows(h, out).observed[0]).toMatchObject({ bondDecrease: 40, uncleared: 0, eligibleBefore: 100 });
   });
 });

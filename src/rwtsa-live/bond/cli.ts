@@ -40,8 +40,17 @@ function parse(argv: readonly string[], spec: Spec): Map<string, string[]> {
   for (const r of spec.required) if (!out.has(r)) throw new UsageError(`--${r} is required`);
   return out;
 }
-const num = (s: string, what: string): number => { const n = Number(s); if (!Number.isFinite(n) || n <= 0) throw new UsageError(`${what} must be a positive number`); return n; };
+const num = (s: string, what: string): number => { const n = /^\d+(\.\d+)?$/.test(s) ? Number(s) : NaN; if (!Number.isFinite(n) || n <= 0) throw new UsageError(`${what} must be a positive number`); return n; };
 
+const acctOf = (s: Snapshot) => s.source.identity.accountIdSha256;
+/** All snapshots must be from one Cin7 account, and that account must match the one the register is bound to (binding it first if `bindBy` is given). */
+function checkAccount(snaps: readonly Snapshot[], events: readonly RegisterEvent[], env: CliEnv, bind?: { by: string; append: (e: RegisterEvent) => void }): void {
+  const acct = acctOf(snaps[0]);
+  if (snaps.some((s) => acctOf(s) !== acct)) throw new BondRegisterError("the snapshots are from different Cin7 accounts and cannot be compared");
+  const bound = foldRegister(events, { asOf: env.today }).boundAccount;
+  if (bound !== undefined && bound !== acct) throw new BondRegisterError("the register is bound to a different Cin7 account than these snapshots");
+  if (bound === undefined && bind) bind.append({ type: "REGISTER_BOUND", accountIdSha256: acct, by: bind.by, on: env.today });
+}
 function loadSnapshot(file: string): Snapshot {
   const s = readSnapshotFile(file);
   assertReconcilable(s, false); // COMPLETE and identity VERIFIED, or refuse
@@ -68,15 +77,17 @@ export function runBondCli(argv: readonly string[], env: CliEnv): CliResult {
         append({ type: "CLEARANCE_ADDED", entry });
         return { code: 0, lines: [`Recorded clearance entry ${id} with ${lines.length} SKU line(s). It is UNVERIFIED, which means NOT CLEARED, until verified.`] };
       }
-      case "verify": append({ type: "CLEARANCE_VERIFIED", entryId: one("entry"), verifiedBy: one("by"), verifiedOn: env.today, documentRef: one("document-ref") }); return { code: 0, lines: [`Verified clearance entry ${one("entry")}.`] };
+      case "verify": append({ type: "CLEARANCE_VERIFIED", entryId: one("entry"), verifiedBy: one("by"), verifiedOn: env.today, verifiedAt: env.now, documentRef: one("document-ref") }); return { code: 0, lines: [`Verified clearance entry ${one("entry")}.`] };
       case "withdraw": append({ type: "CLEARANCE_WITHDRAWN", entryId: one("entry"), by: one("by"), on: env.today, reason: one("reason") }); return { code: 0, lines: [`Withdrew clearance entry ${one("entry")}.`] };
       case "propose": {
         const snap = loadSnapshot(one("snapshot"));
+        checkAccount([snap], reg.events, env);
         const state = foldRegister(reg.events, { asOf: env.today });
         const to = one("to") as Destination, qty = num(one("qty"), "--qty");
         const check = validateProposal(state, { bondBySku: bondMap(snap), operationalUsableBySku: usableMap(snap) }, { sku: one("sku"), quantity: qty, destination: to });
         if (!check.ok) return { code: 1, lines: [`Proposal refused: ${check.reason}`] };
-        const id = `P-${countOf(reg.events, "TRANSFER_PROPOSED") + 1}`;
+        checkAccount([snap], reg.events, env, { by: one("by"), append });
+        const id = `P-${countOf(readRegister({ home: env.home }).events, "TRANSFER_PROPOSED") + 1}`;
         append({ type: "TRANSFER_PROPOSED", proposal: { id, sku: one("sku"), quantity: qty, destination: to, proposedBy: one("by"), proposedOn: env.today, reason: one("reason") } });
         return { code: 0, lines: [`Recorded draft transfer proposal ${id} . No Cin7 transaction was created.`] };
       }
@@ -84,17 +95,20 @@ export function runBondCli(argv: readonly string[], env: CliEnv): CliResult {
       case "record-release": {
         const from = loadSnapshot(one("from-snapshot")), to = loadSnapshot(one("to-snapshot"));
         if (Date.parse(from.takenAt) >= Date.parse(to.takenAt)) return { code: 1, lines: ["Refused: the from-snapshot must be earlier than the to-snapshot."] };
+        checkAccount([from, to], reg.events, env);
         const sku = one("sku"), qty = num(one("qty"), "--qty");
         const decrease = Math.max(0, (bondMap(from).get(sku) ?? 0) - (bondMap(to).get(sku) ?? 0));
         const state = foldRegister(reg.events, { asOf: env.today });
         const already = state.releases.filter((r) => r.sku === sku && !r.voided && r.fromHash === from.contentHash && r.toHash === to.contentHash).reduce((t, r) => t + r.quantity, 0);
         if (qty + already - decrease > 1e-9) return { code: 1, lines: [`Refused: only ${Math.max(0, decrease - already)} unit(s) of observed Bond decrease remain unrecorded between these snapshots.`] };
-        const id = `R-${countOf(reg.events, "RELEASE_RECORDED") + 1}`;
+        checkAccount([from, to], reg.events, env, { by: one("by"), append });
+        const id = `R-${countOf(readRegister({ home: env.home }).events, "RELEASE_RECORDED") + 1}`;
         append({ type: "RELEASE_RECORDED", id, sku, quantity: qty, on: env.today, recordedBy: one("by"), fromSnapshotHash: from.contentHash, toSnapshotHash: to.contentHash, fromTakenAt: from.takenAt, toTakenAt: to.takenAt, proposalId: a.get("proposal")?.[0] });
         return { code: 0, lines: [`Recorded release ${id} from an observed Bond decrease. This records a movement only; it is not clearance evidence.`] };
       }
       case "report": {
         const snap = loadSnapshot(one("snapshot")), prev = a.has("previous-snapshot") ? loadSnapshot(one("previous-snapshot")) : undefined;
+        checkAccount(prev ? [snap, prev] : [snap], reg.events, env);
         if (prev && Date.parse(prev.takenAt) >= Date.parse(snap.takenAt)) return { code: 1, lines: ["Refused: the previous snapshot must be earlier than the snapshot."] };
         const state = foldRegister(reg.events, { asOf: env.today });
         const rep = buildBondReport({ snapshot: snap, previous: prev, state, registerTipHash: reg.tipHash, registerEvents: reg.count, generatedAt: env.now });

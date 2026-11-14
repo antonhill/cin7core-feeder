@@ -19,7 +19,7 @@ export interface BondReport {
 export function buildBondReport(i: { snapshot: Snapshot; previous?: Snapshot; state: RegisterState; registerTipHash: string; registerEvents: number; generatedAt: string }): BondReport {
   const cur = maps(i.snapshot);
   const rows = assessBond(i.state, { bondBySku: cur.bondBySku, operationalUsableBySku: cur.usableBySku });
-  const observed = i.previous ? observeBondMovement(i.state, { bondBySku: maps(i.previous).bondBySku, nonBondBySku: maps(i.previous).nonBondBySku }, { bondBySku: cur.bondBySku, nonBondBySku: cur.nonBondBySku }, { fromSnapshotHash: i.previous.contentHash, toSnapshotHash: i.snapshot.contentHash }) : [];
+  const observed = i.previous ? observeBondMovement(i.state, { bondBySku: maps(i.previous).bondBySku, nonBondBySku: maps(i.previous).nonBondBySku }, { bondBySku: cur.bondBySku, nonBondBySku: cur.nonBondBySku }, { fromSnapshotHash: i.previous.contentHash, toSnapshotHash: i.snapshot.contentHash, fromTakenAt: i.previous.takenAt }) : [];
   const sum = (f: (r: BondAssessment) => number) => rows.reduce((t, r) => t + f(r), 0);
   const withBond = rows.filter((r) => r.bondPhysical > 0);
   return {
