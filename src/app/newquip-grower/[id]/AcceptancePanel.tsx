@@ -1,5 +1,9 @@
 "use client";
 
+import { AuditDetails } from "./AuditDetails";
+import { splitEvidence } from "../technical-text";
+import { PendingNotice } from "@/components/ui/action-feedback";
+import { OP } from "@/components/ui/operation-labels";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Status } from "@/components/ui/Status";
@@ -22,11 +26,15 @@ const RESPONSE_LABEL: Record<string, string> = { ACCEPTED: "Accepted", DECLINED:
 type ContactChoice = "delivery" | "alt" | number;
 const kb = (n: number) => `${Math.max(1, Math.round(n / 1024))} KB`;
 
+/** The operation name for a busy key (ids carry the response they act on). */
+const busyLabel = (b: string): string => b === "revoke" ? OP.revokeLinks : b === "record" ? OP.recordCustomerResponse : b.startsWith("attach-") ? OP.attachEvidence : b.startsWith("v-") || b.startsWith("r-") ? OP.verifyCustomerResponse : OP.loadCustomerResponse;
+
 export function AcceptancePanel({ quoteId, onGate }: { quoteId: string; onGate: (g: DeliveryGate) => void }) {
   const [d, setD] = useState<DeliveryView | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const inFlight = useRef(false);
   const [response, setResponse] = useState<"ACCEPTED" | "DECLINED" | "CHANGES_REQUESTED">("ACCEPTED");
   const [choice, setChoice] = useState<ContactChoice>("delivery");
   const [alt, setAlt] = useState({ name: "", email: "", reason: "" });
@@ -43,12 +51,16 @@ export function AcceptancePanel({ quoteId, onGate }: { quoteId: string; onGate: 
   useEffect(() => { let live = true; void (async () => { if (live) await reload(); })(); return () => { live = false; }; }, [reload]);
 
   const work = async (what: string, fn: () => Promise<{ ok: boolean; error?: string }>, done: string) => {
+    if (inFlight.current) return; // a second click in the same tick (before React re-renders) is a no-op: the guard is a ref, not state
+    inFlight.current = true;
     setBusy(what); setErr(null); setNote(null);
-    try { const r = await fn(); if (r.ok) { setNote(done); await reload(); } else setErr(r.error ?? "Failed."); } catch { setErr("Something went wrong. Please try again."); } finally { setBusy(null); }
+    try { const r = await fn(); if (r.ok) { setNote(done); await reload(); } else setErr(r.error ?? "The action failed. Nothing was changed."); }
+    catch { setErr("We could not confirm whether this completed. The latest status is shown on this page: check it before trying again."); try { await reload(); } catch { /* unconfirmed, as the message says */ } }
+    finally { inFlight.current = false; setBusy(null); }
   };
   const upload = (form: FormData) => postFormToOwnRoute("/api/newquip-quote-responses", form);
 
-  if (!d) return <Panel><PanelTitle>Customer response</PanelTitle><p className="mt-2 text-sm text-slate-600">{err ?? "Loading…"}</p></Panel>;
+  if (!d) return <Panel><PanelTitle>Customer response</PanelTitle>{err ? <p className="mt-2 text-sm text-slate-600">{err}</p> : <PendingNotice label={OP.loadCustomerResponse} />}</Panel>;
   if (!d.available) return <Panel><PanelTitle>Customer response</PanelTitle><Alert tone="info">Customer responses become available once the database update for customer quotations (migration 0115) has been applied.</Alert></Panel>;
 
   const statusTone: BadgeTone = d.status === "CUSTOMER_ACCEPTED" ? "success" : d.status === "ACCEPTANCE_PENDING_VERIFICATION" ? "warning" : d.status === "CUSTOMER_DECLINED" || d.status === "CHANGES_REQUESTED" || d.status === "ACCEPTANCE_REJECTED" ? "danger" : "neutral";
@@ -96,7 +108,7 @@ export function AcceptancePanel({ quoteId, onGate }: { quoteId: string; onGate: 
       <p className="mt-1 text-xs text-slate-600">Record what the customer answered and keep the evidence. Manager approval is not the customer&apos;s acceptance, and an acceptance that arrives by the emailed link only counts once it has been verified here.</p>
       {err && <Alert tone="danger">{err}</Alert>}
       {note && <Alert tone="success">{note}</Alert>}
-      {busy && <p role="status" className="mt-2 text-sm text-slate-600">Working…</p>}
+      {busy && <PendingNotice label={busyLabel(busy)} />}
       {!d.portal && <Alert tone="info">Choosing the responding contact from Cin7, attaching evidence files and responses from the emailed link become available once the database update for customer responses (migration 0117) has been applied. Responses can still be recorded below.</Alert>}
       {d.portal && d.status !== "CUSTOMER_ACCEPTED" && (
         <p className="mt-2 text-xs text-slate-600" data-testid="link-state">
@@ -107,7 +119,7 @@ export function AcceptancePanel({ quoteId, onGate }: { quoteId: string; onGate: 
           {d.links.state === "ACTIVE" && d.canReview && (
             <span className="ml-2 inline-flex items-center gap-2">
               <input className={`${inputCls} w-56`} aria-label="Reason for withdrawing the links" placeholder="Reason to withdraw the links" value={revokeReason} onChange={(e) => setRevokeReason(e.target.value)} />
-              <Button type="button" variant="secondary" loading={busy === "revoke"} disabled={revokeReason.trim().length < 3} onClick={() => void work("revoke", () => revokeResponseLinksAction(quoteId, revokeReason), "The response links were withdrawn.")}>Withdraw links</Button>
+              <Button type="button" variant="secondary" loading={busy === "revoke"} disabled={busy !== null || revokeReason.trim().length < 3} onClick={() => void work("revoke", () => revokeResponseLinksAction(quoteId, revokeReason), "The response links were withdrawn.")}>Withdraw links</Button>
             </span>
           )}
         </p>
@@ -121,8 +133,8 @@ export function AcceptancePanel({ quoteId, onGate }: { quoteId: string; onGate: 
           {d.canReview ? (
             <div className="flex flex-wrap items-end gap-2">
               <input className={`${inputCls} w-72`} aria-label="Verification note" placeholder="Note (required to reject)" value={review[r.id] ?? ""} onChange={(e) => setReview({ ...review, [r.id]: e.target.value })} />
-              <Button type="button" loading={busy === `v-${r.id}`} onClick={() => void work(`v-${r.id}`, () => reviewCustomerResponseAction(quoteId, { responseId: r.id, decision: "VERIFIED", note: review[r.id] ?? "" }), "Acceptance verified. Project Handover is now available.")}>Verify acceptance</Button>
-              <Button type="button" variant="secondary" loading={busy === `r-${r.id}`} disabled={(review[r.id] ?? "").trim().length < 3} onClick={() => void work(`r-${r.id}`, () => reviewCustomerResponseAction(quoteId, { responseId: r.id, decision: "REJECTED", note: review[r.id] ?? "" }), "Acceptance rejected.")}>Reject acceptance</Button>
+              <Button type="button" loading={busy === `v-${r.id}`} disabled={busy !== null} onClick={() => void work(`v-${r.id}`, () => reviewCustomerResponseAction(quoteId, { responseId: r.id, decision: "VERIFIED", note: review[r.id] ?? "" }), "Acceptance verified. Project Handover is now available.")}>Verify acceptance</Button>
+              <Button type="button" variant="secondary" loading={busy === `r-${r.id}`} disabled={busy !== null || (review[r.id] ?? "").trim().length < 3} onClick={() => void work(`r-${r.id}`, () => reviewCustomerResponseAction(quoteId, { responseId: r.id, decision: "REJECTED", note: review[r.id] ?? "" }), "Acceptance rejected.")}>Reject acceptance</Button>
             </div>
           ) : <p className="text-xs text-slate-600">A Rep or Manager verifies this.</p>}
         </div>
@@ -165,7 +177,7 @@ export function AcceptancePanel({ quoteId, onGate }: { quoteId: string; onGate: 
               {files.length > 0 && <span className="text-xs text-slate-700">{files.map((x) => `${x.name} (${kb(x.size)})`).join(", ")}</span>}
             </label>
           )}
-          <Button type="button" loading={busy === "record"} disabled={!canSubmit} onClick={() => void (d.portal ? record() : recordLegacy())}>Record response</Button>
+          <Button type="button" loading={busy === "record"} disabled={busy !== null || !canSubmit} onClick={() => void (d.portal ? record() : recordLegacy())}>Record response</Button>
           {needsFile && files.length === 0 && <p className="text-xs text-amber-700">Attach the evidence (for example the signed quotation or the customer&apos;s confirming email) to record an acceptance.</p>}
         </div>
       ) : <p className="mt-2 text-sm text-slate-600">{d.accepted ? "Accepted: this acceptance is final." : "A response can be recorded once the quotation has been issued. Only a Rep or Manager can record it."}</p>}
@@ -181,17 +193,23 @@ export function AcceptancePanel({ quoteId, onGate }: { quoteId: string; onGate: 
               </div>
               <div>{r.contact}{r.company ? `, ${r.company}` : ""}{r.contactEmail ? ` <${r.contactEmail}>` : ""}{r.contactSource ? ` · ${r.contactSource === "DELIVERY_CONTACT" ? "contact who received the quotation" : r.contactSource === "CIN7_CONTACT" ? "Cin7 contact" : r.contactSource === "ALTERNATIVE" ? "alternative contact" : "details given by the customer"}` : ""} · {r.respondedOn} · {r.origin === "CUSTOMER_LINK" ? "received" : "recorded by"} {r.recordedBy} · {formatSast(r.at)}</div>
               {r.exceptionReason && <div className="text-xs text-amber-800">Exception reason: {r.exceptionReason}</div>}
-              <div className="text-slate-700">Evidence: {r.evidence}{r.note ? ` · ${r.note}` : ""}{r.origin === "CUSTOMER_LINK" && r.response === "ACCEPTED" ? ` · authority confirmed: ${r.authorityConfirmed ? "yes" : "no"}` : ""}</div>
+              <div className="text-slate-700">Evidence: {splitEvidence(r.evidence).plain}{r.note ? ` · ${r.note}` : ""}{r.origin === "CUSTOMER_LINK" && r.response === "ACCEPTED" ? ` · authority confirmed: ${r.authorityConfirmed ? "yes" : "no"}` : ""}</div>
               {r.review && <div className="text-xs text-slate-600">{r.review.decision === "VERIFIED" ? "Verified" : "Rejected"} by {r.review.by} · {formatSast(r.review.at)}{r.review.note ? ` · ${r.review.note}` : ""}</div>}
               {r.files.length > 0 && (
                 <ul className="list-disc pl-5 text-xs">
-                  {r.files.map((x) => <li key={x.id}><a className="text-indigo-700 underline" href={`/api/newquip-response-evidence/${x.id}`}>{x.fileName}</a> · {kb(x.bytes)} · uploaded by {x.uploadedBy} · sha256 {x.sha256.slice(0, 12)}…</li>)}
+                  {r.files.map((x) => <li key={x.id}><a className="text-indigo-700 underline" href={`/api/newquip-response-evidence/${x.id}`}>{x.fileName}</a> · {kb(x.bytes)} · uploaded by {x.uploadedBy}</li>)}
                 </ul>
+              )}
+              {(splitEvidence(r.evidence).technical || r.files.length > 0) && (
+                <AuditDetails testId={`audit-details-${r.id}`} label={`Audit details for ${RESPONSE_LABEL[r.response].toLowerCase()} response of ${r.respondedOn}`} className="text-xs text-slate-600">
+                  {splitEvidence(r.evidence).technical && <p>Quotation document: {splitEvidence(r.evidence).technical}</p>}
+                  {r.files.map((x) => <p key={x.id}>{x.fileName}: sha256 {x.sha256.slice(0, 12)}…</p>)}
+                </AuditDetails>
               )}
               {d.portal && d.canRecord && r.origin === "STAFF" && (
                 <div className="flex flex-wrap items-center gap-2 text-xs">
                   <input type="file" multiple accept={EVIDENCE_ACCEPT} id={`att-${r.id}`} />
-                  <Button type="button" size="sm" variant="secondary" loading={busy === `attach-${r.id}`} onClick={() => attach(r, document.getElementById(`att-${r.id}`) as HTMLInputElement | null)}>Add evidence</Button>
+                  <Button type="button" size="sm" variant="secondary" loading={busy === `attach-${r.id}`} disabled={busy !== null} onClick={() => attach(r, document.getElementById(`att-${r.id}`) as HTMLInputElement | null)}>Add evidence</Button>
                 </div>
               )}
             </li>

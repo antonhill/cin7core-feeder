@@ -59,10 +59,8 @@ update newquip_project_templates set status = 'RETIRED' where id = '00000000-000
 
 -- RLS: members read their own organisation only; no client writes
 select pg_temp.act_as('00000000-0000-0000-0000-0000000011a1');
-do $$ begin
-  if (select count(*) from newquip_project_templates) <> 1 then raise exception 'a member must see only their own templates'; end if;
-  if (select count(*) from newquip_project_template_versions) <> 2 then raise exception 'a member must see only their own versions'; end if;
-end $$;
+select pg_temp.expect_denied($q$select count(*) from newquip_project_templates$q$, 'a signed-in member has no read access to newquip_project_templates (0122)');
+select pg_temp.expect_denied($q$select count(*) from newquip_project_template_versions$q$, 'a signed-in member has no read access to newquip_project_template_versions (0122)');
 select pg_temp.expect_denied($q$insert into newquip_project_templates (org_id, name, created_by_email) values ('00000000-0000-0000-0000-0000000011b1', 'client write', 'x@x')$q$, 'client insert');
 select pg_temp.expect_denied($q$update newquip_project_templates set name = 'x'$q$, 'client update');
 select pg_temp.reset_role();

@@ -2,6 +2,10 @@ import { defineConfig } from "vitest/config";
 import path from "node:path";
 
 export default defineConfig({
+  test: {
+    // Freezes Date for the NewQuip pricing tests only (see the file header).
+    setupFiles: ["./src/test/newquip-pricing-clock.ts"],
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),

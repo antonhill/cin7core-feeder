@@ -1,3 +1,4 @@
+import { approvedInPocMode, excludeUnverifiedScope, isPocQuote, pocPresentationEnabled } from "./poc-presentation";
 import "server-only";
 // NewQuip quotes — persistence orchestration. LOCAL ONLY: this module imports nothing from src/cin7 and never calls fetch
 // (pinned by no-cin7-write.test.ts). Every query is scoped by org_id; a quote of another org is indistinguishable from "not
@@ -6,18 +7,29 @@ import "server-only";
 import type { createServiceRoleClient } from "@/supabase/server";
 import { evaluateDraft, type EvaluationContext, type QuoteEvaluation } from "@/newquip/grower/evaluate";
 import { emptyDraft, type QuoteDraft } from "@/newquip/grower/draft";
-import { buildAcceptedBaseline, baselineMatchesHash, hashOf, type AcceptedBaseline } from "@/newquip/quote/baseline";
+import { pricingFinality } from "@/newquip/pricing/estimator/finality";
+import { legacyCostCoverageFor } from "@/newquip/pricing/estimator/legacy-cost-coverage";
+import { keepServerOwnedPricing } from "@/newquip/pricing/estimator/ownership";
+import { buildAcceptedBaseline, baselineMatchesHash, commercialLinesOf, hashOf, type AcceptedBaseline } from "@/newquip/quote/baseline";
+import { baselineExceptionView, baselineMappingGate, validateExceptionReason, type BaselineExceptionRequest, type BaselineExceptionView } from "@/newquip/quote/baseline-exception";
+import { buildPhysicalScope } from "@/newquip/quote/physical-scope";
+import { applyMappingLibrary } from "@/lib/projects/product-scope";
 import { quoteToProjectBaseline } from "@/newquip/quote/to-project";
 import type { ScheduleStageTemplate } from "@/newquip/quote/billing-schedule";
 import type { ScheduleSource } from "@/newquip/quote/project-template";
-import { authoriseTransition, canEditDraft, checkApproval, checkHandoff, type QuoteState } from "@/newquip/quote/workflow";
-import type { QuoteRole } from "@/newquip/quote/roles";
+import { authoriseTransition, canEditDraft, checkApproval, checkHandoff, checkSignOff, type QuoteState } from "@/newquip/quote/workflow";
+import { estimatorCostingComplete, type CostingStatus } from "@/newquip/quote/readiness-concepts";
+import { hasAny, COMMERCIAL_APPROVAL_ROLES, type QuoteRole } from "@/newquip/quote/roles";
 import { createProjectFromBaseline } from "@/lib/projects/project-store";
 import { libraryOf, listActiveMappings } from "@/lib/projects/package-mapping-store";
 import { requireAcceptance } from "./acceptance";
 import { latestSnapshot } from "./customer-store";
+import { recordReturn, recordSignoff, voidReturn, type ReturnBy } from "./return-store";
+import { NEUTRAL_REASON } from "@/newquip/quote/return-info";
 import { verifyMappings } from "./mapping-check";
 import { mappedSkus } from "@/newquip/grower/mapping-integrity";
+import { buildIndicativeSnapshot } from "@/newquip/pricing/indicative-snapshot";
+import { handoffWithSnapshot } from "./indicative-store";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 
@@ -57,6 +69,40 @@ export interface QuoteRecord {
 }
 
 const totalCents = (ev: QuoteEvaluation): number | null => (ev.budget && !ev.budget.incomplete ? Math.round(ev.budget.totals.subtotalExTax * 100) : null);
+/** The CURRENT INDICATIVE total (priced lines + Rep-entered charges), also while Estimator-owned items are unresolved. What the Rep's customer confirms at handoff. */
+const indicativeTotalCents = (ev: QuoteEvaluation): number | null => (ev.budget ? Math.round(ev.budget.totals.subtotalExTax * 100) : null);
+
+/**
+ * ESTIMATOR_COSTING_COMPLETE, evaluated server-side with cost VISIBLE even though the workflow evaluation withholds it. Nothing but the boolean and the reason
+ * texts (counts and line labels, never a cost or margin value) leaves this function, so the cost-withheld caller never receives cost.
+ */
+export async function costingOf(db: Db, orgId: string, draft: QuoteDraft, ctx: EvaluationContext): Promise<CostingStatus> {
+  const library = await listActiveMappings(db, orgId);
+  const ev = evaluateDraft(draft, { ...ctx, withholdCost: false });
+  const nowIso = new Date().toISOString();
+  // NQ-008B Phase 2: a SKU the legacy check lists as having no supplier cost is satisfied only by the CURRENT, independently verified supplier pricing of exactly that SKU (no waiver, nothing for a
+  // quotation that has not enabled supplier pricing). Every Phase 2 gate below still applies in full.
+  const base = estimatorCostingComplete(draft, ev, library ? libraryOf(library) : undefined, nowIso, legacyCostCoverageFor(draft.estimator.pricing, nowIso));
+  // NQ-008B Phase 2 (owner decision 2): supplier pricing that is not verified is indicative only. It makes costing INCOMPLETE for sign-off and approval and the
+  // accepted-incomplete exception does not waive it (so `acceptedIncomplete` is dropped). A draft without Estimator pricing is judged exactly as before.
+  const fin = pricingFinality(draft.estimator.pricing, ev.budget);
+  return fin.final ? base : { complete: false, reasons: [...base.reasons, ...fin.reasons] };
+}
+
+/**
+ * Does approving this draft need a Manager's baseline exception (Estimator-priced systems with no Cin7 SKU), and which items would it cover? Evaluated with cost VISIBLE
+ * server-side; only item labels and the pricing route leave this function (never a cost, price or margin value).
+ */
+export async function baselineExceptionOf(db: Db, orgId: string, draft: QuoteDraft, ctx: EvaluationContext, asOfIso: string = new Date().toISOString()): Promise<BaselineExceptionView> {
+  const b = evaluateDraft(draft, { ...ctx, withholdCost: false }).budget;
+  if (!b) return { baselineExceptionRequired: false, items: [], blocking: [], otherBlockers: [], costException: null };
+  const library = await listActiveMappings(db, orgId);
+  const lines = commercialLinesOf(b);
+  const scope = buildPhysicalScope(lines);
+  const lib = library ? libraryOf(library) : undefined;
+  const costEx = draft.estimator.costBasis?.incompleteAccepted;
+  return baselineExceptionView(baselineMappingGate({ lines, scope: lib && lib.size ? applyMappingLibrary(scope, lib, asOfIso) : scope, physicalCosts: draft.estimator.physicalCosts, costExceptionAccepted: !!costEx, pocWaiver: isPocQuote(draft) && pocPresentationEnabled(process.env as Record<string, string | undefined>, orgId), phase2Coverage: legacyCostCoverageFor(draft.estimator.pricing, asOfIso) }), costEx ?? null);
+}
 
 // ── reads ───────────────────────────────────────────────────────────────────
 
@@ -98,8 +144,19 @@ export async function createQuote(db: Db, orgId: string, email: string, draft: Q
  * Saves the editable draft. An edit made after the estimator signed off CLEARS the sign-off (it covered different content).
  * An approved quote is never editable.
  */
-export async function saveDraft(db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, quoteId: string, draft: QuoteDraft): Promise<{ draftHash: string; signoffCleared: boolean }> {
+export async function saveDraft(
+  db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, quoteId: string, submitted: QuoteDraft,
+  /** The customer name of the quotation's Cin7 snapshot, when one exists. It is the ONLY source of the customer name then: whatever the client sent is replaced by it. */
+  authoritativeCustomerName?: string | null,
+  /**
+   * `keepStoredPricing`: the SERVER-OWNED supplier pricing is taken from the row loaded HERE, not from the caller's (possibly older) copy of the draft. Every server writer that
+   * clones a draft and then saves it passes this, so a pricing / verification revision that landed in between can never be overwritten by the older pricing it cloned.
+   */
+  opts: { keepStoredPricing?: boolean } = {},
+): Promise<{ draftHash: string; signoffCleared: boolean }> {
   const q = await mustLoad(db, orgId, quoteId);
+  const named = authoritativeCustomerName ? { ...submitted, customerName: authoritativeCustomerName } : submitted;
+  const draft = opts.keepStoredPricing ? keepServerOwnedPricing(named, q.draft) : named;
   if (!canEditDraft(roles, q.state)) fail(q.state === "MANAGER_APPROVED_FINAL" ? "The accepted quote is final and cannot be edited. Post-acceptance changes must be Variations." : "You do not have permission to edit this quote.");
   const draftHash = hashOf(draft);
   const changed = draftHash !== q.draft_hash;
@@ -107,9 +164,10 @@ export async function saveDraft(db: Db, orgId: string, roles: ReadonlySet<QuoteR
   const r = await db.from("newquip_quotes").update({
     draft, draft_hash: draftHash, customer_name: draft.customerName, site_name: draft.siteName, quote_type: draft.quoteType,
     ...(clearSignoff ? { estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null } : {}),
-  }).eq("org_id", orgId).eq("id", quoteId).in("state", ["REP_DRAFT", "ESTIMATOR_REVIEW"]).select("id");
+  }).eq("org_id", orgId).eq("id", quoteId).eq("draft_hash", q.draft_hash).in("state", ["REP_DRAFT", "ESTIMATOR_REVIEW"]).select("id");
+  // Compare-and-set on the draft hash read above: a save that raced with another writer (e.g. an Estimator pricing revision, which also changes the hash) must not silently overwrite it.
   if (r.error) fail(r.error.message);
-  if (!r.data || r.data.length === 0) fail("The quote could not be saved (its state changed).");
+  if (!r.data || r.data.length === 0) fail("The quote could not be saved (it changed while you were editing; refresh and try again).");
   return { draftHash, signoffCleared: clearSignoff };
 }
 
@@ -119,7 +177,7 @@ export async function saveDraft(db: Db, orgId: string, roles: ReadonlySet<QuoteR
  * quotation goes back to the Rep as a new revision (so the new customer must confirm before it is handed off again). A REP_DRAFT has no confirmation yet.
  */
 export async function applyCustomerChange(
-  db: Db, orgId: string, quoteId: string, customerName: string, previousCustomer: boolean,
+  db: Db, orgId: string, quoteId: string, customerName: string, previousCustomer: boolean, by: ReturnBy,
 ): Promise<{ returnedToRep: boolean; signoffCleared: boolean; confirmationCleared: boolean }> {
   const q = await mustLoad(db, orgId, quoteId);
   if (q.state === "MANAGER_APPROVED_FINAL") fail("The customer details of an approved quotation are immutable. Start a new quotation for a different customer.");
@@ -129,13 +187,49 @@ export async function applyCustomerChange(
   const inReview = q.state === "ESTIMATOR_REVIEW";
   const signoffCleared = q.estimator_signoff_hash != null;
   const confirmationCleared = q.customer_confirmed_cents != null || q.customer_confirmed_by != null;
+  // The quotation goes back to the Rep: keep WHY (kind, actor, previous total) before the state changes. A REP_DRAFT has nothing to return.
+  const recId = inReview ? await recordReturn(db, orgId, by, { quoteId, kind: "CUSTOMER_CHANGED", reason: NEUTRAL_REASON.CUSTOMER_CHANGED, destination: "REP", fromState: q.state, fromRevision: q.revision, toRevision: q.revision + 1, ...(q.customer_confirmed_cents != null ? { previousCents: q.customer_confirmed_cents } : {}) }, "Returned a NewQuip quotation to the Rep: the customer changed (local only)") : null;
   const r = await db.from("newquip_quotes").update({
     draft, draft_hash: hashOf(draft), customer_name: customerName,
     estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null,
     ...(inReview ? { state: "REP_DRAFT", revision: q.revision + 1, customer_confirmed_cents: null, customer_confirmed_by: null, customer_confirmed_at: null, handoff_by_email: null } : {}),
   }).eq("org_id", orgId).eq("id", quoteId).eq("state", q.state).select("id");
-  if (r.error) fail(r.error.message);
-  if (!r.data || r.data.length === 0) fail("The quotation changed while updating the customer; refresh and try again.");
+  if (r.error || !r.data || r.data.length === 0) { if (recId) await voidReturn(db, orgId, quoteId, recId, r.error?.message ?? "no row updated"); fail(r.error?.message ?? "The quotation changed while updating the customer; refresh and try again."); }
+  return { returnedToRep: inReview, signoffCleared, confirmationCleared };
+}
+
+/**
+ * The CONFIRMED CONTACT (or the confirmed amount) no longer applies. Nulls the live confirmation columns and the estimator's sign-off - exactly the columns returnToRep
+ * nulls; snapshot history, approval events and step logs are untouched - and, from estimator review, returns the quotation to the Rep as a new revision so the customer
+ * must confirm again before it is handed off. A no-op (all false) when no confirmation is recorded. Callers audit it; `effect` is what the UI needs to describe it.
+ */
+export async function invalidateConfirmation(
+  db: Db, orgId: string, quoteId: string,
+  /** Who withdrew it (D5): kept as the return record when the quotation goes back to the Rep. */
+  by: ReturnBy,
+  /** What the caller observed (the confirmed amount and revision it decided on). If the quotation no longer matches, e.g. a handoff committed meanwhile, NOTHING is cleared. */
+  expected?: { cents: number | null; revision: number },
+  /** Why: AMOUNT_CHANGED (the total changed: `newCents` is the new total) or CONTACT_CHANGED (default). */
+  change?: { kind: "AMOUNT_CHANGED" | "CONTACT_CHANGED"; newCents?: number },
+): Promise<{ returnedToRep: boolean; signoffCleared: boolean; confirmationCleared: boolean }> {
+  const q = await mustLoad(db, orgId, quoteId);
+  if (expected && (q.customer_confirmed_cents !== expected.cents || q.revision !== expected.revision)) fail("The quotation changed while withdrawing the confirmation; refresh and try again.");
+  if (q.state === "MANAGER_APPROVED_FINAL") fail("An approved quotation's confirmation is immutable.");
+  const confirmationCleared = q.customer_confirmed_cents != null || q.customer_confirmed_by != null;
+  if (!confirmationCleared) return { returnedToRep: false, signoffCleared: false, confirmationCleared: false };
+  const inReview = q.state === "ESTIMATOR_REVIEW";
+  const signoffCleared = q.estimator_signoff_hash != null;
+  // The reason is kept BEFORE the state change (a failed record changes nothing), bound to the revision it produces; a Rep draft has nothing to return, so only a review-state withdrawal is recorded.
+  const kind = change?.kind ?? "CONTACT_CHANGED";
+  const recId = inReview ? await recordReturn(db, orgId, by, { quoteId, kind, reason: NEUTRAL_REASON[kind], destination: "REP", fromState: q.state, fromRevision: q.revision, toRevision: q.revision + 1, ...(q.customer_confirmed_cents != null ? { previousCents: q.customer_confirmed_cents } : {}), ...(kind === "AMOUNT_CHANGED" && change?.newCents != null ? { newCents: change.newCents } : {}) }, `Returned a NewQuip quotation to the Rep: the ${kind === "AMOUNT_CHANGED" ? "total" : "confirmed contact"} changed (local only)`) : null;
+  // compare-and-set on state, revision AND the confirmed amount as read: a handoff or edit committed since the load clears nothing
+  const upd = db.from("newquip_quotes").update({
+    customer_confirmed_cents: null, customer_confirmed_by: null, customer_confirmed_at: null, handoff_by_email: null,
+    estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null,
+    ...(inReview ? { state: "REP_DRAFT", revision: q.revision + 1 } : {}),
+  }).eq("org_id", orgId).eq("id", quoteId).eq("state", q.state).eq("revision", q.revision);
+  const r = await (q.customer_confirmed_cents != null ? upd.eq("customer_confirmed_cents", q.customer_confirmed_cents) : upd.is("customer_confirmed_cents", null)).select("id");
+  if (r.error || !r.data || r.data.length === 0) { if (recId) await voidReturn(db, orgId, quoteId, recId, r.error?.message ?? "no row updated"); fail(r.error?.message ?? "The quotation changed while withdrawing the confirmation; refresh and try again."); }
   return { returnedToRep: inReview, signoffCleared, confirmationCleared };
 }
 
@@ -150,8 +244,16 @@ export async function sendToEstimator(
   const auth = authoriseTransition(roles, q.state, "SEND_TO_ESTIMATOR");
   if (!auth.ok) fail(auth.error);
   const ev = evaluateDraft(q.draft, ctx);
-  const chk = checkHandoff({ readiness: ev.readiness, totalExVatCents: totalCents(ev), confirmedAmountCents: input.confirmedAmountCents, confirmedBy: input.confirmedBy });
+  const chk = checkHandoff({ readiness: ev.readiness, totalExVatCents: indicativeTotalCents(ev), confirmedAmountCents: input.confirmedAmountCents, confirmedBy: input.confirmedBy });
   if (!chk.ok) fail(chk.error);
+  // NQ-008A: the indicative price and its calculation basis are captured in the SAME transaction as the state change (migration 0123), so a handoff either records
+  // what the Rep's price was or does not happen. `ctx` is the Rep's (cost-withheld) view; the cost-visible twin is used only for the confidential internal section.
+  // Until 0123 is applied the RPC is absent: nothing is written and the handoff proceeds exactly as before (the Estimator is then told no snapshot exists).
+  const built = ev.budget ? buildIndicativeSnapshot({ quoteRef: q.quote_ref, revision: q.revision, draft: q.draft, repEvaluation: ev, internalEvaluation: evaluateDraft(q.draft, { ...ctx, withholdCost: false }) }) : null;
+  if (built) {
+    const cap = await handoffWithSnapshot(db, orgId, quoteId, { draftHash: q.draft_hash, confirmedCents: input.confirmedAmountCents, confirmedBy: input.confirmedBy.trim(), handoffBy: email, snapshot: built.snapshot, snapshotHash: built.hash, index: built.index });
+    if (cap.captured) return;
+  }
   const r = await db.from("newquip_quotes").update({
     state: auth.to, customer_confirmed_cents: input.confirmedAmountCents, customer_confirmed_by: input.confirmedBy.trim(),
     customer_confirmed_at: new Date().toISOString(), handoff_by_email: email,
@@ -162,33 +264,34 @@ export async function sendToEstimator(
 }
 
 /** Estimator → Rep: a new revision. The customer's confirmation and any sign-off no longer apply. */
-export async function returnToRep(db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, quoteId: string, reason: string): Promise<void> {
+export async function returnToRep(db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, quoteId: string, reason: string, by: ReturnBy): Promise<void> {
   if (!reason.trim()) fail("A reason is required to return a quote to the rep.");
   const q = await mustLoad(db, orgId, quoteId);
   const auth = authoriseTransition(roles, q.state, "RETURN_TO_REP");
   if (!auth.ok) fail(auth.error);
+  // The reason is kept (activity_log, append-only) BEFORE the state changes: every path - legacy, staged, manager, estimator - ends here.
+  const recId = await recordReturn(db, orgId, by, { quoteId, kind: "RETURN", reason: reason.trim(), destination: "REP", fromState: q.state, fromRevision: q.revision, toRevision: q.revision + 1 }, "Returned a NewQuip quotation to the Rep (local only)");
   const r = await db.from("newquip_quotes").update({
     state: auth.to, revision: q.revision + 1, customer_confirmed_cents: null, customer_confirmed_by: null, customer_confirmed_at: null, handoff_by_email: null,
     estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null,
   }).eq("org_id", orgId).eq("id", quoteId).eq("state", "ESTIMATOR_REVIEW").select("id");
-  if (r.error) fail(r.error.message);
-  if (!r.data || r.data.length === 0) fail("The quote is no longer in estimator review.");
+  if (r.error || !r.data || r.data.length === 0) { await voidReturn(db, orgId, quoteId, recId, r.error?.message ?? "no row updated"); fail(r.error?.message ?? "The quote is no longer in estimator review."); }
 }
 
 /**
  * Manager -> Estimator. The quotation, its revision, the customer's confirmation and its whole history are kept; ONLY the estimator's sign-off is
  * withdrawn, so it cannot be approved again until an estimator signs off the (possibly corrected) current content.
  */
-export async function returnToEstimator(db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, quoteId: string, reason: string): Promise<void> {
+export async function returnToEstimator(db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, quoteId: string, reason: string, by: ReturnBy): Promise<void> {
   if (!reason.trim()) fail("A reason is required to return a quote to the estimator.");
   const q = await mustLoad(db, orgId, quoteId);
   const auth = authoriseTransition(roles, q.state, "RETURN_TO_ESTIMATOR");
   if (!auth.ok) fail(auth.error);
   if (!q.estimator_signoff_hash) fail("The estimator has not signed this quote off, so there is nothing to return to the estimator.");
+  const recId = await recordReturn(db, orgId, by, { quoteId, kind: "RETURN", reason: reason.trim(), destination: "ESTIMATOR", fromState: q.state, fromRevision: q.revision, toRevision: q.revision }, "Returned a NewQuip quotation to the Estimator (local only)");
   const r = await db.from("newquip_quotes").update({ estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null })
     .eq("org_id", orgId).eq("id", quoteId).eq("state", "ESTIMATOR_REVIEW").eq("draft_hash", q.draft_hash).select("id");
-  if (r.error) fail(r.error.message);
-  if (!r.data || r.data.length === 0) fail("The quote changed while returning it; refresh and try again.");
+  if (r.error || !r.data || r.data.length === 0) { await voidReturn(db, orgId, quoteId, recId, r.error?.message ?? "no row updated"); fail(r.error?.message ?? "The quote changed while returning it; refresh and try again."); }
 }
 
 /** The estimator double-checked THIS exact content (its hash is what is recorded). */
@@ -197,7 +300,8 @@ export async function estimatorSignOff(db: Db, orgId: string, roles: ReadonlySet
   const auth = authoriseTransition(roles, q.state, "ESTIMATOR_SIGN_OFF");
   if (!auth.ok) fail(auth.error);
   const ev = evaluateDraft(q.draft, ctx);
-  if (ev.readiness.state !== "READY") fail(`The quote is ${ev.readiness.state}; resolve ${ev.readiness.reasons[0] ?? "the outstanding items"} before signing off.`);
+  const chk = checkSignOff({ readiness: ev.readiness, totalExVatCents: totalCents(ev), customerConfirmedCents: q.customer_confirmed_cents, costing: await costingOf(db, orgId, q.draft, ctx) });
+  if (!chk.ok) fail(chk.error);
   // Only items actually in the quotation are checked: a stale mapping on a deselected item is not part of what is being signed off (and the UI offers no way to clear it).
   const inQuote = new Set(ev.calc.lines.filter((l) => l.basis !== "not_selected").map((l) => l.itemKey as string));
   // Mapping integrity is re-checked NOW, not only when the draft was saved: the catalogue may have changed since (a product deactivated or removed). Nothing is stamped on failure.
@@ -211,25 +315,37 @@ export async function estimatorSignOff(db: Db, orgId: string, roles: ReadonlySet
   const r = await (priorHash ? upd.eq("estimator_signoff_hash", priorHash) : upd.is("estimator_signoff_hash", null)).select("id");
   if (r.error) fail(r.error.message);
   if (!r.data || r.data.length === 0) fail("The quote changed or was signed off while signing off; refresh and try again.");
+  await recordSignoff(db, orgId, quoteId, email); // ends any earlier return to the Estimator for the reader (see ReturnHistory)
 }
 
 /**
  * Manager final approval. Re-evaluates the saved draft SERVER-SIDE (no client number is ever trusted), verifies every
  * precondition, builds the sealed baseline and freezes it. Creates nothing in Cin7.
  */
-export async function managerApprove(db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, email: string, quoteId: string, ctx: EvaluationContext, marginCtx?: EvaluationContext): Promise<{ baselineHash: string; contractCents: number }> {
+export async function managerApprove(db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, email: string, quoteId: string, ctx: EvaluationContext, marginCtx?: EvaluationContext, opts: { baselineException?: BaselineExceptionRequest } = {}): Promise<{ baselineHash: string; contractCents: number; exceptionRecorded: boolean }> {
   const q = await mustLoad(db, orgId, quoteId);
   const auth = authoriseTransition(roles, q.state, "MANAGER_APPROVE");
   if (!auth.ok) fail(auth.error);
+  // A baseline exception is a Manager's own decision: re-checked here (before anything is built or written), bound to the exact version they reviewed, and fail-closed on any change.
+  const bx = opts.baselineException;
+  if (bx) {
+    if (!hasAny(roles, COMMERCIAL_APPROVAL_ROLES)) fail("Only a Manager can accept a baseline exception.");
+    const bad = validateExceptionReason(bx.reason);
+    if (bad) fail(bad);
+    if (bx.expectedRevision !== q.revision || bx.expectedDraftHash !== q.draft_hash) fail("The quotation changed after the exception was reviewed. Review the current version and accept the exception again.");
+  }
   const ev = evaluateDraft(q.draft, ctx);
-  const chk = checkApproval({ readiness: ev.readiness, totalExVatCents: totalCents(ev), customerConfirmedCents: q.customer_confirmed_cents, signoffHash: q.estimator_signoff_hash, currentDraftHash: q.draft_hash });
+  const chk = checkApproval({ readiness: ev.readiness, totalExVatCents: totalCents(ev), customerConfirmedCents: q.customer_confirmed_cents, signoffHash: q.estimator_signoff_hash, currentDraftHash: q.draft_hash, costing: await costingOf(db, orgId, q.draft, ctx) });
   if (!chk.ok) fail(chk.error);
   const now = new Date().toISOString();
-  // Reusable mappings active RIGHT NOW are applied to unmapped packages and sealed with their versions. Unresolved items never block approval.
+  // Reusable mappings active RIGHT NOW are applied to unmapped packages and sealed with their versions.
   const library = await listActiveMappings(db, orgId);
   const { baseline, hash } = buildAcceptedBaseline({
     mappingLibrary: library ? libraryOf(library) : undefined,
     quoteRef: q.quote_ref, revision: q.revision, draft: q.draft, evaluation: ev,
+    ...(isPocQuote(q.draft) && pocPresentationEnabled(process.env as Record<string, string | undefined>, orgId) ? { pocPresentation: true } : {}),
+    ...(bx ? { baselineException: { reason: bx.reason, draftHash: q.draft_hash } } : {}),
+    phase2Coverage: legacyCostCoverageFor(q.draft.estimator.pricing, now),
     // Cost-visible evaluation of the SAME draft, used only for the internal margin sheet frozen with the baseline.
     marginEvaluation: marginCtx ? evaluateDraft(q.draft, marginCtx) : undefined,
     approvals: {
@@ -243,7 +359,7 @@ export async function managerApprove(db: Db, orgId: string, roles: ReadonlySet<Q
   }).eq("org_id", orgId).eq("id", quoteId).eq("state", "ESTIMATOR_REVIEW").eq("draft_hash", q.draft_hash).select("id");
   if (r.error) fail(r.error.message);
   if (!r.data || r.data.length === 0) fail("The quote changed during approval; refresh and review it again.");
-  return { baselineHash: hash, contractCents: baseline.contractCents };
+  return { baselineHash: hash, contractCents: baseline.contractCents, exceptionRecorded: !!baseline.exceptions?.length };
 }
 
 // ── Quote → Project ─────────────────────────────────────────────────────────
@@ -283,6 +399,10 @@ export async function createProjectFromAcceptedQuote(db: Db, orgId: string, emai
     const snap = await latestSnapshot(db, orgId, q.id);
     let generic = quoteToProjectBaseline(q.accepted_baseline, q.baseline_hash, q.id, accepted ? accepted.schedule : schedule, accepted ? (accepted.scheduleSource ?? scheduleSource) : scheduleSource);
     if (snap) generic = { ...generic, customer: { ...generic.customer, cin7CustomerId: snap.cin7_customer_id } }; // the selected Cin7 customer, by its authoritative ID
+    // POC Presentation Mode: a quotation approved with unverified mappings gets those scope items EXCLUDED from the Cin7 Sale's physical lines (audited resolution), never sent as invalid products.
+    if (pocPresentationEnabled(process.env as Record<string, string | undefined>, orgId) && approvedInPocMode(q.accepted_baseline as never) && Array.isArray((generic as { physicalScope?: unknown }).physicalScope)) {
+      generic = { ...generic, physicalScope: excludeUnverifiedScope((generic as unknown as { physicalScope: never[] }).physicalScope, new Date().toISOString()) } as typeof generic;
+    }
     try {
       projectId = await createProjectFromBaseline(db, orgId, email, generic, { reference: `PRJ-${q.quote_ref}`, name: `${q.accepted_baseline.quote.customerName} — ${q.accepted_baseline.quote.siteName}` });
     } catch (e) {

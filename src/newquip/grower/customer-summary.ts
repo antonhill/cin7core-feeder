@@ -11,13 +11,14 @@ export interface SummarySection {
   amountExVat: number;
 }
 
-const GROUPS: { title: string; scope: string; items: GrowerItemKey[]; charges?: string[] }[] = [
-  { title: "Feed storage & distribution", scope: "Bulk feed storage and the M75 feed distribution system, as configured with your representative.", items: ["bulk_tank", "flex_auger"] },
-  { title: "Feeding equipment", scope: "CCM feeders with feed-saver mats for each room.", items: ["feeder", "feed_saver_mat"] },
+// A group's scope wording never names equipment the quotation does not contain: `scope` may depend on which of its items are present.
+const GROUPS: { title: string; scope: string | ((have: ReadonlySet<string>) => string); items: GrowerItemKey[]; charges?: string[] }[] = [
+  { title: "Feed storage & distribution", scope: (h) => `${h.has("bulk_tank") && h.has("flex_auger") ? "Bulk feed storage and the M75 feed distribution system" : h.has("flex_auger") ? "The M75 feed distribution system" : "Bulk feed storage"}, as configured with your representative.`, items: ["bulk_tank", "flex_auger"] },
+  { title: "Feeding equipment", scope: (h) => h.has("feeder") && h.has("feed_saver_mat") ? "CCM feeders with feed-saver mats for each room." : h.has("feed_saver_mat") ? "Feed-saver mats for each room." : "CCM feeders for each room.", items: ["feeder", "feed_saver_mat"] },
   { title: "Drinking system", scope: "Cup drinkers with pipes and brackets.", items: ["cup_drinker"] },
   { title: "Flooring", scope: "Concrete slatted flooring, including crane-truck delivery of slats.", items: ["concrete_slat"], charges: ["concrete_slat_delivery"] },
   { title: "Penning", scope: "Polypropylene penning supplied by the running metre.", items: ["penning_package"] },
-  { title: "Lighting & doors", scope: "LED lighting and PVC doors with frames.", items: ["led_light", "pvc_door"] },
+  { title: "Lighting & doors", scope: (h) => h.has("led_light") && h.has("pvc_door") ? "LED lighting and PVC doors with frames." : h.has("pvc_door") ? "PVC doors with frames." : "LED lighting.", items: ["led_light", "pvc_door"] },
   { title: "Ventilation & controls (optional scope)", scope: "Optional ventilation, cooling and control equipment, where selected.", items: ["controller", "silo_weighing", "control_panel", "emergency_windows", "pad_cooling", "cone_fans", "manure_plug"] },
   { title: "Delivery", scope: "Delivery of the equipment to site.", items: [], charges: ["delivery"] },
   { title: "Installation", scope: "Installation of the equipment on site.", items: [], charges: ["installation"] },
@@ -40,7 +41,8 @@ export function buildCustomerSummary(budget: BudgetQuote): CustomerSummary | nul
     const lineSum = budget.lines.filter((l) => g.items.includes(l.itemKey) && l.status === "priced").reduce((a, l) => a + (l.revenueExTax ?? 0), 0);
     const chargeSum = budget.charges.filter((c) => g.charges?.includes(c.key)).reduce((a, c) => a + (c.amountExTax ?? 0), 0);
     const amount = round2(lineSum + chargeSum);
-    if (amount > 0) sections.push({ title: g.title, scope: g.scope, amountExVat: amount });
+    const have = new Set(budget.lines.filter((l) => g.items.includes(l.itemKey) && l.status === "priced" && (l.revenueExTax ?? 0) > 0).map((l) => l.itemKey as string));
+    if (amount > 0) sections.push({ title: g.title, scope: typeof g.scope === "function" ? g.scope(have) : g.scope, amountExVat: amount });
   }
   return { sections, subtotalExVat: round2(budget.totals.subtotalExTax), vat: round2(budget.totals.taxTotal), totalIncVat: round2(budget.totals.totalIncTax) };
 }
@@ -52,7 +54,8 @@ export function buildCustomerSummaryFromCommercial(c: {
   const sections: SummarySection[] = [];
   for (const g of GROUPS) {
     const cents = c.lines.filter((l) => g.items.includes(l.itemKey as GrowerItemKey)).reduce((a, l) => a + l.revenueCents, 0) + c.charges.filter((x) => g.charges?.includes(x.key)).reduce((a, x) => a + x.amountCents, 0);
-    if (cents > 0) sections.push({ title: g.title, scope: g.scope, amountExVat: cents / 100 });
+    const have = new Set(c.lines.filter((l) => g.items.includes(l.itemKey as GrowerItemKey) && l.revenueCents > 0).map((l) => l.itemKey));
+    if (cents > 0) sections.push({ title: g.title, scope: typeof g.scope === "function" ? g.scope(have) : g.scope, amountExVat: cents / 100 });
   }
   // Anything the groups do not cover is shown rather than silently dropped, so the sections always add up to the sub-total.
   const covered = Math.round(sections.reduce((a, x) => a + x.amountExVat * 100, 0));

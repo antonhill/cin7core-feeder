@@ -12,6 +12,12 @@ import { assertNewquipOrg } from "@/lib/projects/newquip-gate";
 import { canAdminister, isFunctionalRole, type FunctionalRole, type PolicySet, type StagePolicy } from "@/lib/approvals/roles";
 import { assignRole, listOrgUsers, loadPolicies, removeRole, resolveRoles, rolesAvailable, roleHistory, savePolicy, setStrictRoles, strictRoles, type OrgUser, type RoleEvent } from "@/lib/approvals/role-store";
 import type { ApprovalDocType } from "@/lib/approvals/types";
+import { cookies } from "next/headers";
+import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
+import { ACTIVE_ROLE_COOKIE, ACTIVE_ROLE_TTL_SECONDS, SWITCH_LABEL, activeFor, isSwitchRole } from "@/lib/approvals/active-role";
+import { signActiveRole } from "@/lib/approvals/active-role-token";
+import { selectedRoleFor } from "@/lib/approvals/active-role-session";
+import { switchHeldFor } from "@/lib/approvals/role-switch-store";
 
 export interface RoleActionResult<T> { ok: boolean; error?: string; data?: T }
 const msg = (e: unknown) => (e instanceof Error ? e.message : "Unexpected error");
@@ -75,4 +81,27 @@ export async function setStrictRolesAction(strict: boolean): Promise<RoleActionR
     await logActivity(a.db, { orgId: a.orgId, actor: { userId: a.userId, email: a.email }, action: "newquip.strict_roles", summary: strict ? "Switched strict roles ON" : "Switched strict roles OFF", detail: { strict } });
     return { ok: true, data: null };
   } catch (e) { return { ok: false, error: msg(e) }; }
+}
+
+// ── POC role switch ─────────────────────────────────────────────────────────
+// A person holding several explicitly assigned process roles chooses which ONE they act as (docs/newquip-poc-role-switch.md). Authenticates the REAL session, re-derives
+// eligibility on the server (allowlist + explicit assignments + NewQuip test organisation), accepts only a role NAME, and refuses any role the person does not hold.
+// The choice is a signed, expiring, user- and organisation-bound cookie that can only narrow permissions. Every switch is audited under the real identity.
+export interface SwitchRoleResult { ok: boolean; error?: string; active?: string }
+
+export async function switchActiveRoleAction(role: string): Promise<SwitchRoleResult> {
+  try {
+    const real = await requireNewquipPocOrg();
+    if (!isSwitchRole(role)) return { ok: false, error: "Choose Rep, Estimator or Manager." };
+    const db = createServiceRoleClient();
+    const held = await switchHeldFor(db, real.orgId, real.userId);
+    if (!held) return { ok: false, error: "Role switching is not available for your account." };
+    if (!held.includes(role)) return { ok: false, error: `You do not hold the ${SWITCH_LABEL[role]} role.` };
+    const before = activeFor(held, await selectedRoleFor(real.orgId, real.userId)).active;
+    (await cookies()).set(ACTIVE_ROLE_COOKIE, signActiveRole({ user: real.userId, org: real.orgId, role }), { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: ACTIVE_ROLE_TTL_SECONDS });
+    await logActivity(db, { orgId: real.orgId, actor: { userId: real.userId, email: real.email }, action: "newquip.role_switched", summary: `Switched acting role from ${SWITCH_LABEL[before]} to ${SWITCH_LABEL[role]}`, detail: { from: before, to: role, effectiveRole: role, held: [...held] } });
+    return { ok: true, active: role };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unexpected error" };
+  }
 }

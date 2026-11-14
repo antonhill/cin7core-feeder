@@ -22,6 +22,7 @@ export function installStaged(db: FakeDb, clockStart = Date.UTC(2026, 9, 29, 8, 
   const find = (org: string, id: string) => { const r = T("approval_requests").find((x) => x.id === id && x.org_id === org); if (!r) throw new Error("approval: request not found"); return r; };
   const ok = (data: unknown) => ({ data, error: null });
 
+  const delegate = (db as any).rpc?.bind(db); // functions this emulator does not own (e.g. migration 0123's handoff) are the db's own
   (db as any).rpc = async (fn: string, a: any) => {
     try {
       const out = await run(fn, a);
@@ -100,6 +101,7 @@ export function installStaged(db: FakeDb, clockStart = Date.UTC(2026, 9, 29, 8, 
       T("org_functional_role_events").push({ id: `re-${T("org_functional_role_events").length + 1}`, org_id: a.p_org, user_id: a.p_user, user_email: gone.user_email, role: a.p_role, action: "REMOVED", actor_email: a.p_actor.toLowerCase(), created_at: at() });
       return ok(true);
     }
+    if (delegate) return delegate(fn, a);
     return { data: null, error: { message: `unknown rpc ${fn}` } };
   };
 }

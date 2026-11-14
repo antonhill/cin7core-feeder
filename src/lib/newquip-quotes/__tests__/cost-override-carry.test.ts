@@ -3,6 +3,7 @@ import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { readyDraft } from "@/newquip/grower/__tests__/golden";
 import { testPriceSource } from "@/newquip/grower/__tests__/test-snapshot";
 import { buildAcceptedBaseline } from "@/newquip/quote/baseline";
+import { GOLDEN_LIBRARY } from "@/newquip/grower/__tests__/golden-catalogue";
 import { stampCostOverrides, type CostOverride } from "@/newquip/quote/margin";
 import { baseCostFromBaseline } from "../project-estimated-cost";
 
@@ -14,7 +15,7 @@ const freezeWith = (overrides: Record<string, CostOverride>) => {
   const submitted = { ...draft, estimator: { ...draft.estimator, costOverrides: overrides as never } };
   draft.estimator.costOverrides = stampCostOverrides(submitted, undefined, true, "est@x", "2026-11-01T10:00:00Z").estimator.costOverrides;
   const ev = evaluateDraft(draft, { priceSource: testPriceSource(), withholdCost: false });
-  return buildAcceptedBaseline({ quoteRef: "NQ-Q-0001", revision: 1, draft, evaluation: ev, marginEvaluation: ev, approvals }).baseline;
+  return buildAcceptedBaseline({ mappingLibrary: GOLDEN_LIBRARY as never, quoteRef: "NQ-Q-0001", revision: 1, draft, evaluation: ev, marginEvaluation: ev, approvals }).baseline;
 };
 const ov = (lineCostCents: number): CostOverride => ({ lineCostCents, reason: "Supplier quote higher than Cin7 latest", by: "", at: "" });
 

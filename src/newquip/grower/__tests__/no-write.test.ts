@@ -35,7 +35,11 @@ const FORBIDDEN: [string, RegExp][] = [
   ["mutating HTTP verb", /method\s*:\s*["'](POST|PUT|PATCH|DELETE)["']/],
   // (a hash digest's `.update(` is not a database write)
   ["supabase insert/update/upsert/delete", /(?<!createHash\("sha256"\))\.(insert|update|upsert|delete)\s*\(/],
-  ["supabase rpc", /\.rpc\s*\(/],
+  // A database function call is forbidden EXCEPT the two local functions NewQuip needs, each of which touches only NewQuip's own tables and has no path to Cin7 or Xero:
+  //   newquip_handoff_with_snapshot (migration 0123): moves a quotation to Estimator review and stores its immutable indicative price in ONE transaction (NQ-008A);
+  //   newquip_apply_pricing_revision (migration 0126, NOT APPLIED, NQ-008B P2-B): writes an Estimator pricing change and its immutable revision in ONE transaction.
+  // Any other rpc still fails here and must be added consciously, with the owner's approval of what it does.
+  ["supabase rpc (other than the two approved local functions)", /\.rpc\s*\(\s*(?!["'](?:newquip_handoff_with_snapshot|newquip_apply_pricing_revision)["'])/],
 ];
 
 describe("NewQuip POC has no Cin7 write capability", () => {

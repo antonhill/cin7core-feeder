@@ -220,12 +220,62 @@ export function keepServerOwnedCostBasis<D extends { estimator: { costBasis?: un
 }
 
 /** Removes every internal financial from a quote record for a viewer who may not see cost: the frozen margin sheet and the cost overrides. */
-export function redactInternalFinancials<Q extends { draft: { estimator: { costOverrides?: unknown; physicalCosts?: unknown; costBasis?: unknown } }; accepted_baseline: { internalMargin?: unknown; physicalCostEstimate?: unknown; estimator?: { physicalCosts?: unknown; costOverrides?: unknown; costBasis?: unknown } } | null }>(quote: Q, canViewCommercials: boolean): Q {
+export function redactInternalFinancials<Q extends { draft: { estimator: { costOverrides?: unknown; physicalCosts?: unknown; costBasis?: unknown; changeStamps?: unknown; pricing?: unknown } }; accepted_baseline: { internalMargin?: unknown; physicalCostEstimate?: unknown; estimator?: { physicalCosts?: unknown; costOverrides?: unknown; costBasis?: unknown; pricing?: unknown } } | null }>(quote: Q, canViewCommercials: boolean): Q {
   if (canViewCommercials) return quote;
   const q = structuredClone(quote);
   delete q.draft.estimator.costOverrides;
   delete q.draft.estimator.physicalCosts;
   delete q.draft.estimator.costBasis;
-  if (q.accepted_baseline) { delete q.accepted_baseline.internalMargin; delete q.accepted_baseline.physicalCostEstimate; if (q.accepted_baseline.estimator) { delete q.accepted_baseline.estimator.physicalCosts; delete q.accepted_baseline.estimator.costOverrides; delete q.accepted_baseline.estimator.costBasis; } }
+  delete q.draft.estimator.changeStamps; // NQ-008A: who adjusted which input is for cost-entitled roles
+  delete q.draft.estimator.pricing; // NQ-008B: supplier costs, rates, freight and markup
+  if (q.accepted_baseline) q.accepted_baseline = neutraliseDeep(q.accepted_baseline);
+  const src = (q.accepted_baseline as unknown as { pricing?: { source?: { id?: string; label?: string; basis?: string; provenance?: string; notice?: string } } } | null)?.pricing?.source;
+  if (src && src.id === "estimator_supplier_pricing") Object.assign(src, { label: "Project pricing", basis: "Project pricing: quoted at the project price basis, ex VAT.", provenance: "Project pricing", notice: "Quoted at the approved NewQuip project price basis." });
+  if (q.accepted_baseline) { delete q.accepted_baseline.internalMargin; delete q.accepted_baseline.physicalCostEstimate; if (q.accepted_baseline.estimator) { delete q.accepted_baseline.estimator.physicalCosts; delete q.accepted_baseline.estimator.costOverrides; delete q.accepted_baseline.estimator.costBasis; delete q.accepted_baseline.estimator.pricing; } }
   return q;
+}
+
+/**
+ * Replaces the server-authored wording that explains how a selling price derives from COST (landed cost, ROE, freight, mark-up) with a neutral equivalent, for a viewer
+ * who may not see cost. Only these known phrasings are touched; any other text (including text a person typed) is returned unchanged.
+ */
+export function neutraliseCostWording(text: string): string {
+  return text
+    .replace(/Day-to-day: workbook Retail Price ex VAT\. Project: landed cost \(Cost × ROE × Freight\) \+ 20%\./g, "Standard price list basis.")
+    .replace(/Day-to-day = workbook Retail Price ex VAT\. Project = landed cost \(Cost × ROE × Freight\) \+ 20%\./g, "Standard price list basis.")
+    .replace(/Landed cost \(Cost × ROE × Freight\) \+ 20% markup/g, "Project pricing")
+    .replace(/the workbook (?:landed cost|Retail Price) for /g, "the price list price for ")
+    .replace(/landed cost \(Cost × ROE × Freight\)(?: \+ 20%(?: mark-?up)?)?/gi, "the project price basis");
+}
+function neutraliseDeep<T>(v: T): T {
+  if (typeof v === "string") return neutraliseCostWording(v) as unknown as T;
+  if (Array.isArray(v)) return v.map(neutraliseDeep) as unknown as T;
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, neutraliseDeep(x)])) as T;
+  return v;
+}
+
+const NEUTRAL_PRICING_BASIS: Record<string, string> = {
+  day_to_day: "Day-to-day pricing: quoted at the standard price list, ex VAT.",
+  project: "Project pricing: quoted at the project price basis, ex VAT.",
+};
+
+/**
+ * Removes the margin-derived SUMMARY keys from an evaluation for a viewer who may not see cost: the costed revenue, the costed line count and the excluded-from-margin
+ * count (they reveal which lines carry a cost and how much revenue is costed). The long-standing withheld fields (estimatedCost / estimatedGP / marginPct, which the
+ * cost-withheld evaluation already nulls or zeroes) are untouched. Defence in depth on top of the evaluation. Unchanged for a cost-entitled viewer.
+ */
+export function redactEvaluationFinancials<E extends { budget: BudgetQuote | null }>(ev: E, canViewCommercials: boolean): E {
+  if (canViewCommercials || !ev.budget) return ev;
+  const out = structuredClone(ev);
+  const totals = out.budget!.totals as unknown as Record<string, unknown>;
+  for (const k of ["marginRevenueExTax", "costedLineCount", "excludedFromMarginCount"]) delete totals[k];
+  // The pricing basis text describes how the selling price is derived from COST ("landed cost + 20%"): a neutral description for anyone who may not see cost.
+  const neutral = NEUTRAL_PRICING_BASIS[out.budget!.quoteType] ?? "Quoted at the approved NewQuip price list.";
+  out.budget!.pricingBasis = neutral;
+  out.budget!.priceSource = out.budget!.priceSource.id === "estimator_supplier_pricing"
+    // NQ-008B: the supplier-pricing source's label, notice and provenance (a fingerprint of the confidential inputs) are for cost-entitled roles only.
+    ? { ...out.budget!.priceSource, label: "Project pricing", basis: neutral, provenance: "Project pricing", notice: "Quoted at the approved NewQuip project price basis." }
+    : { ...out.budget!.priceSource, basis: neutral };
+  // …and the same wording inside server reason / detail text (line reasons, readiness items and reasons, manual-price reasons).
+  return neutraliseDeep(out);
 }

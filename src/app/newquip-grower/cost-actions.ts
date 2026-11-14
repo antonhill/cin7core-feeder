@@ -17,6 +17,9 @@ import { evaluateDraft } from "@/newquip/grower/evaluate";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import { previewDraftOf } from "@/newquip/grower/preview-draft";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
+import type { QuoteRole } from "@/newquip/quote/roles";
+import { returnByOf } from "@/lib/newquip-quotes/return-store";
+import { reconcileConfirmationAmount, resyncApprovalsLogged } from "@/lib/newquip-quotes/confirmation-reconcile";
 import { loadQuote, saveDraft } from "@/lib/newquip-quotes/quote-store";
 import { effectiveScope, applyMappingLibrary } from "@/lib/projects/product-scope";
 import { libraryOf, listActiveMappings } from "@/lib/projects/package-mapping-store";
@@ -28,7 +31,6 @@ import { rolesFor } from "@/newquip/quote/roles";
 import { keepServerOwnedCostBasis, keepServerOwnedCosts } from "@/newquip/quote/margin";
 import { buildPhysicalScope } from "@/newquip/quote/physical-scope";
 import { commercialLinesOf } from "@/newquip/quote/baseline";
-import { resyncQuoteApprovals, legacyCtx, stagedAvailable } from "@/lib/approvals/approval-store";
 
 export interface CostActionResult<T> { ok: boolean; error?: string; data?: T }
 const msg = (e: unknown) => (e instanceof Error ? e.message : "Unexpected error");
@@ -119,9 +121,13 @@ async function writeDraftCosts(db: Db, a: Actor, quoteId: string, next: { physic
   const draft = structuredClone(q.draft);
   const physicalCosts = next.physicalCosts ?? draft.estimator.physicalCosts;
   const costBasis = "costBasis" in next ? next.costBasis : draft.estimator.costBasis;
-  const saved = await saveDraft(db, a.orgId, rolesFor("admin"), quoteId, keepServerOwnedCostBasis(keepServerOwnedCosts(draft, physicalCosts), costBasis));
+  const saved = await saveDraft(db, a.orgId, rolesFor("admin"), quoteId, keepServerOwnedCostBasis(keepServerOwnedCosts(draft, physicalCosts), costBasis), undefined, { keepStoredPricing: true });
   await logActivity(db, { orgId: a.orgId, actor: { userId: a.userId, email: a.email }, action, summary: `${summary} (read-only against Cin7)`, detail: { quoteId, ...detail } });
-  if (saved.signoffCleared && (await stagedAvailable(db))) await resyncQuoteApprovals(db, legacyCtx(a.orgId, a.userId, a.email, true), quoteId, { quiet: true }).catch(() => undefined);
+  // The same single helper as every draft writer: a changed commercial total withdraws the confirmation (a cost-only edit does not); a failed approval re-sync is audited, not swallowed.
+  const amount = await reconcileConfirmationAmount(db, { orgId: a.orgId, userId: a.userId, email: a.email, isAdmin: true }, quoteId, evaluationContext(true),
+    // Cost writers are cost-entitled (Estimator / Manager); this Actor carries no role set, so the return is attributed to the Estimator capacity (the actor email is exact).
+    returnByOf({ email: a.email, roles: new Set<QuoteRole>(["estimator"]) }));
+  if (!amount && saved.signoffCleared) await resyncApprovalsLogged(db, { orgId: a.orgId, userId: a.userId, email: a.email, isAdmin: true }, quoteId, { returnedToRep: false, signoffCleared: true });
   return saved;
 }
 

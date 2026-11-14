@@ -1,7 +1,9 @@
 "use client";
 
+import { PendingNotice } from "@/components/ui/action-feedback";
+import { OP } from "@/components/ui/operation-labels";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Status, statusText } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
@@ -12,6 +14,8 @@ import { getQuoteDeliveryAction, retryQuoteSendAction, sendQuoteToCustomerAction
 import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/billing-schedule";
 import { DisabledReason } from "@/components/ApprovalDisabledReason";
 import { ScheduleChooser } from "./ScheduleChooser";
+import { StepPanel } from "@/components/ui/StepRail";
+import { AuditDetails } from "./AuditDetails";
 
 // The customer-facing half of an APPROVED quotation: issue the PDF, review it, send it (Rep), then record the customer's response. Manager approval authorises issue;
 // it is NOT customer acceptance. "Accepted by the email provider" means the provider took the message - it is not proof that the customer received it. Nothing here
@@ -20,15 +24,23 @@ const inputCls = "h-9 rounded-md border border-slate-300 bg-white px-2 text-sm";
 const SEND_LABEL: Record<string, string> = { ACCEPTED: "Accepted by the email provider (not proof of inbox delivery)", FAILED: "Failed", SUPPRESSED: "Not sent: recipient not permitted from this environment", QUEUED: "Queued / outcome unconfirmed" };
 const newKey = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `k-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
+/** UX-006c: when given, the two halves of the quotation section are the steps of the Stage 4 rail. Both stay MOUNTED; the other is only `hidden`+`inert` (no action or gate changes). */
+export interface DeliverySteps { current: "issue" | "send"; showAll: boolean }
+function Sec({ steps, id, number, title, children }: { steps?: DeliverySteps; id: "issue" | "send"; number: number; title: string; children: React.ReactNode }) {
+  if (!steps) return <>{children}</>;
+  return <StepPanel railId="s4" stepId={id} number={number} title={title} current={steps.current === id} showAll={steps.showAll} headingClassName="mt-5">{children}</StepPanel>;
+}
+
 export interface DeliveryGate { requires: boolean; accepted: boolean; status: string | null; hasDocument: boolean; linkState?: "NONE" | "ACTIVE" | "EXPIRED" | "REVOKED" }
 
 /** `section`: Stage 4 (Customer Quotation) shows the PDF and the send; Stage 5 (Customer Acceptance) shows the customer's response. The same data and server actions serve both. */
-export function DeliveryPanel({ quoteId, contractCents, onGate, section }: { quoteId: string; contractCents: number; onGate: (g: DeliveryGate) => void; section: "quotation" }) {
+export function DeliveryPanel({ quoteId, contractCents, onGate, section, steps }: { quoteId: string; contractCents: number; onGate: (g: DeliveryGate) => void; section: "quotation"; steps?: DeliverySteps }) {
   const [docs, setDocs] = useState<QuoteDocumentsView | null>(null);
   const [d, setD] = useState<DeliveryView | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null); // UX-007: the operation in flight, by its label (null when idle)
+  const inFlight = useRef(false);
   const [choice, setChoice] = useState<ScheduleChoice | undefined>(undefined);
   const [to, setTo] = useState(""); const [cc, setCc] = useState(""); const [message, setMessage] = useState(""); const [reviewed, setReviewed] = useState(false);
   const [key, setKey] = useState(newKey); const [altReason, setAltReason] = useState(""); const [resendOf, setResendOf] = useState<string | null>(null); const [resendReason, setResendReason] = useState("");
@@ -41,12 +53,16 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section }: { quo
   }, [quoteId, onGate]);
   useEffect(() => { let live = true; void (async () => { if (live) await reload(); })(); return () => { live = false; }; }, [reload]);
 
-  const run = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: string) => {
-    setBusy(true); setErr(null); setNote(null);
-    try { const r = await fn(); if (r.ok) { setNote(done); await reload(); } else setErr(r.error ?? "Failed."); } finally { setBusy(false); }
+  const run = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: string, label: string, lost: string = "We could not confirm whether this completed. The latest status is shown below: check it before trying again.") => {
+    if (inFlight.current) return; // a second click in the same tick (before React re-renders) is a no-op: the guard is a ref, not state
+    inFlight.current = true;
+    setBusy(label); setErr(null); setNote(null);
+    try { const r = await fn(); if (r.ok) { setNote(done); await reload(); } else setErr(r.error ?? "The action failed. Nothing was changed."); }
+    catch { setErr(lost); try { await reload(); } catch { /* the message above already says the state is unconfirmed */ } }
+    finally { inFlight.current = false; setBusy(null); }
   };
 
-  if (!docs || !d) return <Panel><PanelTitle>{section === "quotation" ? "Issue and send the quotation" : "Customer response"}</PanelTitle><p className="mt-2 text-sm text-slate-600">{err ?? "Loading…"}</p></Panel>;
+  if (!docs || !d) return <Panel><PanelTitle>{section === "quotation" ? "Issue and send the quotation" : "Customer response"}</PanelTitle>{err ? <p className="mt-2 text-sm text-slate-600">{err}</p> : <PendingNotice label={section === "quotation" ? "Loading the quotation PDF and send history…" : OP.loadCustomerResponse} />}</Panel>;
   if (!docs.available || !d.available) return <Panel><PanelTitle>Customer quotation</PanelTitle><Alert tone="info">Sending a quotation to the customer becomes available once the database update for customer quotations (migration 0115) has been applied.</Alert></Panel>;
   const latest = docs.documents[0];
   const split = (s: string) => s.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean);
@@ -64,16 +80,19 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section }: { quo
       <p className="mt-1 text-xs text-slate-600">Manager approval lets the quotation be issued. It is not the customer&apos;s acceptance: a Project for a new quotation needs the customer&apos;s recorded acceptance.</p>
       {err && <Alert tone="danger">{err}</Alert>}
       {note && <Alert tone="success">{note}</Alert>}
+      {busy && <PendingNotice label={busy} />}
 
       {section === "quotation" && (<>
+      <Sec steps={steps} id="issue" number={1} title="Issue PDF">
       <h3 className="mt-4 text-sm font-semibold text-slate-800">Quotation PDF</h3>
       {docs.blockers.length > 0 && <Alert tone="warning"><ul className="list-disc pl-4">{docs.blockers.map((b) => <li key={b}>{b}</li>)}</ul><Link className="underline" href="/newquip-grower/company-profile">Company details</Link></Alert>}
       {docs.documents.length > 0 && (
         <ul className="mt-2 divide-y rounded-md border border-slate-200 text-sm">
           {docs.documents.map((x) => (
             <li key={x.id} className="flex flex-wrap items-center justify-between gap-2 p-2">
-              <span>Revision {x.revision} · version {x.version} · issued {formatSast(x.issuedAt)} by {x.issuedBy} · {(x.byteSize / 1024).toFixed(0)} KB · sha256 {x.contentHash.slice(0, 12)}…</span>
+              <span>Revision {x.revision} · version {x.version} · issued {formatSast(x.issuedAt)} by {x.issuedBy} · {(x.byteSize / 1024).toFixed(0)} KB</span>
               <a className="text-indigo-700 underline" href={`/api/newquip-quote-documents/${x.id}`} target="_blank" rel="noreferrer">Open PDF</a>
+              <AuditDetails testId={`audit-details-${x.id}`} label={`Audit details for revision ${x.revision}, version ${x.version}`} className="w-full text-xs text-slate-600"><p>Issued PDF fingerprint: sha256 {x.contentHash.slice(0, 12)}…</p></AuditDetails>
             </li>
           ))}
         </ul>
@@ -82,12 +101,15 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section }: { quo
         <div className="mt-3 space-y-2">
           {!d.requiresAcceptance ? null : <p className="text-xs text-slate-600">The billing schedule you choose here is printed on the quotation and is the one the Project will use once the customer accepts.</p>}
           {!latest && <ScheduleChooser contractCents={contractCents} onChange={setChoice} />}
-          <Button type="button" variant="secondary" loading={busy} disabled={!latest && !resolveScheduleChoice(choice).ok} onClick={() => void run(() => issueQuoteDocumentAction(quoteId, choice), latest ? "Checked: the PDF is current (a new version is created only if an input changed)." : "Quotation PDF generated.")}>
+          <Button type="button" variant="secondary" loading={busy === OP.generatePdf} disabled={busy !== null || (!latest && !resolveScheduleChoice(choice).ok)} onClick={() => void run(() => issueQuoteDocumentAction(quoteId, choice), latest ? "Checked: the PDF is current (a new version is created only if an input changed)." : "Quotation PDF generated.", OP.generatePdf)}>
             {latest ? "Re-check / issue a new version if inputs changed" : "Generate customer quotation PDF"}
           </Button>
         </div>
       )}
 
+      </Sec>
+
+      <Sec steps={steps} id="send" number={2} title="Send to customer">
       <h3 className="mt-5 text-sm font-semibold text-slate-800">Send to the customer</h3>
       {d.policy.restricted && <Alert tone="info">Preview environment: only {d.policy.allowlist.join(", ")} will be emailed. Any other address is recorded as not sent, never redirected. Subjects are marked [PREVIEW].</Alert>}
       {!d.policy.emailConfigured && <Alert tone="warning">Email is not configured in this environment.</Alert>}
@@ -102,11 +124,16 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section }: { quo
           {resendOf && <label className="flex flex-col gap-1 text-sm"><span className="font-medium text-slate-700">Reason for sending again</span><input className={`${inputCls} w-full`} value={resendReason} onChange={(e) => setResendReason(e.target.value)} /></label>}
           {altNeeded.length > 0 && <label className="flex flex-col gap-1 text-sm"><span className="font-medium text-amber-800">{altNeeded.join(", ")} {altNeeded.length === 1 ? "is" : "are"} not a Cin7 contact of this customer. Reason for approving {altNeeded.length === 1 ? "this address" : "these addresses"} (audited)</span><input className={`${inputCls} w-full`} value={altReason} onChange={(e) => setAltReason(e.target.value)} /></label>}
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} /> I have opened and reviewed the PDF, and these are the right recipients.</label>
-          <Button type="button" loading={busy} aria-describedby={sendWhy ? "send-customer-why" : undefined} disabled={!reviewed || split(to).length === 0 || (altNeeded.length > 0 && altReason.trim().length < 5) || (!!resendOf && resendReason.trim().length < 3)} onClick={() => void run(async () => {
+          <Button type="button" loading={busy === OP.sendCustomerEmail} aria-describedby={sendWhy ? "send-customer-why" : undefined} disabled={busy !== null || !reviewed || split(to).length === 0 || (altNeeded.length > 0 && altReason.trim().length < 5) || (!!resendOf && resendReason.trim().length < 3)} onClick={() => void run(async () => {
             const r = await sendQuoteToCustomerAction(quoteId, { documentId: latest.id, to: split(to), cc: split(cc), message, idempotencyKey: key, alternativeReason: altNeeded.length ? altReason : undefined, resendOfId: resendOf ?? undefined, resendReason: resendOf ? resendReason : undefined });
-            if (r.ok && r.data) { setKey(newKey()); setResendOf(null); setResendReason(""); setReviewed(false); }
+            if (r.ok && r.data) {
+              setKey(newKey()); setResendOf(null); setResendReason(""); setReviewed(false);
+              // The send is always RECORDED, but a recorded FAILED / SUPPRESSED send is not "sent": say so plainly instead of a success note.
+              if (r.data.status === "FAILED") { await reload(); return { ok: false, error: "The email was NOT sent: the email provider or its settings refused it. It is recorded as FAILED in the history below; fix the cause and use Retry." }; }
+              if (r.data.status === "SUPPRESSED") { await reload(); return { ok: false, error: "Not sent: no recipient is on the allowed list for this environment. It is recorded as SUPPRESSED in the history below." }; }
+            }
             return r.ok && r.data ? { ok: true } : r;
-          }, "Send recorded. See the history below for the outcome.")}>{resendOf ? "Send again" : "Send quotation to customer"}</Button>
+          }, "Sent: the email provider accepted it (this is not proof of inbox delivery). See the history below.", OP.sendCustomerEmail, "We could not confirm whether the email was sent. Check the send history below before sending again: it may already have gone.")}>{resendOf ? "Send again" : "Send quotation to customer"}</Button>
           <DisabledReason id="send-customer-why">{sendWhy}</DisabledReason>
         </div>
       ) : <p className="mt-2 text-sm text-slate-600">{d.status === "CUSTOMER_ACCEPTED" ? "The customer has accepted; nothing further to send." : "Issue the quotation PDF first. Only a Rep can send it."}</p>}
@@ -117,7 +144,7 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section }: { quo
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span><Status tone={s.status === "ACCEPTED" ? "success" : s.status === "FAILED" ? "danger" : "warning"}>{statusText(s.status)}</Status> {SEND_LABEL[s.status]} · {formatSast(s.at)} · by {s.sentBy}</span>
                 <span className="flex gap-2">
-                  {s.status === "FAILED" && d.canSend && <Button type="button" variant="secondary" loading={busy} onClick={() => void run(() => retryQuoteSendAction(quoteId, s.id), "Retry recorded.")}>Retry</Button>}
+                  {s.status === "FAILED" && d.canSend && <Button type="button" variant="secondary" loading={busy === OP.retryCustomerEmail} disabled={busy !== null} onClick={() => void run(() => retryQuoteSendAction(quoteId, s.id), "Retry recorded.", OP.retryCustomerEmail, "We could not confirm whether the retry was sent. Check the send history below before retrying again.")}>Retry</Button>}
                   {s.status === "ACCEPTED" && d.canSend && <Button type="button" variant="secondary" onClick={() => { setResendOf(s.id); setKey(newKey()); setReviewed(false); }}>Send again…</Button>}
                 </span>
               </div>
@@ -126,6 +153,7 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section }: { quo
           ))}
         </ul>
       )}
+      </Sec>
 
       </>)}
 

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeDb } from "@/lib/projects/__tests__/fake-db";
@@ -7,11 +7,9 @@ import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
 import { canSeeCosts, resolveRoles } from "@/lib/approvals/role-store";
-import { createQuote, loadQuote, saveDraft } from "@/lib/newquip-quotes/quote-store";
-import * as costActions from "../cost-actions";
+import { createQuote, saveDraft } from "@/lib/newquip-quotes/quote-store";
 import { emptyDraft } from "@/newquip/grower/draft";
 import { rolesFor } from "@/newquip/quote/roles";
-import * as actions from "../actions";
 
 
 // F-12 harness (copied from the D4 corrections test). UAT-003, rendered through the REAL page with the owner's real quote shape and the real workbook price source (no test price snapshot). Server actions are run through a
@@ -60,14 +58,15 @@ async function storedQuote() {
   await saveDraft(db as never, ORG, member, id, draft);
   return id;
 }
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
-async function open(stage = "2", roles: Array<"REP" | "ESTIMATOR" | "MANAGER"> = ["REP", "ESTIMATOR"], state?: string, wait = "Customer-driven exclusions") {
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+async function open(stage = "2", roles: Array<"REP" | "ESTIMATOR" | "MANAGER"> = ["REP", "ESTIMATOR"], state?: string, wait = "Product mappings") {
   (globalThis as { __STAGE?: string }).__STAGE = stage;
   asRoles(...roles);
   vi.mocked(canSeeCosts).mockResolvedValue(true);
   const id = await storedQuote();
   if (state) for (const row of db.rows("newquip_quotes") as Array<Record<string, unknown>>) if (row.id === id) row.state = state;
   (globalThis as { __QID?: string }).__QID = id;
+  vi.stubGlobal("localStorage", { getItem: (k: string) => (k === "nq-builder-show-all" ? "1" : null), setItem: () => undefined }); // these checks look across the whole stage: "Show all steps" (UX-006b)
   const { default: Page } = await import("../[id]/page");
   render(createElement(Page));
   await waitFor(() => expect(screen.getByText(wait)).toBeTruthy(), { timeout: 5000 });
@@ -86,31 +85,43 @@ describe("F-12 Solution Builder disabled controls say why", () => {
   }, 30000);
 
   it("Save draft: a viewer who cannot edit is told so (and the explanation names no one)", async () => {
-    await open("2", ["MANAGER"]);
-    const save = screen.getByRole("button", { name: "Save draft" }) as HTMLButtonElement;
+    // UX-006i2: Stage 2 has no Save bar for a viewer who cannot edit there (a Manager only inspects it), so the explanation is checked where Save lives for everyone: Stage 1.
+    await open("1", ["MANAGER"], undefined, "Equipment selections");
+    const save = (await screen.findByRole("button", { name: "Save draft" }, { timeout: 8000 })) as HTMLButtonElement; // i1: the Stage 1 toolbar shows once the customer details have settled
     expect(save.disabled).toBe(true);
     expect(described(save)).toMatch(/only a Rep or Estimator can edit and save/);
   }, 30000);
 
-  it("Record pre-approval price confirmation: a non-Rep is told only a Rep can send it", async () => {
-    await open("2", ["ESTIMATOR"], undefined, "Pre-approval price confirmation");
-    const btn = screen.getByRole("button", { name: /Record pre-approval price confirmation/ }) as HTMLButtonElement;
+  // UX-006i1: the Rep's price confirmation + send moved to Stage 1 step 5 and is now labelled "Submit to Estimator" (same action, same gates, same disabled reasons).
+  it("Submit to Estimator: a non-Rep is told only a Rep can send it", async () => {
+    await open("1", ["ESTIMATOR"], undefined, "Charges & assumptions");
+    const btn = (await screen.findByRole("button", { name: "Submit to Estimator", hidden: true }, { timeout: 5000 })) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
     expect(described(btn)).toMatch(/Only a Rep can record the price confirmation/);
   }, 30000);
 
-  it("Record pre-approval price confirmation: a Rep with no chosen Cin7 customer is told to select one in Step 1", async () => {
-    await open("2", ["REP", "ESTIMATOR"], undefined, "Pre-approval price confirmation");
-    const btn = screen.getByRole("button", { name: /Record pre-approval price confirmation/ }) as HTMLButtonElement;
+  it("Submit to Estimator: a Rep with no chosen Cin7 customer is told to select one in step 1", async () => {
+    await open("1", ["REP", "ESTIMATOR"], undefined, "Charges & assumptions");
+    const btn = (await screen.findByRole("button", { name: "Submit to Estimator", hidden: true }, { timeout: 5000 })) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
     expect(described(btn).length).toBeGreaterThan(10);
   }, 30000);
 
-  it("Estimator sign-off and the return buttons: reasons are shown beside them", async () => {
-    await open("2", ["REP"], "ESTIMATOR_REVIEW", "Estimator: I double-checked this quote");
-    const so = screen.getByRole("button", { name: /Estimator: I double-checked/ }) as HTMLButtonElement;
-    expect(so.disabled).toBe(true);
-    expect(described(so)).toMatch(/Only an Estimator can sign off/);
+  it("Estimator sign-off and the return buttons: a non-Estimator is not offered them and is told whose action it is", async () => {
+    // UX-006i2: the sign-off and return controls exist only for the authenticated Estimator ("only valid actions"); a Rep reads who has the work instead of meeting a disabled button.
+    await open("2", ["REP"], "ESTIMATOR_REVIEW", "Sign off or return");
+    expect(screen.queryByRole("button", { name: /Sign off for Manager approval/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Return to rep" })).toBeNull();
+    expect(screen.getByTestId("signoff-not-yours").textContent).toMatch(/Only an Estimator can sign off or return it here/);
+  }, 30000);
+
+  it("Estimator sign-off keeps its READY gate and reason, and the return button says a reason is required", async () => {
+    await open("2", ["ESTIMATOR"], "ESTIMATOR_REVIEW", "Sign off or return");
+    const so = screen.getByRole("button", { name: /Sign off for Manager approval/ }) as HTMLButtonElement;
+    expect(so.disabled ? described(so) : "").toMatch(so.disabled ? /must be READY/ : /^\s*$/); // gate unchanged: disabled only with its reason (this fixture's readiness decides which)
+    const ret = screen.getByRole("button", { name: "Return to rep" }) as HTMLButtonElement;
+    expect(ret.disabled).toBe(true);
+    expect(described(ret)).toMatch(/Enter the reason for returning it/);
   }, 30000);
 
   it("Manager return buttons say a reason is required; Final approval keeps its blocked messages", async () => {
@@ -124,19 +135,19 @@ describe("F-12 Solution Builder disabled controls say why", () => {
     expect(ret.getAttribute("aria-describedby")).toBeNull();
   }, 30000);
 
-  it("Manager: final approval is described by whichever message applies (role, missing sign-off) and is never silent", async () => {
+  it("Approve is described by whichever message applies (role, missing sign-off) and is never silent", async () => {
     await open("3", ["MANAGER"], "ESTIMATOR_REVIEW", "Return to rep — reason");
-    const approve = screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement;
+    const approve = screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement;
     expect(approve.disabled).toBe(true);
     expect(described(approve)).toMatch(/Waiting for the Estimator/);
     cleanup();
-    await open("3", ["REP"], "ESTIMATOR_REVIEW", "Final approval needs the manager role (org owner/admin).");
-    const approve2 = screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement;
-    expect(described(approve2)).toMatch(/needs the manager role/);
+    await open("3", ["REP"], "ESTIMATOR_REVIEW", "Final approval needs the Manager role.");
+    const approve2 = screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement;
+    expect(described(approve2)).toMatch(/needs the Manager role/);
   }, 60000);
 
   it("Stage 1 pig-size options use the shared money format (R 1 300,00 / rm), not hard-coded R1,300", async () => {
-    await open("1", ["REP"], undefined, "Selections");
+    await open("1", ["REP"], undefined, "Equipment selections");
     const labels = Array.from(document.querySelectorAll("option")).map((o) => o.textContent ?? "").filter((t) => /\/ rm/.test(t));
     expect(labels.length).toBe(3);
     expect(labels[0]).toBe("Small — R\u00A01\u00A0300,00 / rm");

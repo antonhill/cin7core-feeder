@@ -6,7 +6,7 @@
 // whichever `PriceSource` is plugged in. Swapping to Cin7 Core later means supplying another PriceSource — nothing in the
 // engine or the UI changes. No workbook price is scattered through UI components.
 
-export type PriceSourceId = "newquip_master_workbook_snapshot" | "cin7_core_live";
+export type PriceSourceId = "newquip_master_workbook_snapshot" | "cin7_core_live" | "estimator_supplier_pricing";
 
 export type QuoteType = "day_to_day" | "project";
 export const QUOTE_TYPE_LABEL: Record<QuoteType, string> = { day_to_day: "Day-to-day", project: "Project" };
@@ -39,6 +39,12 @@ export interface PriceSource {
 /** Day-to-day = workbook Retail ex VAT. Project = landed cost + 20% (Sean): landed = Cost × ROE × Freight, NOT Retail MU + 20%. */
 export const PRICING_RULE_NOTICE =
   "Day-to-day = workbook Retail Price ex VAT. Project = landed cost (Cost × ROE × Freight) + 20%.";
+
+/** What a REP (no cost visibility) reads about a quotation type: it names the type without revealing the cost basis or any markup. The detailed QUOTE_TYPE_BASIS is for cost-visible roles only. */
+export const QUOTE_TYPE_NEUTRAL: Record<QuoteType, string> = { day_to_day: "Standard price list basis", project: "Project pricing" };
+
+/** Server reason text can name the cost basis ("the workbook landed cost for X is zero"). Where a viewer without cost visibility reads such a reason it is shown as a plain price-list statement. */
+export const neutralPriceText = (t: string): string => t.replace(/the workbook (?:landed cost|Retail Price) for/gi, "the price list price for").replace(/landed cost/gi, "price");
 
 export const QUOTE_TYPE_BASIS: Record<QuoteType, string> = {
   day_to_day: "Workbook Retail Price ex VAT",

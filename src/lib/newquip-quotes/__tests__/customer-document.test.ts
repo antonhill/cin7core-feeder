@@ -9,6 +9,7 @@ import { createWorkbookPriceSource } from "@/newquip/grower/workbook-price-sourc
 import { NEWQUIP_MASTER_POC_SNAPSHOT } from "@/newquip/grower/snapshot";
 import { testPriceSource } from "@/newquip/grower/__tests__/test-snapshot";
 import { buildAcceptedBaseline, type AcceptedBaseline } from "@/newquip/quote/baseline";
+import { GOLDEN_LIBRARY } from "@/newquip/grower/__tests__/golden-catalogue";
 import { NEWQUIP_STANDARD_SCHEDULE } from "@/newquip/quote/billing-schedule";
 import { buildCustomerSnapshot, withChosenContact } from "../customer-snapshot";
 import { assertNoInternalLeak, buildCustomerDocumentModel, internalTokens, internalTokenSet, messageLeaksInternal, tokenAppears, type CustomerDocumentModel } from "../customer-document";
@@ -24,7 +25,7 @@ const PROFILE: CompanyProfile = {
 const approvals = { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "rep.person@nq.example", handoffBy: "rep.person@nq.example", estimatorSignoffBy: "est.person@nq.example", estimatorSignoffAt: "t", managerApprovedBy: "mgr.person@nq.example", managerApprovedAt: "t" };
 const freeze = () => {
   const draft = readyDraft(); draft.customerName = "Boerdery (Pty) Ltd"; draft.siteName = "Paarl farm"; draft.estimator.assumptions = "INTERNAL-ASSUMPTION-DO-NOT-PRINT margin is tight";
-  return buildAcceptedBaseline({ quoteRef: "NQ-Q-0009", revision: 1, draft, evaluation: evaluateDraft(draft, { priceSource: testPriceSource(), withholdCost: false }), approvals });
+  return buildAcceptedBaseline({ mappingLibrary: GOLDEN_LIBRARY as never, quoteRef: "NQ-Q-0009", revision: 1, draft, evaluation: evaluateDraft(draft, { priceSource: testPriceSource(), withholdCost: false }), approvals });
 };
 const snapshot = (over: Record<string, unknown> = {}) => withChosenContact(buildCustomerSnapshot({
   ID: "cin7-1", Name: "Boerdery (Pty) Ltd", Currency: "ZAR", PaymentTerm: "30 days", TaxNumber: "4123456789",
@@ -84,7 +85,7 @@ describe("customer document model", () => {
     expect(() => assertNoInternalLeak(model, baseline)).not.toThrow();
   });
   it("the customer contact who confirmed the amount is the customer's own person, not internal data: the document may be addressed to them, while internal staff are still guarded", () => {
-    const { baseline: b2 } = buildAcceptedBaseline({ quoteRef: "NQ-Q-0009", revision: 1, draft: readyDraft(), evaluation: evaluateDraft(readyDraft(), { priceSource: testPriceSource(), withholdCost: false }), approvals: { ...approvals, customerConfirmedBy: "Piet <piet@boerdery.example>" } });
+    const { baseline: b2 } = buildAcceptedBaseline({ mappingLibrary: GOLDEN_LIBRARY as never, quoteRef: "NQ-Q-0009", revision: 1, draft: readyDraft(), evaluation: evaluateDraft(readyDraft(), { priceSource: testPriceSource(), withholdCost: false }), approvals: { ...approvals, customerConfirmedBy: "Piet <piet@boerdery.example>" } });
     expect(internalTokens(b2)).not.toContain("Piet <piet@boerdery.example>");
     const m = structuredClone(model); m.customer.contactName = "Piet"; m.customer.contactEmail = "piet@boerdery.example";
     expect(() => assertNoInternalLeak(m, b2)).not.toThrow();
@@ -224,7 +225,7 @@ describe("REGRESSION: NQ-Q-0015 on Preview (demonstration quotation, 40/55/5)", 
   const demo = () => {
     const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Spark" }).draft;
     const ap = { ...approvals, customerConfirmedBy: "Anton Hill <anton@sparkconsulting.co.za>", handoffBy: "rep@sparkconsulting.co.za", estimatorSignoffBy: "estimator@sparkconsulting.co.za", managerApprovedBy: "anton@sparkconsulting.co.za" };
-    const { baseline, hash } = buildAcceptedBaseline({ quoteRef: "NQ-Q-0015", revision: 1, draft, evaluation: evaluateDraft(draft, { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: false }), approvals: ap });
+    const { baseline, hash } = buildAcceptedBaseline({ mappingLibrary: GOLDEN_LIBRARY as never, quoteRef: "NQ-Q-0015", revision: 1, draft, evaluation: evaluateDraft(draft, { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: false }), approvals: ap });
     // the customer's contact is the SAME person as the internal approver, and the customer is called "Spark"
     const snap = withChosenContact(buildCustomerSnapshot({ ID: "c-spark", Name: "Spark", Currency: "ZAR", Addresses: [{ Type: "Billing", Line1: "1 Spark Road", DefaultForType: true }], Contacts: [{ Name: "Anton Hill", Email: "anton@sparkconsulting.co.za" }] }, "t"), { source: "CIN7_CONTACT", contactIndex: 0 });
     return { baseline, hash, snap, model: buildCustomerDocumentModel({ baseline, quoteRef: "NQ-Q-0015", revision: 1, snapshot: snap, profile: PROFILE, schedule: NEWQUIP_STANDARD_SCHEDULE, issuedOn: "2026-10-30" }) };
@@ -289,7 +290,7 @@ describe("the guard still blocks genuine confidential data (and names only the K
     expect(dirty((m) => { m.deliveryInstallationConditions += " INTERNAL-ASSUMPTION-DO-NOT-PRINT margin is tight"; })).toThrow(/internal note/);
   });
   it("a short internal note is still caught as a WORD in the offer text (the scope), but not as a fragment of another word or in the customer's own details", () => {
-    const { baseline: b } = (() => { const d = readyDraft(); d.estimator.assumptions = "Test"; return buildAcceptedBaseline({ quoteRef: "Q", revision: 1, draft: d, evaluation: evaluateDraft(d, { priceSource: testPriceSource(), withholdCost: false }), approvals }); })();
+    const { baseline: b } = (() => { const d = readyDraft(); d.estimator.assumptions = "Test"; return buildAcceptedBaseline({ mappingLibrary: GOLDEN_LIBRARY as never, quoteRef: "Q", revision: 1, draft: d, evaluation: evaluateDraft(d, { priceSource: testPriceSource(), withholdCost: false }), approvals }); })();
     const m1 = structuredClone(model); m1.sections[0].scope += " this is a Test line";
     expect(() => assertNoInternalLeak(m1, b)).toThrow(/an internal note/);
     const m2 = structuredClone(model); m2.sections[0].scope += " the latest testing contest"; m2.quote.siteName = "Test Farm 1"; m2.customer.name = "Test Customer";
