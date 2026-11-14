@@ -154,7 +154,7 @@ describe("separation of duties", () => {
     const row = bundle.ok ? bundle.data!.view.rows.find((x) => x.costHash) : undefined;
     expect(row).toBeTruthy();
     expect(bundle.ok && bundle.data!.verification.verifiableSkus).not.toContain(row!.sku);
-    const r = await pricingActions.verifyEstimatorCostsAction(id, [{ sku: row!.sku, costHash: row!.costHash }], "Supplier quote SQ-1");
+    const r = await pricingActions.verifyEstimatorCostsAction(id, [{ sku: row!.sku, costHash: row!.costHash ?? "" }], "Supplier quote SQ-1");
     expect(r.ok).toBe(false);
     expect(r.ok === false && r.error).toMatch(/entered|independent|yourself|another/i);
   }, 60000);
