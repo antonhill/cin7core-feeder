@@ -16,6 +16,7 @@ export function summaryLines(s: ReturnType<typeof reconcileSnapshot>["summary"])
     `  Bond      : match ${d.bond.match} · explained ${d.bond.explainedKnown} · unexplained ${d.bond.unexplained} (${t.unexplainedBondUnits} units) · workbook ${t.workbookBond} vs Cin7 ${t.cin7Bond} · known movements ${t.knownBond}`,
     `  allocation: match ${d.allocation.match} · known source-only ${d.allocation.sourceOnly} (${t.sourceOnlyAllocationUnits} units, never added to Cin7 quantities) · unexplained ${d.allocation.unexplained}`,
     `  usable    : match ${d.usable.match} · explained ${d.usable.explained} · unexplained ${d.usable.unexplained} (${t.unexplainedUsableUnits} units) · workbook ${t.workbookUsable} vs Cin7 ${t.cin7Usable}`,
+    ...(s.unmatchedKnownTransactions > 0 ? [`  WARNING: ${s.unmatchedKnownTransactions} known transaction(s) match no SKU in the snapshot or workbook and were NOT applied`] : []),
     `  availability: Cin7 operational ${t.cin7OperationalAvailable} · RWTSA planning (derived, source commitments applied) ${t.rwtsaPlanningAvailable}`,
   ];
 }

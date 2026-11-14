@@ -44,7 +44,7 @@ export function parseKnownTransactions(raw: unknown): KnownTransaction[] {
     if (typeof o.ref !== "string" || !o.ref || typeof o.sku !== "string" || !o.sku) bad(`entry ${i + 1} needs a text ref and sku`);
     if (typeof o.physicalDelta !== "number" || !Number.isFinite(o.physicalDelta)) bad(`entry ${i + 1}: physicalDelta must be a finite number`);
     if (o.bondDelta !== undefined && (typeof o.bondDelta !== "number" || !Number.isFinite(o.bondDelta))) bad(`entry ${i + 1}: bondDelta must be a finite number`);
-    const k = `${o.ref}|${o.sku}`; if (seen.has(k)) bad(`entry ${i + 1} repeats an earlier ref+sku`); seen.add(k);
+    const k = JSON.stringify([o.ref, o.sku]); if (seen.has(k)) bad(`entry ${i + 1} repeats an earlier ref+sku`); seen.add(k);
     return { ref: o.ref as string, sku: o.sku as string, physicalDelta: o.physicalDelta as number, bondDelta: o.bondDelta as number | undefined };
   });
 }
@@ -80,7 +80,7 @@ export function reconcileSnapshot(i: { snapshotStock: readonly SkuStock[]; workb
     const d = { p: C.physical - W.physical, b: C.bond - W.bond, a: C.allocated - W.allocated, u: C.usable - W.usable };
     const phys = stockDimension(d.p, explainedPhysical), bond = stockDimension(d.b, explainedBond);
     const committed = w?.committed ?? 0;
-    const sourceOnly = accept && !z(committed) && committed > 0 && z(C.allocated);
+    const sourceOnly = accept && !!w && !!c && !z(committed) && committed > 0 && z(C.allocated);
     const allocationStatus: AllocationDimension = z(d.a) ? "MATCH" : sourceOnly ? "SOURCE_ONLY_ALLOCATION" : "UNEXPLAINED";
     const sourceOnlyAllocation = allocationStatus === "SOURCE_ONLY_ALLOCATION" ? committed : 0;
     const residualUsable = z(d.u - knownNonBond - sourceOnlyAllocation) ? 0 : d.u - knownNonBond - sourceOnlyAllocation;
@@ -100,12 +100,13 @@ export function reconcileSnapshot(i: { snapshotStock: readonly SkuStock[]; workb
   const sum = (f: (r: ReconRow) => number) => rows.reduce((t, r) => t + f(r), 0);
   const by = <T extends string>(f: (r: ReconRow) => T, v: T) => rows.filter((r) => f(r) === v).length;
   const known = i.knownTransactions.filter((t) => cin.has(t.sku) || wb.has(t.sku));
+  const unmatchedKnownTransactions = i.knownTransactions.length - known.length;
   const knownPhysical = known.reduce((t, x) => t + x.physicalDelta, 0), knownBond = known.reduce((t, x) => t + (x.bondDelta ?? 0), 0);
   return {
     rows,
     summary: {
       skus: rows.length, match: count("MATCH"), explained: count("EXPLAINED"), knownSourceOnlyAllocation: count("KNOWN_SOURCE_ONLY_ALLOCATION"), unexplained: count("UNEXPLAINED"), onlyInWorkbook: count("ONLY_IN_WORKBOOK"), onlyInCin7: count("ONLY_IN_CIN7"),
-      sourceOnlyAllocationsAccepted: accept,
+      sourceOnlyAllocationsAccepted: accept, unmatchedKnownTransactions,
       byDimension: {
         physical: { match: by((r) => r.physicalStatus, "MATCH"), explainedKnown: by((r) => r.physicalStatus, "EXPLAINED_KNOWN"), unexplained: by((r) => r.physicalStatus, "UNEXPLAINED") },
         bond: { match: by((r) => r.bondStatus, "MATCH"), explainedKnown: by((r) => r.bondStatus, "EXPLAINED_KNOWN"), unexplained: by((r) => r.bondStatus, "UNEXPLAINED") },

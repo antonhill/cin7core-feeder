@@ -121,3 +121,26 @@ describe("separate reconciliation dimensions", () => {
     expect(r.usableStatus).toBe("EXPLAINED");
   });
 });
+
+describe("review hardening (independent review P2/P3)", () => {
+  it("source-only allocation is never counted for a SKU Cin7 does not have", () => {
+    const r = run([], [wb("W", { jhb: 5, committed: 5 })], [], true);
+    expect(r.rows[0].status).toBe("ONLY_IN_WORKBOOK");
+    expect(r.rows[0].allocationStatus).not.toBe("SOURCE_ONLY_ALLOCATION");
+    expect(r.summary.totals.sourceOnlyAllocationUnits).toBe(0);
+    expect(r.summary.byDimension.allocation.sourceOnly).toBe(0);
+  });
+  it("reports known transactions that match no SKU on either side instead of ignoring them", () => {
+    const r = run([cin("A", { nonBond: 5 })], [wb("A", { jhb: 5 })], [{ ref: "PO-1", sku: "TYPO", physicalDelta: 3 }, { ref: "PO-1", sku: "A", physicalDelta: 0 }]);
+    expect(r.summary.unmatchedKnownTransactions).toBe(1);
+    expect(r.summary.totals.knownPhysical).toBe(0);
+  });
+  it("a negative workbook commitment is never source-only", () => {
+    const r = run([cin("A", { nonBond: 5 })], [wb("A", { jhb: 5, committed: -2 })], [], true).rows[0];
+    expect(r.allocationStatus).toBe("UNEXPLAINED");
+  });
+  it("known-transaction duplicate detection cannot be fooled by separator characters", async () => {
+    const { parseKnownTransactions } = await import("@/rwtsa-live/reconcile");
+    expect(parseKnownTransactions([{ ref: "a|b", sku: "c", physicalDelta: 1 }, { ref: "a", sku: "b|c", physicalDelta: 1 }])).toHaveLength(2);
+  });
+});
