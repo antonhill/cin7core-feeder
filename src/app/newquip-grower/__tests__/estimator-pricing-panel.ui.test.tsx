@@ -85,6 +85,48 @@ describe("what the Estimator sees", () => {
   });
 });
 
+describe("an invalid supplier cost shows a message instead of silently disappearing", () => {
+  const typeCost = (v: string) => { const cost = screen.getAllByLabelText(/PNQ082 supplier cost/)[0] as HTMLInputElement; fireEvent.change(cost, { target: { value: v } }); fireEvent.blur(cost, { target: { value: v } }); return cost; };
+  it("more than 7 decimals: a clear message, the field is marked invalid, nothing is rounded", async () => {
+    mount(bundle(equivalentInputs()));
+    await waitFor(() => expect(screen.getByTestId("pricing-save")).toBeTruthy());
+    const cost = typeCost("6.54547551");
+    expect(await screen.findByText(/At most 7 decimal places are allowed.*Nothing was rounded/)).toBeTruthy();
+    expect(cost.getAttribute("aria-invalid")).toBe("true");
+    expect(cost.value).toBe("6.54547551"); // what was typed stays visible
+  });
+  it("a comma, units or text: a clear message", async () => {
+    mount(bundle(equivalentInputs()));
+    await waitFor(() => expect(screen.getByTestId("pricing-save")).toBeTruthy());
+    for (const bad of ["6,5", "R 12", "abc", "-1", "1e-7"]) {
+      const cost = typeCost(bad);
+      expect(await screen.findByText(/Enter the cost as a plain number/)).toBeTruthy();
+      expect(cost.getAttribute("aria-invalid")).toBe("true");
+    }
+  });
+  it("a valid 7-decimal cost clears the message and is what gets saved; an invalid entry never overwrote the saved value", async () => {
+    mount(bundle(equivalentInputs()));
+    await waitFor(() => expect(screen.getByTestId("pricing-save")).toBeTruthy());
+    typeCost("6.54547551");
+    expect(await screen.findByText(/At most 7 decimal places/)).toBeTruthy();
+    const cost = typeCost("6.5454755");
+    await waitFor(() => expect(screen.queryByText(/At most 7 decimal places/)).toBeNull());
+    expect(cost.getAttribute("aria-invalid")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Reason for this pricing revision"), { target: { value: "Cin7 cost" } });
+    vi.mocked(actions.applyEstimatorPricingAction).mockResolvedValue({ ok: true, data: { seq: 2, kind: "CHANGED", changedValues: 1, confirmation: { confirmationCleared: false, signoffCleared: false, returnedToRep: false, previousCents: 1, newCents: 1 } } });
+    fireEvent.click(screen.getByTestId("pricing-save"));
+    await waitFor(() => expect(actions.applyEstimatorPricingAction).toHaveBeenCalled());
+    const submission = vi.mocked(actions.applyEstimatorPricingAction).mock.calls.at(-1)![1];
+    expect(submission.skus.PNQ082.nativeUnitCostE7).toBe(65_454_755);
+  });
+  it("an empty field leaves the saved cost alone and shows no error", async () => {
+    mount(bundle(equivalentInputs()));
+    await waitFor(() => expect(screen.getByTestId("pricing-save")).toBeTruthy());
+    const cost = typeCost("");
+    expect(cost.getAttribute("aria-invalid")).toBeNull();
+  });
+});
+
 describe("saving", () => {
   it("needs a reason; saves the edited inputs as ONE submission with that reason; and tells the Estimator the Rep must reconfirm when the total moved", async () => {
     const reload = mount(bundle(equivalentInputs()));

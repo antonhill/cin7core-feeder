@@ -8,6 +8,9 @@ import type { QuoteDraft } from "@/newquip/grower/draft";
 import { rolesFor } from "@/newquip/quote/roles";
 import { micro, cost7 } from "@/newquip/pricing/model";
 import { equivalentInputs, withPricing, AT, EST, REVIEWER } from "@/newquip/pricing/estimator/__tests__/helpers";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { internalTokenSet } from "../customer-document";
 import { costInputHash } from "@/newquip/pricing/estimator/verification";
 import { rateInputHash } from "@/newquip/pricing/estimator/attestation";
 import type { EstimatorPricing, SkuPricingInput } from "@/newquip/pricing/estimator/types";
@@ -89,6 +92,53 @@ describe("A. the NORMAL Phase 2 path succeeds with NO costing waiver", () => {
     await handoff(id, cents(d));
     await signOff(id);
     expect((await approve(id)).contractCents).toBe(cents(d));
+  });
+});
+
+describe("A2. partial legacy capture: the frozen legacy estimate is a DISPLAY value and never feeds totals, margin, PDFs, approval or Cin7 posting", () => {
+  const MANUAL = { unitCostCents: 123_456, source: "MANUAL_ESTIMATE" as const, retrievedAt: AT, reason: "fixture manual estimate", by: EST, at: AT };
+  it("approval, the contract total and the frozen internal margin come from the quotation and its Phase 2 costs, not from the partial legacy estimate", async () => {
+    const d = normal();
+    d.estimator.physicalCosts = { "SYSH-2750-3": MANUAL };
+    const id = await stored(d);
+    const total = cents(d);
+    await handoff(id, total);
+    await signOff(id);
+    const r = await approve(id);
+    expect(r.contractCents).toBe(total);
+    const b = (await loadQuote(db as never, ORG, id))!.accepted_baseline!;
+    expect(b.contractCents).toBe(total);
+    expect(b.commercial.subtotalCents).toBe(total);
+    // the frozen internal margin (what Projects profitability reads) is built from the evaluated quotation and its Phase 2 costs: it is IDENTICAL to the one frozen for the same quotation with
+    // no legacy capture at all, so the partial legacy estimate has no influence on it
+    const d2 = normal();
+    const id2 = await stored(d2);
+    await handoff(id2, cents(d2)); await signOff(id2); await approve(id2);
+    const b2 = (await loadQuote(db as never, ORG, id2))!.accepted_baseline!;
+    expect(JSON.stringify(b.internalMargin)).toBe(JSON.stringify(b2.internalMargin));
+    expect(JSON.stringify(b.commercial)).toBe(JSON.stringify(b2.commercial));
+    expect(b2.physicalCostEstimate).toBeUndefined();
+    // the legacy estimate is frozen honestly as captured: the SKUs only Phase 2 costs are listed as having no LEGACY cost (display only)
+    expect(b.physicalCostEstimate!.incomplete).toBe(true);
+    expect(b.physicalCostEstimate!.missingSkus).toContain("PNQ082");
+    // the customer-document leak scanner reads it only to know which figures must NOT appear; missing costs add nothing and it does not throw
+    const t = internalTokenSet(b);
+    expect(t.figures).toContain("1234.56");
+  });
+  it("evidence: only the known internal/display readers touch physicalCostEstimate: no Cin7 posting, sync, claim, invoice or customer-document code reads it", () => {
+    const root = join(__dirname, "..", "..", "..");
+    const files: string[] = [];
+    const walk = (dir: string) => { for (const n of readdirSync(dir)) { const f = join(dir, n); if (statSync(f).isDirectory()) { if (n !== "__tests__" && n !== "node_modules") walk(f); } else if (/\.(ts|tsx)$/.test(n)) files.push(f); } };
+    walk(root);
+    const readers = files.filter((f) => /physicalCostEstimate/.test(readFileSync(f, "utf8"))).map((f) => f.slice(root.length + 1).replace(/\\/g, "/")).sort();
+    expect(readers).toEqual([
+      "app/newquip-grower/[id]/page.tsx", // a note shown only when an incomplete-cost exception was accepted
+      "app/newquip-grower/cost-actions.ts", // the legacy CostPanel's frozen view
+      "app/projects/procurement-actions.ts", // the Projects "Cost targets" comparison
+      "lib/newquip-quotes/customer-document.ts", // the leak scanner (figures that must NOT appear)
+      "newquip/quote/baseline.ts", // where it is frozen
+      "newquip/quote/margin.ts", // Rep redaction (deletes it)
+    ]);
   });
 });
 
