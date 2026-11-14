@@ -3,9 +3,9 @@ import { RwtsaLiveError } from "./types";
 
 /**
  * The ONLY Cin7 resources this module may read, all by GET. Phase 3 added the three production read paths HERE (orderList, order, order/run: read-only evidence for one manufacture order);
- * nothing else in the module needs to change, so the isolation boundary stays put.
+ * a later phase added /production/productionBOM (read-only existence check of one finished-good production BOM); nothing else in the module needs to change, so the isolation boundary stays put.
  */
-export const ALLOWED_GET_PATHS = ["/ref/location", "/ref/productavailability", "/product", "/production/orderList", "/production/order", "/production/order/run"] as const;
+export const ALLOWED_GET_PATHS = ["/ref/location", "/ref/productavailability", "/product", "/production/orderList", "/production/order", "/production/order/run", "/production/productionBOM"] as const;
 
 /** Throws unless this is a GET on an allowlisted path; returns the URL rooted at the one fixed Cin7 origin. */
 export function assertReadOnlyRequest(method: string, path: string): URL {
