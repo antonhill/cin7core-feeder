@@ -90,7 +90,7 @@ export function ScenarioAPlanner({ model, returnTo }: { model: RedFlagModel; ret
           <div>
             <p className="text-sm font-semibold text-slate-900">Replenishment proposal</p>
             <div data-testid="planner-order" data-state={sel.proposalWithheld ? "withheld" : "value"} className="mt-1 text-sm text-slate-800">
-              <p>Formula: {sel.planner.formula === "net-requirement" ? "RFP DP-13 net requirement" : "approved minimum-shortfall rule"} (change it in the controls).</p>
+              <p>Formula: {sel.planner.formula === "net-requirement" ? "RFP DP-13 net requirement" : "minimum-shortfall demonstration formula (previously defined; not RWTSA-approved policy)"} (change it in the controls).</p>
               {sel.proposalWithheld ? (
                 <p className="text-amber-800">Withheld: classify this SKU first.</p>
               ) : (

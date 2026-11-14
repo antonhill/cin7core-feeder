@@ -155,8 +155,8 @@ describe("Scenario A core: DP-13 formulas by horizon, both labelled", () => {
     expect(t).toMatch(/Approved rule \(unchanged\)/);
     expect(t).toMatch(/RFP DP-13 net requirement/);
     expect(t).toMatch(/OWNER DECISION REQUIRED/);
-    expect(t).toContain("13 wk: approved");
-    expect(t).toContain("26 wk: RFP net");
+    expect(t).toContain("13 wk: min-shortfall (demo formula)");
+    expect(t).toContain("26 wk: RFP DP-13 net");
   });
   it("the horizon table is the same whichever horizon drives the main table", async () => {
     synthetic();
@@ -166,7 +166,7 @@ describe("Scenario A core: DP-13 formulas by horizon, both labelled", () => {
   it("proposed quantities in the comparison are withheld while tender classification is open", async () => {
     local();
     const m = await A();
-    expect(text(m)).toMatch(/13 wk: approved/);
+    expect(text(m)).toMatch(/13 wk: min-shortfall \(demo formula\)/);
     expect(m).toContain("Withheld");
     // the quantities must not be present anywhere in the markup either
     const rows = [...m.matchAll(/data-testid="horizon-row" data-key="[^"]*" data-a13="([^"]*)" data-n13="([^"]*)" data-a26="([^"]*)" data-n26="([^"]*)"/g)];
