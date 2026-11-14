@@ -231,7 +231,7 @@ describe("package scripts", () => {
 describe("navigation and remote resources", () => {
   it("links every page and loads nothing remote", () => {
     const m = renderToStaticMarkup(<Nav />);
-    for (const href of ["/", "/scenario-a", "/scenario-b", "/scenario-c", "/scenario-d", "/validation"]) expect(m).toContain(`href="${href}"`);
+    for (const href of ["/", "/scenario-a", "/scenario-b?style=RVEST-2T-NVL", "/scenario-c", "/scenario-d", "/validation"]) expect(m).toContain(`href="${href}"`);
     expect(m).not.toMatch(/https?:\/\//i);
   });
 });
