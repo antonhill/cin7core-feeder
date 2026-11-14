@@ -1,5 +1,7 @@
 "use client";
 
+import { AuditDetails } from "./AuditDetails";
+import { splitEvidence } from "../technical-text";
 import { PendingNotice } from "@/components/ui/action-feedback";
 import { OP } from "@/components/ui/operation-labels";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -191,12 +193,18 @@ export function AcceptancePanel({ quoteId, onGate }: { quoteId: string; onGate: 
               </div>
               <div>{r.contact}{r.company ? `, ${r.company}` : ""}{r.contactEmail ? ` <${r.contactEmail}>` : ""}{r.contactSource ? ` · ${r.contactSource === "DELIVERY_CONTACT" ? "contact who received the quotation" : r.contactSource === "CIN7_CONTACT" ? "Cin7 contact" : r.contactSource === "ALTERNATIVE" ? "alternative contact" : "details given by the customer"}` : ""} · {r.respondedOn} · {r.origin === "CUSTOMER_LINK" ? "received" : "recorded by"} {r.recordedBy} · {formatSast(r.at)}</div>
               {r.exceptionReason && <div className="text-xs text-amber-800">Exception reason: {r.exceptionReason}</div>}
-              <div className="text-slate-700">Evidence: {r.evidence}{r.note ? ` · ${r.note}` : ""}{r.origin === "CUSTOMER_LINK" && r.response === "ACCEPTED" ? ` · authority confirmed: ${r.authorityConfirmed ? "yes" : "no"}` : ""}</div>
+              <div className="text-slate-700">Evidence: {splitEvidence(r.evidence).plain}{r.note ? ` · ${r.note}` : ""}{r.origin === "CUSTOMER_LINK" && r.response === "ACCEPTED" ? ` · authority confirmed: ${r.authorityConfirmed ? "yes" : "no"}` : ""}</div>
               {r.review && <div className="text-xs text-slate-600">{r.review.decision === "VERIFIED" ? "Verified" : "Rejected"} by {r.review.by} · {formatSast(r.review.at)}{r.review.note ? ` · ${r.review.note}` : ""}</div>}
               {r.files.length > 0 && (
                 <ul className="list-disc pl-5 text-xs">
-                  {r.files.map((x) => <li key={x.id}><a className="text-indigo-700 underline" href={`/api/newquip-response-evidence/${x.id}`}>{x.fileName}</a> · {kb(x.bytes)} · uploaded by {x.uploadedBy} · sha256 {x.sha256.slice(0, 12)}…</li>)}
+                  {r.files.map((x) => <li key={x.id}><a className="text-indigo-700 underline" href={`/api/newquip-response-evidence/${x.id}`}>{x.fileName}</a> · {kb(x.bytes)} · uploaded by {x.uploadedBy}</li>)}
                 </ul>
+              )}
+              {(splitEvidence(r.evidence).technical || r.files.length > 0) && (
+                <AuditDetails testId={`audit-details-${r.id}`} className="text-xs text-slate-600">
+                  {splitEvidence(r.evidence).technical && <p>Quotation document: {splitEvidence(r.evidence).technical}</p>}
+                  {r.files.map((x) => <p key={x.id}>{x.fileName}: sha256 {x.sha256.slice(0, 12)}…</p>)}
+                </AuditDetails>
               )}
               {d.portal && d.canRecord && r.origin === "STAFF" && (
                 <div className="flex flex-wrap items-center gap-2 text-xs">

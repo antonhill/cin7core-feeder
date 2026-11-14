@@ -785,8 +785,11 @@ describe("P0: a Rep changing a product-affecting control (the server refuses; pr
 describe("second review: chrome, saving rules, up-front note, step 3 disclosure", () => {
   it("price source / provenance sits in one collapsed disclosure; the save row and show-all share the step toolbar; the saving rule is stated once", async () => {
     await open({ view: snapshotView(true), step: "2" });
-    const prov = screen.getByTestId("provenance") as HTMLDetailsElement;
-    expect(prov.open).toBe(false);
+    const audit = screen.getByTestId("audit-details") as HTMLDetailsElement;
+    expect(audit.open).toBe(false);
+    expect(audit.querySelector("summary")!.textContent).toBe("Audit details");
+    const prov = screen.getByTestId("provenance");
+    expect(audit.contains(prov)).toBe(true);
     expect(prov.textContent).toContain("Price source & provenance");
     expect(prov.textContent).toContain("Grower House Template v1");
     const rail = screen.getByTestId("step-rail");
@@ -939,7 +942,7 @@ describe("touch targets on the primary journey are class-contracted at 44px", ()
     const page = rd("[id]/page.tsx");
     expect(page).toContain("[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 [&_select]:min-h-11 [&_textarea]:min-h-11"); // additive, Stage 1 form only
     expect(page).toContain('data-testid="provenance"');
-    expect(page).toMatch(/provenance[\s\S]{0,200}min-h-11/);
+    expect(rd("[id]/AuditDetails.tsx")).toMatch(/summary className="[^"]*min-h-11/);
     expect(rd("../NewquipShell.tsx")).not.toContain("md:min-h-9");
     expect(rd("page.tsx")).not.toContain("h-9 items-center");
     expect(rd("[id]/Stage1Review.tsx")).toContain("inline-flex min-h-11 cursor-pointer items-center");
