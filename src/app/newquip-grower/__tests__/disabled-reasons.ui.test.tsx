@@ -135,14 +135,14 @@ describe("F-12 Solution Builder disabled controls say why", () => {
     expect(ret.getAttribute("aria-describedby")).toBeNull();
   }, 30000);
 
-  it("Manager: final approval is described by whichever message applies (role, missing sign-off) and is never silent", async () => {
+  it("Approve is described by whichever message applies (role, missing sign-off) and is never silent", async () => {
     await open("3", ["MANAGER"], "ESTIMATOR_REVIEW", "Return to rep — reason");
-    const approve = screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement;
+    const approve = screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement;
     expect(approve.disabled).toBe(true);
     expect(described(approve)).toMatch(/Waiting for the Estimator/);
     cleanup();
     await open("3", ["REP"], "ESTIMATOR_REVIEW", "Final approval needs the Manager role.");
-    const approve2 = screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement;
+    const approve2 = screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement;
     expect(described(approve2)).toMatch(/needs the Manager role/);
   }, 60000);
 

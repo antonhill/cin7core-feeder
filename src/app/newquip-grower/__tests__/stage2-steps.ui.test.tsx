@@ -721,7 +721,7 @@ describe("UX-006i2 Stage 2: the view follows real workflow transitions and nothi
     await open({ stage: "3", roles: ["MANAGER"], commercials: true, state: "ESTIMATOR_REVIEW", row: { ...SUB.row, __useDraftHash: true, requires_customer_acceptance: true } , draftOver: COSTED });
     const id = g.__QID!;
     vi.spyOn(actions, "approveGrowerQuoteAction").mockImplementation((async () => { patchRow(id, () => ({ state: "MANAGER_APPROVED_FINAL", approved_by_email: "m@nq" })); return reread(id); }) as never);
-    const approve = await waitFor(() => { const b = screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement; expect(b.disabled).toBe(false); return b; }, { timeout: 8000 });
+    const approve = await waitFor(() => { const b = screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement; expect(b.disabled).toBe(false); return b; }, { timeout: 8000 });
     expect(viewedStage()).toBe("3");
     fireEvent.click(approve);
     await waitFor(() => expect(viewedStage()).toBe("4"), { timeout: 8000 });
