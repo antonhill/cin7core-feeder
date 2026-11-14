@@ -127,7 +127,7 @@ describe("an invalid supplier cost shows a message instead of silently disappear
   });
 });
 
-describe("an invalid supplier cost blocks Save, says it was NOT saved, and never goes stale", () => {
+describe("an invalid supplier cost blocks Save, says it was NOT saved, and never goes stale", { timeout: 30000 }, () => { // these render the whole panel several times: slow on the shared CI runner (a 5 s default timed out there); the assertions are unchanged
   const typeCost = (sku: string, v: string) => { const cost = screen.getAllByLabelText(new RegExp(`${sku} supplier cost`))[0] as HTMLInputElement; fireEvent.change(cost, { target: { value: v } }); fireEvent.blur(cost, { target: { value: v } }); return cost; };
   const reasonIn = () => fireEvent.change(screen.getByLabelText("Reason for this pricing revision"), { target: { value: "Cin7 cost" } });
   const save = () => screen.getByTestId("pricing-save") as HTMLButtonElement;
