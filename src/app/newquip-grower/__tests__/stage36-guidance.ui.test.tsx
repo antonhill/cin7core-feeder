@@ -403,8 +403,8 @@ describe("UX-006c stage navigation", () => {
 // UX-006 PR B, rendered through the real page: ids, hashes, seals and rule sets sit inside collapsed "Audit details" only, and the Stage 6 baseline audit block appears on Stage 6 alone.
 const UUID = "e3cbb8a4-aefb-4e5c-86eb-01c9b02a51b8";
 const SHA = "8714a8424bb3bb04eac4dab11835597e17d9352d346793f3098ef256216eee6c";
-const response = { id: "r1", documentId: "d0", response: "ACCEPTED", contact: "Anton", respondedOn: "2026-11-05", at: "2026-11-05T12:28:00Z", recordedBy: "anton@x.co", note: "", origin: "CUSTOMER_LINK", standing: "VERIFIED", contactEmail: "anton@x.co", contactSource: "DELIVERY_CONTACT", company: "Spark", exceptionReason: null, authorityConfirmed: true,
-  evidence: `Customer response link · Anton accepted quotation NQ-Q-0029, revision 1 (document ${UUID}, SHA-256 ${SHA}) and confirmed being authorised.`,
+const response = { id: "r1", documentId: "d0", response: "ACCEPTED", contact: "Anton", respondedOn: "2026-11-05", at: "2026-11-05T12:28:00Z", recordedBy: "anton@x.co", note: `Anton (Spark, anton@x.co) accepted quotation NQ-Q-0029, revision 1 (document ${UUID}, SHA-256 ${SHA}) and confirmed being authorised. Comment: thanks`, origin: "CUSTOMER_LINK", standing: "VERIFIED", contactEmail: "anton@x.co", contactSource: "DELIVERY_CONTACT", company: "Spark", exceptionReason: null, authorityConfirmed: true,
+  evidence: "Customer response link", // the real shape: the customer's statement (with the document id and hash) is stored in the NOTE, the evidence reference is the short label
   files: [{ id: "f1", fileName: "signed.pdf", bytes: 2048, uploadedBy: "anton@x.co", sha256: "0123456789abcdef0123456789abcdef" }], review: { decision: "VERIFIED", note: "", by: "m@nq", at: "2026-11-05T12:29:00Z" } };
 const inAudit = (el: Element) => el.closest("details[data-testid^=audit-details]") as HTMLDetailsElement | null;
 describe("UX-006 PR B: technical identifiers live in collapsed Audit details", () => {
@@ -439,7 +439,7 @@ describe("UX-006 PR B: technical identifiers live in collapsed Audit details", (
     await open({ stage: "5", roles: ["MANAGER"], row: FINAL, delivery: delivery({ status: "CUSTOMER_ACCEPTED", accepted: true, latestDocumentId: "d0", responses: [response] }) });
     const list = await screen.findByTestId("response-history", {}, { timeout: 8000 });
     const ev = [...list.querySelectorAll("div")].find((n) => n.textContent?.startsWith("Evidence:"))!;
-    expect(ev.textContent).toContain("accepted quotation NQ-Q-0029, revision 1 and confirmed being authorised.");
+    expect(ev.textContent).toContain("Customer response link · Anton (Spark, anton@x.co) accepted quotation NQ-Q-0029, revision 1 and confirmed being authorised. Comment: thanks"); // the company/email parenthetical and the comment stay
     expect(ev.textContent).not.toContain(UUID);
     expect(ev.textContent).not.toContain(SHA);
     const d = screen.getByTestId("audit-details-r1") as HTMLDetailsElement;
