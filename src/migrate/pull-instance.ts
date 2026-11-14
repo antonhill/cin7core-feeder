@@ -10,6 +10,11 @@ import { toFullCustomerAddressesCsv } from "@/export/customer-addresses-csv-live
 import { toFullSuppliersCsv } from "@/export/suppliers-csv-live";
 import { toFullSupplierAddressesCsv } from "@/export/supplier-addresses-csv-live";
 import { runImport, type ImportKind, type RunImportResult } from "@/import/run-import";
+import { stampPulledState } from "@/migrate/stamp-pulled-state";
+
+/** The non-empty string values of `field` across Cin7's records - the SKUs or Names this pull returned. */
+const keysOf = (records: Record<string, unknown>[], field: string): string[] =>
+  records.map((r) => r[field]).filter((v): v is string => typeof v === "string" && v.length > 0);
 
 /**
  * A Migrate pull is chunked into 3 resumable groups — one Cin7 fetch (the
@@ -54,6 +59,8 @@ export async function pullInstanceGroup(
     // validate-bom-references.ts — so it must commit after products, never
     // in a separate later group.
     results.assembly_bom = await runImport(db, orgId, "assembly_bom", "migrated-assembly-bom.csv", toFullAssemblyBomCsv(products));
+    // A product's content_hash includes its BOM lines, so the pulled state is recorded only after BOTH imports.
+    await stampPulledState(db, orgId, sourceInstanceId, "products", keysOf(products, "SKU"), results.products);
   } else if (group === "customers") {
     const customers = await fetchAllCustomers(creds);
     results.customers = await runImport(db, orgId, "customers", "migrated-customers.csv", toFullCustomersCsv(customers));
@@ -64,6 +71,7 @@ export async function pullInstanceGroup(
       "migrated-customer-addresses.csv",
       toFullCustomerAddressesCsv(customers)
     );
+    await stampPulledState(db, orgId, sourceInstanceId, "customers", keysOf(customers, "Name"), results.customers);
   } else {
     const suppliers = await fetchAllSuppliers(creds);
     results.suppliers = await runImport(db, orgId, "suppliers", "migrated-suppliers.csv", toFullSuppliersCsv(suppliers));
@@ -74,6 +82,7 @@ export async function pullInstanceGroup(
       "migrated-supplier-addresses.csv",
       toFullSupplierAddressesCsv(suppliers)
     );
+    await stampPulledState(db, orgId, sourceInstanceId, "suppliers", keysOf(suppliers, "Name"), results.suppliers);
   }
 
   return results;

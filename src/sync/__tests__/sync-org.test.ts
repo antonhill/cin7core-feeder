@@ -1,6 +1,7 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { syncOrgInstances } from "@/sync/sync-org";
+import { SCHEDULED_PUSH_ALLOWLIST_ENV } from "@/sync/scheduled-push-policy";
 import { syncInstance } from "@/sync/run-sync";
 import { logActivity } from "@/lib/activity-log";
 
@@ -75,6 +76,13 @@ function lockRpc(opts: { routeAcquired?: boolean; instanceAcquired?: boolean } =
 beforeEach(() => {
   vi.mocked(syncInstance).mockReset();
   vi.mocked(logActivity).mockReset();
+  // The scheduler is default-deny (scheduled-push-policy.ts). These tests exercise the orchestration (locks, concurrency, logging) of instances that ARE
+  // authorised; the gate itself is pinned in scheduled-push-gate.test.ts.
+  vi.stubEnv(SCHEDULED_PUSH_ALLOWLIST_ENV, "inst-1,inst-2");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe("syncOrgInstances", () => {

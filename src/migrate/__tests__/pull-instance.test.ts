@@ -6,17 +6,20 @@ import { fetchAllProductsWithBom } from "@/cin7/products";
 import { fetchAllCustomers } from "@/cin7/customers";
 import { fetchAllSuppliers } from "@/cin7/suppliers";
 import { runImport } from "@/import/run-import";
+import { stampPulledState } from "@/migrate/stamp-pulled-state";
 
 vi.mock("@/cin7/load-credentials", () => ({ loadCin7Credentials: vi.fn() }));
 vi.mock("@/cin7/products", () => ({ fetchAllProductsWithBom: vi.fn() }));
 vi.mock("@/cin7/customers", () => ({ fetchAllCustomers: vi.fn() }));
 vi.mock("@/cin7/suppliers", () => ({ fetchAllSuppliers: vi.fn() }));
 vi.mock("@/import/run-import", () => ({ runImport: vi.fn() }));
+vi.mock("@/migrate/stamp-pulled-state", () => ({ stampPulledState: vi.fn() }));
 
 const db = {} as SupabaseClient;
 const creds = { name: "Source Instance", accountId: "a", applicationKey: "k", baseUrl: "https://example.test" };
 
 beforeEach(() => {
+  vi.mocked(stampPulledState).mockReset().mockResolvedValue(0);
   vi.mocked(loadCin7Credentials).mockReset().mockResolvedValue(creds);
   vi.mocked(fetchAllProductsWithBom).mockReset().mockResolvedValue([{ SKU: "SKU1" }]);
   vi.mocked(fetchAllCustomers).mockReset().mockResolvedValue([{ Name: "Woolworths" }]);
@@ -99,5 +102,36 @@ describe("pullInstanceGroup", () => {
     const kinds = vi.mocked(runImport).mock.calls.map((call) => call[2]);
     expect(kinds).toContain("products");
     expect(kinds).toContain("assembly_bom");
+  });
+});
+
+describe("a pull records what it read as already in sync with its SOURCE instance (so it can never trigger a writeback)", () => {
+  it("products: stamps the pulled SKUs against the source instance only, after BOTH products and assembly_bom were imported", async () => {
+    vi.mocked(fetchAllProductsWithBom).mockResolvedValue([{ SKU: "A" }, { SKU: "B" }, { SKU: "" }, { NoSku: 1 }]);
+    await pullInstanceGroup(db, "org1", "inst-src", "products");
+    expect(stampPulledState).toHaveBeenCalledTimes(1);
+    expect(stampPulledState).toHaveBeenCalledWith(db, "org1", "inst-src", "products", ["A", "B"], expect.objectContaining({ committed: true }));
+    // after both imports: the product hash includes its BOM lines
+    expect(vi.mocked(runImport).mock.invocationCallOrder.at(-1)!).toBeLessThan(vi.mocked(stampPulledState).mock.invocationCallOrder[0]);
+  });
+
+  it("customers and suppliers: stamp the pulled Names against the source instance", async () => {
+    await pullInstanceGroup(db, "org1", "inst-src", "customers");
+    await pullInstanceGroup(db, "org1", "inst-src", "suppliers");
+    expect(stampPulledState).toHaveBeenNthCalledWith(1, db, "org1", "inst-src", "customers", ["Woolworths"], expect.anything());
+    expect(stampPulledState).toHaveBeenNthCalledWith(2, db, "org1", "inst-src", "suppliers", ["ABC Suppliers"], expect.anything());
+  });
+
+  it("never stamps any other instance: the instance id passed is always the pull's source", async () => {
+    await pullInstanceGroup(db, "org1", "inst-src", "products");
+    await pullInstanceGroup(db, "org1", "inst-src", "customers");
+    await pullInstanceGroup(db, "org1", "inst-src", "suppliers");
+    for (const call of vi.mocked(stampPulledState).mock.calls) expect(call[2]).toBe("inst-src");
+  });
+
+  it("a failed fetch stamps nothing", async () => {
+    vi.mocked(fetchAllCustomers).mockRejectedValueOnce(new Error("Rate limited"));
+    await expect(pullInstanceGroup(db, "org1", "inst-src", "customers")).rejects.toThrow("Rate limited");
+    expect(stampPulledState).not.toHaveBeenCalled();
   });
 });

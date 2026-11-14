@@ -70,11 +70,15 @@ describe("fetchActivityLog", () => {
     };
     const limit = vi.fn().mockResolvedValue({ data: [row], error: null });
     const order = vi.fn(() => ({ limit }));
-    const eq = vi.fn(() => ({ order }));
+    const not = vi.fn(() => ({ order }));
+    const eq = vi.fn(() => ({ not }));
     const select = vi.fn(() => ({ eq }));
     const db = { from: vi.fn(() => ({ select })) } as unknown as SupabaseClient;
 
     const result = await fetchActivityLog(db, "org1");
+
+    // Diagnostic rows (not Cin7 writes) are excluded from the write-audit view.
+    expect(not).toHaveBeenCalledWith("action", "like", "diagnostic.%");
 
     expect(result).toEqual([
       {
@@ -95,7 +99,8 @@ describe("fetchActivityLog", () => {
   it("throws with the underlying error message when the query fails", async () => {
     const limit = vi.fn().mockResolvedValue({ data: null, error: { message: "boom" } });
     const order = vi.fn(() => ({ limit }));
-    const eq = vi.fn(() => ({ order }));
+    const not = vi.fn(() => ({ order }));
+    const eq = vi.fn(() => ({ not }));
     const select = vi.fn(() => ({ eq }));
     const db = { from: vi.fn(() => ({ select })) } as unknown as SupabaseClient;
 

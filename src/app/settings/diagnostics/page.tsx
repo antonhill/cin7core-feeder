@@ -20,6 +20,8 @@ import {
   debugSurveyProductionRun,
   debugSurveyProductionOrderStatuses,
   debugSurveyPurchaseDetailFields,
+  debugAuditPurchaseFreshnessCensus,
+  debugAuditPurchaseListReconciliation,
   debugSurveyProductAvailabilityFields,
   debugSurveyProductSupplierOptionsFields,
   debugFindProductSupplierOptionsExample,
@@ -54,6 +56,8 @@ export default function DiagnosticsPage() {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
+  const [censusInputs, setCensusInputs] = useState<Record<string, string>>({});
+  const [listAuditInputs, setListAuditInputs] = useState<Record<string, string>>({});
   const [refCheckNames, setRefCheckNames] = useState<Record<string, string>>({});
   const [accountCodes, setAccountCodes] = useState<Record<string, string>>({});
   const [productionBomSkus, setProductionBomSkus] = useState<Record<string, string>>({});
@@ -261,6 +265,24 @@ export default function DiagnosticsPage() {
     setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Surveying purchase detail fields (multiple calls)…" } }));
     startTransition(async () => {
       const result = await debugSurveyPurchaseDetailFields(instanceId);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
+  function handleAuditCensus(instanceId: string) {
+    const [cohort = "fresh_open", offset = "0", limit = "20"] = (censusInputs[instanceId] ?? "fresh_open 0 20").split(/[\s,;]+/).filter(Boolean);
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Running read-only freshness census (sequential, rate limited, up to ~2 min)…" } }));
+    startTransition(async () => {
+      const result = await debugAuditPurchaseFreshnessCensus(instanceId, cohort, Number(offset), Number(limit));
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
+  function handleAuditListReconciliation(instanceId: string) {
+    const [fromPage = "1", pages = "10"] = (listAuditInputs[instanceId] ?? "1 10").split(/[\s,;]+/).filter(Boolean);
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Running read-only list reconciliation (sequential, rate limited)…" } }));
+    startTransition(async () => {
+      const result = await debugAuditPurchaseListReconciliation(instanceId, Number(fromPage), Number(pages));
       setTestResults((prev) => ({ ...prev, [instanceId]: result }));
     });
   }
@@ -526,6 +548,28 @@ export default function DiagnosticsPage() {
               </Button>
             </div>
             <div className="mt-2 flex items-center gap-2">
+              <div className="flex flex-col gap-1">
+                <input
+                  aria-label="Freshness census: cohort offset limit (read-only)"
+                  placeholder="fresh_open 0 20  (cohort offset limit≤40)"
+                  className="h-8 w-full rounded-md border border-slate-300 px-2 text-xs"
+                  value={censusInputs[inst.id] ?? ""}
+                  onChange={(e) => setCensusInputs((prev) => ({ ...prev, [inst.id]: e.target.value }))}
+                />
+                <Button variant="secondary" size="sm" onClick={() => handleAuditCensus(inst.id)} disabled={isPending}>
+                  Audit PO freshness census (read-only)
+                </Button>
+                <input
+                  aria-label="List reconciliation: fromPage pages (read-only)"
+                  placeholder="1 10  (fromPage pages≤30)"
+                  className="h-8 w-full rounded-md border border-slate-300 px-2 text-xs"
+                  value={listAuditInputs[inst.id] ?? ""}
+                  onChange={(e) => setListAuditInputs((prev) => ({ ...prev, [inst.id]: e.target.value }))}
+                />
+                <Button variant="secondary" size="sm" onClick={() => handleAuditListReconciliation(inst.id)} disabled={isPending}>
+                  Audit purchase list reconciliation (read-only)
+                </Button>
+              </div>
               <Button variant="secondary" size="sm" onClick={() => handleSurveyPurchaseDetailFields(inst.id)} disabled={isPending}>
                 Survey purchase detail fields (Inventory Movement Phase 1)
               </Button>

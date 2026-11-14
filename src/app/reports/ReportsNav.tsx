@@ -63,6 +63,10 @@ const REPORT_CATEGORIES: ReportCategory[] = [
     ],
   },
   {
+    label: "Purchasing",
+    links: [{ href: "/reports/po-reconciliation", label: "PO Quantity Comparison" }],
+  },
+  {
     label: "Custom",
     links: [{ href: "/reports/custom", label: "Custom Reports" }],
   },

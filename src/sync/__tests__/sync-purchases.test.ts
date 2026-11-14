@@ -4,10 +4,11 @@ import { syncInstancePurchases, syncOrgPurchases } from "@/sync/sync-purchases";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllPurchasesList } from "@/cin7/purchases";
 import { fetchPurchaseDetail } from "@/cin7/purchase-detail";
+import { Cin7ApiError } from "@/cin7/http";
 
 vi.mock("@/cin7/load-credentials", () => ({ loadCin7Credentials: vi.fn() }));
 vi.mock("@/cin7/purchases", () => ({ fetchAllPurchasesList: vi.fn() }));
-vi.mock("@/cin7/purchase-detail", () => ({ fetchPurchaseDetail: vi.fn() }));
+vi.mock("@/cin7/purchase-detail", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/cin7/purchase-detail")>()), fetchPurchaseDetail: vi.fn() }));
 
 const creds = { accountId: "a", applicationKey: "k", baseUrl: "https://example.test" };
 
@@ -16,6 +17,21 @@ interface FakeDbOptions {
   existingPurchases?: { cin7_purchase_id: string; combined_receiving_status: string | null; detail_synced_at: string | null }[];
   pendingPurchases?: { cin7_purchase_id: string }[];
   rpcError?: string;
+  /** Rows the throttle lookup on activity_log should find (already-logged failure within the window). */
+  recentFailureRows?: { id: string }[];
+  /** When set, the 0125 purchase_refresh_queue RPC returns these rows; when unset it behaves like "function not deployed" (legacy path). */
+  queue?: { cin7_purchase_id: string; order_number?: string | null; source?: string | null; combined_receiving_status?: string | null; reason: "unsynced" | "relisted" | "open_ttl" }[];
+  /** Result of replace_purchase_detail_guarded (default true = applied). */
+  guardedResult?: boolean;
+  /** Simulates the guarded function not being deployed. */
+  guardedMissing?: boolean;
+  /** Cached rows the refresh reads before deciding. */
+  cachedOrderLines?: { quantity: number }[];
+  cachedReceiptLines?: { quantity: number }[];
+  /** purchase ids the rejected-skip lookup on activity_log should return. */
+  rejectedPurchaseIds?: string[];
+  /** Existing suspected-void diagnostics (activity_log rows the backoff lookup should find). */
+  suspectVoidRows?: { purchase_id: string; created_at: string }[];
 }
 
 function makeFakeDb(opts: FakeDbOptions) {
@@ -45,6 +61,10 @@ function makeFakeDb(opts: FakeDbOptions) {
       },
       limit: (...args: unknown[]) => {
         calls.push({ table, op: "limit", args });
+        return obj;
+      },
+      gte: (...args: unknown[]) => {
+        calls.push({ table, op: "gte", args });
         return obj;
       },
       maybeSingle: async () => terminalResult(),
@@ -81,6 +101,37 @@ function makeFakeDb(opts: FakeDbOptions) {
           },
         };
       }
+      if (table === "purchase_order_lines" || table === "purchase_receipt_lines") {
+        return {
+          select: (...args: unknown[]) => {
+            calls.push({ table, op: "select", args });
+            const rows = table === "purchase_order_lines" ? (opts.cachedOrderLines ?? []) : (opts.cachedReceiptLines ?? []);
+            return chain(table, () => ({ data: rows, error: null }));
+          },
+        };
+      }
+      if (table === "activity_log") {
+        return {
+          select: (...args: unknown[]) => {
+            calls.push({ table, op: "select", args });
+            // The skip-map lookups select `detail, created_at` filtered by action; the throttle lookup selects `id`.
+            const wantsDetail = String(args[0]).startsWith("detail");
+            const startAt = calls.length;
+            return chain(table, () => {
+              const action = calls.slice(startAt).find((c) => c.table === "activity_log" && c.op === "eq" && c.args[0] === "action")?.args[1];
+              if (!wantsDetail) return { data: opts.recentFailureRows ?? [], error: null };
+              if (action === "diagnostic.purchase_likely_voided_at_source") {
+                return { data: (opts.suspectVoidRows ?? []).map((r) => ({ detail: { purchase_id: r.purchase_id }, created_at: r.created_at })), error: null };
+              }
+              return { data: (opts.rejectedPurchaseIds ?? []).map((id) => ({ detail: { purchase_id: id }, created_at: new Date().toISOString() })), error: null };
+            });
+          },
+          insert: (row: unknown) => {
+            calls.push({ table, op: "insert", args: [row] });
+            return Promise.resolve({ error: null });
+          },
+        };
+      }
       throw new Error(`Unhandled table in fake db: ${table}`);
     },
     // Security re-audit P0-7: syncPurchaseDetails now calls the atomic
@@ -90,6 +141,14 @@ function makeFakeDb(opts: FakeDbOptions) {
     // this just records the args it was called with.
     rpc: (fn: string, args: Record<string, unknown>) => {
       calls.push({ table: "__rpc__", op: fn, args: [args] });
+      if (fn === "purchase_refresh_queue") {
+        return Promise.resolve(opts.queue ? { data: opts.queue, error: null } : { data: null, error: { code: "PGRST202", message: "Could not find the function public.purchase_refresh_queue" } });
+      }
+      if (fn === "replace_purchase_detail_guarded") {
+        if (opts.guardedMissing) return Promise.resolve({ data: null, error: { code: "PGRST202", message: "Could not find the function public.replace_purchase_detail_guarded" } });
+        if (opts.rpcError) return Promise.resolve({ data: null, error: { message: opts.rpcError } });
+        return Promise.resolve({ data: opts.guardedResult ?? true, error: null });
+      }
       return Promise.resolve({ error: opts.rpcError ? { message: opts.rpcError } : null });
     },
   };
@@ -193,7 +252,8 @@ describe("syncInstancePurchases — list phase", () => {
   it("passes the stored watermark as UpdatedSince on a subsequent run", async () => {
     const { db } = makeFakeDb({ syncState: { last_list_synced_at: "2026-05-01T00:00:00.000Z" }, existingPurchases: [], pendingPurchases: [] });
     await syncInstancePurchases(db, "org1", "inst-1");
-    expect(fetchAllPurchasesList).toHaveBeenCalledWith(expect.objectContaining(creds), "2026-05-01T00:00:00.000Z");
+    // The watermark is held back by the pagination overlap (default 10 minutes) so entries shifted between pages are re-listed.
+    expect(fetchAllPurchasesList).toHaveBeenCalledWith(expect.objectContaining(creds), "2026-04-30T23:50:00.000Z");
   });
 
   it("advances the watermark even when nothing came back changed", async () => {
@@ -325,5 +385,496 @@ describe("syncOrgPurchases", () => {
     expect(results).toHaveLength(2);
     expect(results[0].errors[0].error).toBe("Instance not found");
     expect(results[1].instanceId).toBe("inst-2");
+  });
+});
+
+describe("syncInstancePurchases — duplicate-receipt regression and failure diagnostics", () => {
+  const aggregatedDetail = {
+    source: "advanced-purchase" as const,
+    // What fetchPurchaseDetail now returns for PO-14939: the four 21/20/106/233 lines already collapsed to one key.
+    receiptLines: [{ cardId: "card-1", productSku: "LBLINSTALLATIONNONIP", productName: "Installation", quantity: 380, receivedDate: "2026-10-29", location: "Main", locationId: "loc-1" }],
+    orderLines: [{ productSku: "LBLINSTALLATIONNONIP", productName: "Installation", quantity: 380 }],
+    isDropShip: false,
+  };
+
+  it("PO-14939: sends one row per (card_id, product_sku) with the 380 total to the atomic replace", async () => {
+    vi.mocked(fetchPurchaseDetail).mockResolvedValueOnce(aggregatedDetail);
+    const { db, calls } = makeFakeDb({ existingPurchases: [], pendingPurchases: [{ cin7_purchase_id: "po-14939", order_number: "PO-14939" } as { cin7_purchase_id: string }] });
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1");
+
+    expect(summary).toMatchObject({ detailSynced: 1, detailFailed: 0 });
+    const args = calls.find((c) => c.table === "__rpc__" && c.op === "replace_purchase_detail")?.args[0] as { p_receipt_lines: { card_id: string; product_sku: string; quantity: number }[] };
+    const keys = args.p_receipt_lines.map((l) => `${l.card_id}|${l.product_sku}`);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(args.p_receipt_lines.reduce((n, l) => n + l.quantity, 0)).toBe(380);
+  });
+
+  it("repeated synchronisation sends the identical payload each time (replace is idempotent) and records no failures", async () => {
+    vi.mocked(fetchPurchaseDetail).mockResolvedValue(aggregatedDetail);
+    const first = makeFakeDb({ existingPurchases: [], pendingPurchases: [{ cin7_purchase_id: "po-14939" }] });
+    const second = makeFakeDb({ existingPurchases: [], pendingPurchases: [{ cin7_purchase_id: "po-14939" }] });
+
+    await syncInstancePurchases(first.db, "org1", "inst-1");
+    await syncInstancePurchases(second.db, "org1", "inst-1");
+
+    const payload = (c: { calls: { table: string; op: string; args: unknown[] }[] }) => c.calls.find((x) => x.table === "__rpc__" && x.op === "replace_purchase_detail")?.args[0];
+    expect(payload(second)).toEqual(payload(first));
+    expect(first.calls.some((c) => c.table === "activity_log" && c.op === "insert")).toBe(false);
+  });
+
+  it("a failed detail sync is recorded as a sanitised, persistent diagnostic naming the PO — and does not abort the batch", async () => {
+    vi.mocked(fetchPurchaseDetail)
+      .mockResolvedValueOnce({ source: "purchase", receiptLines: [], orderLines: [], isDropShip: false })
+      .mockResolvedValueOnce({ source: "purchase", receiptLines: [], orderLines: [], isDropShip: false });
+    const { db, calls } = makeFakeDb({
+      existingPurchases: [],
+      pendingPurchases: [{ cin7_purchase_id: "po-14939", order_number: "PO-14939" } as { cin7_purchase_id: string }, { cin7_purchase_id: "po-2" }],
+      rpcError: 'duplicate key value violates unique constraint "purchase_receipt_lines_pkey" Key (org_id, instance_id, card_id, product_sku)=(11111111-2222-3333-4444-555555555555, x, y, z) already exists.',
+    });
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1");
+
+    expect(summary.detailFailed).toBe(2);
+    const insert = calls.find((c) => c.table === "activity_log" && c.op === "insert")?.args[0] as Record<string, unknown>;
+    expect(insert).toMatchObject({ org_id: "org1", instance_id: "inst-1", action: "diagnostic.purchase_detail_sync_failed" });
+    expect(String(insert.summary)).toContain("PO-14939");
+    expect(JSON.stringify(insert)).not.toMatch(/11111111-2222|card_id, product_sku/);
+    expect((insert.detail as Record<string, unknown>).code).toBe("duplicate_key");
+  });
+
+  it("does not re-record the same PO's failure inside the throttle window (no log spam every 15 minutes)", async () => {
+    vi.mocked(fetchPurchaseDetail).mockRejectedValueOnce(new Error("boom"));
+    const { db, calls } = makeFakeDb({ existingPurchases: [], pendingPurchases: [{ cin7_purchase_id: "po-1" }], recentFailureRows: [{ id: "already" }] });
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1");
+
+    expect(summary.detailFailed).toBe(1);
+    expect(calls.some((c) => c.table === "activity_log" && c.op === "insert")).toBe(false);
+  });
+
+  it("a failing diagnostic write never fails or aborts the sync", async () => {
+    vi.mocked(fetchPurchaseDetail).mockRejectedValueOnce(new Error("boom")).mockResolvedValueOnce({ source: "purchase", receiptLines: [], orderLines: [], isDropShip: false });
+    const { db } = makeFakeDb({ existingPurchases: [], pendingPurchases: [{ cin7_purchase_id: "po-1" }, { cin7_purchase_id: "po-2" }] });
+    const original = db.from.bind(db);
+    (db as unknown as { from: (t: string) => unknown }).from = (t: string) => {
+      if (t === "activity_log") throw new Error("activity_log down");
+      return original(t);
+    };
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1");
+
+    expect(summary).toMatchObject({ detailSynced: 1, detailFailed: 1 });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Issue #206 / migration 0125: prioritised refresh queue, guards, budget and instrumentation.
+// ---------------------------------------------------------------------------------------------------------------
+describe("purchase detail refresh (0125 queue)", () => {
+  const cfg = { maxPerRun: 3, openTtlHours: 24, listOverlapMinutes: 0, suspectVoidBackoffHours: 168, safetyMs: 45_000 };
+  const full = (over: Record<string, unknown> = {}) => ({
+    source: "purchase" as const,
+    isDropShip: false,
+    receiptSectionPresent: true,
+    orderLines: [{ productSku: "A", productName: "A", quantity: 10 }],
+    receiptLines: [{ cardId: "c1", productSku: "A", productName: "A", quantity: 4, receivedDate: "2026-11-01", location: "Main", locationId: "l" }],
+    ...over,
+  });
+  const q = (id: string, reason: "unsynced" | "relisted" | "open_ttl", extra: Record<string, unknown> = {}) => ({ cin7_purchase_id: id, order_number: `PO-${id}`, source: "purchase", combined_receiving_status: "PARTIALLY RECEIVED", reason, ...extra });
+  const rpcCalls = (calls: { table: string; op: string; args: unknown[] }[], fn: string) => calls.filter((c) => c.table === "__rpc__" && c.op === fn);
+
+  it("asks the queue function for THIS org+instance only, and fetches each PO with its source hint", async () => {
+    vi.mocked(fetchPurchaseDetail).mockResolvedValue(full({ source: "advanced-purchase" }));
+    const { db, calls } = makeFakeDb({ queue: [q("p1", "unsynced", { source: "advanced-purchase" })], cachedOrderLines: [], cachedReceiptLines: [] });
+
+    await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+    expect(rpcCalls(calls, "purchase_refresh_queue")[0].args[0]).toMatchObject({ p_org_id: "org1", p_instance_id: "inst-1", p_open_ttl_hours: 24 });
+    expect(vi.mocked(fetchPurchaseDetail)).toHaveBeenCalledWith(expect.anything(), "p1", { sourceHint: "advanced-purchase" });
+    // cached-detail lookups are tenant scoped
+    const eqs = calls.filter((c) => (c.table === "purchase_order_lines" || c.table === "purchase_receipt_lines") && c.op === "eq").map((c) => c.args.join("="));
+    expect(eqs).toEqual(expect.arrayContaining(["org_id=org1", "instance_id=inst-1", "cin7_purchase_id=p1"]));
+  });
+
+  it("caps the work per run at maxPerRun (the capacity this route reserves)", async () => {
+    vi.mocked(fetchPurchaseDetail).mockResolvedValue(full());
+    const queue = ["p1", "p2", "p3", "p4", "p5"].map((id) => q(id, "relisted"));
+    const { db } = makeFakeDb({ queue, cachedOrderLines: [{ quantity: 10 }], cachedReceiptLines: [{ quantity: 4 }] });
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+    expect(vi.mocked(fetchPurchaseDetail)).toHaveBeenCalledTimes(3);
+    expect(summary.detailSynced).toBe(3);
+  });
+
+  it("refreshes a RELISTED PO whose receipts changed with NO status change, via the newer-wins guard", async () => {
+    vi.mocked(fetchPurchaseDetail).mockResolvedValue(full({ receiptLines: [
+      { cardId: "c1", productSku: "A", productName: "A", quantity: 4, receivedDate: "2026-11-01", location: "Main", locationId: "l" },
+      { cardId: "c2", productSku: "A", productName: "A", quantity: 3, receivedDate: "2026-11-05", location: "Main", locationId: "l" },
+    ] }));
+    const { db, calls } = makeFakeDb({ queue: [q("p1", "relisted")], cachedOrderLines: [{ quantity: 10 }], cachedReceiptLines: [{ quantity: 4 }] });
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+    expect(summary).toMatchObject({ detailSynced: 1, detailRefreshed: 1, refreshChanged: 1, refreshChangedWithoutRelist: 0, refreshRejected: 0 });
+    const guarded = rpcCalls(calls, "replace_purchase_detail_guarded")[0].args[0] as { p_receipt_lines: unknown[]; p_fetched_at: string };
+    expect(guarded.p_receipt_lines).toHaveLength(2);
+    expect(Date.parse(guarded.p_fetched_at)).not.toBeNaN();
+  });
+
+  it("an OPEN PO past its TTL that CHANGED without Cin7 relisting it is counted and recorded (evidence about LastUpdatedDate)", async () => {
+    vi.mocked(fetchPurchaseDetail).mockResolvedValue(full({ receiptLines: [{ cardId: "c1", productSku: "A", productName: "A", quantity: 9, receivedDate: "2026-11-02", location: "Main", locationId: "l" }] }));
+    const { db, calls } = makeFakeDb({ queue: [q("p1", "open_ttl")], cachedOrderLines: [{ quantity: 10 }], cachedReceiptLines: [{ quantity: 4 }] });
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+    expect(summary).toMatchObject({ detailRefreshed: 1, refreshChanged: 1, refreshChangedWithoutRelist: 1 });
+    const insert = calls.find((c) => c.table === "activity_log" && c.op === "insert")?.args[0] as Record<string, unknown>;
+    expect(insert).toMatchObject({ action: "diagnostic.purchase_refresh_changed_without_relist", org_id: "org1", instance_id: "inst-1" });
+    expect((insert.detail as { before: { receiptQty: number }; after: { receiptQty: number } }).before.receiptQty).toBe(4);
+    expect((insert.detail as { after: { receiptQty: number } }).after.receiptQty).toBe(9);
+  });
+
+  it("an unchanged open-TTL revalidation is applied quietly (no diagnostic, not counted as changed)", async () => {
+    vi.mocked(fetchPurchaseDetail).mockResolvedValue(full());
+    const { db, calls } = makeFakeDb({ queue: [q("p1", "open_ttl")], cachedOrderLines: [{ quantity: 10 }], cachedReceiptLines: [{ quantity: 4 }] });
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+    expect(summary).toMatchObject({ detailSynced: 1, detailRefreshed: 1, refreshChanged: 0, refreshChangedWithoutRelist: 0 });
+    expect(calls.some((c) => c.table === "activity_log" && c.op === "insert")).toBe(false);
+  });
+
+  it("PRESERVES cached receipts when the response is contradictory: zero receipts while Cin7's list says PARTIALLY RECEIVED", async () => {
+    vi.mocked(fetchPurchaseDetail).mockResolvedValue(full({ receiptLines: [] }));
+    const { db, calls } = makeFakeDb({ queue: [q("p1", "relisted")], cachedOrderLines: [{ quantity: 10 }], cachedReceiptLines: [{ quantity: 4 }] });
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+    expect(summary).toMatchObject({ detailSynced: 0, detailFailed: 0, refreshRejected: 1 });
+    expect(rpcCalls(calls, "replace_purchase_detail_guarded")).toHaveLength(0);
+    expect(rpcCalls(calls, "replace_purchase_detail")).toHaveLength(0);
+    const insert = calls.find((c) => c.table === "activity_log" && c.op === "insert")?.args[0] as Record<string, unknown>;
+    expect(insert).toMatchObject({ action: "diagnostic.purchase_refresh_rejected" });
+    expect((insert.detail as { code: string }).code).toBe("zero_receipts_contradicts_status");
+  });
+
+  it("PRESERVES cached receipts when the response has no receipt section at all", async () => {
+    vi.mocked(fetchPurchaseDetail).mockResolvedValue(full({ receiptLines: [], receiptSectionPresent: false }));
+    const { db, calls } = makeFakeDb({ queue: [q("p1", "relisted", { combined_receiving_status: "NOT RECEIVED" })], cachedOrderLines: [{ quantity: 10 }], cachedReceiptLines: [{ quantity: 4 }] });
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+    expect(summary.refreshRejected).toBe(1);
+    expect(rpcCalls(calls, "replace_purchase_detail_guarded")).toHaveLength(0);
+  });
+
+  it("applies zero receipts when the list status is NOT RECEIVED (a legitimately reversed receipt)", async () => {
+    vi.mocked(fetchPurchaseDetail).mockResolvedValue(full({ receiptLines: [] }));
+    const { db } = makeFakeDb({ queue: [q("p1", "relisted", { combined_receiving_status: "NOT RECEIVED" })], cachedOrderLines: [{ quantity: 10 }], cachedReceiptLines: [{ quantity: 4 }] });
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+    expect(summary).toMatchObject({ detailSynced: 1, refreshChanged: 1, refreshRejected: 0 });
+  });
+
+  it("a fetch that loses the race to a newer stored detail is skipped, not applied and not an error", async () => {
+    vi.mocked(fetchPurchaseDetail).mockResolvedValue(full());
+    const { db } = makeFakeDb({ queue: [q("p1", "relisted")], guardedResult: false, cachedOrderLines: [{ quantity: 10 }], cachedReceiptLines: [{ quantity: 4 }] });
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+    expect(summary).toMatchObject({ detailSynced: 0, detailFailed: 0, skippedNewer: 1 });
+  });
+
+  it("falls back to replace_purchase_detail if the guarded function is not deployed", async () => {
+    vi.mocked(fetchPurchaseDetail).mockResolvedValue(full());
+    const { db, calls } = makeFakeDb({ queue: [q("p1", "unsynced")], guardedMissing: true });
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+    expect(summary.detailSynced).toBe(1);
+    expect(rpcCalls(calls, "replace_purchase_detail")).toHaveLength(1);
+  });
+
+  it("uses the legacy unsynced-only path (and says so) when the queue function is not deployed yet", async () => {
+    vi.mocked(fetchPurchaseDetail).mockResolvedValue(full());
+    const { db } = makeFakeDb({ pendingPurchases: [{ cin7_purchase_id: "p1" }] });
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+    expect(summary).toMatchObject({ legacyQueue: true, detailSynced: 1 });
+  });
+
+  it("honours the cron time budget: starts no fetch when less than safetyMs remains", async () => {
+    vi.mocked(fetchPurchaseDetail).mockResolvedValue(full());
+    const { db } = makeFakeDb({ queue: [q("p1", "relisted"), q("p2", "relisted")] });
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1", { config: cfg, deadlineAt: Date.now() + 10_000 });
+
+    expect(vi.mocked(fetchPurchaseDetail)).not.toHaveBeenCalled();
+    expect(summary.stoppedEarly).toBe("budget");
+  });
+
+  it("syncOrgPurchases passes the cron's remaining budget down: with 1s left no fetch starts; with no budget it runs", async () => {
+    vi.mocked(fetchPurchaseDetail).mockResolvedValue(full());
+    const build = () => {
+      const base = makeFakeDb({ queue: [q("p1", "relisted")], cachedOrderLines: [{ quantity: 10 }], cachedReceiptLines: [{ quantity: 4 }] });
+      const inner = base.db as unknown as { from: (t: string) => unknown; rpc: unknown };
+      return {
+        db: {
+          rpc: inner.rpc,
+          from: (t: string) =>
+            t === "cin7_instances"
+              ? { select: () => ({ eq: () => ({ then: (resolve: (v: unknown) => void) => resolve({ data: [{ id: "inst-1", org_id: "org1" }], error: null }) }) }) }
+              : inner.from(t),
+        } as unknown as SupabaseClient,
+      };
+    };
+
+    const limited = await syncOrgPurchases(build().db, undefined, undefined, 1_000);
+    expect(limited[0].stoppedEarly).toBe("budget");
+    expect(vi.mocked(fetchPurchaseDetail)).not.toHaveBeenCalled();
+
+    const unlimited = await syncOrgPurchases(build().db);
+    expect(unlimited[0].detailSynced).toBe(1);
+    expect(vi.mocked(fetchPurchaseDetail)).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops spending Cin7 budget on an instance the moment it is rate limited", async () => {
+    vi.mocked(fetchPurchaseDetail).mockRejectedValue(new Cin7ApiError(503, "Rate limited (60 calls/min) and retries exhausted", true));
+    const { db } = makeFakeDb({ queue: [q("p1", "relisted"), q("p2", "relisted"), q("p3", "relisted")] });
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+    expect(vi.mocked(fetchPurchaseDetail)).toHaveBeenCalledTimes(1);
+    expect(summary).toMatchObject({ stoppedEarly: "rate_limit", detailFailed: 1 });
+  });
+
+  it("a PO whose refresh was recently REJECTED is skipped so it cannot hog the head of the queue", async () => {
+    vi.mocked(fetchPurchaseDetail).mockResolvedValue(full());
+    const { db } = makeFakeDb({ queue: [q("rej", "relisted"), q("ok1", "relisted")], rejectedPurchaseIds: ["rej"], cachedOrderLines: [{ quantity: 10 }], cachedReceiptLines: [{ quantity: 4 }] });
+
+    await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+    const fetched = vi.mocked(fetchPurchaseDetail).mock.calls.map((c) => c[1]);
+    expect(fetched).toEqual(["ok1"]);
+  });
+
+  describe("suspected void at source (empty order lines for a PO that has cached lines)", () => {
+    const hoursAgo = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
+    const empty = () => full({ orderLines: [], receiptLines: [] });
+    const cachedOpts = { cachedOrderLines: [{ quantity: 10 }], cachedReceiptLines: [] as { quantity: number }[] };
+    const insertOf = (calls: { table: string; op: string; args: unknown[] }[]) => calls.find((c) => c.table === "activity_log" && c.op === "insert")?.args[0] as Record<string, unknown>;
+
+    it("records LIKELY_VOIDED_AT_SOURCE, keeps ALL cached detail, writes no status, and never calls it confirmed", async () => {
+      vi.mocked(fetchPurchaseDetail).mockResolvedValue(empty());
+      const { db, calls } = makeFakeDb({ queue: [q("v1", "open_ttl", { combined_receiving_status: "NOT RECEIVED" })], ...cachedOpts });
+
+      const summary = await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+      expect(summary).toMatchObject({ detailSynced: 0, detailFailed: 0, refreshRejected: 1 });
+      const insert = insertOf(calls);
+      expect(insert).toMatchObject({ action: "diagnostic.purchase_likely_voided_at_source" });
+      expect((insert.detail as { code: string }).code).toBe("likely_voided_at_source");
+      expect(String(insert.summary)).toMatch(/suspected/i);
+      expect(String(insert.summary)).toMatch(/NOT confirmed/);
+      // data preservation: no replace of any kind, and no write to purchases (no VOIDED status inferred)
+      expect(rpcCalls(calls, "replace_purchase_detail_guarded")).toHaveLength(0);
+      expect(rpcCalls(calls, "replace_purchase_detail")).toHaveLength(0);
+      expect(calls.filter((c) => c.table === "purchases" && ["update", "upsert", "insert", "delete"].includes(c.op))).toHaveLength(0);
+      expect(JSON.stringify(calls)).not.toMatch(/"VOIDED"/);
+    });
+
+    it("a suspect-void PO is NOT re-fetched inside the (long) backoff, so it cannot waste calls or hog the queue", async () => {
+      vi.mocked(fetchPurchaseDetail).mockResolvedValue(full());
+      const { db, calls } = makeFakeDb({
+        queue: [q("v1", "open_ttl", { updated_at: hoursAgo(500) }), q("ok1", "open_ttl")],
+        suspectVoidRows: [{ purchase_id: "v1", created_at: hoursAgo(30) }], // 30h ago: far longer than the 6h generic skip, well inside 168h
+        ...cachedOpts,
+      });
+
+      await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+      expect(vi.mocked(fetchPurchaseDetail).mock.calls.map((c) => c[1])).toEqual(["ok1"]);
+      // the queue limit was widened by the skipped PO so it cannot starve the rest
+      expect(rpcCalls(calls, "purchase_refresh_queue")[0].args[0]).toMatchObject({ p_limit: cfg.maxPerRun + 1 + 40 });
+    });
+
+    it("the suspect-void lookup is tenant scoped and bounded by the configurable backoff window", async () => {
+      vi.mocked(fetchPurchaseDetail).mockResolvedValue(full());
+      const { db, calls } = makeFakeDb({ queue: [q("ok1", "open_ttl")], ...cachedOpts });
+
+      await syncInstancePurchases(db, "org1", "inst-1", { config: { ...cfg, suspectVoidBackoffHours: 72 } });
+
+      const log = calls.filter((c) => c.table === "activity_log");
+      expect(log.filter((c) => c.op === "eq").map((c) => c.args.join("="))).toEqual(
+        expect.arrayContaining(["org_id=org1", "instance_id=inst-1", "action=diagnostic.purchase_likely_voided_at_source"])
+      );
+      // one lookup is bounded by the configured 72h window (the other by the 6h rejected window)
+      const windows = log.filter((c) => c.op === "gte").map((c) => String(c.args[1]));
+      expect(windows.some((t) => t > hoursAgo(73) && t < hoursAgo(71))).toBe(true);
+    });
+
+    it("SOURCE-CONFIRMED CHANGE BYPASSES the backoff: Cin7 relisted the PO AFTER the suspicion, so it is re-fetched at once", async () => {
+      vi.mocked(fetchPurchaseDetail).mockResolvedValue(full());
+      const { db } = makeFakeDb({
+        queue: [q("v1", "relisted", { updated_at: hoursAgo(2) })],
+        suspectVoidRows: [{ purchase_id: "v1", created_at: hoursAgo(30) }],
+        ...cachedOpts,
+      });
+
+      const summary = await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+      expect(vi.mocked(fetchPurchaseDetail).mock.calls.map((c) => c[1])).toEqual(["v1"]);
+      expect(summary.detailSynced).toBe(1); // the real (restored) detail is applied
+    });
+
+    it("a receiving-status change (detail cleared => reason unsynced) also bypasses the backoff", async () => {
+      vi.mocked(fetchPurchaseDetail).mockResolvedValue(full());
+      const { db } = makeFakeDb({
+        queue: [q("v1", "unsynced", { updated_at: hoursAgo(500) })],
+        suspectVoidRows: [{ purchase_id: "v1", created_at: hoursAgo(30) }],
+        ...cachedOpts,
+      });
+
+      await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+      expect(vi.mocked(fetchPurchaseDetail).mock.calls.map((c) => c[1])).toEqual(["v1"]);
+    });
+
+    it("once the backoff has expired (no record inside the window) the PO is re-checked on the TTL again", async () => {
+      vi.mocked(fetchPurchaseDetail).mockResolvedValue(empty());
+      const { db } = makeFakeDb({ queue: [q("v1", "open_ttl")], suspectVoidRows: [], ...cachedOpts });
+
+      const summary = await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+      expect(vi.mocked(fetchPurchaseDetail)).toHaveBeenCalledTimes(1);
+      expect(summary.refreshRejected).toBe(1);
+    });
+
+    it("a relist AFTER an earlier suspicion that is STILL empty is recorded again (new evidence is not throttled away)", async () => {
+      vi.mocked(fetchPurchaseDetail).mockResolvedValue(empty());
+      const { db, calls } = makeFakeDb({
+        queue: [q("v1", "relisted", { updated_at: hoursAgo(2) })],
+        suspectVoidRows: [{ purchase_id: "v1", created_at: hoursAgo(30) }],
+        recentFailureRows: [], // throttle lookup finds nothing newer than the relist
+        ...cachedOpts,
+      });
+
+      await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+      expect(insertOf(calls)).toMatchObject({ action: "diagnostic.purchase_likely_voided_at_source" });
+      // the throttle lookup was bounded by the relist time (not just the window), proving the supersede rule is applied
+      const gte = calls.filter((c) => c.table === "activity_log" && c.op === "gte").map((c) => String(c.args[1]));
+      expect(gte.some((t) => t > hoursAgo(3))).toBe(true);
+    });
+
+    it("other rejection codes keep the original 6h skip and the original diagnostic (unchanged behaviour)", async () => {
+      vi.mocked(fetchPurchaseDetail).mockResolvedValue(full({ receiptLines: [] }));
+      const { db, calls } = makeFakeDb({ queue: [q("p1", "relisted")], cachedOrderLines: [{ quantity: 10 }], cachedReceiptLines: [{ quantity: 4 }] });
+
+      await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+      expect(insertOf(calls)).toMatchObject({ action: "diagnostic.purchase_refresh_rejected" });
+    });
+  });
+
+  it("partial failure: one PO failing does not stop the others, and failures are persisted", async () => {
+    vi.mocked(fetchPurchaseDetail).mockRejectedValueOnce(new Error("boom")).mockResolvedValue(full());
+    const { db, calls } = makeFakeDb({ queue: [q("p1", "relisted"), q("p2", "relisted")], cachedOrderLines: [{ quantity: 10 }], cachedReceiptLines: [{ quantity: 4 }] });
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+    expect(summary).toMatchObject({ detailSynced: 1, detailFailed: 1 });
+    expect(calls.some((c) => c.table === "activity_log" && c.op === "insert" && (c.args[0] as { action: string }).action === "diagnostic.purchase_detail_sync_failed")).toBe(true);
+  });
+
+  it("records receipt lines WITHOUT a CardID (not persisted) as a throttled diagnostic — instrumentation only", async () => {
+    vi.mocked(fetchPurchaseDetail).mockResolvedValue(full({ droppedReceiptLines: { count: 2, quantity: 7 } }));
+    const { db, calls } = makeFakeDb({ queue: [q("p1", "unsynced")] });
+
+    await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+    const insert = calls.find((c) => c.table === "activity_log" && c.op === "insert")?.args[0] as Record<string, unknown>;
+    expect(insert).toMatchObject({ action: "diagnostic.receipt_lines_without_cardid" });
+    expect(insert.detail).toMatchObject({ lines: 2, quantity: 7 });
+    // persistence is unchanged: only the keyed line is sent
+    const sent = rpcCalls(calls, "replace_purchase_detail_guarded")[0].args[0] as { p_receipt_lines: unknown[] };
+    expect(sent.p_receipt_lines).toHaveLength(1);
+  });
+
+  it("nil-CardID lines of different POs are passed through unchanged (the 0124 key keeps them apart)", async () => {
+    const nil = "00000000-0000-0000-0000-000000000000";
+    vi.mocked(fetchPurchaseDetail).mockResolvedValue(full({ receiptLines: [{ cardId: nil, productSku: "LBLINSTALLATIONNONIP", productName: "x", quantity: 380, receivedDate: null, location: "Main", locationId: "l" }] }));
+    const { db, calls } = makeFakeDb({ queue: [q("po-a", "unsynced"), q("po-b", "unsynced")] });
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+    expect(summary.detailSynced).toBe(2);
+    const sent = rpcCalls(calls, "replace_purchase_detail_guarded").map((c) => (c.args[0] as { p_cin7_purchase_id: string; p_receipt_lines: { card_id: string; quantity: number }[] }));
+    expect(sent.map((x) => x.p_cin7_purchase_id)).toEqual(["po-a", "po-b"]);
+    expect(sent.every((x) => x.p_receipt_lines[0].card_id === nil && x.p_receipt_lines[0].quantity === 380)).toBe(true);
+  });
+
+  it("repeating the same refresh sends the identical payload both times (idempotent)", async () => {
+    vi.mocked(fetchPurchaseDetail).mockResolvedValue(full());
+    const run = async () => {
+      const { db, calls } = makeFakeDb({ queue: [q("p1", "relisted")], cachedOrderLines: [{ quantity: 10 }], cachedReceiptLines: [{ quantity: 4 }] });
+      await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+      const sent = { ...(rpcCalls(calls, "replace_purchase_detail_guarded")[0].args[0] as Record<string, unknown>) };
+      delete sent.p_fetched_at; // the fetch-start timestamp legitimately differs between runs
+      return sent;
+    };
+    expect(await run()).toEqual(await run());
+  });
+});
+
+describe("purchase list phase — header status and pagination overlap", () => {
+  const cfg = { maxPerRun: 3, openTtlHours: 24, listOverlapMinutes: 10, suspectVoidBackoffHours: 168, safetyMs: 45_000 };
+
+  it("detects a header Status change with an UNCHANGED receiving status, and keeps the cached detail (the relist queues the refresh)", async () => {
+    vi.mocked(fetchAllPurchasesList).mockResolvedValue([{ ID: "po-1", Status: "COMPLETED", CombinedReceivingStatus: "FULLY RECEIVED" }]);
+    const { db, calls } = makeFakeDb({
+      existingPurchases: [{ cin7_purchase_id: "po-1", combined_receiving_status: "FULLY RECEIVED", status: "INVOICED", detail_synced_at: "2026-08-01T00:00:00Z" } as never],
+    });
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+    expect(summary.listStatusChanged).toBe(1);
+    const rows = calls.find((c) => c.table === "purchases" && c.op === "upsert")!.args[0] as { detail_synced_at: string | null; updated_at: string }[];
+    expect(rows[0].detail_synced_at).toBe("2026-08-01T00:00:00Z"); // NOT cleared: last-known quantities stay visible
+    expect(Date.parse(rows[0].updated_at)).toBeGreaterThan(Date.parse("2026-08-01T00:00:00Z")); // …but the bump makes it relisted-after-fetch
+  });
+
+  it("still clears detail_synced_at when the RECEIVING status changes (existing behaviour)", async () => {
+    vi.mocked(fetchAllPurchasesList).mockResolvedValue([{ ID: "po-1", Status: "RECEIVING", CombinedReceivingStatus: "FULLY RECEIVED" }]);
+    const { db, calls } = makeFakeDb({ existingPurchases: [{ cin7_purchase_id: "po-1", combined_receiving_status: "PARTIALLY RECEIVED", status: "RECEIVING", detail_synced_at: "2026-08-01T00:00:00Z" } as never] });
+
+    await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+
+    const rows = calls.find((c) => c.table === "purchases" && c.op === "upsert")!.args[0] as { detail_synced_at: string | null }[];
+    expect(rows[0].detail_synced_at).toBeNull();
+  });
+
+  it("holds the list watermark back by the overlap, and only on subsequent runs", async () => {
+    const { db } = makeFakeDb({ syncState: { last_list_synced_at: "2026-05-01T00:30:00.000Z" } });
+    await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+    expect(fetchAllPurchasesList).toHaveBeenLastCalledWith(expect.anything(), "2026-05-01T00:20:00.000Z");
+
+    vi.mocked(fetchAllPurchasesList).mockClear();
+    const first = makeFakeDb({ syncState: null });
+    await syncInstancePurchases(first.db, "org1", "inst-1", { config: cfg });
+    const since = vi.mocked(fetchAllPurchasesList).mock.calls[0][1] as string;
+    expect(Date.now() - Date.parse(since)).toBeGreaterThan(300 * 24 * 3600 * 1000); // first run keeps the 12-month backfill
+  });
+
+  it("still excludes VOIDED purchases from the list upsert exactly as before (downstream consumers unchanged)", async () => {
+    vi.mocked(fetchAllPurchasesList).mockResolvedValue([{ ID: "po-v", Status: "VOIDED", CombinedReceivingStatus: "NOT RECEIVED" }]);
+    const { db, calls } = makeFakeDb({});
+    const summary = await syncInstancePurchases(db, "org1", "inst-1", { config: cfg });
+    expect(summary.listSynced).toBe(0);
+    expect(calls.some((c) => c.table === "purchases" && c.op === "upsert")).toBe(false);
   });
 });

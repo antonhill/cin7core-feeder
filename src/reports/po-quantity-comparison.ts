@@ -1,0 +1,481 @@
+/**
+ * Purchase Order Quantity Comparison — pure reconciliation logic (no I/O).
+ *
+ * Reads only what the purchase sync already caches (`purchases`,
+ * `purchase_order_lines`, `purchase_receipt_lines`). Quantities are
+ * aggregated per (instance, PO, SKU): Cin7 receipt lines carry no order-line
+ * key, so a line-level join would be unsupported (and would double-count the
+ * ordered quantity whenever a SKU has several receipts). Duplicate-SKU order
+ * lines are therefore summed, and `orderLineCount` says how many were merged.
+ *
+ * Correctness rules enforced here:
+ * - A PO whose detail has not synced (`detail_synced_at` null) gets ONE row
+ *   with null quantities — never zero. Any order/receipt lines still in the
+ *   cache for it are leftovers from an earlier fetch and are ignored.
+ * - A PO with detail synced but no cached lines at all is also incomplete.
+ * - A PO re-listed after its detail was fetched (`updated_at` later than
+ *   `detail_synced_at`) is shown but flagged possibly stale: the sync only
+ *   re-fetches detail when the receiving status changes, so e.g. a further
+ *   partial receipt can leave the cached received quantity out of date.
+ * - Outstanding = ordered − received and is never clamped: over-receipts
+ *   show as negatives.
+ */
+
+export type LineStatus = "fully_received" | "partially_received" | "not_received" | "over_received";
+
+export type DataQuality = "ok" | "detail_not_synced" | "no_lines_cached" | "possibly_stale" | "status_mismatch" | "no_product_lines";
+
+/**
+ * The four states shown to users. Complete; Incomplete (cache has no usable lines — a Toolbox data gap); Potentially stale (cache refresh
+ * pending — a Toolbox data gap); Needs review (Cin7's own receiving status disagrees with its received lines — the cache cannot tell whether
+ * that is a Cin7 source inconsistency or a cache discrepancy, so it is NOT labelled a Toolbox defect). Only Complete rows feed trusted totals.
+ */
+export type QualityGroup = "complete" | "incomplete" | "stale" | "review" | "not_applicable";
+
+export function qualityGroup(q: DataQuality): QualityGroup {
+  switch (q) {
+    case "ok":
+      return "complete";
+    case "possibly_stale":
+      return "stale";
+    case "status_mismatch":
+      return "review";
+    case "no_product_lines":
+      return "not_applicable";
+    default:
+      return "incomplete";
+  }
+}
+
+export interface PurchaseHeader {
+  instance_id: string;
+  cin7_purchase_id: string;
+  order_number: string | null;
+  supplier_name: string | null;
+  status: string | null;
+  combined_receiving_status: string | null;
+  order_date: string | null;
+  is_drop_ship: boolean | null;
+  /** Which Cin7 endpoint served the detail: "purchase" (classic) or "advanced-purchase". */
+  source?: string | null;
+  detail_synced_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface OrderLineInput {
+  instance_id: string;
+  cin7_purchase_id: string;
+  product_sku: string | null;
+  product_name: string | null;
+  quantity: number | string | null;
+}
+
+export interface ReceiptLineInput {
+  instance_id: string;
+  cin7_purchase_id: string;
+  product_sku: string | null;
+  product_name: string | null;
+  quantity: number | string | null;
+}
+
+export interface PoQuantityRow {
+  /** Stable React/sort key: instance|purchase|sku. */
+  key: string;
+  instanceId: string;
+  instanceName: string;
+  cin7PurchaseId: string;
+  orderNumber: string | null;
+  supplierName: string | null;
+  orderDate: string | null;
+  poStatus: string | null;
+  receivingStatus: string | null;
+  isDropShip: boolean;
+  /** Null only on the single placeholder row of a PO with incomplete detail. */
+  sku: string | null;
+  productName: string | null;
+  /** How many order lines were summed into `ordered` (>1 = duplicate-SKU lines). */
+  orderLineCount: number;
+  ordered: number | null;
+  received: number | null;
+  /** ordered − received, never clamped. */
+  outstanding: number | null;
+  lineStatus: LineStatus | null;
+  /** Received against a SKU that is not on the PO at all (ordered 0). */
+  notOnOrder: boolean;
+  dataQuality: DataQuality;
+  /** Why the row is not Complete (null when it is). */
+  dataQualityNote: string | null;
+  detailSyncedAt: string | null;
+}
+
+/** Float-noise guard for summing decimal quantities (Cin7 allows fractional units). */
+function round(n: number): number {
+  return Math.round(n * 1e6) / 1e6;
+}
+
+function toNum(v: number | string | null | undefined): number {
+  const n = Number(v ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export const NO_SKU_LABEL = "(no SKU)";
+
+function normSku(sku: string | null | undefined): string {
+  const s = (sku ?? "").trim();
+  return s === "" ? NO_SKU_LABEL : s;
+}
+
+export function classifyLine(ordered: number, received: number): LineStatus {
+  if (received > ordered) return "over_received";
+  if (received === 0) return "not_received";
+  if (received === ordered) return "fully_received";
+  return "partially_received";
+}
+
+function poKey(instanceId: string, purchaseId: string): string {
+  return `${instanceId}|${purchaseId}`;
+}
+
+interface SkuAgg {
+  name: string | null;
+  orderedLines: number;
+  ordered: number;
+  received: number;
+}
+
+/** Latest recorded detail-sync failure for a PO (from the persisted sync diagnostics), keyed `${instanceId}|${purchaseId}`. */
+export type SyncFailureMap = Record<string, { at: string; message: string }>;
+
+function placeholderRow(h: PurchaseHeader, instanceName: string, quality: DataQuality, failure?: { at: string; message: string }): PoQuantityRow {
+  return {
+    key: `${poKey(h.instance_id, h.cin7_purchase_id)}|`,
+    instanceId: h.instance_id,
+    instanceName,
+    cin7PurchaseId: h.cin7_purchase_id,
+    orderNumber: h.order_number,
+    supplierName: h.supplier_name,
+    orderDate: h.order_date,
+    poStatus: h.status,
+    receivingStatus: h.combined_receiving_status,
+    isDropShip: Boolean(h.is_drop_ship),
+    sku: null,
+    productName: null,
+    orderLineCount: 0,
+    ordered: null,
+    received: null,
+    outstanding: null,
+    lineStatus: null,
+    notOnOrder: false,
+    dataQuality: quality,
+    dataQualityNote: placeholderNote(quality, failure),
+    detailSyncedAt: h.detail_synced_at,
+  };
+}
+
+/**
+ * A charge/service-only purchase: Cin7 serves it from the Advanced-purchase
+ * endpoint (Service Purchases are an Advanced type), reports receiving as
+ * NOT AVAILABLE, and it has left the unfinished stages. Anything else with no
+ * lines — a Classic PO, an unfinished DRAFT/ORDERING Advanced PO, or a normal
+ * receiving status — stays Incomplete, never assumed to be a service purchase.
+ */
+export function isNoProductLinePurchase(h: Pick<PurchaseHeader, "source" | "combined_receiving_status" | "status">): boolean {
+  if (h.source !== "advanced-purchase") return false;
+  if (h.combined_receiving_status !== "NOT AVAILABLE") return false;
+  const status = (h.status ?? "").toUpperCase();
+  return status !== "" && status !== "DRAFT" && status !== "ORDERING";
+}
+
+function placeholderNote(quality: DataQuality, failure?: { at: string; message: string }): string {
+  if (quality === "detail_not_synced") {
+    return failure
+      ? `PO detail has not synced. Last recorded failure (${failure.at.slice(0, 10)}): ${failure.message}`
+      : "PO detail has not synced (never fetched, or failing without a recorded reason).";
+  }
+  if (quality === "no_product_lines") {
+    return "Advanced purchase with receiving NOT AVAILABLE and no product lines in Cin7 (e.g. a Service Purchase with additional charges). Nothing to compare — not a data gap.";
+  }
+  return "PO detail synced but no order or receipt lines are cached. Verify the PO in Cin7.";
+}
+
+/**
+ * An open PO (NOT / PARTIALLY RECEIVED) whose detail has not been re-verified within this many hours is shown
+ * as potentially stale even if Cin7 never relisted it: Cin7's LastUpdatedDate is not proven to move on
+ * receipt-only changes, and the sync re-verifies open POs on a 24h TTL, so anything older than 3× that has
+ * missed its refresh. Closed POs are only stale when relisted after their last fetch.
+ */
+export const OPEN_PO_MAX_DETAIL_AGE_HOURS = 72;
+
+export type StaleReason = "relisted" | "open_unverified";
+
+export function isOpenReceivingStatus(status: string | null | undefined): boolean {
+  return status === "NOT RECEIVED" || status === "PARTIALLY RECEIVED";
+}
+
+/** Why the cached detail may be out of date, or null. Relisted-after-fetch has a 1s tolerance for same-run ordering. */
+export function staleReason(
+  h: Pick<PurchaseHeader, "detail_synced_at" | "updated_at" | "combined_receiving_status">,
+  now: Date = new Date()
+): StaleReason | null {
+  if (!h.detail_synced_at) return null;
+  const synced = new Date(h.detail_synced_at).getTime();
+  if (h.updated_at && new Date(h.updated_at).getTime() - synced > 1000) return "relisted";
+  if (isOpenReceivingStatus(h.combined_receiving_status) && now.getTime() - synced > OPEN_PO_MAX_DETAIL_AGE_HOURS * 3600 * 1000) return "open_unverified";
+  return null;
+}
+
+/** True when the cached detail is potentially stale (relisted after its last fetch, or an open PO not re-verified in 72h). */
+export function isDetailPossiblyStale(
+  h: Pick<PurchaseHeader, "detail_synced_at" | "updated_at" | "combined_receiving_status">,
+  now: Date = new Date()
+): boolean {
+  return staleReason(h, now) !== null;
+}
+
+/**
+ * Cin7's own CombinedReceivingStatus is an independent signal. When the cached
+ * received lines disagree with it the PO needs review. Deliberately NOT called a
+ * defect: live checks showed Advanced POs whose Cin7 detail itself has fewer
+ * received lines than ordered while Cin7 says FULLY RECEIVED (a source
+ * inconsistency). The cache alone cannot tell that from a cache discrepancy.
+ */
+export function receivingStatusMismatch(receivingStatus: string | null, skus: { ordered: number; received: number }[]): string | null {
+  const totalReceived = round(skus.reduce((n, a) => n + a.received, 0));
+  if (receivingStatus === "FULLY RECEIVED" && skus.some((a) => round(a.received) < round(a.ordered))) {
+    return "Cin7 shows FULLY RECEIVED but its received lines total less than ordered. Verify the PO in Cin7 — this may be a Cin7 data inconsistency or a Toolbox cache discrepancy.";
+  }
+  if (receivingStatus === "PARTIALLY RECEIVED" && totalReceived === 0) {
+    return "Cin7 shows PARTIALLY RECEIVED but no received lines are cached. Verify the PO in Cin7.";
+  }
+  if (receivingStatus === "NOT RECEIVED" && totalReceived > 0) {
+    return "Cin7 shows NOT RECEIVED but received lines are cached. Verify the PO in Cin7.";
+  }
+  return null;
+}
+
+export interface TrustedTotals {
+  trustedPoCount: number;
+  trustedRowCount: number;
+  ordered: number;
+  received: number;
+  outstanding: number;
+  excludedPoCount: { incomplete: number; stale: number; review: number };
+  /** POs with no product lines (service/charge-only): nothing to compare, reported separately — neither trusted nor a data problem. */
+  notApplicablePoCount: number;
+}
+
+/** Totals over Complete rows ONLY. Incomplete / potentially stale / needs-review POs are counted but never summed. */
+export function computeTrustedTotals(rows: PoQuantityRow[]): TrustedTotals {
+  const trusted = new Set<string>();
+  const ex = { incomplete: new Set<string>(), stale: new Set<string>(), review: new Set<string>() };
+  const notApplicable = new Set<string>();
+  let ordered = 0;
+  let received = 0;
+  let trustedRowCount = 0;
+  for (const r of rows) {
+    const po = `${r.instanceId}|${r.cin7PurchaseId}`;
+    const g = qualityGroup(r.dataQuality);
+    if (g === "complete") {
+      trusted.add(po);
+      trustedRowCount += 1;
+      ordered += r.ordered ?? 0;
+      received += r.received ?? 0;
+    } else if (g === "not_applicable") notApplicable.add(po);
+    else ex[g].add(po);
+  }
+  return {
+    trustedPoCount: trusted.size,
+    trustedRowCount,
+    ordered: round(ordered),
+    received: round(received),
+    outstanding: round(ordered - received),
+    excludedPoCount: { incomplete: ex.incomplete.size, stale: ex.stale.size, review: ex.review.size },
+    notApplicablePoCount: notApplicable.size,
+  };
+}
+
+export function buildPoQuantityRows(input: {
+  purchases: PurchaseHeader[];
+  orderLines: OrderLineInput[];
+  receiptLines: ReceiptLineInput[];
+  instanceNames: Record<string, string>;
+  syncFailures?: SyncFailureMap;
+  /** Injected clock for the open-PO age rule (defaults to the real time). */
+  now?: Date;
+}): PoQuantityRow[] {
+  const { purchases, orderLines, receiptLines, instanceNames, syncFailures } = input;
+  const now = input.now ?? new Date();
+
+  const ordersByPo = new Map<string, OrderLineInput[]>();
+  for (const l of orderLines) {
+    const k = poKey(l.instance_id, l.cin7_purchase_id);
+    const arr = ordersByPo.get(k);
+    if (arr) arr.push(l);
+    else ordersByPo.set(k, [l]);
+  }
+  const receiptsByPo = new Map<string, ReceiptLineInput[]>();
+  for (const l of receiptLines) {
+    const k = poKey(l.instance_id, l.cin7_purchase_id);
+    const arr = receiptsByPo.get(k);
+    if (arr) arr.push(l);
+    else receiptsByPo.set(k, [l]);
+  }
+
+  const rows: PoQuantityRow[] = [];
+  for (const h of purchases) {
+    const instanceName = instanceNames[h.instance_id] ?? h.instance_id;
+    if (!h.detail_synced_at) {
+      rows.push(placeholderRow(h, instanceName, "detail_not_synced", syncFailures?.[poKey(h.instance_id, h.cin7_purchase_id)]));
+      continue;
+    }
+
+    const k = poKey(h.instance_id, h.cin7_purchase_id);
+    const orders = ordersByPo.get(k) ?? [];
+    const receipts = receiptsByPo.get(k) ?? [];
+    if (orders.length === 0 && receipts.length === 0) {
+      rows.push(placeholderRow(h, instanceName, isNoProductLinePurchase(h) ? "no_product_lines" : "no_lines_cached"));
+      continue;
+    }
+
+    const bySku = new Map<string, SkuAgg>();
+    const get = (sku: string): SkuAgg => {
+      let a = bySku.get(sku);
+      if (!a) {
+        a = { name: null, orderedLines: 0, ordered: 0, received: 0 };
+        bySku.set(sku, a);
+      }
+      return a;
+    };
+    for (const o of orders) {
+      const a = get(normSku(o.product_sku));
+      a.orderedLines += 1;
+      a.ordered += toNum(o.quantity);
+      a.name = a.name ?? o.product_name;
+    }
+    for (const r of receipts) {
+      const a = get(normSku(r.product_sku));
+      a.received += toNum(r.quantity);
+      a.name = a.name ?? r.product_name;
+    }
+
+    let quality: DataQuality = "ok";
+    let note: string | null = null;
+    const reason = staleReason(h, now);
+    if (reason) {
+      quality = "possibly_stale";
+      note =
+        reason === "relisted"
+          ? "PO changed in Cin7 after its quantities were last fetched; received quantities may be out of date until the next refresh."
+          : `Open PO whose quantities have not been re-verified against Cin7 for over ${OPEN_PO_MAX_DETAIL_AGE_HOURS} hours; received quantities may be out of date until the next refresh.`;
+    } else if (!h.is_drop_ship) {
+      const mismatchReason = receivingStatusMismatch(h.combined_receiving_status, [...bySku.values()]);
+      if (mismatchReason) {
+        quality = "status_mismatch";
+        note = mismatchReason;
+      }
+    }
+    for (const [sku, a] of [...bySku.entries()].sort((x, y) => x[0].localeCompare(y[0]))) {
+      const ordered = round(a.ordered);
+      const received = round(a.received);
+      rows.push({
+        key: `${k}|${sku}`,
+        instanceId: h.instance_id,
+        instanceName,
+        cin7PurchaseId: h.cin7_purchase_id,
+        orderNumber: h.order_number,
+        supplierName: h.supplier_name,
+        orderDate: h.order_date,
+        poStatus: h.status,
+        receivingStatus: h.combined_receiving_status,
+        isDropShip: Boolean(h.is_drop_ship),
+        sku,
+        productName: a.name,
+        orderLineCount: a.orderedLines,
+        ordered,
+        received,
+        outstanding: round(ordered - received),
+        lineStatus: classifyLine(ordered, received),
+        notOnOrder: a.orderedLines === 0 && received !== 0,
+        dataQuality: quality,
+        dataQualityNote: note,
+        detailSyncedAt: h.detail_synced_at,
+      });
+    }
+  }
+  return rows;
+}
+
+export interface InstanceSyncSummary {
+  instanceId: string;
+  instanceName: string;
+  poCount: number;
+  /** POs whose detail has never synced or is queued for re-fetch (incl. ones failing every run). */
+  detailPending: number;
+  possiblyStale: number;
+  lastListSyncedAt: string | null;
+  lastDetailSyncedAt: string | null;
+  /** Approximate start of cached coverage: first cached PO's creation − 12 months (the sync's initial backfill window). Null if no POs cached. */
+  approxCoverageFrom: string | null;
+}
+
+export const BACKFILL_MONTHS = 12;
+
+export function summariseInstanceSync(input: {
+  purchases: PurchaseHeader[];
+  listSyncedAt: Record<string, string | null>;
+  instanceNames: Record<string, string>;
+  instanceIds: string[];
+  now?: Date;
+}): InstanceSyncSummary[] {
+  const now = input.now ?? new Date();
+  return input.instanceIds.map((instanceId) => {
+    const mine = input.purchases.filter((p) => p.instance_id === instanceId);
+    let lastDetail: string | null = null;
+    let firstCreated: string | null = null;
+    for (const p of mine) {
+      if (p.detail_synced_at && (!lastDetail || p.detail_synced_at > lastDetail)) lastDetail = p.detail_synced_at;
+      if (p.created_at && (!firstCreated || p.created_at < firstCreated)) firstCreated = p.created_at;
+    }
+    let approxCoverageFrom: string | null = null;
+    if (firstCreated) {
+      const d = new Date(firstCreated);
+      d.setMonth(d.getMonth() - BACKFILL_MONTHS);
+      approxCoverageFrom = d.toISOString().slice(0, 10);
+    }
+    return {
+      instanceId,
+      instanceName: input.instanceNames[instanceId] ?? instanceId,
+      poCount: mine.length,
+      detailPending: mine.filter((p) => !p.detail_synced_at).length,
+      possiblyStale: mine.filter((p) => isDetailPossiblyStale(p, now)).length,
+      lastListSyncedAt: input.listSyncedAt[instanceId] ?? null,
+      lastDetailSyncedAt: lastDetail,
+      approxCoverageFrom,
+    };
+  });
+}
+
+export const LINE_STATUS_LABEL: Record<LineStatus, string> = {
+  fully_received: "Fully received",
+  partially_received: "Partially received",
+  not_received: "Not received",
+  over_received: "Over-received",
+};
+
+export const DATA_QUALITY_LABEL: Record<DataQuality, string> = {
+  ok: "Complete",
+  detail_not_synced: "Incomplete — detail not synced",
+  no_lines_cached: "Incomplete — no lines cached",
+  possibly_stale: "Potentially stale",
+  status_mismatch: "Needs review — Cin7 status vs received lines",
+  no_product_lines: "No product lines — receiving not applicable",
+};
+
+export const QUALITY_GROUP_LABEL: Record<QualityGroup, string> = {
+  complete: "Complete",
+  incomplete: "Incomplete",
+  stale: "Potentially stale",
+  review: "Needs review",
+  not_applicable: "No product lines",
+};
