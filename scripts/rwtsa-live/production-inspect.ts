@@ -19,7 +19,7 @@ const arg = (n: string): string | undefined => { const i = process.argv.indexOf(
 async function main(): Promise<number> {
   const order = arg("order");
   if (!order || !/^[A-Za-z0-9-]{1,40}$/.test(order) || !process.argv.includes("--i-confirm-read-only-inspection")) {
-    console.error("Usage: --order <order number> --i-confirm-read-only-inspection   (three GET requests, read-only, dedicated RWTSA instance)");
+    console.error("Usage: --order <order number> --i-confirm-read-only-inspection   (up to three GET requests, read-only, dedicated RWTSA instance)");
     return 2;
   }
   const home = homedir();
@@ -35,7 +35,7 @@ async function main(): Promise<number> {
   const v = e.verdicts;
   console.log(`PRODUCTION EVIDENCE · ${e.requests} GET request(s) (${e.methodsUsed.join(",")}) · order status ${v.orderStatus.status}`);
   console.log(`  consumption : ${v.consumption.status} (movement export still required: ${v.consumption.movementExportStillRequired}) · planned components missing from run: ${v.consumption.plannedComponentsMissingFromRun.length}`);
-  console.log(`  receipt     : ${v.receipt.status} · received units ${v.receipt.receivedQuantity}`);
+  console.log(`  receipt     : ${v.receipt.status} · ${v.receipt.receivedLines} of ${v.receipt.outputLines} output line(s) received`);
   console.log(`  times       : ${v.operationTimes.status} · labour cost: ${v.labourCost.status}`);
   e.findings.forEach((f) => console.log(`  finding     : ${f}`));
   console.log(`  written: ${path.basename(file)} (in ~/rwtsa-local/cin7-snapshots)`);

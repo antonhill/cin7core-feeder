@@ -8,7 +8,7 @@ const FG = "FG-1", C1 = "CMP-A", C2 = "CMP-B";
 type Routes = Parameters<typeof fakeFetch>[0];
 const listBody = (rows: unknown[]) => ({ Total: rows.length, ProductionOrderListItems: rows });
 const LIST_ROW = { TaskID: "t1", ProductionOrderID: "po-1", Type: "O", OrderNumber: "MO-00001", ProductSku: FG, Status: "COMPLETED", CompletionDate: "2026-11-05T00:00:00" };
-const orderBody = { ProductionOrders: [{ ProductionOrderID: "po-1", OrderNumber: "MO-00001", Status: "COMPLETED", ProductSku: FG, Quantity: 10, Operations: [
+const orderBody = { ProductionOrders: [{ ProductionOrderID: "po-1", OrderNumber: "MO-00001", Status: "COMPLETED", ProductSku: FG, Quantity: 10, BomQuantity: 1, Operations: [
   { Name: "Cut", WorkCenterName: "Cutting", Components: [{ ProductSku: C1, Quantity: 5.5, WastageQty: 0 }, { ProductSku: C2, Quantity: 3, WastageQty: 0 }], Resources: [{ ResourceCode: "LAB", ResourceName: "Labour", Quantity: 10, Cost: 2.7, TotalCost: 27 }] },
 ] }] };
 const runBody = (o: { c1?: number; c2?: number; status?: string; output?: unknown[] | null; opStatus?: string } = {}) => ({ Runs: [{ RunID: "r1", Number: 1, Status: o.status ?? "COMPLETED", Quantity: 10, Operations: [
@@ -36,7 +36,7 @@ describe("production evidence collector (three GETs, read-only)", () => {
     const { c } = mk(routes());
     const e = await inspectProductionOrder(c, "MO-00001");
     expect(e.order).toMatchObject({ orderNumber: "MO-00001", status: "COMPLETED", productSku: FG });
-    expect(e.order.plannedComponents).toEqual([{ sku: C1, quantity: 5.5, wastage: 0 }, { sku: C2, quantity: 3, wastage: 0 }]);
+    expect(e.order.plannedComponents).toEqual([{ sku: C1, recipeQuantity: 5.5, wastage: 0 }, { sku: C2, recipeQuantity: 3, wastage: 0 }]);
     expect(e.run?.operations[0]).toMatchObject({ name: "Cut", status: "COMPLETED", plannedTime: 30, actualTime: 41, resourceCostTotal: 27 });
     expect(e.run?.operations[0].components).toEqual([{ sku: C1, actual: 5.5, expected: 5.5, wastage: 0, unitCost: 18.5, location: "Factory Store", backflush: true }, { sku: C2, actual: 3, expected: 3, wastage: 0, unitCost: 18.5, location: "Factory Store", backflush: false }]);
     expect(e.run?.output).toEqual([{ sku: FG, quantity: 10, received: true, receivedDate: "2026-11-05T00:00:00", location: "Factory Store" }]);
@@ -120,5 +120,67 @@ describe("production evidence collector (three GETs, read-only)", () => {
   it("an unexpected response shape fails closed with a clear error and no invented fields", async () => {
     await expect(inspectProductionOrder(mk(routes({ "/production/orderList": () => ({ body: { Weird: [] } }) })).c, "MO-00001")).rejects.toThrow(/shape/i);
     await expect(inspectProductionOrder(mk(routes({ "/production/order": () => ({ body: { Nope: 1 } }) })).c, "MO-00001")).rejects.toThrow(/shape/i);
+  });
+});
+
+describe("independent review fixes", () => {
+  it("a VOIDED run never replaces the real run, and several live runs are surfaced instead of silently merged", async () => {
+    const real = runBody().Runs[0]; const voided = { ...runBody({ output: [{ ProductCode: FG, Quantity: 10, Received: true }] }).Runs[0], RunID: "r2", Number: 2, Status: "VOIDED" };
+    const e = await inspectProductionOrder(mk(routes({ "/production/order/run": () => ({ body: { Runs: [real, voided] } }) })).c, "MO-00001");
+    expect(e.run?.runId).toBe("r1");
+    expect(e.findings.join(" ")).toMatch(/voided/i);
+    const second = { ...runBody().Runs[0], RunID: "r3", Number: 3 };
+    const many = await inspectProductionOrder(mk(routes({ "/production/order/run": () => ({ body: { Runs: [real, second] } }) })).c, "MO-00001");
+    expect(many.findings.join(" ")).toMatch(/more than one (live|non-void)/i);
+    const allVoid = await inspectProductionOrder(mk(routes({ "/production/order/run": () => ({ body: { Runs: [voided] } }) })).c, "MO-00001");
+    expect(allVoid.run).toBeNull();
+    expect(allVoid.verdicts.consumption.status).toBe("NOT_PROVEN_NO_RUN");
+  });
+  it("the order response must be the order that was asked for (id and number)", async () => {
+    const wrongId = { ProductionOrders: [{ ...orderBody.ProductionOrders[0], ProductionOrderID: "other" }] };
+    await expect(inspectProductionOrder(mk(routes({ "/production/order": () => ({ body: wrongId }) })).c, "MO-00001")).rejects.toThrow(/different order/i);
+    const wrongNo = { ProductionOrders: [{ ...orderBody.ProductionOrders[0], OrderNumber: "MO-00002" }] };
+    await expect(inspectProductionOrder(mk(routes({ "/production/order": () => ({ body: wrongNo }) })).c, "MO-00001")).rejects.toThrow(/different order/i);
+    const noId = { ProductionOrders: [{ ...orderBody.ProductionOrders[0], ProductionOrderID: undefined }] };
+    await expect(inspectProductionOrder(mk(routes({ "/production/order": () => ({ body: noId }) })).c, "MO-00001")).rejects.toThrow(/different order|identif/i);
+  });
+  it("a run whose own order id is present must match; its absence is stated, not assumed", async () => {
+    const mism = { Runs: [{ ...runBody().Runs[0], ProductionOrderID: "other" }] };
+    await expect(inspectProductionOrder(mk(routes({ "/production/order/run": () => ({ body: mism }) })).c, "MO-00001")).rejects.toThrow(/different order/i);
+    const e = await inspectProductionOrder(mk(routes()).c, "MO-00001");
+    expect(e.findings.join(" ")).toMatch(/run response does not carry the order id/i);
+  });
+  it("malformed numbers are never turned into zeros: they are findings and the affected verdict is not claimed", async () => {
+    const strQty = runBody(); (strQty.Runs[0].Operations[0].Components[0] as Record<string, unknown>).Quantity = "5";
+    const a = await inspectProductionOrder(mk(routes({ "/production/order/run": () => ({ body: strQty }) })).c, "MO-00001");
+    expect(a.findings.join(" ")).toMatch(/malformed/i);
+    expect(a.verdicts.consumption.status).toBe("NOT_PROVEN_MALFORMED_RESPONSE");
+    const badCost = runBody(); (badCost.Runs[0].Operations[0] as Record<string, unknown>).ResourceCosts = [{ ExpenseAccount: "5000", Cost: "12.5" }];
+    const b = await inspectProductionOrder(mk(routes({ "/production/order/run": () => ({ body: badCost }) })).c, "MO-00001");
+    expect(b.run?.operations[0].resourceCostTotal).toBeNull();
+    expect(b.verdicts.labourCost.status).toBe("NOT_AVAILABLE_ACTUAL_COST");
+    const badOut = runBody({ output: [{ ProductCode: FG, Quantity: "10", Received: true }] });
+    const c = await inspectProductionOrder(mk(routes({ "/production/order/run": () => ({ body: badOut }) })).c, "MO-00001");
+    expect(c.verdicts.receipt.status).toBe("MALFORMED_RESPONSE");
+  });
+  it("a zero actual time is not 'actual time reported'", async () => {
+    const z = runBody(); (z.Runs[0].Operations[0] as Record<string, unknown>).ActualTime = 0;
+    const e = await inspectProductionOrder(mk(routes({ "/production/order/run": () => ({ body: z }) })).c, "MO-00001");
+    expect(e.verdicts.operationTimes.status).toBe("NOT_AVAILABLE");
+  });
+  it("a partial receipt, or a receipt of zero units, is not a full RECEIVED", async () => {
+    const part = await inspectProductionOrder(mk(routes({ "/production/order/run": () => ({ body: runBody({ output: [{ ProductCode: FG, Quantity: 6, Received: true }, { ProductCode: FG, Quantity: 4, Received: false }] }) }) })).c, "MO-00001");
+    expect(part.verdicts.receipt.status).toBe("PARTIALLY_RECEIVED");
+    const zero = await inspectProductionOrder(mk(routes({ "/production/order/run": () => ({ body: runBody({ output: [{ ProductCode: FG, Quantity: 0, Received: true }] }) }) })).c, "MO-00001");
+    expect(zero.verdicts.receipt.status).not.toBe("RECEIVED");
+  });
+  it("an order missing from a full first page says the list may be truncated", async () => {
+    const rows = Array.from({ length: 1000 }, (_, i) => ({ ...LIST_ROW, TaskID: `x${i}`, OrderNumber: `MO-9${i}`, ProductionOrderID: `p${i}` }));
+    await expect(inspectProductionOrder(mk(routes({ "/production/orderList": () => ({ body: listBody(rows) }) })).c, "MO-00001")).rejects.toThrow(/truncated|later page/i);
+  });
+  it("states the recipe basis explicitly (BomQuantity) next to the recipe quantities", async () => {
+    const e = await inspectProductionOrder(mk(routes()).c, "MO-00001");
+    expect(e.order.bomQuantity).toBe(1);
+    expect(e.order.plannedComponents[0]).toHaveProperty("recipeQuantity");
   });
 });
