@@ -13,8 +13,8 @@ const orderBody = { ProductionOrders: [{ ProductionOrderID: "po-1", OrderNumber:
 ] }] };
 const runBody = (o: { c1?: number; c2?: number; status?: string; output?: unknown[] | null; opStatus?: string } = {}) => ({ Runs: [{ RunID: "r1", Number: 1, Status: o.status ?? "COMPLETED", Quantity: 10, Operations: [
   { OperationID: "op1", Order: 1, Name: "Cut", WorkCenterName: "Cutting", Status: o.opStatus ?? "COMPLETED", PlannedTime: 30, ActualTime: 41, StartDate: "2026-11-04T08:00:00", EndDate: "2026-11-04T09:00:00",
-    Components: [{ ProductCode: C1, Quantity: o.c1 ?? 5.5, ExpectedQuantity: 5.5, WastageQty: 0, UnitCost: 18.5 }, { ProductCode: C2, Quantity: o.c2 ?? 3, ExpectedQuantity: 3, WastageQty: 0, UnitCost: 18.5 }],
-    ResourceCosts: [{ ExpenseAccount: "5000", Cost: 27 }], FinishedProducts: [] }], Output: o.output === null ? [] : (o.output ?? [{ ProductCode: FG, Quantity: 10, WastageQuantity: 0, Received: true, ReceivedDate: "2026-11-05T00:00:00" }]) }] });
+    Components: [{ ProductCode: C1, Quantity: o.c1 ?? 5.5, ExpectedQuantity: 5.5, WastageQty: 0, UnitCost: 18.5, LocationName: "Factory Store", IsBackflush: true }, { ProductCode: C2, Quantity: o.c2 ?? 3, ExpectedQuantity: 3, WastageQty: 0, UnitCost: 18.5, LocationName: "Factory Store", IsBackflush: false }],
+    ResourceCosts: [{ ExpenseAccount: "5000", Cost: 27 }], FinishedProducts: [] }], Output: o.output === null ? [] : (o.output ?? [{ ProductCode: FG, Quantity: 10, WastageQuantity: 0, Received: true, ReceivedDate: "2026-11-05T00:00:00", LocationName: "Factory Store" }]) }] });
 const mk = (routes: Routes) => { const f = fakeFetch(routes); return { f, c: createReadOnlyClient({ creds, fetchImpl: f.impl, sleep: noSleep, now: () => 0, minIntervalMs: 0 }) }; };
 const routes = (over: Partial<Record<string, () => { status?: number; body?: unknown }>> = {}): Routes => ({
   "/production/orderList": () => ({ body: listBody([LIST_ROW, { ...LIST_ROW, TaskID: "t2", Type: "R" }]) }),
@@ -38,8 +38,8 @@ describe("production evidence collector (three GETs, read-only)", () => {
     expect(e.order).toMatchObject({ orderNumber: "MO-00001", status: "COMPLETED", productSku: FG });
     expect(e.order.plannedComponents).toEqual([{ sku: C1, quantity: 5.5, wastage: 0 }, { sku: C2, quantity: 3, wastage: 0 }]);
     expect(e.run?.operations[0]).toMatchObject({ name: "Cut", status: "COMPLETED", plannedTime: 30, actualTime: 41, resourceCostTotal: 27 });
-    expect(e.run?.operations[0].components).toEqual([{ sku: C1, actual: 5.5, expected: 5.5, wastage: 0, unitCost: 18.5 }, { sku: C2, actual: 3, expected: 3, wastage: 0, unitCost: 18.5 }]);
-    expect(e.run?.output).toEqual([{ sku: FG, quantity: 10, received: true, receivedDate: "2026-11-05T00:00:00" }]);
+    expect(e.run?.operations[0].components).toEqual([{ sku: C1, actual: 5.5, expected: 5.5, wastage: 0, unitCost: 18.5, location: "Factory Store", backflush: true }, { sku: C2, actual: 3, expected: 3, wastage: 0, unitCost: 18.5, location: "Factory Store", backflush: false }]);
+    expect(e.run?.output).toEqual([{ sku: FG, quantity: 10, received: true, receivedDate: "2026-11-05T00:00:00", location: "Factory Store" }]);
     expect(e.requests).toBe(3);
   });
   it("records the observed field names and types (the contract) without values", async () => {

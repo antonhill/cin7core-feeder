@@ -22,12 +22,12 @@ function fields(xs: readonly Row[]): string[] {
 }
 
 export interface PlannedComponent { sku: string; quantity: number; wastage: number }
-export interface RunComponent { sku: string; actual: number; expected: number; wastage: number; unitCost: number }
+export interface RunComponent { sku: string; actual: number; expected: number; wastage: number; unitCost: number; location: string | null; backflush: boolean | null }
 export interface RunOperation {
   id: string; order: number; name: string | null; workCenter: string | null; status: string; plannedTime: number | null; actualTime: number | null; startDate: string | null; endDate: string | null;
   components: RunComponent[]; resourceCostTotal: number | null; resourceCostLines: number;
 }
-export interface OutputLine { sku: string | null; quantity: number; received: boolean; receivedDate: string | null }
+export interface OutputLine { sku: string | null; quantity: number; received: boolean; receivedDate: string | null; location: string | null }
 export interface ProductionEvidence {
   takenAt: string; requests: number; methodsUsed: string[];
   contract: Record<"orderListFields" | "orderFields" | "orderOperationFields" | "orderComponentFields" | "orderResourceFields" | "runFields" | "runOperationFields" | "runComponentFields" | "runResourceCostFields" | "runOutputFields", string[]>;
@@ -89,12 +89,12 @@ export async function inspectProductionOrder(client: ReadOnlyClient, orderNumber
       return {
         id: String(op.OperationID ?? ""), order: num(op.Order), name: str(op.Name), workCenter: str(op.WorkCenterName), status: String(op.Status ?? ""),
         plannedTime: numOrNull(op.PlannedTime), actualTime: numOrNull(op.ActualTime), startDate: str(op.StartDate), endDate: str(op.EndDate),
-        components: rows(op.Components).map((c) => ({ sku: String(c.ProductCode ?? ""), actual: num(c.Quantity), expected: num(c.ExpectedQuantity), wastage: num(c.WastageQty), unitCost: num(c.UnitCost) })),
+        components: rows(op.Components).map((c) => ({ sku: String(c.ProductCode ?? ""), actual: num(c.Quantity), expected: num(c.ExpectedQuantity), wastage: num(c.WastageQty), unitCost: num(c.UnitCost), location: str(c.LocationName), backflush: typeof c.IsBackflush === "boolean" ? c.IsBackflush : null })),
         resourceCostTotal: costs.length === 0 ? null : costs.reduce((t, c) => t + num(c.Cost), 0), resourceCostLines: costs.length,
       };
     }).sort((a, b) => a.order - b.order),
     // The run-level Output[] is the reliable receipt; the operation-level FinishedProducts quantity is documented as unreliable and is deliberately NOT read.
-    output: outRows.map((x) => ({ sku: str(x.ProductCode), quantity: num(x.Quantity), received: x.Received === true, receivedDate: str(x.ReceivedDate) })),
+    output: outRows.map((x) => ({ sku: str(x.ProductCode), quantity: num(x.Quantity), received: x.Received === true, receivedDate: str(x.ReceivedDate), location: str(x.LocationName) })),
   } : null;
 
   const allComps = run ? run.operations.flatMap((x) => x.components) : [];
