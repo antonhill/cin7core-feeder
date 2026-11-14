@@ -36,7 +36,7 @@ function Report({ report }: { report: BondReportData }) {
       ) : (
         <Alert tone="info">This page shows an owner-selected local report built from a saved, identity-verified Cin7 snapshot and the owner-maintained clearance register. It makes no Cin7 call and creates no Cin7 transaction.</Alert>
       )}
-      <ul data-testid="statements" className="list-disc space-y-1 pl-5 text-sm text-slate-700">{report.statements.map((t) => <li key={t}>{t}</li>)}</ul>
+      <ul data-testid="statements" className="list-disc space-y-1 pl-5 text-sm text-slate-700">{report.statements.map((t, i) => <li key={`${i}-${t}`}>{t}</li>)}</ul>
 
       <dl className="grid grid-cols-2 gap-3 md:grid-cols-4" aria-label="Summary">
         <Tile label="Physical Bond stock" value={s.bondUnits} />

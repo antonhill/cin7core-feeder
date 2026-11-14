@@ -6,7 +6,7 @@
   "snapshotTakenAt": "2026-11-13T08:00:00.000Z",
   "previousSnapshotHash": "SYNTHETIC-SNAPSHOT-PREVIOUS",
   "registerTipHash": "SYNTHETIC",
-  "registerEvents": 11,
+  "registerEvents": 12,
   "statements": [
     "SYNTHETIC DEMONSTRATION: every value below is invented. A synthetic clearance is not a real customs event and is not RWTSA data.",
     "Unverified clearance means NOT CLEARED.",
@@ -192,6 +192,10 @@
       "documentRef": "SYN-DOC-3",
       "recordedOn": "2026-11-10",
       "status": "WITHDRAWN",
+      "verifiedBy": "synthetic-owner",
+      "verifiedOn": "2026-11-11",
+      "verifiedAt": "2026-11-11T10:00:00.000Z",
+      "verificationDocumentRef": "SYN-DOC-3",
       "withdrawnReason": "synthetic: entered against the wrong shipment reference",
       "lines": [
         {

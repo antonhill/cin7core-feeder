@@ -10,9 +10,11 @@ import { z } from "zod";
  */
 const n = z.number().finite();
 const q = n.nonnegative();
-const str = z.string().min(1);
+const str = z.string().trim().min(1);
 export const EVIDENCE_PROVENANCES = ["CUSTOMS_DOCUMENT", "BROKER_CONFIRMATION", "OWNER_STATEMENT"] as const;
 export const ROW_EXCEPTIONS = ["OVER_RELEASED", "RELEASED_BEFORE_VERIFICATION", "PROPOSAL_EXCEEDS_ELIGIBLE"] as const;
+/** Statements every report must carry (they are the safety rules the page restates). A report that omits them is rejected. */
+export const REQUIRED_STATEMENTS = ["Unverified clearance means NOT CLEARED.", "A stock transfer, posted customs duty or a freight invoice is never evidence of customs clearance."] as const;
 const CLEARANCE_STATUS = ["NOT_CLEARED", "PARTIALLY_CLEARED", "CLEARED", "NO_BOND_STOCK"] as const;
 
 const row = z.strictObject({
@@ -22,13 +24,13 @@ const row = z.strictObject({
 });
 const observed = z.strictObject({ sku: str, bondDecrease: q, bondIncrease: q, nonBondIncrease: q, eligibleBefore: q, uncleared: q, exceptions: z.array(z.literal("TRANSFER_WITHOUT_CLEARANCE_EVIDENCE")), alreadyRecorded: q });
 const evidence = z.strictObject({
-  id: str, shipmentRef: str, clearanceRef: str, clearanceDate: str, attributedTo: str, provenance: z.enum(EVIDENCE_PROVENANCES), documentRef: z.string().optional(), recordedOn: str,
-  status: z.enum(["VERIFIED", "UNVERIFIED_NOT_CLEARED", "WITHDRAWN"]), verifiedBy: z.string().optional(), verifiedOn: z.string().optional(), verifiedAt: z.string().optional(),
-  verificationDocumentRef: z.string().optional(), withdrawnReason: z.string().optional(),
+  id: str, shipmentRef: str, clearanceRef: str, clearanceDate: str, attributedTo: str, provenance: z.enum(EVIDENCE_PROVENANCES), documentRef: z.string().trim().min(1).optional(), recordedOn: str,
+  status: z.enum(["VERIFIED", "UNVERIFIED_NOT_CLEARED", "WITHDRAWN"]), verifiedBy: z.string().trim().min(1).optional(), verifiedOn: z.string().trim().min(1).optional(), verifiedAt: z.string().optional(),
+  verificationDocumentRef: z.string().trim().min(1).optional(), withdrawnReason: z.string().trim().min(1).optional(),
   lines: z.array(z.strictObject({ sku: str, quantity: n.positive() })).min(1),
 });
 const proposal = z.strictObject({ id: str, sku: str, quantity: n.positive(), destination: str, proposedBy: str, proposedOn: str, reason: str, status: z.enum(["OPEN", "PARTLY_COMPLETED", "COMPLETED", "WITHDRAWN"]), completedQuantity: q });
-const release = z.strictObject({ id: str, sku: str, quantity: n.positive(), on: str, fromTakenAt: str, toTakenAt: str, proposalId: z.string().optional(), voided: z.boolean(), releasedBeforeCoverUnits: q });
+const release = z.strictObject({ id: str, sku: str, quantity: n.positive(), on: str, fromTakenAt: str, toTakenAt: str, proposalId: z.string().trim().min(1).optional(), voided: z.boolean(), releasedBeforeCoverUnits: q });
 const summary = z.strictObject({ skusWithBondStock: q, bondUnits: q, verifiedClearedUnits: q, unverifiedClaimedUnits: q, notClearedSkus: q, eligibleUnits: q, proposedUnits: q, exceptionCount: q, unclearedObservedUnits: q });
 
 export const bondReportSchema = z.strictObject({
@@ -42,40 +44,79 @@ const EPS = 1e-6;
 const close = (a: number, b: number) => Math.abs(a - b) <= EPS;
 const sum = <T>(xs: readonly T[], f: (x: T) => number) => xs.reduce((t, x) => t + f(x), 0);
 
+const HEX64 = /^[0-9a-f]{64}$/;
+const isSynIdent = (s: string | undefined) => s !== undefined && /^SYN-/.test(s);
+const isSynPerson = (s: string | undefined) => s !== undefined && /^synthetic/i.test(s);
+
 function crossChecks(r: BondReportData): string[] {
   const p: string[] = [];
   const synthetic = r.dataClass === "SYNTHETIC_DEMONSTRATION";
-  const skuText = [...r.rows.map((x) => x.sku), ...r.evidence.flatMap((e) => e.lines.map((l) => l.sku))];
+  // Every identifier the report carries, by kind, for the real/synthetic separation.
+  const skus = [...r.rows.map((x) => x.sku), ...r.evidence.flatMap((e) => e.lines.map((l) => l.sku)), ...r.proposals.map((o) => o.sku), ...r.releases.map((l) => l.sku), ...r.observed.map((o) => o.sku)];
+  const refs = r.evidence.flatMap((e) => [e.shipmentRef, e.clearanceRef, e.documentRef, e.verificationDocumentRef].filter((v): v is string => v !== undefined));
+  const people = [...r.evidence.flatMap((e) => [e.attributedTo, e.verifiedBy].filter((v): v is string => v !== undefined)), ...r.proposals.map((o) => o.proposedBy)];
   if (synthetic !== r.snapshotHash.startsWith("SYNTHETIC")) p.push("data class and snapshot identity disagree (synthetic and real data must never be mixed)");
-  if (synthetic && !skuText.every((s) => s.startsWith("SYN-"))) p.push("a synthetic report may contain only synthetic identifiers");
-  if (!synthetic && (skuText.some((s) => s.startsWith("SYN-")) || r.evidence.some((e) => /^SYN-/.test(e.shipmentRef) || /^SYN-/.test(e.clearanceRef)))) p.push("a real report may not contain synthetic identifiers");
-  if (new Set(r.rows.map((x) => x.sku)).size !== r.rows.length) p.push("duplicate SKU rows");
-  if (new Set(r.evidence.map((e) => e.id)).size !== r.evidence.length) p.push("duplicate evidence ids");
+  if (synthetic && !(skus.every(isSynIdent) && refs.every(isSynIdent) && people.every(isSynPerson))) p.push("a synthetic report may contain only synthetic identifiers");
+  if (!synthetic && (skus.some(isSynIdent) || refs.some(isSynIdent) || people.some(isSynPerson))) p.push("a real report may not contain synthetic identifiers");
+  if (!synthetic && ![r.snapshotHash, r.registerTipHash, ...(r.previousSnapshotHash === null ? [] : [r.previousSnapshotHash])].every((h) => HEX64.test(h))) p.push("a real report must carry a SHA-256 snapshot hash");
+  if (!REQUIRED_STATEMENTS.every((s) => r.statements.includes(s))) p.push("the report must carry the fixed safety statements");
+  const dup = (xs: readonly string[]) => new Set(xs).size !== xs.length;
+  if (dup(r.rows.map((x) => x.sku))) p.push("duplicate SKU rows");
+  if (dup(r.evidence.map((e) => e.id))) p.push("duplicate evidence ids");
+  if (dup(r.proposals.map((o) => o.id))) p.push("duplicate proposal ids");
+  if (dup(r.releases.map((l) => l.id))) p.push("duplicate release ids");
+  if (dup(r.observed.map((o) => o.sku))) p.push("duplicate observed SKUs");
 
   for (const e of r.evidence) {
-    const verifiedFields = e.verifiedBy !== undefined || e.verifiedOn !== undefined || e.verificationDocumentRef !== undefined;
+    const have = [e.verifiedBy, e.verifiedOn, e.verificationDocumentRef].filter((v) => v !== undefined).length;
     if (e.status === "VERIFIED") {
       if (e.provenance === "OWNER_STATEMENT") p.push("an owner statement cannot be verified clearance evidence");
-      if (!e.verifiedBy || !e.verifiedOn || !e.verificationDocumentRef) p.push("verified evidence must name who verified it, when, and the document reference");
-    } else if (verifiedFields) p.push("only verified evidence may carry verification details");
+      if (have !== 3) p.push("verified evidence must name who verified it, when, and the document reference");
+    } else if (e.status === "UNVERIFIED_NOT_CLEARED") {
+      if (have > 0 || e.verifiedAt !== undefined) p.push("only verified evidence may carry verification details");
+    } else if (have !== 0 && have !== 3) p.push("verification details must be complete or absent");
     if (e.status === "WITHDRAWN" && !e.withdrawnReason) p.push("withdrawn evidence must carry a reason");
+    if (e.status !== "WITHDRAWN" && e.withdrawnReason !== undefined) p.push("only withdrawn evidence may carry a withdrawal reason");
     if (new Set(e.lines.map((l) => l.sku)).size !== e.lines.length) p.push("an evidence entry repeats a SKU");
   }
   const lines = (status: "VERIFIED" | "UNVERIFIED_NOT_CLEARED", sku: string) => sum(r.evidence.filter((e) => e.status === status), (e) => sum(e.lines.filter((l) => l.sku === sku), (l) => l.quantity));
   const rowSkus = new Set(r.rows.map((x) => x.sku));
   if (r.evidence.some((e) => e.status !== "WITHDRAWN" && e.lines.some((l) => !rowSkus.has(l.sku)))) p.push("evidence refers to a SKU that has no row");
+  if ([...r.proposals, ...r.releases].some((o) => !rowSkus.has(o.sku))) p.push("a proposal or release refers to a SKU that has no row");
+  const propById = new Map(r.proposals.map((o) => [o.id, o]));
+  for (const l of r.releases) if (l.proposalId !== undefined) { const o = propById.get(l.proposalId); if (!o) p.push("a release refers to an unknown proposal"); else if (o.sku !== l.sku) p.push("a release cites a proposal for a different SKU"); }
+  for (const o of r.proposals) {
+    if (o.completedQuantity > o.quantity + EPS) p.push("a proposal's completed quantity exceeds its quantity");
+    const expected = o.status === "WITHDRAWN" ? o.status : o.completedQuantity + EPS >= o.quantity ? "COMPLETED" : o.completedQuantity > EPS ? "PARTLY_COMPLETED" : "OPEN";
+    if (o.status !== expected) p.push("a proposal's status does not match its completed quantity");
+    if (!close(o.completedQuantity, sum(r.releases.filter((l) => l.proposalId === o.id && !l.voided), (l) => l.quantity))) p.push("a proposal's completed quantity does not equal the releases that cite it");
+  }
   for (const x of r.rows) {
     if (!close(x.verifiedCleared, lines("VERIFIED", x.sku))) p.push("verified-cleared quantity does not equal the verified evidence");
     if (!close(x.unverifiedClaimed, lines("UNVERIFIED_NOT_CLEARED", x.sku))) p.push("unverified-claimed quantity does not equal the unverified evidence");
-    if (!close(x.released, sum(r.releases.filter((l) => l.sku === x.sku && !l.voided), (l) => l.quantity))) p.push("released quantity does not equal the recorded releases");
+    const live = r.releases.filter((l) => l.sku === x.sku && !l.voided);
+    if (!close(x.released, sum(live, (l) => l.quantity))) p.push("released quantity does not equal the recorded releases");
+    if (!close(x.releasedBeforeCover, sum(live, (l) => l.releasedBeforeCoverUnits))) p.push("released-before-cover quantity does not equal the recorded releases");
     if (!close(x.activeProposed, sum(r.proposals.filter((o) => o.sku === x.sku && o.status !== "WITHDRAWN"), (o) => Math.max(0, o.quantity - o.completedQuantity)))) p.push("proposed quantity does not equal the open proposals");
     if (!close(x.remainingCleared, Math.max(0, x.verifiedCleared - x.released))) p.push("remaining cleared quantity is inconsistent");
     if (x.eligible > x.bondPhysical + EPS) p.push("eligible quantity exceeds physical Bond stock");
     if (x.eligible > x.remainingCleared + EPS) p.push("eligible quantity exceeds the verified clearance");
+    if (!close(x.eligible, Math.min(x.bondPhysical, x.remainingCleared))) p.push("eligible quantity is not the lesser of Bond stock and remaining verified clearance");
     if ((x.clearanceStatus === "NOT_CLEARED" || x.clearanceStatus === "NO_BOND_STOCK") && x.eligible !== 0) p.push("a NOT CLEARED row cannot be eligible");
-    if (x.released > x.verifiedCleared + EPS && !x.exceptions.includes("OVER_RELEASED")) p.push("a release beyond verified clearance must carry the OVER_RELEASED exception");
+    const status = x.bondPhysical <= EPS ? "NO_BOND_STOCK" : x.remainingCleared <= EPS ? "NOT_CLEARED" : x.remainingCleared + EPS >= x.bondPhysical ? "CLEARED" : "PARTIALLY_CLEARED";
+    if (x.clearanceStatus !== status) p.push("clearance status does not follow from the stock and verified evidence");
+    if (x.clearedExceedsBond !== (x.inSnapshot && x.remainingCleared - x.bondPhysical > EPS)) p.push("clearedExceedsBond is inconsistent with the stock and clearance");
+    if (!x.inSnapshot && x.bondPhysical !== 0) p.push("a SKU absent from the snapshot cannot hold Bond stock");
+    const want = new Set<string>();
+    if (x.released > x.verifiedCleared + EPS) want.add("OVER_RELEASED");
+    if (x.releasedBeforeCover > EPS) want.add("RELEASED_BEFORE_VERIFICATION");
+    if (x.activeProposed > x.eligible + EPS) want.add("PROPOSAL_EXCEEDS_ELIGIBLE");
+    if (want.size !== x.exceptions.length || x.exceptions.some((c) => !want.has(c)) || new Set(x.exceptions).size !== x.exceptions.length) p.push("row exceptions do not match the figures");
   }
-  for (const o of r.observed) if (o.uncleared > EPS && !o.exceptions.includes("TRANSFER_WITHOUT_CLEARANCE_EVIDENCE")) p.push("an uncleared movement must carry the exception");
+  for (const o of r.observed) {
+    if (!close(o.uncleared, Math.max(0, o.bondDecrease - o.eligibleBefore))) p.push("an observed movement's uncleared quantity does not follow from its decrease and eligibility");
+    if ((o.uncleared > EPS) !== (o.exceptions.length > 0)) p.push("an uncleared movement must carry the exception");
+  }
   const s = r.summary, bondRows = r.rows.filter((x) => x.bondPhysical > 0);
   const checks: [number, number][] = [
     [s.skusWithBondStock, bondRows.length], [s.bondUnits, sum(r.rows, (x) => x.bondPhysical)], [s.verifiedClearedUnits, sum(r.rows, (x) => x.verifiedCleared)],

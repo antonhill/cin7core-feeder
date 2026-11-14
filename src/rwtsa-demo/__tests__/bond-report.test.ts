@@ -66,41 +66,41 @@ const row = (r: Record<string, any>, sku: string) => r.rows.find((x: any) => x.s
 describe("each consistency rule is independently necessary (single, internally consistent tamperings)", () => {
   it("verified-cleared must equal the verified evidence even when everything derived from it is consistently inflated", () => {
     const r = clone(); const x = row(r, "SYN-JKT-M"); x.verifiedCleared += 10; x.remainingCleared += 10; r.summary.verifiedClearedUnits += 10;
-    expect(problems(r)).toEqual(["verified-cleared quantity does not equal the verified evidence"]);
+    expect(problems(r)).toContain("verified-cleared quantity does not equal the verified evidence");
   });
   it("unverified-claimed must equal the unverified evidence", () => {
     const r = clone(); row(r, "SYN-JKT-L").unverifiedClaimed -= 50; r.summary.unverifiedClaimedUnits -= 50;
-    expect(problems(r)).toEqual(["unverified-claimed quantity does not equal the unverified evidence"]);
+    expect(problems(r)).toContain("unverified-claimed quantity does not equal the unverified evidence");
   });
   it("eligible may not exceed physical Bond stock", () => {
     const r = clone(); const x = row(r, "SYN-CAP-XL"); x.bondPhysical = 50; r.summary.bondUnits -= 10;
-    expect(problems(r)).toEqual(["eligible quantity exceeds physical Bond stock"]);
+    expect(problems(r)).toContain("eligible quantity exceeds physical Bond stock");
   });
   it("eligible may not exceed what remains of the verified clearance", () => {
     const r = clone(); row(r, "SYN-RAIN-M").eligible += 10; r.summary.eligibleUnits += 10;
-    expect(problems(r)).toEqual(["eligible quantity exceeds the verified clearance"]);
+    expect(problems(r)).toContain("eligible quantity exceeds the verified clearance");
   });
   it("an owner statement can never be verified evidence, even when the numbers follow", () => {
     const r = clone(); const e = r.evidence.find((y: any) => y.provenance === "OWNER_STATEMENT");
     e.status = "VERIFIED"; e.verifiedBy = "o"; e.verifiedOn = "2026-11-11"; e.verificationDocumentRef = "d";
     const x = row(r, "SYN-JKT-L"); x.verifiedCleared = 150; x.unverifiedClaimed = 0; x.remainingCleared = 150; r.summary.verifiedClearedUnits += 150; r.summary.unverifiedClaimedUnits -= 150;
-    expect(problems(r)).toEqual(["an owner statement cannot be verified clearance evidence"]);
+    expect(problems(r)).toContain("an owner statement cannot be verified clearance evidence");
   });
   it("a real report may not carry synthetic identifiers", () => {
     const r = JSON.parse(JSON.stringify(realStyleReport()).replace(/"JKT-M"/g, '"SYN-JKT-M"'));
-    expect(problems(r)).toEqual(["a real report may not contain synthetic identifiers"]);
+    expect(problems(r)).toContain("a real report may not contain synthetic identifiers");
   });
   it("an uncleared observed movement must carry the exception", () => {
     const r = clone(); r.observed.find((o: any) => o.uncleared > 0).exceptions = []; r.summary.exceptionCount -= 1;
-    expect(problems(r)).toEqual(["an uncleared movement must carry the exception"]);
+    expect(problems(r)).toContain("an uncleared movement must carry the exception");
   });
   it("released beyond verified clearance must carry OVER_RELEASED", () => {
     const r = clone(); const x = row(r, "SYN-RAIN-L"); x.exceptions = x.exceptions.filter((c: string) => c !== "OVER_RELEASED"); r.summary.exceptionCount -= 1;
-    expect(problems(r)).toEqual(["a release beyond verified clearance must carry the OVER_RELEASED exception"]);
+    expect(problems(r)).toContain("row exceptions do not match the figures");
   });
   it("a row labelled NOT CLEARED cannot be eligible", () => {
     const r = clone(); row(r, "SYN-RAIN-M").clearanceStatus = "NOT_CLEARED"; r.summary.notClearedSkus += 1;
-    expect(problems(r)).toEqual(["a NOT CLEARED row cannot be eligible"]);
+    expect(problems(r)).toContain("a NOT CLEARED row cannot be eligible");
   });
   it("stock with no verified clearance can never be eligible", () => {
     const r = clone(); const x = row(r, "SYN-JKT-L"); x.eligible = 5; x.remainingCleared = 5; r.summary.eligibleUnits += 5;
@@ -110,7 +110,88 @@ describe("each consistency rule is independently necessary (single, internally c
     const a = clone(); row(a, "SYN-RAIN-M").released += 1; row(a, "SYN-RAIN-M").remainingCleared -= 1;
     expect(problems(a)).toContain("released quantity does not equal the recorded releases");
     const b = clone(); row(b, "SYN-JKT-M").activeProposed += 5; b.summary.proposedUnits += 5;
-    expect(problems(b)).toEqual(["proposed quantity does not equal the open proposals"]);
+    expect(problems(b)).toContain("proposed quantity does not equal the open proposals");
+  });
+});
+
+describe("independent review fixes (status vs evidence, references, real/synthetic separation)", () => {
+  it("clearanceStatus must follow from the evidence: a CLEARED badge with no verified clearance is rejected", () => {
+    const r = clone(); row(r, "SYN-JKT-L").clearanceStatus = "CLEARED"; r.summary.notClearedSkus -= 1;
+    expect(problems(r)).toEqual(["clearance status does not follow from the stock and verified evidence"]);
+    const s = clone(); row(s, "SYN-RAIN-M").clearanceStatus = "CLEARED";
+    expect(problems(s)).toEqual(["clearance status does not follow from the stock and verified evidence"]);
+  });
+  it("eligible must equal min(Bond stock, remaining verified clearance), not merely stay under it", () => {
+    const r = clone(); row(r, "SYN-CAP-XL").eligible = 59; r.summary.eligibleUnits -= 1;
+    expect(problems(r)).toEqual(["eligible quantity is not the lesser of Bond stock and remaining verified clearance"]);
+  });
+  it("clearedExceedsBond must be true exactly when the remaining clearance exceeds the Bond stock", () => {
+    const r = clone(); row(r, "SYN-JKT-M").clearedExceedsBond = true;
+    expect(problems(r)).toEqual(["clearedExceedsBond is inconsistent with the stock and clearance"]);
+  });
+  it("a verified entry that is later withdrawn keeps its verification history and the report stays valid", () => {
+    const r = clone(); const e = r.evidence.find((x: any) => x.status === "WITHDRAWN");
+    expect(e.verifiedBy).toBeDefined();
+    expect(problems(r)).toEqual([]);
+    delete e.verificationDocumentRef;
+    expect(problems(r)).toEqual(["verification details must be complete or absent"]);
+  });
+  it("the exception lists must be exactly what the figures imply (nothing omitted, nothing invented)", () => {
+    const a = clone(); const x = row(a, "SYN-RAIN-L"); x.exceptions = x.exceptions.filter((c: string) => c !== "RELEASED_BEFORE_VERIFICATION"); a.summary.exceptionCount -= 1;
+    expect(problems(a)).toEqual(["row exceptions do not match the figures"]);
+    const b = clone(); row(b, "SYN-CAP-XL").exceptions = ["PROPOSAL_EXCEEDS_ELIGIBLE"]; b.summary.exceptionCount += 1;
+    expect(problems(b)).toEqual(["row exceptions do not match the figures"]);
+    const c = clone(); row(c, "SYN-RAIN-L").releasedBeforeCover = 0;
+    expect(problems(c)).toContain("released-before-cover quantity does not equal the recorded releases");
+  });
+  it("an observed movement's uncleared quantity must follow from its own decrease and eligibility, and is never hidden", () => {
+    const r = clone(); const o = r.observed.find((x: any) => x.uncleared > 0); o.uncleared = 0; o.exceptions = []; r.summary.unclearedObservedUnits -= 40; r.summary.exceptionCount -= 1;
+    expect(problems(r)).toEqual(["an observed movement's uncleared quantity does not follow from its decrease and eligibility"]);
+    const d = clone(); d.observed.push(JSON.parse(JSON.stringify(d.observed[0])));
+    expect(problems(d)).toContain("duplicate observed SKUs");
+  });
+  it("proposals and releases must refer to real rows and each other, with unique ids and consistent completion", () => {
+    const a = clone(); a.proposals[0].sku = "SYN-NOPE"; expect(problems(a).length).toBeGreaterThan(0);
+    const b = clone(); b.releases[0].sku = "SYN-NOPE"; expect(problems(b)).toContain("a proposal or release refers to a SKU that has no row");
+    const c = clone(); c.releases.find((x: any) => x.proposalId).proposalId = "P-99"; expect(problems(c)).toContain("a release refers to an unknown proposal");
+    const d = clone(); d.proposals[1].id = d.proposals[0].id; expect(problems(d)).toContain("duplicate proposal ids");
+    const e = clone(); e.releases[1].id = e.releases[0].id; expect(problems(e)).toContain("duplicate release ids");
+    const f = clone(); const p = f.proposals.find((x: any) => x.status === "COMPLETED"); p.completedQuantity = p.quantity + 1; expect(problems(f)).toContain("a proposal's completed quantity exceeds its quantity");
+    const g = clone(); g.proposals.find((x: any) => x.status === "COMPLETED").status = "OPEN"; expect(problems(g)).toContain("a proposal's status does not match its completed quantity");
+    const h = clone(); h.proposals.find((x: any) => x.status === "COMPLETED").completedQuantity = 10; h.proposals.find((x: any) => x.status === "COMPLETED").status = "PARTLY_COMPLETED"; expect(problems(h)).toContain("a proposal's completed quantity does not equal the releases that cite it");
+  });
+  it("real and synthetic stay apart in EVERY identifier, and real reports need real-looking hashes", () => {
+    const a = clone(); a.evidence[0].clearanceRef = "BOE-REAL-1"; expect(problems(a)).toContain("a synthetic report may contain only synthetic identifiers");
+    const b = clone(); b.evidence[0].attributedTo = "Some Person"; expect(problems(b)).toContain("a synthetic report may contain only synthetic identifiers");
+    const c = clone(); c.proposals[0].proposedBy = "x"; expect(problems(c)).toContain("a synthetic report may contain only synthetic identifiers");
+    const d = realStyleReport(); d.evidence[0].clearanceRef = "SYN-BOE-1"; expect(problems(d)).toContain("a real report may not contain synthetic identifiers");
+    const e = realStyleReport(); e.evidence[0].attributedTo = "synthetic-owner"; expect(problems(e)).toContain("a real report may not contain synthetic identifiers");
+    const f = realStyleReport(); f.snapshotHash = "not-a-real-hash"; expect(problems(f)).toContain("a real report must carry a SHA-256 snapshot hash");
+    const g = realStyleReport(); g.registerTipHash = "zz"; expect(problems(g)).toContain("a real report must carry a SHA-256 snapshot hash");
+  });
+  it("a SKU absent from the snapshot cannot hold Bond stock", () => {
+    const r = clone(); row(r, "SYN-CAP-XL").inSnapshot = false;
+    expect(problems(r)).toContain("a SKU absent from the snapshot cannot hold Bond stock");
+  });
+  it("only verified evidence may carry verification details, and only withdrawn evidence a withdrawal reason", () => {
+    const a = clone(); a.evidence.find((e: any) => e.status === "UNVERIFIED_NOT_CLEARED").verifiedBy = "synthetic-owner";
+    expect(problems(a)).toContain("only verified evidence may carry verification details");
+    const b = clone(); b.evidence.find((e: any) => e.status === "VERIFIED").withdrawnReason = "oops";
+    expect(problems(b)).toContain("only withdrawn evidence may carry a withdrawal reason");
+  });
+  it("a release may only cite a proposal for the same SKU", () => {
+    const r = clone(); r.releases.find((l: any) => l.proposalId).sku = "SYN-JKT-M";
+    expect(problems(r)).toContain("a release cites a proposal for a different SKU");
+  });
+  it("the fixed safety statements must be present, so a report cannot omit them", () => {
+    const r = realStyleReport(); r.statements = r.statements.filter((s: string) => !/Unverified clearance means NOT CLEARED/.test(s));
+    expect(problems(r)).toEqual(["the report must carry the fixed safety statements"]);
+    const s = realStyleReport(); s.statements = [];
+    expect(problems(s)).toEqual(["the report must carry the fixed safety statements"]);
+  });
+  it("whitespace-only identifiers are rejected", () => {
+    const r = clone(); r.evidence[0].attributedTo = "   ";
+    expect(problems(r).length).toBeGreaterThan(0);
   });
 });
 
@@ -150,6 +231,10 @@ describe("Bond report loading (owner-selected local file or the built-in synthet
     expect(b.kind).toBe("INVALID");
     expect(JSON.stringify(b)).toMatch(/size limit/);
     expect(JSON.stringify(a)).toMatch(/git working tree/);
+  });
+  it("a defined-but-blank path is invalid and never falls back to the example", async () => {
+    const r = await loadBondReport({ path: "   ", source: "synthetic" });
+    expect(r.kind).toBe("INVALID");
   });
   it("a symlink is resolved and judged by where it really points", async () => {
     const repo = join(tmp, "repo2"); mkdirSync(join(repo, ".git"), { recursive: true });

@@ -26,7 +26,8 @@ const EVENTS: RegisterEvent[] = [
   entry("CL-1", 1, "CUSTOMS_DOCUMENT", [{ sku: "SYN-JKT-M", quantity: 120 }, { sku: "SYN-RAIN-M", quantity: 100 }], "SYN-DOC-1"), // partial clearance of the jackets
   { type: "CLEARANCE_VERIFIED", entryId: "CL-1", verifiedBy: WHO, verifiedOn: "2026-11-11", verifiedAt: "2026-11-11T08:00:00.000Z", documentRef: "SYN-DOC-1" },
   entry("CL-2", 2, "OWNER_STATEMENT", [{ sku: "SYN-JKT-L", quantity: 150 }]), // a statement only: recorded, can never be verified, stays NOT CLEARED
-  entry("CL-3", 3, "BROKER_CONFIRMATION", [{ sku: "SYN-RAIN-L", quantity: 90 }], "SYN-DOC-3"), // recorded against the wrong shipment, then withdrawn
+  entry("CL-3", 3, "BROKER_CONFIRMATION", [{ sku: "SYN-RAIN-L", quantity: 90 }], "SYN-DOC-3"), // verified, then found to be recorded against the wrong shipment and withdrawn: its verification history is kept, but it no longer counts
+  { type: "CLEARANCE_VERIFIED", entryId: "CL-3", verifiedBy: WHO, verifiedOn: "2026-11-11", verifiedAt: "2026-11-11T10:00:00.000Z", documentRef: "SYN-DOC-3" },
   { type: "CLEARANCE_WITHDRAWN", entryId: "CL-3", by: WHO, on: "2026-11-11", reason: "synthetic: entered against the wrong shipment reference" },
   entry("CL-4", 4, "BROKER_CONFIRMATION", [{ sku: "SYN-CAP-XL", quantity: 60 }], "SYN-DOC-4"),
   { type: "CLEARANCE_VERIFIED", entryId: "CL-4", verifiedBy: WHO, verifiedOn: "2026-11-11", verifiedAt: "2026-11-11T09:00:00.000Z", documentRef: "SYN-DOC-4" },
