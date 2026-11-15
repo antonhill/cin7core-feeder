@@ -36,6 +36,20 @@ export async function logActivity(db: SupabaseClient, input: LogActivityInput): 
   if (error) console.error(`logActivity failed (${input.action}):`, error.message);
 }
 
+/** Like logActivity, but a failed insert THROWS: for an audit row that must exist (a stored authorised exception can never lack its audit record). */
+export async function logActivityStrict(db: SupabaseClient, input: LogActivityInput): Promise<void> {
+  const { error } = await db.from("activity_log").insert({
+    org_id: input.orgId,
+    instance_id: input.instanceId ?? null,
+    actor_user_id: input.actor === "system" ? null : input.actor.userId,
+    actor_email: input.actor === "system" ? "System (scheduled sync)" : (input.actor.email ?? "Unknown"),
+    action: input.action,
+    summary: input.summary,
+    detail: input.detail ? redactSecrets(input.detail) : null,
+  });
+  if (error) throw new Error(`audit record could not be written: ${error.message}`);
+}
+
 export interface ActivityLogEntry {
   id: string;
   instanceId: string | null;
