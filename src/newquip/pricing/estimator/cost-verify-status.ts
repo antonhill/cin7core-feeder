@@ -67,6 +67,40 @@ export function phase2CostNote(s: Phase2CostStatus): string {
   return s.complete ? `Supplier costs verified (${s.verified} of ${s.required}); check them in the supplier pricing workspace` : `${s.outstanding.length} supplier-pricing item${s.outstanding.length === 1 ? "" : "s"} outstanding`;
 }
 
+// ── THE EFFECTIVE APPROVAL REQUIREMENTS ─────────────────────────────────────────────────────────
+// ONE pure source for "what blocks the Manager's plain Approve right now". The page's Approve button is disabled from this list and the Next-action banner reads the SAME list, so the banner can never
+// say "Ready for approval" while the button is blocked, and it always names what is outstanding. It adds and removes NO gate: it is exactly the set the button already enforced (a current Estimator
+// sign-off, no unsaved edits, the quotation READY with costing complete, no outstanding baseline exception and no unmapped product only a library mapping can resolve). The Manager role and a
+// transient "another action is running" are not quotation requirements and stay with the button itself.
+export type ApprovalBlockerId = "signoff-missing" | "signoff-stale" | "unsaved" | "not-ready" | "costing-open" | "baseline-exception" | "mapping-blocking";
+export interface ApprovalBlocker { id: ApprovalBlockerId; text: string }
+export interface ApprovalBlockerInput {
+  signoff: "none" | "current" | "stale";
+  dirty: boolean;
+  /** The quotation is not READY: its reasons (empty list: not ready, no reason given). Null when READY. */
+  notReadyReasons: readonly string[] | null;
+  /** The server's costing verdict is incomplete. */
+  costingOpen: boolean;
+  costingReason?: string | null;
+  /** An approval exception is required (and sufficient): plain approval is unavailable. */
+  baselineExceptionRequired: boolean;
+  baselineExceptionItems?: readonly string[];
+  /** Unmapped products no exception can cover (labels): they need an active library mapping. */
+  blockingLabels?: readonly string[];
+}
+export function approvalBlockers(i: ApprovalBlockerInput): ApprovalBlocker[] {
+  const out: ApprovalBlocker[] = [];
+  if (i.signoff === "none") out.push({ id: "signoff-missing", text: "The Estimator sign-off is missing" });
+  if (i.signoff === "stale") out.push({ id: "signoff-stale", text: "The Estimator sign-off no longer matches the current quotation" });
+  if (i.dirty) out.push({ id: "unsaved", text: "There are unsaved edits: approval applies to the saved quotation" });
+  if (i.notReadyReasons) out.push({ id: "not-ready", text: `The quotation is not ready${i.notReadyReasons[0] ? `: ${i.notReadyReasons[0]}` : ""}${i.notReadyReasons.length > 1 ? ` (+${i.notReadyReasons.length - 1} more)` : ""}` });
+  if (i.costingOpen) out.push({ id: "costing-open", text: `Costing is incomplete${i.costingReason ? `: ${i.costingReason.replace(/\.$/, "")}` : ""}` });
+  if (i.baselineExceptionRequired) out.push({ id: "baseline-exception", text: `A baseline exception is required before approval${i.baselineExceptionItems && i.baselineExceptionItems.length > 0 ? ` (${list([...i.baselineExceptionItems])})` : ""}` });
+  const blocking = i.blockingLabels ?? [];
+  if (blocking.length > 0) out.push({ id: "mapping-blocking", text: `${list([...blocking])} ${blocking.length === 1 ? "needs" : "need"} an active library mapping before approval` });
+  return out;
+}
+
 export type NextActionTone = "success" | "warning" | "info" | "danger";
 export interface NextAction { id: string; tone: NextActionTone; headline: string; detail: string | null; /** Everything still outstanding (Phase 2 items first). */ outstanding: string[] }
 export interface NextActionInput {
@@ -84,6 +118,8 @@ export interface NextActionInput {
   readinessBlocked?: readonly string[];
   /** The Rep-confirmed amount no longer equals the quote total. */
   amountChanged: boolean;
+  /** `approvalBlockers(...)` from the page: the SAME list that disables the Approve button. While any exists the banner never says the quotation is ready for approval. */
+  approvalBlockers?: readonly ApprovalBlocker[];
   /** The SERVER's costing verdict still lists something Phase 2 does not explain. */
   serverIncomplete: boolean;
   serverReason?: string | null;
@@ -105,6 +141,13 @@ export function nextCostVerifyAction(i: NextActionInput): NextAction {
   if (i.readinessBlocked && i.readinessBlocked.length > 0) { const r = i.readinessBlocked; return A("readiness", "warning", "Resolve readiness items", `${r[0]}${r.length > 1 ? ` (and ${r.length - 1} more)` : ""}. The quotation cannot be signed off or approved until it is READY.`); }
   if (i.amountChanged) return A("reconfirm", "info", "Waiting for Rep reconfirmation", "The total changed after the customer confirmed it. Return the quotation to the Rep to reconfirm the amount.");
   if (i.serverIncomplete) return A("costing", "warning", "Costing is not complete", i.serverReason ?? "A supplier cost the quotation needs is unresolved.");
+  if (i.signoff === "current" && i.approvalBlockers && i.approvalBlockers.length > 0) {
+    const bl = i.approvalBlockers, texts = bl.map((b) => b.text);
+    const bx = bl.find((b) => b.id === "baseline-exception"), mp = bl.find((b) => b.id === "mapping-blocking");
+    const who = i.roles.manager ? "approval" : "Manager approval";
+    const headline = bx ? `Baseline exception required before ${who}` : mp ? `Library mapping required before ${who}` : `Not ready for ${who}`;
+    return { id: "approval-blocked", tone: "warning", headline, detail: `${texts[0]}${texts.length > 1 ? ` (and ${texts.length - 1} more)` : ""}.${bx ? (i.roles.manager ? " Approve with the recorded exception in Manager approval." : " The Manager approves it with a recorded exception.") : ""}`, outstanding: [...texts, ...out] };
+  }
   if (i.signoff === "current") return A("approve", "success", i.roles.manager ? "Ready for your approval" : "Ready for Manager approval", "Supplier costs are verified and the Estimator sign-off is current.");
   if (i.roles.estimator && i.costNeedsMark) return A("mark", "info", "Mark reviewed, then sign off", "Supplier costs are verified. Mark the costing reviewed in Final review, then sign off for Manager approval.");
   if (i.roles.estimator) return A("signoff", "info", "Sign off for Manager approval", i.costAcknowledged ? "The costing is marked reviewed for this session." : null);

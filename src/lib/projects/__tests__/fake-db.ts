@@ -105,6 +105,10 @@ export class FakeDb {
     const revs = this.rows("newquip_pricing_revisions");
     const seq = Math.max(0, ...revs.filter((r) => r.quote_id === a.p_quote && r.org_id === a.p_org).map((r) => Number(r.seq)));
     if (seq !== a.p_expected_seq) return { data: null, error: { message: "pricing_conflict: the pricing changed while it was being edited" } };
+    // The remaining checks of the real function (0126), in its order: ONLY estimator.pricing may differ, the recorded previous / new pricing are the stored / written ones, and the
+    // independent-review structure (cost reviews and forward-cover attestations) holds.
+    const bad = pricingRevisionViolation(q.draft as Row, a);
+    if (bad) return { data: null, error: { message: `pricing_conflict: ${bad}` } };
     if (String(a.p_reason ?? "").trim().length < 3) return { data: null, error: { message: "check violation: reason" } };
     const row: Row = { id: `id-${++this.seq}`, created_at: this.ts(), org_id: a.p_org, quote_id: a.p_quote, seq: seq + 1, quote_revision: q.revision, kind: a.p_kind, rule_version: a.p_rule_version, reason: a.p_reason,
       previous_pricing: structuredClone(a.p_previous_pricing), new_pricing: structuredClone(a.p_new_pricing), changes: structuredClone(a.p_changes), new_pricing_hash: a.p_new_pricing_hash, draft_hash_after: a.p_new_draft_hash, changed_by_email: a.p_changed_by };
@@ -256,4 +260,39 @@ export class FakeDb {
     };
     return q;
   }
+}
+
+
+// ── parity helper for newquip_apply_pricing_revision (migration 0126) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+const jn = (v: unknown): unknown => (v === undefined ? null : v);
+const jeq = (x: unknown, y: unknown): boolean => JSON.stringify(sortKeys(jn(x))) === JSON.stringify(sortKeys(jn(y)));
+function sortKeys(v: unknown): unknown { return Array.isArray(v) ? v.map(sortKeys) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v as object).sort().map((k) => [k, sortKeys((v as Record<string, unknown>)[k])])) : v; }
+const without = (o: unknown, ...keys: string[]): Record<string, unknown> => { const c = { ...(o as Record<string, unknown>) }; for (const k of keys) delete c[k]; return c; };
+const low = (x: unknown): string => String(x ?? "").trim().toLowerCase();
+/** The reason the real function would raise (after 'pricing_conflict: '), or null. Mirrors the SQL line by line; see supabase/tests/0126_newquip_apply_pricing_revision_contract.test.sql. */
+export function pricingRevisionViolation(stored: Row, a: Row): string | null {
+  const strip = (d: unknown) => { const c = structuredClone(d ?? {}) as Row; if (c.estimator && typeof c.estimator === "object") delete (c.estimator as Row).pricing; return c; };
+  const storedPricing = (stored?.estimator as Row | undefined)?.pricing, newPricing = ((a.p_new_draft as Row)?.estimator as Row | undefined)?.pricing;
+  if (!jeq(strip(a.p_new_draft), strip(stored))) return "a pricing revision may change only estimator.pricing";
+  if (!jeq(a.p_previous_pricing, storedPricing)) return "the recorded previous pricing is not the stored pricing";
+  if (!jeq(a.p_new_pricing, newPricing)) return "the recorded new pricing is not the pricing written to the draft";
+  const isObj = (x: unknown): x is Row => !!x && typeof x === "object" && !Array.isArray(x);
+  for (const [field, what, newMsg] of [["skus", "cost", "a review cannot be recorded for a new cost"], ["forwardCover", "forward-cover rate", "an attestation cannot be recorded for a new forward-cover rate"]] as const) {
+    const nm = isObj((newPricing as Row | undefined)?.[field]) ? ((newPricing as Row)[field] as Row) : {}, om = isObj((storedPricing as Row | undefined)?.[field]) ? ((storedPricing as Row)[field] as Row) : {};
+    const noun = field === "skus" ? "review" : "attestation";
+    for (const k of Object.keys(nm)) {
+      const n = nm[k], o = om[k];
+      if (!isObj(n) || !isObj(n.review)) continue;
+      if (!jeq(n.review, isObj(o) ? o.review : null)) {
+        if (o === undefined) return newMsg;
+        if ((n.by ?? null) !== (isObj(o) ? o.by ?? null : null)) return `${noun === "review" ? "a review" : "an attestation"} cannot be recorded together with a change to the ${field === "skus" ? "cost" : "rate"}`;
+        if (low((n.review as Row).by) !== low(a.p_changed_by)) return `${noun === "review" ? "a review" : "an attestation"} must be recorded by the reviewer`;
+        if (low((n.review as Row).by) === low(n.by)) return field === "skus" ? "a cost cannot be verified by the person who entered it" : "a forward-cover rate cannot be attested by the person who entered it";
+      }
+      if (isObj(o) && !jeq(without(n, "review", "by", "at"), without(o, "review", "by", "at"))) return field === "skus" ? "a changed cost cannot carry a review" : "a changed forward-cover rate cannot carry an attestation";
+      if (isObj(o) && jeq(n.review, o.review) && (n.by ?? null) !== (o.by ?? null)) return `who entered ${field === "skus" ? "a reviewed cost" : "an attested forward-cover rate"} cannot be changed`;
+    }
+    void what;
+  }
+  return null;
 }

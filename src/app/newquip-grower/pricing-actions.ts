@@ -7,12 +7,13 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { applyPricingChange, attestRates, loadPricingWorkspace, recordManualEvidence, verifyCosts, type ApplyReport, type PricingActor, type WorkspaceBundle } from "@/lib/newquip-quotes/pricing-service";
 import type { PricingSubmission } from "@/newquip/pricing/estimator/apply";
+import type { PricingConflict } from "@/newquip/pricing/estimator/merge";
 import { auditActor, authoriseActor, errText as rawErrText, type Actor } from "./actor";
 
 /** Unexpected programming errors (a malformed request) are not echoed to the browser; our own plain-language messages are. */
 const errText = (e: unknown): string => (e instanceof TypeError || e instanceof RangeError || e instanceof SyntaxError ? "The pricing request was not valid." : rawErrText(e));
 
-export interface PricingActionResult<T> { ok: boolean; error?: string; errors?: string[]; data?: T }
+export interface PricingActionResult<T> { ok: boolean; error?: string; errors?: string[]; data?: T; /** A save refused because the stored pricing changed since the base the edits were made against: which units conflict. */ conflicts?: PricingConflict[] }
 
 const asPricingActor = (a: Actor): PricingActor => ({ orgId: a.orgId, userId: a.userId, email: a.email, roles: a.roles, canSeeCost: a.canSeeCost });
 /** Supplier pricing is cost data: like the cost actions, it is not available while a Demo Mode identity is active. */
@@ -21,12 +22,12 @@ async function pricingActor(): Promise<Actor> {
   if (a.demo) throw new Error("Supplier pricing is not available in Demo Mode.");
   return a;
 }
-async function run(quoteId: string, submission: PricingSubmission | null, reason: string): Promise<PricingActionResult<ApplyReport>> {
+async function run(quoteId: string, submission: PricingSubmission | null, reason: string, base: PricingSubmission | null): Promise<PricingActionResult<ApplyReport>> {
   if (typeof quoteId !== "string" || quoteId.length === 0 || quoteId.length > 64 || typeof reason !== "string") throw new TypeError("bad request");
   const a = await pricingActor();
   const db = createServiceRoleClient();
-  const r = await applyPricingChange(db, asPricingActor(a), quoteId, submission, reason);
-  if (!r.ok) return { ok: false, error: r.errors[0], errors: r.errors };
+  const r = await applyPricingChange(db, asPricingActor(a), quoteId, submission, reason, base);
+  if (!r.ok) return { ok: false, error: r.errors[0], errors: r.errors, ...(r.conflicts ? { conflicts: r.conflicts } : {}) };
   await auditActor(db, a, { action: "newquip.pricing_revision", summary: "Recorded an Estimator pricing revision (local only; no Cin7 write)", detail: { quoteId, seq: r.report.seq, kind: r.report.kind, changedValues: r.report.changedValues, customerConfirmationWithdrawn: !!r.report.confirmation } });
   return { ok: true, data: r.report };
 }
@@ -38,17 +39,25 @@ export async function getEstimatorPricingAction(quoteId: string): Promise<Pricin
   } catch (e) { return { ok: false, error: errText(e) }; }
 }
 
-/** Records the submitted pricing as one immutable revision (the first one switches the model on for this quotation). */
-export async function applyEstimatorPricingAction(quoteId: string, submission: PricingSubmission, reason: string): Promise<PricingActionResult<ApplyReport>> {
+const NO_BASE = "This request did not say which saved pricing your edits were based on, so it was refused to avoid overwriting someone else's change. Reload the page and try again.";
+const isBase = (x: unknown): boolean => x === null || (typeof x === "object" && !Array.isArray(x));
+
+/**
+ * Records the submitted pricing as one immutable revision (the first one switches the model on for this quotation). `base` is REQUIRED: the stored pricing these edits were made against
+ * (null = pricing was off when loaded). The server merges field by field onto the CURRENT stored pricing and refuses on a real conflict; a missing base is refused (never last-write-wins).
+ */
+export async function applyEstimatorPricingAction(quoteId: string, submission: PricingSubmission, reason: string, base: PricingSubmission | null): Promise<PricingActionResult<ApplyReport>> {
   try {
-    return await run(quoteId, submission, reason);
+    if (!isBase(base)) return { ok: false, error: NO_BASE, errors: [NO_BASE] };
+    return await run(quoteId, submission, reason, base);
   } catch (e) { return { ok: false, error: errText(e) }; }
 }
 
-/** Switches the model off for this quotation (recorded as a revision): it returns to the POC price source. */
-export async function disableEstimatorPricingAction(quoteId: string, reason: string): Promise<PricingActionResult<ApplyReport>> {
+/** Switches the model off for this quotation (recorded as a revision): it returns to the POC price source. `base` is REQUIRED and the switch-off is refused if the stored pricing changed since it. */
+export async function disableEstimatorPricingAction(quoteId: string, reason: string, base: PricingSubmission | null): Promise<PricingActionResult<ApplyReport>> {
   try {
-    return await run(quoteId, null, reason);
+    if (!isBase(base)) return { ok: false, error: NO_BASE, errors: [NO_BASE] };
+    return await run(quoteId, null, reason, base);
   } catch (e) { return { ok: false, error: errText(e) }; }
 }
 

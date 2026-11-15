@@ -5,7 +5,7 @@ import type { QuoteDraft } from "@/newquip/grower/draft";
 import type { EstimatorPricing } from "@/newquip/pricing/estimator/types";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { evaluationContext } from "./context";
-import { applyCostVerification, applyManualEvidence, applyPricingSubmission, applyRateAttestation, disablePricing, selectRuleVersion, type ApplyResult, type AttestItem, type EvidenceItem, type PricingChange, type PricingSubmission, type RevisionKind, type VerifyItem, type Viewer } from "@/newquip/pricing/estimator";
+import { applyCostVerification, changedUnits, conflictMessage, emptySubmission, mergePricing, canEnterPricingInputs, submissionFrom, type PricingConflict, applyManualEvidence, applyPricingSubmission, applyRateAttestation, disablePricing, selectRuleVersion, type ApplyResult, type AttestItem, type EvidenceItem, type PricingChange, type PricingSubmission, type RevisionKind, type VerifyItem, type Viewer } from "@/newquip/pricing/estimator";
 import { loadQuote, type QuoteRecord } from "./quote-store";
 
 // IMMUTABLE ESTIMATOR PRICING REVISIONS (NQ-008B Phase 2, migration 0126). The change and its revision are ONE database transaction (newquip_apply_pricing_revision): a pricing
@@ -31,7 +31,7 @@ export async function listPricingRevisions(db: Db, orgId: string, quoteId: strin
 }
 
 export interface ApplyOutcome { ok: true; seq: number; kind: RevisionKind; changes: PricingChange[]; draftHash: string }
-export type ApplyFailure = { ok: false; errors: string[] };
+export type ApplyFailure = { ok: false; errors: string[]; /** Present when the save was refused because the stored pricing changed since the submission's base (nothing was written). */ conflicts?: PricingConflict[] };
 
 type Built = { res: Extract<ApplyResult, { ok: true }>; reason: string } | ApplyFailure;
 
@@ -66,10 +66,25 @@ async function persist(db: Db, orgId: string, quoteId: string, email: string, bu
 
 /** Validate, stamp and persist one authorised pricing change as an immutable revision. `submission` null = switch the model off. */
 export function applyEstimatorPricing(
-  db: Db, orgId: string, quoteId: string, viewer: Viewer, email: string, submission: PricingSubmission | null, reason: string, nowIso: string = new Date().toISOString(),
+  db: Db, orgId: string, quoteId: string, viewer: Viewer, email: string, submission: PricingSubmission | null, reason: string, nowIso: string = new Date().toISOString(), base?: PricingSubmission | null,
 ): Promise<ApplyOutcome | ApplyFailure> {
   return persist(db, orgId, quoteId, email, (q) => {
     const prior = q.draft.estimator.pricing;
+    // NO SILENT OVERWRITE. When the caller says what its edits were based on (`base`; null = pricing was off), the submission is merged field by field onto what is stored NOW: fields the user did
+    // not touch take the current stored values, and a field both sides changed differently refuses the whole save (nothing written). Without a base the submission is applied as it always was.
+    // A SWITCH-OFF is conflict-aware too: refused when the stored pricing is no longer what the user saw.
+    // A null base means "pricing was OFF when loaded": switching off pricing that is ON now is therefore stale. (An undefined base never reaches here from the actions: it is refused there.)
+    // Concurrent Manager verifications / attestations / evidence are deliberately not conflicts: a switch-off discards them with the pricing.
+    if (!submission && base !== undefined && prior && canEnterPricingInputs(viewer)) {
+      if (base === null || changedUnits(base, submissionFrom(prior)).length > 0) return { ok: false, errors: ["The supplier pricing was switched on or changed since you loaded it, so it was not switched off. Nothing was saved. Reload to review. (Switching off discards the verifications, attestations and evidence recorded on it.)"], conflicts: [{ key: "pricing", label: "supplier pricing" }] };
+    }
+    if (submission && base !== undefined && canEnterPricingInputs(viewer)) {
+      const baseSub = base ?? emptySubmission(submission.ruleVersionId);
+      if (base !== null && !prior) return { ok: false, errors: ["Supplier pricing was switched off by someone else since you loaded it. Nothing was saved. Reload to review; your typed values are kept until you choose."], conflicts: [{ key: "pricing", label: "supplier pricing (switched off)" }] };
+      const m = mergePricing(baseSub, prior ? submissionFrom(prior) : emptySubmission(submission.ruleVersionId), submission, prior);
+      if (m.conflicts.length > 0) return { ok: false, errors: [conflictMessage(m.conflicts)], conflicts: m.conflicts };
+      submission = m.merged;
+    }
     const res = submission ? applyPricingSubmission(prior, submission, viewer, email, nowIso, reason, q.draft.quoteType) : disablePricing(prior, viewer, reason);
     return res.ok ? { res, reason } : res;
   });

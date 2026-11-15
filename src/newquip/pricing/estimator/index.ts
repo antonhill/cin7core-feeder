@@ -4,6 +4,7 @@ export * from "./finality";
 export * from "./ownership";
 export * from "./adjustment";
 export * from "./apply";
+export * from "./merge";
 export * from "./verification";
 export * from "./attestation";
 export * from "./manual-evidence";
