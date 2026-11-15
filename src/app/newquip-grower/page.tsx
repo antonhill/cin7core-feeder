@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { stageLabelOf, waitingOn, type QuoteState } from "@/newquip/quote/workflow";
-import { createGrowerQuoteAction, listGrowerQuotesAction } from "./actions";
+import { createGrowerQuoteAction, listGrowerQuotesAction, pocDemonstrationAvailableAction } from "./actions";
 import { QuoteListSkeleton } from "./QuoteSkeleton";
 import { announceNavigation } from "@/app/navigation-events";
 import { OP } from "@/components/ui/operation-labels";
@@ -37,13 +37,16 @@ export default function NewquipGrowerPage() {
     listGrowerQuotesAction().then((r) => (r.ok ? (setRows(r.data ?? []), setError(null)) : setError(r.error ?? "The quotations could not be loaded."))).catch(() => setError("The quotations could not be loaded. Reload the page to try again."));
   }, []);
 
-  function create() {
+  const [demoAvailable, setDemoAvailable] = useState(false);
+  useEffect(() => { pocDemonstrationAvailableAction().then((r) => setDemoAvailable(r.ok && r.data === true)).catch(() => setDemoAvailable(false)); }, []);
+
+  function create(demonstration = false) {
     if (creating.current) return;
     creating.current = true;
     setError(null);
     start(async () => {
       let r: Awaited<ReturnType<typeof createGrowerQuoteAction>>;
-      try { r = await createGrowerQuoteAction(); } catch { creating.current = false; return setError("The quotation was not created: the request did not complete. It is safe to try again, but check the list below first."); }
+      try { r = await createGrowerQuoteAction(undefined, demonstration ? { demonstration: true } : undefined); } catch { creating.current = false; return setError("The quotation was not created: the request did not complete. It is safe to try again, but check the list below first."); }
       if (!r.ok || !r.data) { creating.current = false; return setError(r.error ?? "The quotation was not created. Nothing was changed; you can try again."); }
       announceNavigation();
       router.push(`/newquip-grower/${r.data.id}`);
@@ -62,7 +65,8 @@ export default function NewquipGrowerPage() {
           <Link href="/newquip-grower/project-templates" className="inline-flex min-h-11 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Project templates</Link>
           <Link href="/newquip-grower/company-profile" className="inline-flex min-h-11 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Company details</Link>
           <Link href="/newquip-grower/template" className="inline-flex min-h-11 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Template detail</Link>
-          <Button className="min-h-11" onClick={create} loading={isWorking}>{isWorking ? OP.createQuotation : "New Grower quote"}</Button>
+          <Button className="min-h-11" onClick={() => create()} loading={isWorking}>{isWorking ? OP.createQuotation : "New Grower quote"}</Button>
+          {demoAvailable && <Button className="min-h-11" variant="secondary" onClick={() => create(true)} disabled={isWorking} title="Internal presentation only: pre-filled illustrative Estimator inputs, not for real quotations">Start demonstration quotation</Button>}
         </div>
       </div>
       {isWorking && <PendingNotice label={OP.createQuotation} className="mt-4" />}

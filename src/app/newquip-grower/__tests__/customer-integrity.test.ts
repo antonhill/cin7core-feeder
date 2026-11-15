@@ -365,7 +365,10 @@ describe("POC Presentation Mode (designated demonstration only)", () => {
 
   it("a NEW quotation created in the mode is marked and seeded; the same call with the mode off (or on another database) is untouched", async () => {
     on(); await as("rep");
-    const r = await grower.createGrowerQuoteAction(); expect(r.error).toBeUndefined();
+    const ordinary = await grower.createGrowerQuoteAction(); expect(ordinary.error).toBeUndefined(); // mode ON but NOT asked for: a normal quotation (real UAT), no flag, no seed
+    const oq = db.rows("newquip_quotes").find((x) => x.id === ordinary.data!.id) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(hasPocFlag(oq.draft)).toBe(false); expect(oq.draft.estimator.priceResolutions).toEqual({}); expect(oq.draft.estimator.confirmedMappings ?? {}).toEqual({});
+    const r = await grower.createGrowerQuoteAction(undefined, { demonstration: true }); expect(r.error).toBeUndefined();
     const q = db.rows("newquip_quotes").find((x) => x.id === r.data!.id) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
     expect(hasPocFlag(q.draft)).toBe(true);
     expect(q.draft.estimator.assumptions.startsWith(POC_MARKER)).toBe(true);
@@ -382,10 +385,12 @@ describe("POC Presentation Mode (designated demonstration only)", () => {
     expect(Object.keys(after.draft.estimator.priceResolutions).length).toBe(5);
     expect(after.draft.estimator.assumptions.startsWith(POC_MARKER)).toBe(true);
     off();
+    expect((await grower.createGrowerQuoteAction(undefined, { demonstration: true })).ok).toBe(false); // asked for a demonstration where the mode is off: refused, not downgraded
     const n = await grower.createGrowerQuoteAction(); expect(n.error).toBeUndefined();
     const nq = db.rows("newquip_quotes").find((x) => x.id === n.data!.id) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
     expect(hasPocFlag(nq.draft)).toBe(false); expect(nq.draft.estimator.priceResolutions).toEqual({});
     process.env.NEWQUIP_POC_PRESENTATION = "true"; process.env.SUPABASE_URL = "https://wevhibjvinmdvuuyurql.supabase.co"; process.env.NEXT_PUBLIC_SUPABASE_URL = "https://wevhibjvinmdvuuyurql.supabase.co";
+    expect((await grower.createGrowerQuoteAction(undefined, { demonstration: true })).ok).toBe(false); // another database: refused
     const o = await grower.createGrowerQuoteAction(); expect(hasPocFlag((db.rows("newquip_quotes").find((x) => x.id === o.data!.id) as Record<string, any>).draft)).toBe(false); // eslint-disable-line @typescript-eslint/no-explicit-any
   });
 
