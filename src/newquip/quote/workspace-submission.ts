@@ -55,8 +55,14 @@ export function editorFrom(current: PricingSubmission | null, sku: string): SkuE
 }
 export const isForeign = (currency: string): boolean => /^[A-Z]{3}$/.test(currency) && currency !== "ZAR";
 
-/** Plain-language problems that stop a save. Empty = the editor can be saved. */
-export function editorProblems(e: SkuEditor): string[] {
+/** Rates are stored PER CURRENCY: which other products use this currency, and whether a forward-cover contract is already in force for it. */
+export function fxContext(current: PricingSubmission | null, sku: string, currency: string): { others: string[]; hasForward: boolean } {
+  const others = Object.entries(current?.skus ?? {}).filter(([k, v]) => k !== sku && v?.currency === currency).map(([k]) => k).sort();
+  return { others, hasForward: !!current?.forwardCover[currency] };
+}
+
+/** Plain-language problems that stop a save. Empty = the editor can be saved. `fx` says who else shares this currency's rate (see fxContext). */
+export function editorProblems(e: SkuEditor, fx: { others: string[]; hasForward: boolean } = { others: [], hasForward: false }): string[] {
   const p: string[] = [];
   const c = parseCostText(e.costText);
   if (c.kind === "empty") p.push("Enter the supplier cost.");
@@ -69,6 +75,7 @@ export function editorProblems(e: SkuEditor): string[] {
   if (e.addOnText.trim() !== "" && toCents(e.addOnText) === null) p.push("Enter the fixed add-on as a rand amount, or leave it empty.");
   if (isForeign(e.currency)) {
     if (e.fxMode === "spot") {
+      if (fx.hasForward && fx.others.length > 0) p.push(`A forward-cover contract is in force for ${e.currency} and also prices ${fx.others.join(", ")}. Keep using it here, or have it removed from those products first: this form never deletes another product's forward cover.`);
       const r = toMicro(e.spotRateText);
       if (r === null || r <= 0) p.push(`Enter the ${e.currency} spot rate.`);
       if (e.spotSource.trim().length < 3) p.push(`Say where the ${e.currency} rate comes from.`);
@@ -91,8 +98,8 @@ export function editorProblems(e: SkuEditor): string[] {
 
 /** The stored submission with exactly this product's inputs applied. `currentRule` is only used when pricing was off (the first save switches the model on). Returns null when the editor has problems. */
 export function applyEditor(current: PricingSubmission | null, sku: string, e: SkuEditor, nowIso: string): PricingSubmission | null {
-  if (editorProblems(e).length > 0) return null;
   const sub = structuredClone(current ?? emptySubmission(LEGACY_RULE_VERSION.id));
+  if (editorProblems(e, fxContext(current, sku, e.currency)).length > 0) return null;
   const prior = sub.skus[sku];
   const cost = parseCostText(e.costText) as { kind: "ok"; value: number };
   sub.skus[sku] = {
@@ -104,7 +111,7 @@ export function applyEditor(current: PricingSubmission | null, sku: string, e: S
       const rate = toMicro(e.spotRateText)!;
       const stored = sub.fxQuotes[e.currency];
       sub.fxQuotes[e.currency] = stored && stored.rateMicro === rate && stored.source === e.spotSource.trim() ? stored : { rateMicro: rate, source: e.spotSource.trim(), asOf: nowIso };
-      delete sub.forwardCover[e.currency];
+      if (fxContext(current, sku, e.currency).others.length === 0) delete sub.forwardCover[e.currency]; // only when no other product relies on it
     } else {
       sub.forwardCover[e.currency] = { rateMicro: toMicro(e.forward.rateText)!, coverDays: Number(e.forward.coverDaysText), reference: e.forward.reference.trim(), validFrom: e.forward.validFrom, validUntil: e.forward.validUntil, reason: e.forward.reason.trim() };
     }

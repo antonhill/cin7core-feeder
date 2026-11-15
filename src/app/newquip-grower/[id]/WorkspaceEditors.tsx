@@ -8,7 +8,7 @@ import type { WorkspaceBundle } from "@/lib/newquip-quotes/pricing-service";
 import { manualSelectionSkusFor, packageFor } from "@/newquip/grower/commercial";
 import type { GrowerItemKey } from "@/newquip/grower/types";
 import { decodeManualReason, encodeManualReason, manualPriceComplete, money } from "@/newquip/quote/estimator-workspace";
-import { applyEditor, editorFrom, editorProblems, isForeign, parseCostText, previewLine, type SkuEditor } from "@/newquip/quote/workspace-submission";
+import { applyEditor, editorFrom, editorProblems, fxContext, isForeign, parseCostText, previewLine, type SkuEditor } from "@/newquip/quote/workspace-submission";
 import { ProductMappingPicker } from "./ProductMappingPicker";
 
 // The focused editors of the Estimator workspace. One editor per product. They keep what was typed in local state until a save succeeds (a refused or conflicting save never clears a field),
@@ -42,7 +42,8 @@ export function SkuCostForm({ sku, label, quantity, bundle, canEdit, save, onDir
   const [saved, setSaved] = useState<string | null>(null);
   const dirty = JSON.stringify(ed) !== JSON.stringify(initial);
   useEffect(() => { onDirty(dirty); }, [dirty, onDirty]);
-  const problems = editorProblems(ed);
+  const fx = fxContext(bundle.current, sku, ed.currency);
+  const problems = editorProblems(ed, fx);
   const nowIso = useMemo(() => new Date().toISOString(), [ed]); // eslint-disable-line react-hooks/exhaustive-deps
   const sub = useMemo(() => (problems.length === 0 ? applyEditor(bundle.current, sku, ed, nowIso) : null), [bundle.current, sku, ed, nowIso]); // eslint-disable-line react-hooks/exhaustive-deps
   const pv = useMemo(() => previewLine(sub, sku, quantity, nowIso), [sub, sku, quantity, nowIso]);
@@ -72,6 +73,7 @@ export function SkuCostForm({ sku, label, quantity, bundle, canEdit, save, onDir
         </Section>
         {foreign && (
           <Section title="Exchange rate" hint={`${ed.currency} to rand`}>
+            <p className="mb-3 rounded-lg bg-sky-50 px-3 py-2 text-[13px] text-sky-950" data-testid="fx-shared-note">This rate applies to every {ed.currency} product on this quotation{fx.others.length > 0 ? <>: also {fx.others.join(", ")}. {fx.hasForward ? "A forward-cover contract is in force for them." : ""}</> : <>. No other product uses {ed.currency} yet.</>}</p>
             <div role="radiogroup" aria-label="Exchange rate" className="flex flex-wrap gap-3">
               <label className={`flex min-w-[15rem] flex-1 cursor-pointer gap-2 rounded-lg border-[1.5px] p-3 text-sm ${ed.fxMode === "spot" ? "border-blue-700 bg-sky-50" : "border-slate-400"}`}><input type="radio" name={`fx-${sku}`} className="mt-0.5 size-5" checked={ed.fxMode === "spot"} disabled={disabled} onChange={() => set((d) => { d.fxMode = "spot"; })} /><span><strong>Spot rate</strong><br /><span className="text-xs text-slate-700">A spot rate older than the rule&rsquo;s limit expires and blocks pricing.</span></span></label>
               <label className={`flex min-w-[15rem] flex-1 cursor-pointer gap-2 rounded-lg border-[1.5px] p-3 text-sm ${ed.fxMode === "forward" ? "border-blue-700 bg-sky-50" : "border-slate-400"}`}><input type="radio" name={`fx-${sku}`} className="mt-0.5 size-5" checked={ed.fxMode === "forward"} disabled={disabled} onChange={() => set((d) => { d.fxMode = "forward"; })} /><span><strong>My forward-cover contract</strong><br /><span className="text-xs text-slate-700">Needs a contract reference, validity dates and a reason. A Manager attests it.</span></span></label>
@@ -218,5 +220,45 @@ export function PackageConfirm({ itemKey, confirmed, canEdit, busy, onConfirm }:
         <span>I confirm this package is priced from its {pkg?.components.length ?? 7} components below ({pkg?.components.map((c) => `${c.qtyPerUnit ?? ""} ${c.description}`.trim()).join("; ")}). Each is a Cin7 product. <span className="text-slate-700">Recorded with your name and the time when saved.</span></span>
       </label>
     </Section>
+  );
+}
+
+/** The M75 system price: the Estimator's commercial price per system, ex VAT. It is NOT a product mapping and has no supplier cost, so there is no cost, FX or verification here. Saved through the draft save. */
+export function M75PriceForm({ itemKey, label, quantity, existing, canEdit, save, onDirty, onSaved }: {
+  itemKey: string; label: string; quantity: number; existing: number | null | undefined; canEdit: boolean;
+  save: (itemKey: string, unitPrice: number) => Promise<SaveResult>; onDirty: (d: boolean) => void; onSaved?: () => void;
+}) {
+  const [initial, setInitial] = useState(existing != null ? String(existing) : "");
+  const [price, setPrice] = useState(initial);
+  const [errors, setErrors] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState<string | null>(null);
+  const n = Number(price.replace(/\s/g, "").replace(",", "."));
+  const unit = price.trim() !== "" && Number.isFinite(n) ? n : null;
+  const dirty = price !== initial;
+  useEffect(() => { onDirty(dirty); }, [dirty, onDirty]);
+  const ok = unit !== null && unit > 0;
+  async function doSave() {
+    if (!ok || busy || unit === null) return;
+    setBusy(true); setErrors([]); setSaved(null);
+    try {
+      const r = await save(itemKey, Math.round(unit * 100) / 100);
+      if (!r.ok) { setErrors(r.errors?.length ? r.errors : ["Could not save. Nothing you typed was lost."]); return; }
+      setInitial(price); setSaved("Saved."); onDirty(false); onSaved?.();
+    } catch { setErrors(["That did not complete (the connection or the server failed). Nothing you typed was lost."]); } finally { setBusy(false); }
+  }
+  return (
+    <div className="flex min-w-0 flex-col gap-4" data-testid="m75-form">
+      <Section title="M75 system price" hint={`${label} · per system, ex VAT`}>
+        <p className="mb-3 text-sm text-slate-800">The M75 system is priced by you, by design (client preference). It is not a product mapping and has no supplier cost, so there is no cost, exchange rate or verification step for it. A zero is never a price.</p>
+        <div className="w-56"><Input label="Price per system (R)" inputMode="decimal" className="tabular-nums" value={price} disabled={!canEdit || busy} onChange={(e) => { setSaved(null); setPrice(e.target.value); }} helperText="Required. Must be more than zero." /></div>
+        {ok && unit !== null && <p className="mt-3 rounded-lg bg-slate-100 px-3 py-2 text-sm tabular-nums">{quantity.toLocaleString("en-ZA").replace(/\s/g, ",")} × {money(unit)} = <strong>{money(unit * quantity)}</strong> ex VAT</p>}
+      </Section>
+      {errors.length > 0 && <Alert tone="warning"><ul className="list-disc pl-5" data-testid="save-errors">{errors.map((e) => <li key={e}>{e}</li>)}</ul></Alert>}
+      <div className="flex flex-wrap items-center gap-3">
+        <Button type="button" className="min-h-11" loading={busy} disabled={!canEdit || !ok || busy || !dirty} onClick={doSave} aria-describedby="m75-why">Save M75 price</Button>
+        <span id="m75-why" role="status" className="text-sm text-amber-900" data-testid="save-why">{!canEdit ? "Only an Estimator can enter the M75 price." : !ok ? "Enter a price above zero." : !dirty ? (saved ?? "No unsaved changes.") : "Ready to save."}</span>
+      </div>
+    </div>
   );
 }

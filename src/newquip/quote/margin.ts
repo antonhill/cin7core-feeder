@@ -228,6 +228,7 @@ export function redactInternalFinancials<Q extends { draft: { estimator: { costO
   delete q.draft.estimator.costBasis;
   delete q.draft.estimator.changeStamps; // NQ-008A: who adjusted which input is for cost-entitled roles
   delete q.draft.estimator.pricing; // NQ-008B: supplier costs, rates, freight and markup
+  for (const r of Object.values((q.draft.estimator as unknown as { priceResolutions?: Record<string, { reason?: string } | undefined> }).priceResolutions ?? {})) if (r && typeof r.reason === "string") r.reason = neutraliseCostWording(r.reason); // manual-price EVIDENCE is internal
   if (q.accepted_baseline) q.accepted_baseline = neutraliseDeep(q.accepted_baseline);
   const src = (q.accepted_baseline as unknown as { pricing?: { source?: { id?: string; label?: string; basis?: string; provenance?: string; notice?: string } } } | null)?.pricing?.source;
   if (src && src.id === "estimator_supplier_pricing") Object.assign(src, { label: "Project pricing", basis: "Project pricing: quoted at the project price basis, ex VAT.", provenance: "Project pricing", notice: "Quoted at the approved NewQuip project price basis." });
@@ -245,7 +246,9 @@ export function neutraliseCostWording(text: string): string {
     .replace(/Day-to-day = workbook Retail Price ex VAT\. Project = landed cost \(Cost × ROE × Freight\) \+ 20%\./g, "Standard price list basis.")
     .replace(/Landed cost \(Cost × ROE × Freight\) \+ 20% markup/g, "Project pricing")
     .replace(/the workbook (?:landed cost|Retail Price) for /g, "the price list price for ")
-    .replace(/landed cost \(Cost × ROE × Freight\)(?: \+ 20%(?: mark-?up)?)?/gi, "the project price basis");
+    .replace(/landed cost \(Cost × ROE × Freight\)(?: \+ 20%(?: mark-?up)?)?/gi, "the project price basis")
+    // A manual quotation price is stored as "REASON: …" + "EVIDENCE: …" (supplier quote references). The Rep keeps reading the reason exactly as before; the evidence is for cost-entitled roles only.
+    .replace(/REASON: ([^\n]*)\nEVIDENCE: [^\n]*/g, "$1");
 }
 function neutraliseDeep<T>(v: T): T {
   if (typeof v === "string") return neutraliseCostWording(v) as unknown as T;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { emptySubmission, LEGACY_RULE_VERSION, type PricingSubmission } from "@/newquip/pricing/estimator";
-import { applyEditor, blankEditor, editorFrom, editorProblems, parseCostText, previewLine, revisionReason } from "../workspace-submission";
+import { applyEditor, blankEditor, editorFrom, editorProblems, fxContext, parseCostText, previewLine, revisionReason } from "../workspace-submission";
 
 const NOW = "2026-11-15T10:00:00.000Z";
 const filled = (over: Partial<ReturnType<typeof blankEditor>> = {}) => ({ ...blankEditor("ZAR"), costText: "193.60", source: "Supplier quote 12 Nov", supplierName: "Local Supplier", ...over });
@@ -74,4 +74,35 @@ describe("the preview is the pricing model's own result", () => {
 it("the revision reason is deterministic and bounded", () => {
   expect(revisionReason("supplier cost for NQ1161")).toBe("Estimator workspace: supplier cost for NQ1161");
   expect(revisionReason("x".repeat(900)).length).toBe(500);
+});
+
+describe("rates are stored per currency: one product's form never deletes another product's forward cover", () => {
+  const sharedForward = (): PricingSubmission => {
+    const s = emptySubmission(LEGACY_RULE_VERSION.id);
+    for (const k of ["NQA", "NQB"]) s.skus[k] = { supplierId: null, supplierName: "X", currency: "USD", nativeUnitCostE7: 10_000_000, source: "old", freight: { factorMicro: 1_000_000, source: "old" } };
+    s.forwardCover.USD = { rateMicro: 16_900_000, coverDays: 90, reason: "hedged", reference: "FEC-1", validFrom: "2026-11-01", validUntil: "2027-01-30" };
+    return s;
+  };
+  const spot = (): ReturnType<typeof blankEditor> => ({ ...blankEditor("USD"), costText: "6.5", source: "quote", fxMode: "spot", spotRateText: "16.5", spotSource: "rate table" });
+  it("switching one product to a spot rate while another still uses the contract is refused in words, and nothing is applied", () => {
+    const cur = sharedForward();
+    expect(fxContext(cur, "NQA", "USD")).toEqual({ others: ["NQB"], hasForward: true });
+    expect(editorProblems(spot(), fxContext(cur, "NQA", "USD")).join(" ")).toMatch(/forward-cover contract is in force for USD and also prices NQB/);
+    expect(applyEditor(cur, "NQA", spot(), NOW)).toBeNull();
+    expect(cur.forwardCover.USD).toBeDefined();
+  });
+  it("when no other product uses the currency, switching to spot does replace the contract", () => {
+    const cur = sharedForward(); delete cur.skus.NQB;
+    const next = applyEditor(cur, "NQA", spot(), NOW)!;
+    expect(next.forwardCover.USD).toBeUndefined();
+    expect(next.fxQuotes.USD.rateMicro).toBe(16_500_000);
+  });
+  it("editing the shared forward cover changes it for the currency (the form says so) and leaves the other product's own cost untouched", () => {
+    const cur = sharedForward();
+    const e = editorFrom(cur, "NQA");
+    expect(e.fxMode).toBe("forward");
+    const next = applyEditor(cur, "NQA", { ...e, forward: { ...e.forward, rateText: "17.1" } }, NOW)!;
+    expect(next.forwardCover.USD.rateMicro).toBe(17_100_000);
+    expect(next.skus.NQB).toEqual(cur.skus.NQB);
+  });
 });

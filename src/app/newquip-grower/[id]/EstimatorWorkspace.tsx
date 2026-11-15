@@ -13,8 +13,8 @@ import type { GrowerItemKey } from "@/newquip/grower/types";
 import { buildWorkspace, money, targetOf, type TaskKind, type WorkspaceTask } from "@/newquip/quote/estimator-workspace";
 import { applyEditor, revisionReason, type SkuEditor } from "@/newquip/quote/workspace-submission";
 import { applyEstimatorPricingAction, attestEstimatorRatesAction, getEstimatorPricingAction, verifyEstimatorCostsAction } from "../pricing-actions";
-import { ManualPriceForm, PackageConfirm, ProductChoice, Rail, SkuCostForm, type SaveResult } from "./WorkspaceEditors";
-import { CompleteGroup, Legend, NextActionBar, SummaryPanel, TaskRow, WhatNext } from "./WorkspaceParts";
+import { M75PriceForm, ManualPriceForm, PackageConfirm, ProductChoice, Rail, SkuCostForm, type SaveResult } from "./WorkspaceEditors";
+import { CompleteGroup, Legend, NextActionBar, RepItems, SummaryPanel, TaskRow, WhatNext } from "./WorkspaceParts";
 
 // NewQuip Phase 2: the ESTIMATOR WORKSPACE. It replaces the stacked Line decisions / Product mappings / Cin7 cost capture / Margin detail / Cost overrides / supplier-pricing forms for a quotation
 // whose supplier pricing is ON. Everything it shows comes from the existing bridge and pricing model; every save goes through the existing server actions (supplier pricing: one revision merged
@@ -45,6 +45,8 @@ export interface EstimatorWorkspaceProps {
   /** The Estimator's final-review mark is still needed before sign-off (the existing in-session acknowledgement). */
   reviewNeeded: boolean;
   onMarkReviewed: () => void;
+  /** Reports whether an editor holds unsaved typed values (the page uses it to guard its own buttons that leave the workspace). */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 type Open = { id: string; kind: TaskKind } | null;
@@ -58,6 +60,8 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
   const [note, setNote] = useState<string | null>(null);
   const readSeq = useRef(0);
   useUnsavedGuard(dirty, "You have unsaved changes in this editor. If you leave now they are lost.");
+  const { onDirtyChange } = p;
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
 
   const load = useCallback((): Promise<void> => {
     const seq = ++readSeq.current;
@@ -70,7 +74,7 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
 
   const ws = useMemo(() => (bundle ? buildWorkspace({
     budget: p.budget, view: bundle.view,
-    facts: { state: p.state, confirmedCents: p.confirmedCents, signedOff: p.signedOff, canEdit: p.canEdit && bundle.canEdit, canReview: bundle.verification.canReview, confirmedPackages: p.draft.estimator.confirmedPackages, confirmedMappings: p.draft.estimator.confirmedMappings },
+    facts: { state: p.state, confirmedCents: p.confirmedCents, signedOff: p.signedOff, canEdit: p.canEdit && bundle.canEdit, canReview: bundle.verification.canReview, confirmedPackages: p.draft.estimator.confirmedPackages, confirmedMappings: p.draft.estimator.confirmedMappings, priceResolutionReasons: Object.fromEntries(Object.entries(p.draft.estimator.priceResolutions).map(([k, v]) => [k, v?.reason])) },
   }) : null), [bundle, p.budget, p.state, p.confirmedCents, p.signedOff, p.canEdit, p.draft]);
 
   if (loadError && !bundle) return <div className="mt-4"><Alert tone="warning"><span data-testid="workspace-error">{loadError}</span></Alert><Button className="mt-2 min-h-11" variant="secondary" onClick={() => void load()}>Try again</Button></div>;
@@ -82,20 +86,23 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
 
   // ── navigation with an unsaved-editor guard ──
   const go = (to: Open | "list") => { if (dirty) { setPendingNav(to); return; } setOpen(to === "list" ? null : to); setNote(null); };
-  const openTask = (t: WorkspaceTask) => go({ id: t.id, kind: t.kind });
-  const openLine = (id: string) => { const l = lineOf(id); if (!l) return; const tg = targetOf(l); go({ id, kind: tg.kind === "complete_manual" ? "manual" : tg.kind }); };
+  const hasChoices = (id: string) => manualSelectionSkusFor(id as GrowerItemKey).length > 0;
+  const openTask = (t: WorkspaceTask) => go({ id: t.id, kind: hasChoices(t.id) ? "product" : t.kind });
+  const openLine = (id: string) => { const l = lineOf(id); if (!l) return; const tg = targetOf(l); go({ id, kind: tg.kind === "complete_manual" ? "manual" : hasChoices(id) ? "product" : tg.kind }); };
 
   // ── saves ──
   /** Supplier pricing: ONE product's inputs merged onto the CURRENT stored pricing; the base is read just before saving, so a change by someone else is a refusal that keeps every typed value. */
   async function saveSku(sku: string, ed: SkuEditor, beforeMapping?: () => Promise<SaveResult>): Promise<SaveResult> {
-    if (beforeMapping) { const m = await beforeMapping(); if (!m.ok) return m; }
+    let productSaved = false;
+    if (beforeMapping) { const m = await beforeMapping(); if (!m.ok) return m; productSaved = true; }
+    const withProduct = (errs: string[]): string[] => (productSaved ? ["The product was saved, but the cost was not.", ...errs] : errs);
     const fresh = await getEstimatorPricingAction(p.quoteId);
-    if (!fresh.ok || !fresh.data) return { ok: false, errors: [fresh.error ?? "Supplier pricing could not be read, so nothing was saved."] };
+    if (!fresh.ok || !fresh.data) return { ok: false, errors: withProduct([fresh.error ?? "Supplier pricing could not be read, so the cost was not saved."]) };
     const base = fresh.data.current;
     const sub = applyEditor(base, sku, ed, new Date().toISOString());
-    if (!sub) return { ok: false, errors: ["The values are not complete, so nothing was saved."] };
+    if (!sub) return { ok: false, errors: withProduct(["The values are not complete, so the cost was not saved."]) };
     const r = await applyEstimatorPricingAction(p.quoteId, sub, revisionReason(`supplier cost for ${sku}`), base);
-    if (!r.ok) { if (r.conflicts?.length) void load(); return { ok: false, errors: r.errors?.length ? r.errors : [r.error ?? "Could not save."] }; }
+    if (!r.ok) { if (r.conflicts?.length) void load(); return { ok: false, errors: withProduct(r.errors?.length ? r.errors : [r.error ?? "Could not save."]) }; }
     const c = r.data?.confirmation;
     setNote(c?.returnedToRep ? `Saved as revision ${r.data!.seq}. The customer total changed, so the Rep's confirmation was withdrawn and the quotation is back with the Rep to reconfirm.` : `Saved as revision ${r.data!.seq}.`);
     await load(); p.reload();
@@ -104,6 +111,7 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
   const saveMapping = (itemKey: string, sku: string | null) => p.saveDraft((d) => { if (sku) d.estimator.confirmedMappings[itemKey as GrowerItemKey] = sku; else delete d.estimator.confirmedMappings[itemKey as GrowerItemKey]; });
   const saveConfirmed = (itemKey: string, yes: boolean) => p.saveDraft((d) => { const rest = d.estimator.confirmedPackages.filter((k) => k !== itemKey); d.estimator.confirmedPackages = yes ? [...rest, itemKey as GrowerItemKey] : rest; });
   const saveManual = (itemKey: string, unit: number, reason: string) => p.saveDraft((d) => { d.estimator.priceResolutions = { ...d.estimator.priceResolutions, [itemKey]: { unitPriceExVat: unit, reason } }; });
+  const saveM75 = (itemKey: string, unit: number) => p.saveDraft((d) => { d.estimator.unitPrices = { ...d.estimator.unitPrices, [itemKey]: unit }; });
   const removeManual = (itemKey: string) => p.saveDraft((d) => { const n = { ...d.estimator.priceResolutions }; delete n[itemKey as GrowerItemKey]; d.estimator.priceResolutions = n; });
 
   const s = ws.summary;
@@ -131,8 +139,9 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
     const chosenSaved = p.draft.estimator.confirmedMappings[open.id as GrowerItemKey];
     const manualHere = p.draft.estimator.priceResolutions[open.id as GrowerItemKey];
     const costForm = (sku: string, label: string, q: number, before?: () => Promise<SaveResult>, saveLabel?: string) => <SkuCostForm key={sku} sku={sku} label={label} quantity={q} bundle={bundle} canEdit={canEdit} save={(k, e) => saveSku(k, e, before)} onDirty={setDirty} saveLabel={saveLabel} />;
-    const hasChoices = manualSelectionSkusFor(open.id as GrowerItemKey).length > 0 || tg.kind === "product";
-    if (tg.kind === "manual" || tg.kind === "complete_manual") {
+    // The editor is chosen by the kind the task was OPENED with (stable): a save that changes the line's status never swaps the editor, so typed values are never rebuilt away.
+    if (open.kind === "m75") return <M75PriceForm key={`m75-${open.id}`} itemKey={open.id} label={line.label} quantity={qty} existing={p.draft.estimator.unitPrices[open.id as GrowerItemKey]} canEdit={canEdit} save={saveM75} onDirty={setDirty} onSaved={() => setNote("M75 price saved.")} />;
+    if (open.kind === "manual") {
       const parts = line.components && line.components.length > 0 ? (
         <section className="rounded-xl border border-slate-200 bg-white p-5" data-testid="manual-parts"><h3 className="mb-2 text-[15px] font-bold">Why a product cannot be mapped yet <span className="font-normal text-slate-600">· read-only</span></h3>
           <ul className="text-sm">{line.components.map((c) => <li key={c.id} className="flex justify-between border-t border-slate-100 py-1.5 first:border-0"><span>{c.description}</span><span className="text-amber-900">{c.sku ? c.sku : "No SKU or contradictory sources"}</span></li>)}</ul>
@@ -140,12 +149,12 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
       ) : undefined;
       return <ManualPriceForm key={`manual-${open.id}`} itemKey={open.id} label={line.label} quantity={qty} existing={manualHere} canEdit={canEdit} parts={parts} save={saveManual} onDirty={setDirty} onSaved={() => setNote("Saved. This line is priced as a manual, provisional quotation price.")} remove={removeManual} />;
     }
-    if (tg.kind === "package") {
+    if (open.kind === "package") {
       const confirmed = p.draft.estimator.confirmedPackages.includes(open.id as GrowerItemKey);
-      return <PackageEditor key={`${open.id}-${confirmed}`} line={line} confirmed={confirmed} bundle={bundle} canEdit={canEdit} onConfirm={(yes) => saveConfirmed(open.id, yes)} costForm={costForm} onManual={() => go({ id: open.id, kind: "manual" })} />;
+      return <PackageEditor key={`pkg-${open.id}`} line={line} confirmed={confirmed} bundle={bundle} canEdit={canEdit} onConfirm={(yes) => saveConfirmed(open.id, yes)} costForm={costForm} onManual={() => go({ id: open.id, kind: "manual" })} />;
     }
-    if (hasChoices) {
-      return <DoorEditor key={`${open.id}-${chosenSaved ?? ""}`} itemKey={open.id} label={line.label} qty={qty} chosenSaved={chosenSaved} canEdit={canEdit} saveMapping={saveMapping} costForm={costForm} onSaved={() => setNote("Product saved.")} />;
+    if (open.kind === "product") {
+      return <DoorEditor key={`door-${open.id}`} itemKey={open.id} label={line.label} qty={qty} chosenSaved={chosenSaved} canEdit={canEdit} saveMapping={saveMapping} costForm={costForm} onSaved={() => setNote("Product saved.")} />;
     }
     return costForm(line.sku ?? tg.skus[0] ?? open.id, line.label, qty);
   })();
@@ -201,6 +210,7 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
                 </ol>
               )}
             </section>
+            <RepItems items={ws.repItems} />
             <CompleteGroup lines={ws.complete} charges={p.budget.charges} onEdit={openLine} canEdit={canEdit} />
             <p className="text-[13px] text-slate-700">Room measurements, quantities, delivery, installation and the M75 price belong to the Rep.</p>
           </div>

@@ -77,7 +77,7 @@ export function CompleteGroup({ lines, charges, onEdit, canEdit }: { lines: Comp
           {lines.map((c) => (
             <tr key={c.id} className="border-t border-slate-200" data-testid={`complete-${c.id}`}>
               <td className="px-4 py-2.5 sm:px-6"><span aria-hidden className="text-emerald-700">✓ </span>{c.label}{c.provisional && <span className="ml-2 rounded bg-amber-800 px-1.5 py-0.5 text-xs font-bold text-white">PROVISIONAL</span>}</td>
-              <td className="px-2 py-2.5 text-slate-700">{c.how}{!c.estimatorPriced && canEdit && <> · <button type="button" className="font-semibold text-blue-800 underline" onClick={() => onEdit(c.id)}>Edit</button></>}</td>
+              <td className="px-2 py-2.5 text-slate-700">{c.how}{c.manual && <details className="mt-1" data-testid={`manual-detail-${c.id}`}><summary className="cursor-pointer font-semibold text-blue-800">Reason and evidence</summary><dl className="mt-1 text-[13px] text-slate-900"><dt className="font-semibold">Reason</dt><dd className="whitespace-pre-wrap break-words">{c.manual.reason || "—"}</dd><dt className="mt-1 font-semibold">Evidence</dt><dd className="whitespace-pre-wrap break-words">{c.manual.evidence || (c.manual.legacy ? "Not recorded separately (an earlier entry): add it by editing." : "—")}</dd></dl></details>}{!c.estimatorPriced && canEdit && <> · <button type="button" className="font-semibold text-blue-800 underline" onClick={() => onEdit(c.id)}>Edit</button></>}</td>
               <td className="px-2 py-2.5 text-right tabular-nums">{c.quantity ?? "—"} × {c.unit == null ? "—" : money(c.unit)}</td>
               <td className="px-4 py-2.5 text-right font-semibold tabular-nums sm:px-6">{c.revenue == null ? "—" : money(c.revenue)}</td>
             </tr>
@@ -130,5 +130,15 @@ export function WhatNext({ step, verified, required }: { step: 1 | 2 | 3 | 4 | 5
       <ol className="mt-3 flex flex-col gap-2.5 text-sm">{items.map(([who, what], i) => <li key={i} aria-current={step === i + 1 ? "step" : undefined} className={step === i + 1 ? "rounded-md bg-sky-50 px-2 py-1 font-semibold" : "px-2 py-1"}><strong>{who}:</strong> <span className="font-normal text-slate-800">{what}</span></li>)}</ol>
       <p className="mt-3 border-t border-slate-200 pt-2 text-xs text-slate-600">Where a price changes, the Rep reconfirms first, then a Manager verifies costs, then you sign off, then a Manager approves.</p>
     </aside>
+  );
+}
+
+export function RepItems({ items }: { items: Array<{ id: string; label: string; why: string }> }) {
+  if (items.length === 0) return null;
+  return (
+    <section aria-labelledby="ws-rep" className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 sm:px-6" data-testid="rep-items">
+      <h2 id="ws-rep" className="text-base font-bold text-slate-900">Waiting for the Rep <span className="font-medium text-slate-700">· {items.length}</span></h2>
+      <ul className="mt-1 text-sm text-slate-800">{items.map((i) => <li key={i.id} data-testid={`rep-item-${i.id}`}><strong>{i.label}</strong>: {i.why}. These belong to the Rep, so there is no button here.</li>)}</ul>
+    </section>
   );
 }

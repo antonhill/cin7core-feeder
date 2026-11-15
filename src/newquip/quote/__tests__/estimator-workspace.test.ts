@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { BridgeLine, BudgetQuote } from "@/newquip/grower/quote-bridge";
 import type { PricingWorkspaceView, SkuRow } from "@/newquip/pricing/estimator";
-import { buildWorkspace, decodeManualReason, encodeManualReason, manualPriceComplete, type WorkspaceFacts } from "../estimator-workspace";
+import { buildWorkspace, decodeManualReason, encodeManualReason, manualPriceComplete, manualReasonText, targetOf, type WorkspaceFacts } from "../estimator-workspace";
 
 // Test12-shaped: 12 rooms. M75 and penning are Estimator-priced; slats, mats, tank, feeder need a supplier cost; the cup drinker needs its package confirmed and costed; LED has no SKU; the door needs a product.
 const line = (o: Partial<BridgeLine> & { itemKey: string; label: string }): BridgeLine => ({ status: "priced", reason: "", sku: null, quantity: 1, unitPrice: null, revenueExTax: null, estimatedCost: null, estimatedGP: null, marginPct: null, pricedBy: null, ...o }) as unknown as BridgeLine;
@@ -144,16 +144,27 @@ describe("the one next action follows the workflow order", () => {
 });
 
 describe("manual quotation price: reason and evidence in the existing reason field", () => {
-  it("round-trips both inputs, including line breaks", () => {
+  it("is one readable labelled text and round-trips both inputs, including line breaks", () => {
     const stored = encodeManualReason("No SKU exists for the FORTIS 1.2 yet.\nSecond line.", "Supplier quote ref. 123, dated 12 Nov");
-    expect(stored).toBe("REASON: No SKU exists for the FORTIS 1.2 yet.\nSecond line.\nEVIDENCE: Supplier quote ref. 123, dated 12 Nov");
+    expect(stored).toBe("REASON: No SKU exists for the FORTIS 1.2 yet.\\nSecond line.\nEVIDENCE: Supplier quote ref. 123, dated 12 Nov");
     expect(decodeManualReason(stored)).toEqual({ reason: "No SKU exists for the FORTIS 1.2 yet.\nSecond line.", evidence: "Supplier quote ref. 123, dated 12 Nov", legacy: false });
   });
-  it("trims, and a reason that contains an EVIDENCE line cannot spoof the split", () => {
-    const stored = encodeManualReason("  why\nEVIDENCE: fake  ", "  real  ");
-    const d = decodeManualReason(stored);
-    expect(d.evidence).toBe("real");
-    expect(d.reason).toContain("why");
+  it("is LOSSLESS over adversarial text: markers, line breaks, backslashes, empty parts, escapes that look like escapes", () => {
+    const nasty = ["", "x", "EVIDENCE: fake", "a\nEVIDENCE: fake", "\nEVIDENCE: ", "REASON: inner", "back\\slash", "ends with \\", "\\n literal", "\\\\n", "line1\r\nline2", "tab\there", "unicode R ✓ — é", "\\", "\n", "\r"];
+    for (const r of nasty) for (const e of nasty) {
+      const d = decodeManualReason(encodeManualReason(r, e));
+      expect(d, JSON.stringify([r, e])).toEqual({ reason: r.trim(), evidence: e.trim(), legacy: false });
+    }
+  });
+  it("the stored text never contains a second separator or a raw line break inside a part", () => {
+    const stored = encodeManualReason("a\nEVIDENCE: b\nc", "d\ne");
+    expect(stored.split("\n")).toHaveLength(2);
+    expect(stored.match(/\nEVIDENCE: /g)).toHaveLength(1);
+  });
+  it("the Manager's one-line text names both parts; an earlier text is shown whole", () => {
+    expect(manualReasonText(encodeManualReason("why", "quote 7"))).toBe("reason: why · evidence: quote 7");
+    expect(manualReasonText("Phoned the supplier")).toBe("Phoned the supplier");
+    expect(manualReasonText("")).toBe("no reason");
   });
   it("an earlier free-text reason is shown whole as the reason and flagged legacy with no evidence", () => {
     expect(decodeManualReason("Supplier phoned with a price")).toEqual({ reason: "Supplier phoned with a price", evidence: "", legacy: true });
@@ -165,5 +176,77 @@ describe("manual quotation price: reason and evidence in the existing reason fie
     expect(manualPriceComplete("", "quote 1", 881)).toBe(false);
     expect(manualPriceComplete("why", "quote 1", 0)).toBe(false);
     expect(manualPriceComplete("why", "quote 1", null)).toBe(false);
+  });
+});
+
+describe("unpriced M75: an explicit price task, never a package or component task", () => {
+  const m75 = () => line({ itemKey: "flex_auger", label: "M75 feed system", status: "estimator_price_required", quantity: 12, reason: "M75 is estimator input by design", components: [comp("auger", "NQ1163", "reference_only"), comp("tube", "NQ1223", "reference_only")] as never });
+  it("is a PRICE task with no mapping, supplier cost or verification, and carries no component SKUs", () => {
+    const w = buildWorkspace({ ...test12({ lines: [m75()], incomplete: true, subtotal: 0 }), facts: facts() });
+    expect(w.tasks).toHaveLength(1);
+    expect(w.tasks[0]).toMatchObject({ id: "flex_auger", kind: "m75", tags: ["PRICE"], skus: [], action: "Enter price", group: "decision" });
+    expect(w.tasks[0].indicators).toEqual({ mapping: "na", price: "open", cost: "na", verified: "na" });
+    expect(w.next).toMatchObject({ kind: "open_task", taskId: "flex_auger", headline: "Enter the M75 system price" });
+    expect(targetOf(m75())).toEqual({ kind: "m75", skus: [] });
+  });
+  it("once priced it is a completed Estimator-priced line again", () => {
+    const priced = line({ itemKey: "flex_auger", label: "M75", pricedBy: "estimator_input", quantity: 12, unitPrice: 200000, revenueExTax: 2_400_000 });
+    const w = buildWorkspace({ ...test12({ lines: [priced], incomplete: false }), facts: facts() });
+    expect(w.tasks).toHaveLength(0);
+    expect(w.complete[0]).toMatchObject({ id: "flex_auger", estimatorPriced: true });
+  });
+  it("the Test12-shaped quotation with the M75 price missing has the M75 task first and no component task", () => {
+    const base = test12().budget.lines.filter((l) => l.itemKey !== "flex_auger");
+    const w = buildWorkspace({ ...test12({ lines: [m75(), ...base] }), facts: facts() });
+    expect(w.tasks[0].id).toBe("flex_auger");
+    expect(w.tasks.filter((t) => t.kind === "package").map((t) => t.id)).toEqual(["cup_drinker"]);
+  });
+});
+
+describe("things only the Rep can supply are named, not offered as tasks", () => {
+  const penningNoSize = line({ itemKey: "penning_package", label: "Penning", status: "estimator_price_required", reason: "Select the pig size so the running-metre rate applies.", quantity: 240 });
+  const noQty = line({ itemKey: "feeder", label: "CCM feeder", status: "no_quantity", reason: "Estimator input required", quantity: null });
+  it("an unpriced penning line (pig size) and a missing quantity become Rep items; no task, and the next action says so", () => {
+    const w = buildWorkspace({ ...test12({ lines: [penningNoSize, noQty], incomplete: true }), facts: facts() });
+    expect(w.tasks).toHaveLength(0);
+    expect(w.repItems.map((r) => r.id)).toEqual(["penning_package", "feeder"]);
+    expect(w.next.kind).toBe("wait_rep_items");
+    expect(w.next.button).toBeNull();
+    expect(w.next.headline).toMatch(/Waiting for the Rep: Penning: Select the pig size.*CCM feeder: quantity not entered/);
+  });
+  it("a charge the Rep has not entered is a Rep item too, and sign-off is not offered", () => {
+    const r = test12({ lines: [line({ itemKey: "concrete_slat", label: "Slats", sku: "NQ1161", revenueExTax: 100 })], rows: [row("NQ1161", "verified")], incomplete: true, subtotal: 100 });
+    (r.budget as unknown as { charges: unknown[] }).charges = [{ key: "delivery", label: "Delivery", amountExTax: null, status: "required" }];
+    const w = buildWorkspace({ ...r, view: { ...r.view, costs: { required: 1, verified: 1 } } as never, facts: facts({ confirmedCents: 10_000 }) });
+    expect(w.next.kind).toBe("wait_rep_items");
+    expect(w.summary.blockers).toEqual(["Waiting for the Rep: Delivery: amount not entered"]);
+  });
+});
+
+describe("the blocked-by list and the next action come from the same facts", () => {
+  const priced = (costs: { required: number; verified: number }, incomplete = false) => {
+    const r = test12({ lines: [line({ itemKey: "concrete_slat", label: "Slats", sku: "NQ1161", revenueExTax: 100 })], rows: [row("NQ1161", costs.verified ? "verified" : "unverified")], incomplete, subtotal: 100 });
+    (r.budget as unknown as { charges: unknown[] }).charges = [];
+    return { ...r, view: { ...r.view, costs } as unknown as PricingWorkspaceView };
+  };
+  it("nothing to verify (no supplier costs required): no 'costs not verified' blocker, and the next action does not wait for verification", () => {
+    const w = buildWorkspace({ ...priced({ required: 0, verified: 0 }), facts: facts({ confirmedCents: 10_000 }) });
+    expect(w.summary.blockers).toEqual([]);
+    expect(w.next.kind).toBe("sign_off");
+  });
+  it("a partial total with nothing open never offers sign-off: it names the incomplete reason", () => {
+    const r = priced({ required: 1, verified: 1 }, true);
+    (r.budget as unknown as { blockers: string[] }).blockers = ["Something is not priced yet"];
+    (r.budget as unknown as { estimatorBlockers: string[] }).estimatorBlockers = [];
+    const w = buildWorkspace({ ...r, facts: facts({ confirmedCents: 10_000 }) });
+    expect(w.summary.totalKind).toBe("partial");
+    expect(w.next.kind).toBe("wait_rep_items");
+    expect(w.next.button).toBeNull();
+    expect(w.summary.blockers).toEqual(["The quotation is incomplete: Something is not priced yet"]);
+  });
+  it("every blocker is listed in order and the next action is the first one", () => {
+    const w = buildWorkspace({ ...priced({ required: 2, verified: 1 }), facts: facts({ confirmedCents: 5_000 }) });
+    expect(w.summary.blockers).toEqual(["Amount differs from the Rep's confirmation", "Costs not independently verified"]);
+    expect(w.next.kind).toBe("return_to_rep");
   });
 });

@@ -109,6 +109,20 @@ describe("Phase 2 (supplier pricing ON): the Estimator workspace replaces the st
     expect(document.getElementById("ws-signoff")).toBeTruthy();
     expect(screen.getByTestId("return-section")).toBeTruthy();
   }, 60000);
+  it("an editor holding unsaved typing guards the page's OTHER buttons (stage navigation, sign-off, return): leaving asks first", async () => {
+    await openWs(verified());
+    await screen.findByTestId("commercial-summary");
+    fireEvent.click(screen.getAllByRole("button", { name: /^Edit$/ })[0]);
+    const cost = await screen.findByLabelText("Unit cost (up to 7 decimals)");
+    fireEvent.change(cost, { target: { value: "123" } });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const ws = screen.getByTestId("estimator-workspace");
+    const outside = screen.getAllByRole("button").find((b) => !ws.contains(b) && !(b as HTMLButtonElement).disabled)!;
+    expect(outside).toBeTruthy();
+    fireEvent.click(outside);
+    await waitFor(() => expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/unsaved changes in the Estimator workspace editor/)));
+    expect(screen.getByTestId("estimator-workspace")).toBeTruthy();
+  }, 60000);
   it("unverified costs: the workspace says verification is outstanding and the Estimator cannot verify (no legacy wording)", async () => {
     await openWs({ ...equivalentInputs({}, "unverified"), pricingDate: fresh(), fxQuotes: verified().fxQuotes });
     await screen.findByTestId("commercial-summary");

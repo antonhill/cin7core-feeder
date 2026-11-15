@@ -132,6 +132,19 @@ export default function QuoteEditorPage() {
   const [ev, setEv] = useState<QuoteEvaluation | null>(null);
   const [dirty, setDirty] = useState(false);
   useUnsavedGuard(dirty); // the editor already tracks unsaved edits; saving or reloading from the server clears it
+  // The Estimator workspace's editors hold their own typed values until a save succeeds. This is deliberately NOT `dirty` (that would make the workspace's own draft saves refuse); it guards the page's other buttons and links.
+  const [wsDirty, setWsDirty] = useState(false);
+  useUnsavedGuard(wsDirty, "You have unsaved changes in the Estimator workspace editor. If you leave now they are lost.");
+  useEffect(() => {
+    if (!wsDirty) return;
+    const onBtn = (e: MouseEvent) => { // a BUTTON outside the workspace (sign-off, return, stage navigation): links are already covered by the guard above
+      const el = e.target instanceof Element ? e.target.closest("button") : null;
+      if (!el || e.defaultPrevented || el.closest('[data-testid="estimator-workspace"]')) return;
+      if (!window.confirm("You have unsaved changes in the Estimator workspace editor. If you leave now they are lost.")) { e.preventDefault(); e.stopPropagation(); }
+    };
+    document.addEventListener("click", onBtn, true);
+    return () => document.removeEventListener("click", onBtn, true);
+  }, [wsDirty]);
   // The draft the displayed figures were last calculated for, and the draft a failed recalculation belongs to: no synchronous state juggling in the effect.
   const [previewedFor, setPreviewedFor] = useState<QuoteDraft | null>(null);
   const [failedFor, setFailedFor] = useState<{ draft: QuoteDraft; message: string } | null>(null);
@@ -1039,7 +1052,13 @@ export default function QuoteEditorPage() {
           <EstimatorWorkspace quoteId={id} state={q.state} confirmedCents={q.customer_confirmed_cents} signedOff={signedNow} draft={draft} budget={budget} pageDirty={dirty} canEdit={s2Edit}
             title={`${draft.siteName || "Quotation"} · ${draft.customerName || "Customer"}`} subtitle={`${cfg.rooms || 0} rooms · ${draft.quoteType === "project" ? "Project pricing" : "Day-to-day pricing"} · Revision ${q.revision} · Supplier pricing on`}
             refreshKey={`${q.draft_hash}|${q.revision}|${q.state}`} saveDraft={wsSaveDraft} reload={() => { void getGrowerQuoteAction(id).then((r) => { if (r.ok && r.data) adopt(r.data, true); }); }}
-            onGoSignoff={() => document.getElementById("ws-signoff")?.scrollIntoView({ behavior: "smooth" })} onGoApproval={() => goStage(3)} reviewNeeded={costNeedsMark} onMarkReviewed={markReviewed} />
+            onGoSignoff={() => document.getElementById("ws-signoff")?.scrollIntoView({ behavior: "smooth" })} onGoApproval={() => goStage(3)} reviewNeeded={costNeedsMark} onMarkReviewed={markReviewed} onDirtyChange={setWsDirty} />
+        )}
+        {workspaceMode && (
+          <div className="mt-6 space-y-4" data-testid="ws-record">
+            {canCommercials && view.indicativeComparison && <IndicativeComparisonPanel c={view.indicativeComparison} />}
+            {canCommercials && view.manualPriceEvidence && <ManualEvidencePanel rows={view.manualPriceEvidence} />}
+          </div>
         )}
         {!workspaceMode && (
         <>

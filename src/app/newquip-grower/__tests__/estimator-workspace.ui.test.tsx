@@ -244,3 +244,139 @@ describe("the cup drinker: confirm the seven-component package, then cost the co
     expect(screen.getByRole("button", { name: /manual price for the whole cup drinker package/i })).toBeTruthy();
   });
 });
+
+// ── a host that behaves like the page: a saved draft change re-renders the workspace with the new draft and budget ─────────────────────────────────────────────────────────────────────
+import { useState } from "react";
+function Host({ onSaveDraft, budget0 }: { onSaveDraft?: () => { ok: boolean; errors?: string[] }; budget0?: BudgetQuote }) {
+  const [draft, setDraft] = useState<QuoteDraft>(bareDraft());
+  const [budget, setBudget] = useState<BudgetQuote>(budget0 ?? test12Budget());
+  const saveDraft = async (mut: (d: QuoteDraft) => void) => {
+    const r = onSaveDraft?.() ?? { ok: true };
+    if (!r.ok) return r;
+    const d = structuredClone(draft); mut(d); setDraft(d);
+    const door = d.estimator.confirmedMappings.pvc_door;
+    if (door) setBudget((b) => ({ ...b, lines: b.lines.map((l) => (l.itemKey === "pvc_door" ? { ...l, status: "not_in_price_source", sku: door } : l)) }) as BudgetQuote);
+    if (d.estimator.confirmedPackages.includes("cup_drinker")) setBudget((b) => ({ ...b, lines: b.lines.map((l) => (l.itemKey === "cup_drinker" ? { ...l, status: "package_incomplete" } : l)) }) as BudgetQuote);
+    return { ok: true };
+  };
+  return (
+    <>
+      <button type="button" data-testid="bump" onClick={() => setDraft((d) => ({ ...d, estimator: { ...d.estimator, assumptions: `${d.estimator.assumptions}x` } }))}>bump</button>
+      <EstimatorWorkspace quoteId="q1" state="ESTIMATOR_REVIEW" confirmedCents={513_200_000} signedOff={false} draft={draft} budget={budget} pageDirty={false} canEdit title="Test12 · Spark" subtitle="s" refreshKey="k" saveDraft={saveDraft} reload={() => {}} onGoSignoff={() => {}} onGoApproval={() => {}} reviewNeeded={false} onMarkReviewed={() => {}} />
+    </>
+  );
+}
+const typeCost = (cost = "800", source = "Supplier quote 7") => {
+  fireEvent.change(screen.getByLabelText("Unit cost (up to 7 decimals)"), { target: { value: cost } });
+  fireEvent.change(screen.getByLabelText("Where this cost comes from"), { target: { value: source } });
+};
+const costValue = () => (screen.getByLabelText("Unit cost (up to 7 decimals)") as HTMLInputElement).value;
+
+describe("typed values survive the saves that change the line underneath them", () => {
+  beforeEach(() => {
+    vi.mocked(pricing.getEstimatorPricingAction).mockResolvedValue({ ok: true, data: bundle() });
+  });
+  it("PVC door: 'Save product and price': the product saves, the cost is refused, and the typed cost, source and the server's message are all still there", async () => {
+    vi.mocked(pricing.applyEstimatorPricingAction).mockResolvedValue({ ok: false, error: "Refused by the server", errors: ["Refused by the server"] });
+    render(createElement(Host));
+    fireEvent.click(await screen.findByRole("button", { name: /Choose and price: PVC SST door/ }));
+    fireEvent.click(within(await screen.findByTestId("product-choice")).getAllByRole("radio")[0]);
+    typeCost();
+    fireEvent.click(screen.getByRole("button", { name: "Save product and price" }));
+    await waitFor(() => expect(screen.getByTestId("save-errors").textContent).toMatch(/The product was saved, but the cost was not/));
+    expect(screen.getByTestId("save-errors").textContent).toMatch(/Refused by the server/);
+    expect(costValue()).toBe("800");
+    expect((screen.getByLabelText("Where this cost comes from") as HTMLInputElement).value).toBe("Supplier quote 7");
+    expect(screen.getByTestId("editor-title").textContent).toBe("PVC SST door");
+  });
+  it("PVC door: 'Save the product choice only' with a cost already typed keeps the typed cost and the cost form", async () => {
+    render(createElement(Host));
+    fireEvent.click(await screen.findByRole("button", { name: /Choose and price: PVC SST door/ }));
+    fireEvent.click(within(await screen.findByTestId("product-choice")).getAllByRole("radio")[0]);
+    typeCost("812.5", "Cin7 price");
+    fireEvent.click(screen.getByRole("button", { name: "Save the product choice only" }));
+    await waitFor(() => expect(screen.getByTestId("pricing-note").textContent).toMatch(/Product saved/));
+    expect(costValue()).toBe("812.5");
+    expect((screen.getByLabelText("Where this cost comes from") as HTMLInputElement).value).toBe("Cin7 price");
+    expect(screen.getByRole("button", { name: "Save cost" })).toBeTruthy(); // the product is now saved: the price part is what is left
+  });
+  it("PVC door: a product save that is refused keeps the choice and says why", async () => {
+    render(createElement(Host, { onSaveDraft: () => ({ ok: false, errors: ["NQ2114 is inactive in Cin7"] }) }));
+    fireEvent.click(await screen.findByRole("button", { name: /Choose and price: PVC SST door/ }));
+    fireEvent.click(within(await screen.findByTestId("product-choice")).getAllByRole("radio")[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Save the product choice only" }));
+    await waitFor(() => expect(screen.getByTestId("product-error").textContent).toMatch(/inactive in Cin7/));
+    expect((within(screen.getByTestId("product-choice")).getAllByRole("radio")[0] as HTMLInputElement).checked).toBe(true);
+  });
+  it("cup drinker: confirming the package and then a change to the saved draft keep a component cost that is being typed", async () => {
+    render(createElement(Host));
+    fireEvent.click(await screen.findByRole("button", { name: /Map and price: Cup drinker package/ }));
+    fireEvent.click(within(await screen.findByTestId("package-confirm")).getByRole("checkbox"));
+    fireEvent.click(await screen.findByRole("button", { name: /Enter cost for cup/ }));
+    typeCost("6.5454755", "Cin7 supplier price");
+    fireEvent.click(screen.getByTestId("bump")); // the saved draft changes underneath (a confirmation, a reload, a refresh)
+    await waitFor(() => expect(screen.getByTestId("component-editor")).toBeTruthy());
+    expect(costValue()).toBe("6.5454755");
+    expect((screen.getByLabelText("Where this cost comes from") as HTMLInputElement).value).toBe("Cin7 supplier price");
+  });
+});
+
+describe("unpriced M75 is an explicit price task", () => {
+  const m75Budget = (): BudgetQuote => { const b = test12Budget(); b.lines = [line({ itemKey: "flex_auger", label: "M75 feed system", status: "estimator_price_required", quantity: 12, reason: "M75 is estimator input by design", components: [comp("auger", "NQ1163", "reference_only"), comp("tube", "NQ1223", "reference_only")] as never }), ...b.lines.filter((l) => l.itemKey !== "flex_auger")]; return b; };
+  it("shows an 'M75 feed system' price task (no component task) and saves the price through the draft save", async () => {
+    const saveDraft = vi.fn(async () => ({ ok: true }));
+    vi.mocked(pricing.getEstimatorPricingAction).mockResolvedValue({ ok: true, data: bundle() });
+    render(createElement(EstimatorWorkspace, { quoteId: "q1", state: "ESTIMATOR_REVIEW", confirmedCents: 513_200_000, signedOff: false, draft: bareDraft(), budget: m75Budget(), pageDirty: false, canEdit: true, title: "T", subtitle: "s", refreshKey: "k", saveDraft, reload: vi.fn(), onGoSignoff: vi.fn(), onGoApproval: vi.fn(), reviewNeeded: false, onMarkReviewed: vi.fn() }));
+    const row = await screen.findByTestId("task-flex_auger");
+    expect(row.textContent).toMatch(/PRICE/);
+    expect(row.textContent).not.toMatch(/COMPONENTS/);
+    expect(screen.getByTestId("next-action").textContent).toMatch(/Enter the M75 system price/);
+    fireEvent.click(within(row).getByRole("button", { name: /Enter price: M75 feed system/ }));
+    expect(await screen.findByTestId("m75-form")).toBeTruthy();
+    expect(screen.queryByTestId("component-table")).toBeNull();
+    const save = screen.getByRole("button", { name: "Save M75 price" }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Price per system (R)"), { target: { value: "200000" } });
+    fireEvent.click(save);
+    await waitFor(() => expect(saveDraft).toHaveBeenCalledTimes(1));
+    const d = readyDraft(); delete d.estimator.unitPrices.flex_auger;
+    (saveDraft.mock.calls[0] as unknown as [(d: QuoteDraft) => void])[0](d);
+    expect(d.estimator.unitPrices.flex_auger).toBe(200000);
+  });
+  it("a missing quantity or pig size is a named Rep item with no button", async () => {
+    const b = test12Budget(); b.lines = [line({ itemKey: "penning_package", label: "Penning", status: "estimator_price_required", reason: "Select the pig size so the running-metre rate applies.", quantity: 240 })];
+    render(createElement(Host, { budget0: b }));
+    const items = await screen.findByTestId("rep-items");
+    expect(items.textContent).toMatch(/Penning.*Select the pig size/);
+    expect(within(items).queryAllByRole("button")).toHaveLength(0);
+    expect(screen.getByTestId("next-action").textContent).toMatch(/Waiting for the Rep/);
+  });
+});
+
+describe("the FX block says the rate is shared; a completed manual price shows its reason and evidence", () => {
+  it("a foreign currency shows that the rate applies to every product in that currency", async () => {
+    render(createElement(Host));
+    fireEvent.click(await screen.findByRole("button", { name: /Enter cost: Bulk tank/ }));
+    fireEvent.change(await screen.findByLabelText("Currency"), { target: { value: "USD" } });
+    expect(screen.getByTestId("fx-shared-note").textContent).toMatch(/This rate applies to every USD product on this quotation/);
+  });
+  it("the Complete group expands a manual line's reason and evidence", async () => {
+    const b = test12Budget(); b.lines = [line({ itemKey: "led_light", label: "LED lights", pricedBy: "estimator_resolution", quantity: 456, unitPrice: 881, revenueExTax: 401_736 })];
+    vi.mocked(pricing.getEstimatorPricingAction).mockResolvedValue({ ok: true, data: bundle() });
+    const d = bareDraft(); (d.estimator.priceResolutions as Record<string, unknown>).led_light = { unitPriceExVat: 881, reason: "REASON: No SKU yet\nEVIDENCE: Quote SQ-1" };
+    render(createElement(EstimatorWorkspace, { quoteId: "q1", state: "ESTIMATOR_REVIEW", confirmedCents: 1, signedOff: false, draft: d, budget: b, pageDirty: false, canEdit: true, title: "T", subtitle: "s", refreshKey: "k", saveDraft: vi.fn(async () => ({ ok: true })), reload: vi.fn(), onGoSignoff: vi.fn(), onGoApproval: vi.fn(), reviewNeeded: false, onMarkReviewed: vi.fn() }));
+    const det = await screen.findByTestId("manual-detail-led_light");
+    expect(det.textContent).toMatch(/Reason.*No SKU yet.*Evidence.*Quote SQ-1/);
+  });
+});
+
+describe("the page is told when an editor holds unsaved typing", () => {
+  it("onDirtyChange follows the typed state", async () => {
+    const onDirtyChange = vi.fn();
+    vi.mocked(pricing.getEstimatorPricingAction).mockResolvedValue({ ok: true, data: bundle() });
+    render(createElement(EstimatorWorkspace, { quoteId: "q1", state: "ESTIMATOR_REVIEW", confirmedCents: 1, signedOff: false, draft: bareDraft(), budget: test12Budget(), pageDirty: false, canEdit: true, title: "T", subtitle: "s", refreshKey: "k", saveDraft: vi.fn(async () => ({ ok: true })), reload: vi.fn(), onGoSignoff: vi.fn(), onGoApproval: vi.fn(), reviewNeeded: false, onMarkReviewed: vi.fn(), onDirtyChange }));
+    fireEvent.click(await screen.findByRole("button", { name: /Enter cost: Bulk tank/ }));
+    fireEvent.change(await screen.findByLabelText("Unit cost (up to 7 decimals)"), { target: { value: "1" } });
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));
+  });
+});
