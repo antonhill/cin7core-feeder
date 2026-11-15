@@ -17,6 +17,7 @@ import { emailConfigStatus, sendEmail } from "@/lib/email/resend";
 import { applyEmailPolicy, approvalBaseUrl, displayEmailStatus, isRestricted, PREVIEW_EMAIL_ALLOWLIST } from "@/lib/approvals/email-policy";
 import { resolveActing } from "@/lib/demo-mode/context";
 import { buildReviewDetail, type ReviewDetail } from "@/lib/approvals/review-detail";
+import { isNewquipPocOrg } from "@/newquip/access";
 import { authoriseStageDecision } from "@/lib/approvals/policy";
 import { canAdminister, STAGE_LABEL, type FunctionalRole } from "@/lib/approvals/roles";
 import { emailsWithRole, resolveRoles } from "@/lib/approvals/role-store";
@@ -91,14 +92,15 @@ export async function getApprovalDetailAction(requestId: string): Promise<Approv
     if (req.stage !== undefined) {
       // Staged: what this viewer may do is derived from the SAME rules the decision itself enforces (the server re-checks on every action).
       const roles = await resolveRoles(db, ctx.orgId, ctx.userId, ctx.isManager);
-      const actor = { email: ctx.email, roles, isAdmin: canAdminister(roles, ctx.isManager) };
+      const strict = isNewquipPocOrg(ctx.orgId);
+      const actor = { email: ctx.email, roles, isAdmin: canAdminister(roles, ctx.isManager), strictRoles: strict };
       const role = (req.stage_role as FunctionalRole | null) ?? "MANAGER";
       const ok = (a: ApprovalAction, extra: { override?: boolean; destination?: "ESTIMATOR" | "PREPARER" | null } = {}) => authoriseStageDecision(actor, a, req, role, { reason: "probe reason", ...extra });
       const normalApprove = ok("APPROVE"); const overrideApprove = ok("APPROVE", { override: true });
       const canReturn = ok("RETURN").ok;
       return { ok: true, data: {
         request: (await loadRequest(db, ctx.orgId, requestId)) ?? req, history: await requestHistory(db, ctx.orgId, requestId), docHistoryAll: await docHistory(db, ctx.orgId, req.doc_type, req.doc_id),
-        review: await buildReviewDetail(db, ctx.orgId, req, ctx.isManager || roles.has("MANAGER")), isManager: actor.isAdmin || roles.has("MANAGER"), me: ctx.email,   // cost and margin: org owner/admin or an explicit/effective Manager ONLY. The Administrator role alone never sees cost. (An explicitly assigned Estimator can see cost on the quotation screens via canSeeCosts but, as before, not in the approval detail.)
+        review: await buildReviewDetail(db, ctx.orgId, req, strict ? roles.has("MANAGER") : ctx.isManager || roles.has("MANAGER")), isManager: strict ? roles.has("MANAGER") : actor.isAdmin || roles.has("MANAGER"), me: ctx.email,   // cost and margin: org owner/admin or an explicit/effective Manager ONLY. The Administrator role alone never sees cost. (An explicitly assigned Estimator can see cost on the quotation screens via canSeeCosts but, as before, not in the approval detail.)
         can: {
           decide: pending && (normalApprove.ok || overrideApprove.ok || canReturn), withdraw: pending && ok("WITHDRAW").ok,
           reassign: pending && (actor.isAdmin || roles.has("MANAGER") || (req.assigned_to_email ?? "") === ctx.email), needsOverride: pending && !normalApprove.ok && overrideApprove.ok,
@@ -109,8 +111,8 @@ export async function getApprovalDetailAction(requestId: string): Promise<Approv
     }
     return { ok: true, data: {
       request: (await loadRequest(db, ctx.orgId, requestId)) ?? req, history: await requestHistory(db, ctx.orgId, requestId), docHistoryAll: await docHistory(db, ctx.orgId, req.doc_type, req.doc_id),
-      review: await buildReviewDetail(db, ctx.orgId, req, ctx.isManager), isManager: ctx.isManager, me: ctx.email,
-      can: { decide: pending && ctx.isManager, withdraw: pending && (ctx.isManager || self), reassign: pending && ctx.isManager, needsOverride: pending && ctx.isManager && self },
+      review: await buildReviewDetail(db, ctx.orgId, req, ctx.isManager && !isNewquipPocOrg(ctx.orgId)), isManager: ctx.isManager && !isNewquipPocOrg(ctx.orgId), me: ctx.email,
+      can: { decide: pending && ctx.isManager && !isNewquipPocOrg(ctx.orgId), withdraw: pending && (ctx.isManager || self), reassign: pending && ctx.isManager, needsOverride: pending && ctx.isManager && self && !isNewquipPocOrg(ctx.orgId) },
       managers: ctx.isManager ? await managerEmails(db, ctx.orgId) : [],
     } };
   } catch (e) {

@@ -8,7 +8,7 @@
 import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { logActivity } from "@/lib/activity-log";
-import { listOrgUsers } from "@/lib/approvals/role-store";
+import { listOrgUsers, tierHoldsManagerRole } from "@/lib/approvals/role-store";
 import { validateProjectDetails } from "@/lib/projects/project-details";
 import { loadProjectDetails, updateProjectDetails } from "@/lib/projects/project-details-store";
 import { createServiceRoleClient } from "@/supabase/server";
@@ -57,7 +57,7 @@ export interface ClaimPreviewResult {
 
 /** Whether the caller is an org owner/admin (may see internal costs). Fails closed. */
 async function isAdmin(): Promise<boolean> {
-  try { await requireOrgAdmin("view internal costs"); return true; } catch { return false; }
+  try { const c = await requireOrgAdmin("view internal costs"); return await tierHoldsManagerRole(createServiceRoleClient(), c.orgId, c.userId); } catch { return false; }
 }
 
 function message(e: unknown): string {
@@ -101,7 +101,8 @@ export async function getViewerPermissionsAction(): Promise<ActionResult<{ canAp
     // `newquip` shows the NewQuip-only tabs (Variations, Products & Fulfilment); every such server action re-checks it.
     const newquip = isNewquipPocOrg(orgId);
     try {
-      await requireOrgAdmin("approve in Projects");
+      const c = await requireOrgAdmin("approve in Projects");
+      if (!(await tierHoldsManagerRole(createServiceRoleClient(), c.orgId, c.userId))) throw new Error("not a manager");
       return { ok: true, data: { canApprove: true, newquip } };
     } catch {
       return { ok: true, data: { canApprove: false, newquip } };
@@ -172,7 +173,7 @@ export async function recordProgressAction(
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, await isAdmin());
-    if (approvedPct !== null) await requireOrgAdmin("approve commercial completion");
+    if (approvedPct !== null) { const c = await requireOrgAdmin("approve commercial completion"); if (!(await tierHoldsManagerRole(createServiceRoleClient(), c.orgId, c.userId))) throw new Error("This needs the Manager role."); }
     const db = createServiceRoleClient();
     await recordProgress(db, orgId, email ?? "unknown", { projectId, stageId, reportedPct, approvedPct, comment });
     if (approvedPct !== null) {
@@ -234,7 +235,7 @@ export async function approveClaimAction(projectId: string, claimId: string): Pr
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, await isAdmin());
-    await requireOrgAdmin("approve a progress claim");
+    { const c = await requireOrgAdmin("approve a progress claim"); if (!(await tierHoldsManagerRole(createServiceRoleClient(), c.orgId, c.userId))) throw new Error("This needs the Manager role."); }
     const db = createServiceRoleClient();
     if (await approvalsAvailable(db)) await decideDocument(db, legacyCtx(orgId, userId, email, true), "CLAIM", claimId, "APPROVE"); // one approval path: separation of duties, digest, history
     else await approveClaim(db, orgId, email ?? "unknown", projectId, claimId);
@@ -323,7 +324,7 @@ export async function approveVariationAction(projectId: string, variationId: str
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
     assertNewquipOrg(orgId);
-    await requireOrgAdmin("approve a variation");
+    { const c = await requireOrgAdmin("approve a variation"); if (!(await tierHoldsManagerRole(createServiceRoleClient(), c.orgId, c.userId))) throw new Error("This needs the Manager role."); }
     const db = createServiceRoleClient();
     if (await approvalsAvailable(db)) await decideDocument(db, legacyCtx(orgId, userId, email, true), "VARIATION", variationId, "APPROVE");
     else await approveVariation(db, orgId, email ?? "unknown", projectId, variationId);
@@ -338,7 +339,7 @@ export async function rejectVariationAction(projectId: string, variationId: stri
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
     assertNewquipOrg(orgId);
-    await requireOrgAdmin("reject a variation");
+    { const c = await requireOrgAdmin("reject a variation"); if (!(await tierHoldsManagerRole(createServiceRoleClient(), c.orgId, c.userId))) throw new Error("This needs the Manager role."); }
     const db = createServiceRoleClient();
     if (await approvalsAvailable(db)) await decideDocument(db, legacyCtx(orgId, userId, email, true), "VARIATION", variationId, "REJECT", { reason });
     else await rejectVariation(db, orgId, email ?? "unknown", projectId, variationId, reason);

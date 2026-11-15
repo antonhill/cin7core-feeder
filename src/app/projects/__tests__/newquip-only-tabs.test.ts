@@ -18,6 +18,8 @@ import * as billingStore from "@/lib/projects/variation-billing-store";
 vi.mock("@/lib/authorization", () => ({ requireModuleAccess: vi.fn() }));
 vi.mock("@/lib/require-org-admin", () => ({ requireOrgAdmin: vi.fn() }));
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: vi.fn(() => ({ __db: true })) }));
+// This file is about NewQuip-only tab routing, not role resolution: the explicit-Manager rule for the admin tier is tested with the real role store in role-enforcement-approvals.test.ts.
+vi.mock("@/lib/approvals/role-store", async (orig) => ({ ...(await orig<typeof import("@/lib/approvals/role-store")>()), tierHoldsManagerRole: vi.fn(() => Promise.resolve(true)) }));
 vi.mock("@/lib/activity-log", () => ({ logActivity: vi.fn(() => Promise.resolve()) }));
 vi.mock("@/lib/projects/scope-access", async (orig) => ({ ...(await orig<typeof import("@/lib/projects/scope-access")>()), guardBillingScope: vi.fn(() => Promise.resolve()), callerIsOrgAdmin: vi.fn(() => Promise.resolve(false)) }));
 // The approvals framework (migration 0110) is not applied in this scenario: the documents keep their previous approve / reject behaviour.
