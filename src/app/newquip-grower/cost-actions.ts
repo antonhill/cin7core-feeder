@@ -7,7 +7,10 @@
 // Only async functions and erased types are exported.
 import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
-import { canSeeCosts } from "@/lib/approvals/role-store";
+import { canSeeCosts, resolveRoles } from "@/lib/approvals/role-store";
+import { toQuoteRoles } from "@/lib/approvals/roles";
+import { narrowTier } from "@/lib/approvals/role-switch-store";
+import { canAcceptIncompleteCosting, canMutateCosting, COSTING_DENIED, WAIVER_DENIED, WAIVER_REASON_MIN } from "@/newquip/quote/cost-authority";
 import { logActivity } from "@/lib/activity-log";
 import { createServiceRoleClient } from "@/supabase/server";
 import { QUOTES_MODULE } from "@/app/module-nav";
@@ -17,7 +20,6 @@ import { evaluateDraft } from "@/newquip/grower/evaluate";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import { previewDraftOf } from "@/newquip/grower/preview-draft";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
-import type { QuoteRole } from "@/newquip/quote/roles";
 import { returnByOf } from "@/lib/newquip-quotes/return-store";
 import { reconcileConfirmationAmount, resyncApprovalsLogged } from "@/lib/newquip-quotes/confirmation-reconcile";
 import { loadQuote, saveDraft } from "@/lib/newquip-quotes/quote-store";
@@ -38,13 +40,22 @@ const MAX_SKUS = 120;
 type Db = ReturnType<typeof createServiceRoleClient>;
 type CostBasis = NonNullable<QuoteDraft["estimator"]["costBasis"]>;
 
-async function actor() {
+/**
+ * `view`: cost visibility only (owner/admin, Estimator or Manager) - the read. `costing`: also the ESTIMATOR role (every normal costing mutation). `waiver`: also the MANAGER role (the
+ * incomplete-costing exception). Roles are resolved server-side from the session (a role-switch user holds only the active role); never from the browser.
+ */
+async function actor(need: "view" | "costing" | "waiver" = "view") {
   const { orgId } = await requireNewquipPocOrg();
   const access = await requireModuleAccess(QUOTES_MODULE.href);
   let admin = false;
   try { await requireOrgAdmin("see and capture NewQuip costs"); admin = true; } catch { admin = false; } // fail closed
-  if (!(await canSeeCosts(createServiceRoleClient(), orgId, access.userId, admin))) throw new Error("Costs are internal: only an organisation owner/admin, or someone given the Estimator or Manager role, can see or capture them.");
-  return { orgId, userId: access.userId, email: access.email ?? "unknown" };
+  const db = createServiceRoleClient();
+  if (!(await canSeeCosts(db, orgId, access.userId, admin))) throw new Error("Costs are internal: only an organisation owner/admin, or someone given the Estimator or Manager role, can see or capture them.");
+  const roles = toQuoteRoles(await resolveRoles(db, orgId, access.userId, admin && (await narrowTier(db, orgId, access.userId, true))));
+  const who = { roles, canSeeCost: true };
+  if (need === "costing" && !canMutateCosting(who)) throw new Error(COSTING_DENIED);
+  if (need === "waiver" && !canAcceptIncompleteCosting(who)) throw new Error(WAIVER_DENIED);
+  return { orgId, userId: access.userId, email: access.email ?? "unknown", roles };
 }
 type Actor = Awaited<ReturnType<typeof actor>>;
 
@@ -125,8 +136,8 @@ async function writeDraftCosts(db: Db, a: Actor, quoteId: string, next: { physic
   await logActivity(db, { orgId: a.orgId, actor: { userId: a.userId, email: a.email }, action, summary: `${summary} (read-only against Cin7)`, detail: { quoteId, ...detail } });
   // The same single helper as every draft writer: a changed commercial total withdraws the confirmation (a cost-only edit does not); a failed approval re-sync is audited, not swallowed.
   const amount = await reconcileConfirmationAmount(db, { orgId: a.orgId, userId: a.userId, email: a.email, isAdmin: true }, quoteId, evaluationContext(true),
-    // Cost writers are cost-entitled (Estimator / Manager); this Actor carries no role set, so the return is attributed to the Estimator capacity (the actor email is exact).
-    returnByOf({ email: a.email, roles: new Set<QuoteRole>(["estimator"]) }));
+    // The return is attributed to the capacity the server resolved for this writer (Estimator for costing, Manager for the waiver); the actor email is exact.
+    returnByOf({ email: a.email, roles: a.roles }));
   if (!amount && saved.signoffCleared) await resyncApprovalsLogged(db, { orgId: a.orgId, userId: a.userId, email: a.email, isAdmin: true }, quoteId, { returnedToRep: false, signoffCleared: true });
   return saved;
 }
@@ -137,7 +148,7 @@ async function writeDraftCosts(db: Db, a: Actor, quoteId: string, next: { physic
  */
 export async function captureLatestCostsAction(quoteId: string, opts: { replaceSelections?: boolean } = {}): Promise<CostActionResult<{ captured: number; missing: string[]; needsChoice: string[] }>> {
   try {
-    const a = await actor();
+    const a = await actor("costing");
     const db = createServiceRoleClient();
     const { q, eff } = await currentScope(db, a.orgId, quoteId);
     if (eff.lines.length > MAX_SKUS) throw new Error(`This quotation expands to ${eff.lines.length} SKUs; capture is limited to ${MAX_SKUS} per run.`);
@@ -158,7 +169,7 @@ export async function captureLatestCostsAction(quoteId: string, opts: { replaceS
 /** The estimator chooses the supplier among the options already captured. Only stored, currently usable options can be chosen; changing a choice, or choosing against the preference, needs a reason. */
 export async function selectSupplierAction(quoteId: string, sku: string, supplier: { supplierId: string | null; supplierName: string | null }, reason?: string): Promise<CostActionResult<null>> {
   try {
-    const a = await actor();
+    const a = await actor("costing");
     const db = createServiceRoleClient();
     const q = await loadQuote(db, a.orgId, quoteId);
     if (!q) throw new Error("Quote not found.");
@@ -182,7 +193,7 @@ export async function selectSupplierAction(quoteId: string, sku: string, supplie
 /** Re-evaluates every captured option under today's exchange rates and declarations (no Cin7 read), keeping deliberate selections that are still usable. */
 export async function recalculateCostsAction(quoteId: string): Promise<CostActionResult<null>> {
   try {
-    const a = await actor();
+    const a = await actor("costing");
     const db = createServiceRoleClient();
     const q = await loadQuote(db, a.orgId, quoteId);
     if (!q) throw new Error("Quote not found.");
@@ -198,7 +209,7 @@ export async function recalculateCostsAction(quoteId: string): Promise<CostActio
 /** Records an exchange-rate snapshot (ZAR per 1 unit of a foreign currency). Audited and append-only; it never changes an existing quotation by itself. */
 export async function recordFxRateAction(currency: string, rate: string, source: string, asOfIso: string): Promise<CostActionResult<null>> {
   try {
-    const a = await actor();
+    const a = await actor("costing");
     const db = createServiceRoleClient();
     await recordRate(db, { canSeeCost: true }, a.email, { orgId: a.orgId, currency, rate, source, asOf: asOfIso });
     await logActivity(db, { orgId: a.orgId, actor: { userId: a.userId, email: a.email }, action: "newquip.fx_rate_recorded", summary: `Recorded the ${currency.trim().toUpperCase()} exchange rate`, detail: { currency: currency.trim().toUpperCase(), rate, source, asOf: asOfIso } });
@@ -209,7 +220,7 @@ export async function recordFxRateAction(currency: string, rate: string, source:
 /** The estimator declares that NewQuip's Cin7 supplier prices are per stock unit (Cin7 does not state a purchase unit). Audited; prices stay unusable until someone declares it. */
 export async function confirmUnitBasisAction(quoteId: string, reason: string): Promise<CostActionResult<null>> {
   try {
-    const a = await actor();
+    const a = await actor("costing");
     if (reason.trim().length < 10) throw new Error("Explain how you know the supplier prices are per stock unit (at least a short sentence).");
     const db = createServiceRoleClient();
     const q = await loadQuote(db, a.orgId, quoteId);
@@ -227,8 +238,8 @@ export async function confirmUnitBasisAction(quoteId: string, reason: string): P
 /** An authorised exception: lets a quotation with an incomplete cost estimate be approved. Reasoned, audited, and frozen with the approval. */
 export async function acceptIncompleteCostsAction(quoteId: string, reason: string): Promise<CostActionResult<null>> {
   try {
-    const a = await actor();
-    if (reason.trim().length < 10) throw new Error("An exception needs a written reason (at least a short sentence).");
+    const a = await actor("waiver");
+    if (reason.trim().length < WAIVER_REASON_MIN) throw new Error("An exception needs a written reason (at least a short sentence).");
     const db = createServiceRoleClient();
     const q = await loadQuote(db, a.orgId, quoteId);
     if (!q) throw new Error("Quote not found.");
@@ -241,7 +252,7 @@ export async function acceptIncompleteCostsAction(quoteId: string, reason: strin
 /** An audited manual cost estimate for ONE SKU (reason required). It stands in for a missing Cin7 cost and is shown as MANUAL, never as a Cin7 cost. */
 export async function setManualCostEstimateAction(quoteId: string, sku: string, unitCostCents: number, reason: string): Promise<CostActionResult<null>> {
   try {
-    const a = await actor();
+    const a = await actor("costing");
     const bad = validateManualEstimate(unitCostCents, reason);
     if (bad) throw new Error(bad);
     const db = createServiceRoleClient();
@@ -257,7 +268,7 @@ export async function setManualCostEstimateAction(quoteId: string, sku: string, 
 /** Removes a manual estimate (the SKU is then missing a cost again until Cin7 is re-read). */
 export async function clearManualCostEstimateAction(quoteId: string, sku: string): Promise<CostActionResult<null>> {
   try {
-    const a = await actor();
+    const a = await actor("costing");
     const db = createServiceRoleClient();
     const q = await loadQuote(db, a.orgId, quoteId);
     if (!q) throw new Error("Quote not found.");
