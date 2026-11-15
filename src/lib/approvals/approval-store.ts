@@ -22,6 +22,7 @@ import { listVariationStages } from "@/lib/projects/variation-billing-store";
 import { authoriseDecision, authoriseStageDecision, type StageRequest } from "./policy";
 import { demoAuditDetail, type DemoInfo } from "@/lib/demo-mode/context";
 import { logActivity } from "@/lib/activity-log";
+import { isNewquipPocOrg } from "@/newquip/access";
 import { canAdminister, stageOf, STAGE_LABEL, ROLE_LABEL, type ApprovalStage, type FunctionalRole } from "./roles";
 import { emailsWithRole, loadPolicies, resolveRoles, rolesAvailable } from "./role-store";
 import { APPROVALS_DISABLED } from "./kill-switch";
@@ -238,6 +239,7 @@ export async function decide(db: Db, ctx: ApprovalCtx, requestId: string, action
   const req = await loadRequest(db, ctx.orgId, requestId);
   if (!req) fail("Approval request not found.");
   if (req.stage !== undefined) return decideStaged(db, ctx, req, action, input); // a database with migration 0112 returns the stage on every request
+  if (isNewquipPocOrg(ctx.orgId)) fail("Approvals for this organisation need the role-based approval stages; the tier-based fallback is not available.");
   const verdict = authoriseDecision({ email: ctx.email, isManager: ctx.isManager }, action, req, input);
   if (!verdict.ok) fail(verdict.error);
   if (req.version !== input.expectedVersion || req.digest !== input.expectedDigest) fail("This submission changed while you were reviewing it. Reload and review the current revision before deciding.");
@@ -501,6 +503,7 @@ export async function decideDocument(db: Db, ctx: ApprovalCtx, docType: Approval
 async function authoriseBeforeMutating(db: Db, ctx: ApprovalCtx, docType: ApprovalDocType, docId: string, action: Exclude<ApprovalAction, "WITHDRAW">, input: { reason?: string; override?: boolean; destination?: "ESTIMATOR" | "PREPARER" | null; stage?: ApprovalStage }, open: ApprovalRequestRow | null, staged: boolean): Promise<DocSnapshot | null> {
   const { stage: wantedStage, ...rest } = input;
   if (!staged) {
+    if (isNewquipPocOrg(ctx.orgId)) fail("Approvals for this organisation need the role-based approval stages; the tier-based fallback is not available.");
     // Phase H: the same manager-only policy that `decide` applies, evaluated against the open request or the one a decision would first submit.
     const snap = open ? null : await loadSnapshot(db, ctx.orgId, docType, docId);
     if (snap && snap.state !== "SUBMITTABLE") fail(`This ${docType.toLowerCase()} is not in a state that can be submitted for approval (${snap.stateLabel}).`);
@@ -510,7 +513,7 @@ async function authoriseBeforeMutating(db: Db, ctx: ApprovalCtx, docType: Approv
   }
   const roles = await resolveRoles(db, ctx.orgId, ctx.userId, ctx.isManager);
   const policies = await loadPolicies(db, ctx.orgId);
-  const actor = { email: ctx.email, roles, isAdmin: canAdminister(roles, ctx.isManager) };
+  const actor = { email: ctx.email, roles, isAdmin: canAdminister(roles, ctx.isManager), strictRoles: isNewquipPocOrg(ctx.orgId) };
   const check = (req: StageRequest & { stage_role?: string | null }, stage: ApprovalStage) => {
     const sp = stageOf(policies, docType, stage);
     const v = authoriseStageDecision(actor, action, req, (req.stage_role as FunctionalRole | null | undefined) ?? sp.role, rest);
@@ -654,7 +657,7 @@ async function decideStaged(db: Db, ctx: ApprovalCtx, req: ApprovalRequestRow, a
   const stage = req.stage ?? "MANAGER";
   const roles = await resolveRoles(db, ctx.orgId, ctx.userId, ctx.isManager);
   const sp = stageOf(await loadPolicies(db, ctx.orgId), req.doc_type, stage);
-  const verdict = authoriseStageDecision({ email: ctx.email, roles, isAdmin: canAdminister(roles, ctx.isManager) }, action, req, (req.stage_role as typeof sp.role | null) ?? sp.role, input);
+  const verdict = authoriseStageDecision({ email: ctx.email, roles, isAdmin: canAdminister(roles, ctx.isManager), strictRoles: isNewquipPocOrg(ctx.orgId) }, action, req, (req.stage_role as typeof sp.role | null) ?? sp.role, input);
   if (!verdict.ok) fail(verdict.error);
   if (req.version !== input.expectedVersion || req.digest !== input.expectedDigest) fail("This submission changed while you were reviewing it. Reload and review the current revision before deciding.");
   const reason = (input.reason ?? "").trim();

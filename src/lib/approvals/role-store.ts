@@ -66,6 +66,15 @@ export async function canSeeCosts(db: Db, orgId: string, userId: string, adminTi
   return mine.some((a) => a.role === "ESTIMATOR" || a.role === "MANAGER");
 }
 
+/**
+ * Admin-tier gates in the Projects module (internal costs, costing report, claim / variation / commercial-progress approval). Outside the NewQuip organisation the tier alone
+ * passes, as before. In NewQuip the tier is NOT a Manager: the person must ALSO hold the explicit Manager role (an Administrator-only owner is refused). This only narrows.
+ */
+export async function tierHoldsManagerRole(db: Db, orgId: string, userId: string): Promise<boolean> {
+  if (!isNewquipPocOrg(orgId)) return true;
+  return (await resolveRoles(db, orgId, userId, true)).has("MANAGER");
+}
+
 export interface OrgUser { userId: string; email: string; tier: "owner" | "admin" | "member"; roles: FunctionalRole[] }
 
 export async function listOrgUsers(db: Db, orgId: string): Promise<OrgUser[]> {
