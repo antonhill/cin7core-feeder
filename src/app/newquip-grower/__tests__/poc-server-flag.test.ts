@@ -262,3 +262,19 @@ describe("a Manager-typed 'POC PRESENTATION' reason never triggers scope exclusi
     expect(approvedInPocMode({ exceptions: [{ reason: "ordinary" }] })).toBe(false);
   });
 });
+
+import { pocDocumentMarked } from "@/lib/newquip-quotes/poc-presentation";
+describe("customer-document demonstration wording (wording only)", () => {
+  const env = { VERCEL_ENV: "preview", NEWQUIP_POC_PRESENTATION: "true", SUPABASE_URL: `https://${REF}.supabase.co`, NEXT_PUBLIC_SUPABASE_URL: `https://${REF}.supabase.co` };
+  const legacy = { draft: { estimator: { assumptions: `${POC_MARKER}: old` } } as never, accepted_baseline: { exceptions: [{ reason: `${POC_MARKER}: old` }] } };
+  it("an approved legacy POC baseline (no field, prefix reason) keeps the demo terms with the gate on; none with the gate off or in production", () => {
+    expect(pocDocumentMarked(legacy, ORG, env)).toBe(true);
+    expect(pocDocumentMarked(legacy, ORG, { ...env, NEWQUIP_POC_PRESENTATION: "false" })).toBe(false);
+    expect(pocDocumentMarked(legacy, ORG, { ...env, VERCEL_ENV: "production" })).toBe(false);
+  });
+  it("explicit baseline flag counts; a NEW approval of a non-flagged quotation (explicit false, even with a typed prefix) and a marker-only draft do not", () => {
+    expect(pocDocumentMarked({ accepted_baseline: { pocPresentation: true } }, ORG, env)).toBe(true);
+    expect(pocDocumentMarked({ draft: { estimator: { assumptions: `${POC_MARKER}: x` } } as never, accepted_baseline: { pocPresentation: false, exceptions: [{ reason: `${POC_MARKER}: typed` }] } }, ORG, env)).toBe(false);
+    expect(pocDocumentMarked({ draft: { estimator: { assumptions: `${POC_MARKER}: x` } } as never }, ORG, env)).toBe(false);
+  });
+});

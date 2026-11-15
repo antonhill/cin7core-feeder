@@ -35,6 +35,13 @@ export const hasPocFlag = (draft: Pick<QuoteDraft, "estimator"> | null | undefin
 export const isPocQuote = (draft: Pick<QuoteDraft, "estimator"> | null | undefined, orgId: string, env: Record<string, string | undefined> = process.env as Record<string, string | undefined>): boolean =>
   hasPocFlag(draft) && pocPresentationEnabled(env, orgId);
 
+/**
+ * DOCUMENT WORDING ONLY (never a permission or mapping decision): the customer document carries the demonstration terms for a quotation in POC mode OR an already-approved quotation whose
+ * sealed baseline records POC approval (explicit pocPresentation, or the legacy-compat prefix for baselines sealed before that field existed). Still requires the environment gate.
+ */
+export const pocDocumentMarked = (q: { draft?: Pick<QuoteDraft, "estimator"> | null; accepted_baseline?: unknown }, orgId: string, env: Record<string, string | undefined> = process.env as Record<string, string | undefined>): boolean =>
+  pocPresentationEnabled(env, orgId) && (hasPocFlag(q.draft) || (!!q.accepted_baseline && approvedInPocMode(q.accepted_baseline as never)));
+
 /** A client-supplied draft never decides the flag: the STORED value (if any) is carried over, otherwise it is removed. */
 export function keepServerOwnedPocFlag<D extends QuoteDraft>(draft: D, prior: Pick<QuoteDraft, "estimator"> | null | undefined): D {
   const next = structuredClone(draft);
