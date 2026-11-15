@@ -1003,7 +1003,8 @@ export default function QuoteEditorPage() {
       {/* ───────────── 2 · ESTIMATOR REVIEW ───────────── */}
       {stage === 2 && (
         <>
-        <fieldset disabled={!s2Edit} className="mt-4 min-w-0 space-y-6 border-0 p-0">
+        <div className="mt-4 min-w-0 space-y-6">
+        <fieldset disabled={!s2Edit} className="min-w-0 space-y-6 border-0 p-0">
           {/* Hidden steps stay mounted (hidden + inert): the requests and timers started on mount are the same whichever step is shown. A LOCKED step stays mounted too; show-all lists it as heading + reason. */}
           <StepPanel railId="s2" stepId="mapping" number={visible2.indexOf("mapping") + 1} title={STAGE2_WIZARD_LABEL.mapping} current={step2Id === "mapping"} showAll={showAllSteps} locked={lockedFor2("mapping")} className="space-y-6">
             {editWarning && <Alert tone="warning"><span data-testid="edit-clears-signoff">{editWarning}</span></Alert>}
@@ -1124,15 +1125,18 @@ export default function QuoteEditorPage() {
             {!canCommercials && scopePanel}
             {!canCommercials && totalsPanel}
           </StepPanel>
+        </fieldset>
 
           {canCommercials && (
             <StepPanel railId="s2" stepId="costs" number={visible2.indexOf("costs") + 1} title={STAGE2_WIZARD_LABEL.costs} current={step2Id === "costs"} showAll={showAllSteps} locked={lockedFor2("costs")} className="space-y-6">
               {editWarning && <Alert tone="warning"><span data-testid="edit-clears-signoff-costs">{editWarning}</span></Alert>}
               {(roles.has("estimator") || roles.has("manager")) && (
                 <Disclosure testId="disc-supplier-pricing" title="Supplier pricing (Estimator workspace)" summary="Supplier, currency, cost, exchange rate and forward cover, freight, markup and margin per SKU; original versus revised price. Off unless you switch it on for this quotation.">
-                  <EstimatorPricingPanel quoteId={id} unsaved={dirty} reload={() => { void getGrowerQuoteAction(id).then((r) => { if (r.ok && r.data) adopt(r.data, true); }); }} />
+                  <EstimatorPricingPanel quoteId={id} unsaved={dirty} editable={s2Edit} reload={() => { void getGrowerQuoteAction(id).then((r) => { if (r.ok && r.data) adopt(r.data, true); }); }} />
                 </Disclosure>
               )}
+              {/* Everything below the supplier-pricing workspace stays Estimator-only: it keeps the disabled fieldset. The workspace itself sits OUTSIDE it (its editing controls are gated by `editable`) so a Manager can run the independent verification. */}
+              <fieldset disabled={!s2Edit} className="min-w-0 space-y-6 border-0 p-0">
               {!poc && (<Disclosure testId="disc-cost-capture" title="Cin7 cost capture and FX rates" summary={costingIncomplete ? (marginInfo && marginInfo.missing > 0 ? `Costs are incomplete for ${marginInfo.missing} line${marginInfo.missing === 1 ? "" : "s"}: capture or enter them here` : `Costing is incomplete: ${costingReason ?? "supplier costs are unresolved"}`) : "Latest supplier prices from Cin7, exchange rates and exceptions"} attention={costingIncomplete}>
                 {final ? <CostPanel quoteId={id} /> : <CostPanel quoteId={id} unsaved={dirty} previewDraft={dirty ? previewedFor : null} />}
               </Disclosure>)}
@@ -1146,9 +1150,10 @@ export default function QuoteEditorPage() {
                 </Disclosure>
               )}
               {!final && <Alert tone="info">SKU mapping and the Cin7 latest-supplier-price capture work on the frozen physical scope, so they open for the Estimator once the quotation is approved. Until then the estimator review above, the margin sheet and the readiness items are the costing evidence.</Alert>}
+              </fieldset>
             </StepPanel>
           )}
-        </fieldset>
+        </div>
 
         {canCommercials && (
           <StepPanel railId="s2" stepId="final" number={visible2.indexOf("final") + 1} title={STAGE2_WIZARD_LABEL.final} current={step2Id === "final"} showAll={showAllSteps} locked={lockedFor2("final")} className="mt-6 space-y-6">

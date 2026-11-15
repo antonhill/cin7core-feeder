@@ -473,3 +473,58 @@ describe("what the Manager sees at approval (cost-entitled viewers only)", () =>
     expect(actionsSrc.slice(at, at + 400)).toMatch(/if \(canViewCommercials\) \{\s*if \(quote\.draft\.estimator\.pricing\?\.enabled\)/);
   });
 });
+
+// The workspace sits OUTSIDE the Stage 2 disabled fieldset (so a Manager can verify); every editing control is gated by the panel's own `edit` = server canEdit AND the page's `editable`.
+describe("editable={false} (a viewer who may verify but not edit): verification works, nothing else is operable", () => {
+  const renderPanel = (b: WorkspaceBundle, editable: boolean | undefined) => {
+    vi.mocked(actions.getEstimatorPricingAction).mockResolvedValue({ ok: true, data: b });
+    render(createElement(EstimatorPricingPanel, { quoteId: "q1", ...(editable === undefined ? {} : { editable }) }));
+  };
+  const operable = (root: ParentNode) => [...root.querySelectorAll("input,select,textarea,button")].filter((e) => !(e as HTMLInputElement).disabled);
+  const isVerify = (e: Element) => /^Verify .+ cost$/.test(e.getAttribute("aria-label") ?? "") || /^Evidence checked/.test((e as HTMLInputElement).labels?.[0]?.textContent ?? "") || ["verify-save", "verify-all", "attest-save"].includes(e.getAttribute("data-testid") ?? "");
+  const reviewer = (over: Partial<WorkspaceBundle> = {}): WorkspaceBundle => { const b0 = bundle(equivalentInputs({}, "unverified")); return { ...b0, canEdit: true, verification: { canReview: true, reviewerRoles: ["manager"], verifiableSkus: ["PNQ082"] }, ...over }; };
+
+  it("server canEdit=true but editable=false: no editing control is operable and no save / switch / add / clear control exists; the verify controls ARE", async () => {
+    renderPanel(reviewer(), false);
+    await waitFor(() => expect(screen.getByTestId("verify-block")).toBeTruthy());
+    expect(operable(screen.getByTestId("estimator-pricing-panel")).filter((e) => !isVerify(e)).map((e) => e.getAttribute("aria-label") ?? e.textContent)).toEqual([]);
+    for (const id of ["pricing-save", "pricing-off", "clear-cost", "evidence-save"]) expect(screen.queryByTestId(id), id).toBeNull();
+    expect(screen.queryByLabelText("SKU to add")).toBeNull();
+    expect(screen.queryByLabelText(/^Reason for this pricing revision/)).toBeNull();
+    fireEvent.click(screen.getByLabelText("Verify PNQ082 cost"));
+    fireEvent.change(screen.getByLabelText("Evidence checked (for example the supplier quote reference)"), { target: { value: "Supplier quote SQ-9" } });
+    expect((screen.getByTestId("verify-save") as HTMLButtonElement).disabled).toBe(false);
+  });
+  it("the same bundle with editable omitted (the Estimator's page) keeps full editing, exactly as before", async () => {
+    renderPanel(reviewer(), undefined);
+    await waitFor(() => expect(screen.getByTestId("pricing-save")).toBeTruthy());
+    expect((screen.getAllByLabelText(/PNQ082 supplier cost/)[0] as HTMLInputElement).disabled).toBe(false);
+    expect(screen.getByLabelText("SKU to add")).toBeTruthy();
+  });
+  it("an Estimator who ENTERED the cost: no tick for it (verifiableSkus is empty) while editing stays on", async () => {
+    renderPanel({ ...reviewer(), verification: { canReview: true, reviewerRoles: ["manager"], verifiableSkus: [] } }, true);
+    await waitFor(() => expect(screen.getByTestId("pricing-save")).toBeTruthy());
+    expect(screen.queryAllByLabelText(/^Verify .* cost$/)).toHaveLength(0);
+    expect((screen.getByTestId("verify-all") as HTMLButtonElement).disabled).toBe(true);
+  });
+  it("an approved / final quotation: no verification block and nothing editable, whatever the viewer's rights", async () => {
+    renderPanel(reviewer({ state: "MANAGER_APPROVED_FINAL" }), true);
+    await waitFor(() => expect(screen.getByTestId("estimator-pricing-panel")).toBeTruthy());
+    expect(screen.queryByTestId("verify-block")).toBeNull();
+    expect(screen.queryAllByLabelText(/^Verify .* cost$/)).toHaveLength(0);
+    expect(screen.queryByTestId("evidence-save")).toBeNull();
+  });
+  it("a verify-only viewer (editable=false) sees the success note after verifying and the server's reason after a refusal", async () => {
+    renderPanel(reviewer(), false);
+    await waitFor(() => expect(screen.getByTestId("verify-block")).toBeTruthy());
+    fireEvent.click(screen.getByLabelText("Verify PNQ082 cost"));
+    fireEvent.change(screen.getByLabelText("Evidence checked (for example the supplier quote reference)"), { target: { value: "Supplier quote SQ-9" } });
+    vi.mocked(actions.verifyEstimatorCostsAction).mockResolvedValueOnce({ ok: false, error: "You entered this cost.", errors: ["You entered this cost."] });
+    fireEvent.click(screen.getByTestId("verify-save"));
+    await waitFor(() => expect(screen.getByTestId("pricing-errors").textContent).toMatch(/You entered this cost/));
+    vi.mocked(actions.verifyEstimatorCostsAction).mockResolvedValueOnce({ ok: true, data: { seq: 3, verified: 1 } });
+    fireEvent.click(screen.getByTestId("verify-save"));
+    await waitFor(() => expect(screen.getByTestId("pricing-note").textContent).toMatch(/1 supplier cost independently verified/));
+    expect(screen.queryByTestId("pricing-save")).toBeNull();
+  });
+});
