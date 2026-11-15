@@ -115,6 +115,17 @@ function costIndicators(skus: readonly string[], rows: readonly SkuRow[]): { cos
   return { cost, verified };
 }
 
+/** Which editor a budget line opens, and the supplier-cost SKUs it involves (also used to reopen a COMPLETE line for editing). */
+export function targetOf(l: BridgeLine): { kind: TaskKind | "complete_manual"; skus: string[] } {
+  const skus = l.sku ? [l.sku] : componentSkus(l);
+  if (l.pricedBy === "estimator_resolution") return { kind: "complete_manual", skus };
+  const isPackage = !!l.components && l.components.length > 0;
+  if (isPackage && (l.components ?? []).some((c) => c.status === "identity_unresolved" || !c.sku)) return { kind: "manual", skus: [] };
+  if (isPackage) return { kind: "package", skus };
+  if (l.status === "unmapped" || !l.sku) return { kind: "product", skus: [] };
+  return { kind: "cost", skus };
+}
+
 /** The whole workspace from the facts the page already holds. Pure. */
 export function buildWorkspace(i: { budget: BudgetQuote; view: PricingWorkspaceView; facts: WorkspaceFacts }): Workspace {
   const { budget, view, facts } = i;

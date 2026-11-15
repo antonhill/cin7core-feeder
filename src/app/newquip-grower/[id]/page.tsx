@@ -45,6 +45,7 @@ import { BuildStamp } from "@/components/BuildStamp";
 import { ScheduleChooser } from "./ScheduleChooser";
 import { CostPanel } from "./CostPanel";
 import { EstimatorPricingPanel } from "./EstimatorPricingPanel";
+import { EstimatorWorkspace } from "./EstimatorWorkspace";
 import { CostVerifyBanner, LegacyCostingDisclosure } from "./CostVerifyBanner";
 import { approvalBlockers, buildPricingWorkspace, nextCostVerifyAction, phase2CostNote, phase2CostStatus, phase2CostingReason, selectRuleVersion } from "@/newquip/pricing/estimator";
 import { AuditDetails } from "./AuditDetails";
@@ -558,6 +559,17 @@ export default function QuoteEditorPage() {
   const canCommercials = view.viewer.canViewCommercials;
   const isEstimator = roles.has("estimator");
   const s2Edit = isEstimator && !final; // the ONLY Stage 2 editor (the server re-checks every action)
+  // The Estimator workspace replaces the stacked Stage 2 forms ONLY for a quotation whose supplier pricing is ON, for an Estimator or Manager who may see costs, and while it is in review or back with the Rep.
+  // Everything else (supplier pricing off, POC, the Rep, an approved quotation) renders exactly as before.
+  const workspaceMode = !!p2Status && !poc && canCommercials && !final && !!budget && (q.state === "ESTIMATOR_REVIEW" || q.state === "REP_DRAFT") && (isEstimator || roles.has("manager"));
+  const wsSaveDraft = async (mut: (d: QuoteDraft) => void): Promise<{ ok: boolean; errors?: string[] }> => {
+    if (dirty) return { ok: false, errors: ["Save or discard your other unsaved changes first."] };
+    const next = structuredClone(draft!); mut(next);
+    const r = await saveGrowerDraftAction(id, next);
+    if (!r.ok || !r.data) return { ok: false, errors: [r.error ?? "Could not save."] };
+    adopt(r.data);
+    return { ok: true };
+  };
   // The key names the exact version and costing it was given on (quote, revision, content hash, last update and the live cost and margin). It is never rendered or put in an attribute.
   const costKey = budget ? costAckKey({ quoteId: q.id, revision: q.revision, draftHash: q.draft_hash, updatedAt: q.updated_at, estimatedCost: budget.totals.estimatedCost, marginPct: budget.totals.overallMarginPct }) : null;
   const s2Base: Omit<Stage2Input, "costAcknowledged"> = {
@@ -805,9 +817,10 @@ export default function QuoteEditorPage() {
           </div>
           {amountChange.changed && q.state === "ESTIMATOR_REVIEW" && <div className="mt-2"><Alert tone="warning"><span data-testid="total-changed">{amountChange.text}</span></Alert></div>}
           {repSummary}
-          {canCommercials && view.indicativeComparison && <IndicativeComparisonPanel c={view.indicativeComparison} />}
-          {canCommercials && !poc && view.manualPriceEvidence && <ManualEvidencePanel rows={view.manualPriceEvidence} />}
+          {!workspaceMode && canCommercials && view.indicativeComparison && <IndicativeComparisonPanel c={view.indicativeComparison} />}
+          {!workspaceMode && canCommercials && !poc && view.manualPriceEvidence && <ManualEvidencePanel rows={view.manualPriceEvidence} />}
           {req2No !== null && req2No > visible2.length && <p className="mt-3 text-sm text-slate-800" data-testid="step-unavailable">That step is not available to you, so the first step is shown.</p>}
+          {!workspaceMode && (
           <StepRail dense oneLineNotes id="s2" ariaLabel="Costing and review steps" steps={railSteps2View} currentId={step2Id} onSelect={goStep2}
             moreActions={(
               <>
@@ -818,6 +831,7 @@ export default function QuoteEditorPage() {
                 </>
             )}
             actions={(s2Edit || dirty) ? saveRow("") : undefined} />
+          )}
         </>
       )}
 
@@ -1021,6 +1035,14 @@ export default function QuoteEditorPage() {
       {/* ───────────── 2 · ESTIMATOR REVIEW ───────────── */}
       {stage === 2 && (
         <>
+        {workspaceMode && budget && (
+          <EstimatorWorkspace quoteId={id} state={q.state} confirmedCents={q.customer_confirmed_cents} signedOff={signedNow} draft={draft} budget={budget} pageDirty={dirty} canEdit={s2Edit}
+            title={`${draft.siteName || "Quotation"} · ${draft.customerName || "Customer"}`} subtitle={`${cfg.rooms || 0} rooms · ${draft.quoteType === "project" ? "Project pricing" : "Day-to-day pricing"} · Revision ${q.revision} · Supplier pricing on`}
+            refreshKey={`${q.draft_hash}|${q.revision}|${q.state}`} saveDraft={wsSaveDraft} reload={() => { void getGrowerQuoteAction(id).then((r) => { if (r.ok && r.data) adopt(r.data, true); }); }}
+            onGoSignoff={() => document.getElementById("ws-signoff")?.scrollIntoView({ behavior: "smooth" })} onGoApproval={() => goStage(3)} reviewNeeded={costNeedsMark} onMarkReviewed={markReviewed} />
+        )}
+        {!workspaceMode && (
+        <>
         <div className="mt-4 min-w-0 space-y-6">
         <fieldset disabled={!s2Edit} className="min-w-0 space-y-6 border-0 p-0">
           {/* Hidden steps stay mounted (hidden + inert): the requests and timers started on mount are the same whichever step is shown. A LOCKED step stays mounted too; show-all lists it as heading + reason. */}
@@ -1218,8 +1240,11 @@ export default function QuoteEditorPage() {
             </Panel>
           </StepPanel>
         )}
+        </>
+        )}
 
-        <StepPanel railId="s2" stepId="signoff" number={visible2.indexOf("signoff") + 1} title={STAGE2_WIZARD_LABEL.signoff} current={step2Id === "signoff"} showAll={showAllSteps} locked={lockedFor2("signoff")} className="mt-6 space-y-6">
+        <div id="ws-signoff">
+        <StepPanel railId="s2" stepId="signoff" number={visible2.indexOf("signoff") + 1} title={STAGE2_WIZARD_LABEL.signoff} current={workspaceMode || step2Id === "signoff"} showAll={showAllSteps || workspaceMode} locked={lockedFor2("signoff")} className="mt-6 space-y-6">
           <Panel>
             <h3 className="sr-only">Sign off or return</h3>
             {editWarning && <div className="mt-1"><Alert tone="warning"><span data-testid="edit-clears-signoff-signoff">{editWarning}</span></Alert></div>}
@@ -1262,8 +1287,9 @@ export default function QuoteEditorPage() {
             </div>
           </Panel>
         </StepPanel>
+        </div>
 
-        {!showAllSteps && (
+        {!showAllSteps && !workspaceMode && (
         <div className="sticky bottom-0 z-10 -mx-4 mt-6 flex flex-wrap items-end justify-between gap-3 border-t border-slate-200 bg-white px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:-mx-6 md:px-6" data-testid="step-buttons">
           {step2Cur > 1 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep2Id(visible2[step2Cur - 2])}>Back</Button> : <span />}
           {(() => {

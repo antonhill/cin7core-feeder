@@ -83,60 +83,47 @@ describe("legacy quotations (no Phase 2 pricing) render EXACTLY as before", () =
   }
 });
 
-describe("Phase 2 verified and complete", () => {
-  it("shows ONE open supplier-pricing workspace and the next-action banner; the legacy panels are not in the normal view", async () => {
-    await open(verified());
-    expect(document.querySelector('[data-supplier-pricing="primary"]')).toBeTruthy();
-    await screen.findByTestId("estimator-pricing-panel");
-    expect(screen.getAllByTestId("estimator-pricing-panel")).toHaveLength(1);
-    expect(screen.getByTestId("disc-supplier-pricing").hasAttribute("open")).toBe(true);
-    expect(screen.getByTestId("cost-next-action")).toBeTruthy();
-    expect(screen.queryByTestId("disc-cost-capture")).toBeNull();
-    expect(screen.queryByTestId("disc-margin")).toBeNull();
-    expect(screen.queryByTestId("est-priced-note")).toBeNull();
-  }, 60000);
-  it("keeps the legacy data reachable in ONE collapsed 'Legacy costing (not used for this quotation)' disclosure that mounts the legacy panels only when opened", async () => {
-    await open(verified());
-    const legacy = screen.getByTestId("disc-legacy-costing");
-    expect(legacy.textContent).toMatch(/Legacy costing \(not used for this quotation\)/);
-    expect(legacy.hasAttribute("open")).toBe(false);
-    expect(screen.queryByTestId("legacy-costing-body")).toBeNull();
-    fireEvent.click(legacy.querySelector("summary")!);
-    legacy.setAttribute("open", ""); legacy.dispatchEvent(new Event("toggle"));
-    await waitFor(() => expect(screen.getByTestId("legacy-costing-body")).toBeTruthy());
-    expect(screen.getByTestId("legacy-costing-body").textContent).toMatch(/Cin7|cost|margin/i);
+const WS = "estimator-workspace";
+const openWs = (pricing: EstimatorPricing | undefined, roles: Role[] = ["ESTIMATOR"], o: Parameters<typeof open>[2] = {}) => open(pricing, roles, { ...o, waitFor: WS });
+
+describe("Phase 2 (supplier pricing ON): the Estimator workspace replaces the stacked costing forms", () => {
+  it("mounts ONE workspace with the next action and the four separate checks; the legacy panels, margin sheet and old supplier-pricing form are not in the normal view", async () => {
+    await openWs(verified());
+    await screen.findByTestId("commercial-summary");
+    expect(screen.getAllByTestId(WS)).toHaveLength(1);
+    expect(screen.getByTestId("next-action")).toBeTruthy();
+    expect(screen.getByTestId("four-checks").textContent).toMatch(/Mapping complete.*Selling price complete.*Supplier cost complete.*Independently verified/);
+    for (const gone of ["disc-cost-capture", "disc-margin", "disc-supplier-pricing", "estimator-pricing-panel", "disc-legacy-costing", "cost-next-action"]) expect(screen.queryByTestId(gone), gone).toBeNull();
+    expect(document.querySelector('[data-supplier-pricing="primary"]')).toBeNull();
   }, 60000);
   it("no misleading legacy 'costing incomplete / no supplier cost selected / Cin7 cost capture is checked' text anywhere on the page", async () => {
-    await open(verified());
-    await waitFor(() => expect(screen.getByTestId("estimator-pricing-panel")).toBeTruthy());
+    await openWs(verified());
+    await screen.findByTestId("commercial-summary");
     const text = document.body.textContent ?? "";
     for (const re of LEGACY_PHRASES) expect(text, String(re)).not.toMatch(re);
-    expect(text).toMatch(/Supplier costs verified \(\d+ of \d+\)/); // the step summary now speaks for Phase 2
-    // verified: nothing about supplier costs is outstanding any more (this fixture's confirmed amount differs from the total, so the next step is the Rep's reconfirmation)
-    expect(["mark", "reconfirm", "readiness"]).toContain(screen.getByTestId("cost-next-action").getAttribute("data-next-action"));
-    expect(screen.queryByTestId("cost-outstanding")).toBeNull();
   }, 60000);
-});
-
-describe("Phase 2 NOT yet verified: the outstanding items are phrased from the Phase 2 state", () => {
-  it("unverified costs: the banner names the action and who may verify; no legacy wording", async () => {
-    await open({ ...equivalentInputs({}, "unverified"), pricingDate: fresh(), fxQuotes: verified().fxQuotes });
-    const b = screen.getByTestId("cost-next-action");
-    expect(b.getAttribute("data-next-action")).toBe("verify");
-    expect(screen.getByTestId("cost-next-action-headline").textContent).toMatch(/^\d+ costs? needs? independent verification by a Manager$/);
-    expect(screen.getByTestId("cost-outstanding").textContent).toMatch(/supplier costs? needs? independent verification by a Manager \(/);
-    expect(screen.queryByTestId("disc-cost-capture")).toBeNull();
+  it("the sign-off and return actions stay on the page, below the workspace, with their gates", async () => {
+    await openWs(verified());
+    await screen.findByTestId("commercial-summary");
+    expect(document.getElementById("ws-signoff")).toBeTruthy();
+    expect(screen.getByTestId("return-section")).toBeTruthy();
+  }, 60000);
+  it("unverified costs: the workspace says verification is outstanding and the Estimator cannot verify (no legacy wording)", async () => {
+    await openWs({ ...equivalentInputs({}, "unverified"), pricingDate: fresh(), fxQuotes: verified().fxQuotes });
+    await screen.findByTestId("commercial-summary");
+    expect(screen.getByTestId("four-checks").textContent).toMatch(/Independently verified\d+ of \d+/);
+    expect(screen.getByTestId("four-checks").textContent).not.toMatch(/Independently verified(\d+) of \1\b/); // not all verified
+    expect(screen.getByTestId("summary-margin").textContent).toMatch(/indicative, unverified/);
+    expect(screen.queryByTestId("verify-block")).toBeNull(); // only a reviewer sees the verification block; the Estimator cannot verify
     const text = document.body.textContent ?? "";
     expect(text).not.toMatch(/no supplier cost selected/i);
-    expect(text).not.toMatch(/Cin7 cost capture is checked/);
     expect(text).not.toMatch(/Costing is incomplete/);
-    expect(text).toMatch(/Supplier pricing is not complete: \d+ supplier costs? needs? independent verification/); // header / step summary / sign-off reason are phrased from Phase 2
   }, 60000);
-  it("a SKU with no supplier cost entered: 'Enter supplier costs' naming the SKU", async () => {
+  it("a SKU with no supplier cost entered is a task that names it", async () => {
     const p = verified(); delete p.skus.ERT053;
-    await open(p);
-    expect(screen.getByTestId("cost-next-action-headline").textContent).toBe("Enter supplier costs");
-    expect(screen.getByTestId("cost-next-action-detail").textContent).toMatch(/ERT053/);
+    await openWs(p);
+    await screen.findByTestId("needs-you");
+    expect(screen.getByTestId("needs-you").textContent).toMatch(/ERT053/);
   }, 60000);
 });
 
@@ -152,13 +139,10 @@ describe("Phase 2: viewers without cost visibility see nothing of it", () => {
 });
 
 describe("the banner never names an action the sign-off would refuse", () => {
-  it("verified costs but the quotation is not READY: 'Resolve readiness items' (the page's own blocker text), not sign-off / approval", async () => {
-    await open(verified(), ["ESTIMATOR"], { unmapped: true });
-    const b = screen.getByTestId("cost-next-action");
-    expect(b.getAttribute("data-next-action")).toBe("readiness");
-    expect(screen.getByTestId("cost-next-action-headline").textContent).toBe("Resolve readiness items");
-    expect(screen.getByTestId("cost-next-action-detail").textContent).toMatch(/cannot be signed off or approved until it is READY/);
-    expect(b.textContent).not.toMatch(/Mark reviewed|Sign off for|Ready for/);
+  it("verified costs but the quotation is not READY: the workspace never offers sign-off or approval", async () => {
+    await openWs(verified(), ["ESTIMATOR"], { unmapped: true });
+    await screen.findByTestId("next-action");
+    expect(screen.getByTestId("next-action").textContent).not.toMatch(/Sign off this quotation|Mark reviewed|Next: Manager approval/);
   }, 60000);
   it("an approved (final) quotation shows the frozen banner", async () => {
     await open(verified(), ["MANAGER"], { state: "MANAGER_APPROVED_FINAL", waitFor: "cost-next-action" });
