@@ -50,6 +50,8 @@ export interface Stage2Input {
   /** The same predicates `saveWhy` uses, plus blank manual-price reasons. */
   blankExclusionCount: number;
   incompleteCostOverrideCount: number;
+  /** NQ-008B Phase 2: when supplier pricing is on and complete, the Costs step note (the legacy "Cin7 cost capture is checked in the Cost panel" does not apply). */
+  supplierPricingNote?: string;
   blankPriceReasonCount: number;
   /** The total the Rep would confirm (null when it is not available yet). */
   totalAvailable: boolean;
@@ -130,7 +132,7 @@ export function deriveStage2Steps(i: Stage2Input): Stage2Derived {
   else if (i.budget.marginPct == null) cost = { status: "attention", note: "The margin is not available" };
   else if (final) cost = { status: "complete" };
   // The Cin7 cost-capture state lives inside the Cost panel and is not read here, so a green check would claim more than is known: a neutral Review.
-  else cost = { status: "review", note: "Cin7 cost capture is checked in the Cost panel" };
+  else cost = { status: "review", note: i.supplierPricingNote ?? "Cin7 cost capture is checked in the Cost panel" };
 
   // The Estimator's decision. "Awaiting" is all the data can say: nothing records that an Estimator has opened the quote.
   let signoff: Result;

@@ -45,6 +45,8 @@ import { BuildStamp } from "@/components/BuildStamp";
 import { ScheduleChooser } from "./ScheduleChooser";
 import { CostPanel } from "./CostPanel";
 import { EstimatorPricingPanel } from "./EstimatorPricingPanel";
+import { CostVerifyBanner, LegacyCostingDisclosure } from "./CostVerifyBanner";
+import { buildPricingWorkspace, nextCostVerifyAction, phase2CostNote, phase2CostStatus, phase2CostingReason, selectRuleVersion } from "@/newquip/pricing/estimator";
 import { AuditDetails } from "./AuditDetails";
 import { BaselineExceptionBlock, BaselineExceptionNote, BaselineExceptionsSummary, UnmappedTypedPriceNote } from "./BaselineExceptionBlock";
 import { CustomerPanel } from "./CustomerPanel";
@@ -351,8 +353,16 @@ export default function QuoteEditorPage() {
   // The SERVER's costing verdict (QuoteView.costing; cost-entitled callers only). Falls back to the margin sheet's count when the server did not send it.
   const costingSrv = view.costing ?? null;
   const poc = view.poc === true; // POC Presentation Mode quotation: no cost / mapping diagnostics or exception forms (the server records the POC exceptions itself)
-  const costingIncomplete = poc ? false : costingSrv ? !costingSrv.complete : (marginInfo?.missing ?? 0) > 0;
-  const costingReason = costingSrv?.reason ?? null;
+  // NQ-008B Phase 2: when supplier pricing is ON for this quotation, the costing story is told from ITS state (derived from data already loaded; no server call). The legacy Cin7 cost capture, cost overrides and
+  // price-list margin sheet are not what prices it, so their "no supplier cost selected" wording must not describe it. A quotation without Phase 2 pricing is untouched (p2Status is null).
+  const p2Roles = (() => { const sel = selectRuleVersion(draft.estimator.pricing?.ruleVersionId ?? null); return sel.ok ? [...sel.rules.costReview.reviewerRoles] : ["manager"]; })();
+  const p2Status = (() => {
+    if (poc || !view.viewer.canViewCommercials || !draft.estimator.pricing?.enabled) return null;
+    try { return phase2CostStatus(buildPricingWorkspace({ quoteType: draft.quoteType, pricing: draft.estimator.pricing, budget, originalTotalCents: null, originalCapturedAt: null }), p2Roles); } catch { return null; }
+  })();
+  const costingIncomplete = poc ? false : costingSrv ? !costingSrv.complete : p2Status ? !p2Status.complete : (marginInfo?.missing ?? 0) > 0;
+  const costingReason = p2Status && costingIncomplete ? phase2CostingReason(p2Status, costingSrv?.reason) : (costingSrv?.reason ?? null);
+  const costMissingShown = p2Status ? 0 : (marginInfo?.missing ?? 0); // the legacy margin sheet's per-line "no cost" count describes the Cin7 capture, not Phase 2 supplier pricing
   const marginNote = marginIncomplete ? (marginInfo!.missing > 0 ? `project margin not available: ${marginInfo!.missing} line${marginInfo!.missing === 1 ? " has" : "s have"} no cost` : marginInfo!.exempt.length > 0 ? `margin is indicative: ${marginInfo!.exempt.length} line${marginInfo!.exempt.length === 1 ? " is" : "s are"} Estimator-priced (no supplier cost by design)` : "margin is indicative (price-list basis)") : null;
   // "Approve" is described by whichever of the existing messages currently applies (each is already on the page, so nothing is duplicated). Role/process wording only.
   const approveSignoffMissing = q?.state === "ESTIMATOR_REVIEW" && !q.estimator_signoff_hash;
@@ -551,6 +561,7 @@ export default function QuoteEditorPage() {
     readiness: { state: rd.state, reasons: rd.reasons, missingMappings: rd.counts.missingMappings },
     budget: budget ? { incomplete: budget.incomplete, estimatedCost: budget.totals.estimatedCost, marginPct: budget.totals.overallMarginPct, lines: budget.lines, charges: budget.charges } : null,
     blankExclusionCount: blankExclusionKeys.length, incompleteCostOverrideCount: Object.keys(previewCostOverrides(draft.estimator.costOverrides).errors).length,
+    ...(p2Status ? { supplierPricingNote: phase2CostNote(p2Status) } : {}),
     blankPriceReasonCount: Object.values(draft.estimator.priceResolutions).filter((r) => r && !r.reason.trim()).length,
     totalAvailable: totalCents != null, confirmedRecorded: q.customer_confirmed_cents != null,
     dirty, signoff: !q.estimator_signoff_hash ? "none" : q.estimator_signoff_hash === q.draft_hash ? "current" : "stale",
@@ -564,7 +575,7 @@ export default function QuoteEditorPage() {
   const costNeedsMark = canAckCost && !dirty && !costAcknowledged; // the one action is offered only when it can actually take effect
   const ACK_EXPLAIN = "This records that you have looked at the costing and margin for this version. It is not the Estimator sign-off.";
   const work2 = estimatorWork(budget?.lines ?? null, workFacts.blankPriceReasonCount);
-  const commercial = view.viewer.canViewCommercials && budget ? commercialReadiness({ lines: budget.lines, blankPriceReasonCount: workFacts.blankPriceReasonCount, costMissingLines: marginInfo?.missing ?? 0, costingIncomplete, costingReason }) : null;
+  const commercial = view.viewer.canViewCommercials && budget ? commercialReadiness({ lines: budget.lines, blankPriceReasonCount: workFacts.blankPriceReasonCount, costMissingLines: costMissingShown, costingIncomplete, costingReason, supplierPricing: !!p2Status }) : null;
   const amountChange = confirmedAmountChange(q.customer_confirmed_cents, totalCents);
   const mappingOpen = work2.all; // the CURRENT open Estimator items by kind (never stale after the mappings are confirmed)
   // UX policy (no server change): while the review CAN be marked (commercial Estimator, in review, costing in "Review needed", no unsaved edits), signing off waits for the session mark. Returning to the Rep never does.
@@ -572,13 +583,13 @@ export default function QuoteEditorPage() {
   // Every reason the server (or the review policy) would refuse the sign-off for, up front, in the server's own order: READY, costing complete, confirmed amount = total, then the review mark.
   const signoffBlockers = [
     signoffWhy,
-    !signoffWhy && costingIncomplete ? incompleteCostingMessage(costingReason ?? undefined, " Complete it (or record an authorised incomplete-cost exception) before signing off.") : undefined,
+    !signoffWhy && costingIncomplete ? (p2Status ? `${(costingReason ?? "Supplier costs are unresolved").replace(/\.$/, "")}. Complete it before signing off.` : incompleteCostingMessage(costingReason ?? undefined, " Complete it (or record an authorised incomplete-cost exception) before signing off.")) : undefined,
     !signoffWhy && amountChange.changed ? amountChange.text ?? undefined : undefined,
     signoffNeedsReview ? "Mark the costing reviewed first (Final review)." : undefined,
   ].filter((x): x is string => !!x);
   const wizard2 = deriveStage2Wizard({ state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", revision: q.revision, roles: { rep: roles.has("rep"), estimator: isEstimator, manager: roles.has("manager") }, canViewCommercials: canCommercials, signoff: s2Base.signoff,
     dirty, calcValid: ev.calc.valid, readiness: { state: rd.state, reasons: rd.reasons }, mappingOpen, repOpenCount: stage1.open.filter((o) => o.owner === "Rep").length, cost: costBase ? { status: costBase.status, note: costBase.note } : null,
-    costAcknowledged, confirmedCents: q.customer_confirmed_cents, totalCents, costMissingLines: marginInfo?.missing ?? 0, costingIncomplete, costingReason,
+    costAcknowledged, confirmedCents: q.customer_confirmed_cents, totalCents, costMissingLines: costMissingShown, costingIncomplete, costingReason, supplierPricing: !!p2Status,
     mappingSummary: [work2.map.length > 0 && `${work2.map.length} line${work2.map.length === 1 ? "" : "s"} unmapped`, work2.price.length > 0 && `${work2.price.length} supplier quote${work2.price.length === 1 ? "" : "s"} required`, work2.reason.length > 0 && work2.reason[0]].filter(Boolean).join(" · ") || undefined });
   const railSteps2 = toRailSteps(wizard2.steps); // steps hidden from this viewer (the cost steps without cost visibility) are not on the rail
   const visible2 = railSteps2.map((x) => x.id);
@@ -601,10 +612,13 @@ export default function QuoteEditorPage() {
   };
   const goStep2 = (id: string) => goStep2Id(id as Stage2WizardId);
   const next2Open = nextIncompleteStepId(railSteps2, step2Id, (x) => step2Access(x.id as Stage2WizardId).access === "edit" && x.status !== "review"); // only this viewer's own work, never another role's; the costing is looked at, and acknowledged in Final review
-  const finalChecklist = deriveFinalReviewChecklist({ mappingOpen, readiness: { state: rd.state, reasons: rd.reasons }, cost: costBase ? { status: costBase.status, note: costBase.note } : null, confirmedCents: q.customer_confirmed_cents, totalCents, dirty, calcValid: ev.calc.valid, costMissingLines: marginInfo?.missing ?? 0, costingIncomplete, costingReason });
+  const finalChecklist = deriveFinalReviewChecklist({ mappingOpen, readiness: { state: rd.state, reasons: rd.reasons }, cost: costBase ? { status: costBase.status, note: costBase.note } : null, confirmedCents: q.customer_confirmed_cents, totalCents, dirty, calcValid: ev.calc.valid, costMissingLines: costMissingShown, costingIncomplete, costingReason, supplierPricing: !!p2Status });
   const finalBlockText = finalReviewBlockText({ state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", isEstimator, canViewCommercials: canCommercials, costStatus: costBase?.status ?? null, costNote: costBase?.note, dirty });
   const finalStepDone = final || step2Access("final").status === "complete" || step2Access("final").counted === true;
   const finalBlocked = canCommercials && !costNeedsMark && !costAcknowledged && !finalStepDone && finalBlockText != null; // nothing can be recorded: say why instead of offering an ineffective action
+  // The ONE next action of the Cost & Verify step (Phase 2 supplier pricing only), from the state above: no new server call, no gate changed.
+  const costNextAction = p2Status ? nextCostVerifyAction({ status: p2Status, state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", roles: { rep: roles.has("rep"), estimator: isEstimator, manager: roles.has("manager") }, reviewerRoles: p2Roles, dirty,
+    signoff: s2Base.signoff, costAcknowledged, costNeedsMark, amountChanged: amountChange.changed, serverIncomplete: costingIncomplete, serverReason: costingReason }) : null;
   const markReviewed = () => {
     setCostAck(costKey);
     if (showAllSteps) setTimeout(() => document.getElementById("cost-ack-done")?.focus(), 0); else goStep2Id("signoff"); // step mode: the Sign-off heading takes focus; show-all: the "marked reviewed" text does
@@ -1130,26 +1144,36 @@ export default function QuoteEditorPage() {
           {canCommercials && (
             <StepPanel railId="s2" stepId="costs" number={visible2.indexOf("costs") + 1} title={STAGE2_WIZARD_LABEL.costs} current={step2Id === "costs"} showAll={showAllSteps} locked={lockedFor2("costs")} className="space-y-6">
               {editWarning && <Alert tone="warning"><span data-testid="edit-clears-signoff-costs">{editWarning}</span></Alert>}
+              {costNextAction && <CostVerifyBanner action={costNextAction} />}
               {(roles.has("estimator") || roles.has("manager")) && (
-                <Disclosure testId="disc-supplier-pricing" title="Supplier pricing (Estimator workspace)" summary="Supplier, currency, cost, exchange rate and forward cover, freight, markup and margin per SKU; original versus revised price. Off unless you switch it on for this quotation.">
-                  <EstimatorPricingPanel quoteId={id} unsaved={dirty} editable={s2Edit} reload={() => { void getGrowerQuoteAction(id).then((r) => { if (r.ok && r.data) adopt(r.data, true); }); }} />
-                </Disclosure>
+                <div data-supplier-pricing={p2Status ? "primary" : "optional"}>
+                  <Disclosure testId="disc-supplier-pricing" forceOpen={!!p2Status} title={p2Status ? "Supplier pricing and verification" : "Supplier pricing (Estimator workspace)"} summary={p2Status ? "The supplier costs, exchange rates, freight and markup this quotation is priced from, and their independent verification." : "Supplier, currency, cost, exchange rate and forward cover, freight, markup and margin per SKU; original versus revised price. Off unless you switch it on for this quotation."}>
+                    <EstimatorPricingPanel quoteId={id} unsaved={dirty} editable={s2Edit} refreshKey={`${q.draft_hash}|${q.revision}|${q.state}`} reload={() => { void getGrowerQuoteAction(id).then((r) => { if (r.ok && r.data) adopt(r.data, true); }); }} />
+                  </Disclosure>
+                </div>
               )}
               {/* Everything below the supplier-pricing workspace stays Estimator-only: it keeps the disabled fieldset. The workspace itself sits OUTSIDE it (its editing controls are gated by `editable`) so a Manager can run the independent verification. */}
               <fieldset disabled={!s2Edit} className="min-w-0 space-y-6 border-0 p-0">
-              {!poc && (<Disclosure testId="disc-cost-capture" title="Cin7 cost capture and FX rates" summary={costingIncomplete ? (marginInfo && marginInfo.missing > 0 ? `Costs are incomplete for ${marginInfo.missing} line${marginInfo.missing === 1 ? "" : "s"}: capture or enter them here` : `Costing is incomplete: ${costingReason ?? "supplier costs are unresolved"}`) : "Latest supplier prices from Cin7, exchange rates and exceptions"} attention={costingIncomplete}>
+              {!poc && !p2Status && (<Disclosure testId="disc-cost-capture" title="Cin7 cost capture and FX rates" summary={costingIncomplete ? (marginInfo && marginInfo.missing > 0 ? `Costs are incomplete for ${marginInfo.missing} line${marginInfo.missing === 1 ? "" : "s"}: capture or enter them here` : `Costing is incomplete: ${costingReason ?? "supplier costs are unresolved"}`) : "Latest supplier prices from Cin7, exchange rates and exceptions"} attention={costingIncomplete}>
                 {final ? <CostPanel quoteId={id} /> : <CostPanel quoteId={id} unsaved={dirty} previewDraft={dirty ? previewedFor : null} />}
               </Disclosure>)}
-              {marginInfo && marginInfo.exempt.length > 0 && <p className="text-sm text-slate-800" data-testid="est-priced-note">Estimator-priced (no supplier cost by design): {marginInfo.exempt.join("; ")}. They keep the margin indicative; they are not missing costs.</p>}
+              {!p2Status && marginInfo && marginInfo.exempt.length > 0 && <p className="text-sm text-slate-800" data-testid="est-priced-note">Estimator-priced (no supplier cost by design): {marginInfo.exempt.join("; ")}. They keep the margin indicative; they are not missing costs.</p>}
               {totalsPanel}
               {/* The detail sits in labelled disclosures (closed unless something needs attention); they stay mounted, so nothing is requested differently. */}
               <Disclosure testId="disc-scope" title="Physical scope" summary="What will be supplied and installed, line by line (read-only evidence)">{scopePanel}</Disclosure>
-              {budget && (
+              {!p2Status && budget && (
                 <Disclosure testId="disc-margin" title="Margin detail" summary={marginIncomplete ? `${marginLabel}: ${marginNote}` : "Product, package, section and project margins (price-list basis)"} attention={marginIncomplete || incompleteOverrides}>
                   <div aria-busy={recalculating}><MarginPanel budget={budget} draft={draft} final={final} frozen={q.accepted_baseline?.internalMargin} editable={s2Edit} edit={edit} /></div>
                 </Disclosure>
               )}
-              {!final && <Alert tone="info">SKU mapping and the Cin7 latest-supplier-price capture work on the frozen physical scope, so they open for the Estimator once the quotation is approved. Until then the estimator review above, the margin sheet and the readiness items are the costing evidence.</Alert>}
+              {!final && !p2Status && <Alert tone="info">SKU mapping and the Cin7 latest-supplier-price capture work on the frozen physical scope, so they open for the Estimator once the quotation is approved. Until then the estimator review above, the margin sheet and the readiness items are the costing evidence.</Alert>}
+              {p2Status && (
+                <LegacyCostingDisclosure defaultOpen={incompleteOverrides}>
+                  <CostPanel quoteId={id} {...(final ? {} : { unsaved: dirty, previewDraft: dirty ? previewedFor : null })} />
+                  {budget && <MarginPanel budget={budget} draft={draft} final={final} frozen={q.accepted_baseline?.internalMargin} editable={s2Edit} edit={edit} />}
+                  {!final && <p className="text-xs text-slate-700">SKU mapping and the Cin7 latest-supplier-price capture work on the frozen physical scope, so they open for the Estimator once the quotation is approved.</p>}
+                </LegacyCostingDisclosure>
+              )}
               </fieldset>
             </StepPanel>
           )}
@@ -1277,7 +1301,7 @@ export default function QuoteEditorPage() {
             <p className="mt-1 text-xs text-slate-600">Final internal commercial approval. The Rep sees the outcome here and by notification; only a Manager can decide.</p>
             {q.state === "ESTIMATOR_REVIEW" && !poc && <ApprovalChecklist items={approvalChecklist} onGoStage={goStage} />}
 
-            {approveNotReady && !poc && <div id={`${uid}-approve-notready`}><Alert tone="danger"><span data-testid="approve-not-ready">{rd.state !== "READY" ? <>Approval is disabled: the quotation is not ready. {rd.reasons[0] ?? "Open items remain."}{rd.reasons.length > 1 ? ` (+${rd.reasons.length - 1} more)` : ""}</> : null}{approveCostingOpen ? <>{rd.state !== "READY" ? " " : ""}Approval is disabled: costing is incomplete. {costingSrv!.reason ?? "Supplier costs are unresolved."}</> : null}{commercial && !commercial.complete ? ` ${commercial.headline}.` : ""} Return it to the Estimator to resolve them.</span></Alert></div>}
+            {approveNotReady && !poc && <div id={`${uid}-approve-notready`}><Alert tone="danger"><span data-testid="approve-not-ready">{rd.state !== "READY" ? <>Approval is disabled: the quotation is not ready. {rd.reasons[0] ?? "Open items remain."}{rd.reasons.length > 1 ? ` (+${rd.reasons.length - 1} more)` : ""}</> : null}{approveCostingOpen ? <>{rd.state !== "READY" ? " " : ""}Approval is disabled: costing is incomplete. {costingReason ?? "Supplier costs are unresolved."}</> : null}{commercial && !commercial.complete ? ` ${commercial.headline}.` : ""} Return it to the Estimator to resolve them.</span></Alert></div>}
             {approveSignoffMissing && <div id={`${uid}-approve-signoff`}><Alert tone="info">Waiting for the Estimator&apos;s sign-off before the Manager can decide.</Alert></div>}
             {approveSignoffStale && <div id={`${uid}-approve-stale`}><Alert tone="warning">The Estimator&apos;s sign-off no longer matches the current quotation. It must be given again before the Manager can decide.</Alert></div>}
             {q.state === "ESTIMATOR_REVIEW" && dirty && <div id={`${uid}-approve-dirty`}><Alert tone="warning" >You have unsaved edits. Save or discard your edits first: approval applies to the saved quotation.</Alert></div>}

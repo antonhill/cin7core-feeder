@@ -1,13 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Status } from "@/components/ui/Status";
 import { formatSast } from "@/lib/approvals/time";
-import { cost7, formatCost7, fromMicro, micro, LEGACY_RULE_VERSION, type PricingSubmission, type SkuRow } from "@/newquip/pricing/estimator";
+import { cost7, formatCost7, fromMicro, micro, providerTimestampOf, LEGACY_RULE_VERSION, type PricingSubmission, type SkuRow } from "@/newquip/pricing/estimator";
 import type { WorkspaceBundle } from "@/lib/newquip-quotes/pricing-service";
 import { applyEstimatorPricingAction, disableEstimatorPricingAction, attestEstimatorRatesAction, getEstimatorPricingAction, recordManualPriceEvidenceAction, verifyEstimatorCostsAction } from "../pricing-actions";
 import { fmtCents } from "../fields";
@@ -43,7 +43,7 @@ const blankSku = (): Draft["skus"][string] => ({ supplierId: null, supplierName:
  * that a reviewer who may only VERIFY (a Manager) can operate the verification / attestation blocks, so every editing control here is gated explicitly by `edit` (= server canEdit AND `editable`)
  * and no longer relies on an ancestor fieldset. Defaults to true so any other caller behaves exactly as before.
  */
-export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = true }: { quoteId: string; reload?: () => void; unsaved?: boolean; editable?: boolean }) {
+export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = true, refreshKey }: { quoteId: string; reload?: () => void; unsaved?: boolean; editable?: boolean; /** Changes whenever the saved quotation changed elsewhere on the page (a mapping confirmed and saved, a recalculation): the workspace re-reads so its SKU rows and counts never go stale. */ refreshKey?: string }) {
   const [b, setB] = useState<WorkspaceBundle | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -66,15 +66,22 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = tru
     return p[sku] === message ? p : { ...p, [sku]: message };
   }), []);
 
-  const load = useCallback(() => {
-    void getEstimatorPricingAction(quoteId).then((r) => {
-      if (r.ok && r.data) { setCostProblems({}); setEpoch((e) => e + 1); setB(r.data); setDraft(r.data.current ?? { ruleVersionId: LEGACY_RULE_VERSION.id, skus: {}, fxQuotes: {}, forwardCover: {}, skuPriceOverrides: {}, projectMarkup: null, targetAdjustment: null }); }
+  // Only the LATEST read may replace what is shown: an earlier, slower read can never overwrite a newer one (the verification counts and cost status must follow the last action at once).
+  const readSeq = useRef(0);
+  const load = useCallback((): Promise<void> => {
+    const seq = ++readSeq.current;
+    return getEstimatorPricingAction(quoteId).then((r) => {
+      if (seq !== readSeq.current) return;
+      if (r.ok && r.data) { setError(null); setCostProblems({}); setEpoch((e) => e + 1); setB(r.data); setDraft(r.data.current ?? { ruleVersionId: LEGACY_RULE_VERSION.id, skus: {}, fxQuotes: {}, forwardCover: {}, skuPriceOverrides: {}, projectMarkup: null, targetAdjustment: null }); }
       else setError(r.error ?? "Supplier pricing could not be loaded.");
     });
   }, [quoteId]);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { void load(); }, [load]);
+  // The saved quotation changed elsewhere (e.g. a product mapping was confirmed and saved): re-read the workspace so the SKU rows follow it. The first value is the one already loaded above.
+  const firstKey = useRef(refreshKey);
+  useEffect(() => { if (refreshKey === firstKey.current) return; firstKey.current = refreshKey; void load(); }, [refreshKey, load]);
 
-  if (error) return (<Panel><PanelTitle>Supplier pricing</PanelTitle><Alert tone="warning"><span data-testid="pricing-error">{error}</span></Alert><Button variant="secondary" size="sm" onClick={load}>Try again</Button></Panel>);
+  if (error) return (<Panel><PanelTitle>Supplier pricing</PanelTitle><Alert tone="warning"><span data-testid="pricing-error">{error}</span></Alert><Button variant="secondary" size="sm" onClick={() => void load()}>Try again</Button></Panel>);
   if (!b || !draft) return (<Panel><PanelTitle>Supplier pricing</PanelTitle><p className="text-sm text-slate-800" data-testid="pricing-loading">Loading supplier pricing…</p></Panel>);
 
   const v = b.view;
@@ -94,7 +101,7 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = tru
     if (!r.ok) { setErrors(r.errors?.length ? r.errors : [r.error ?? "Could not save."]); return; }
     const c = r.data?.confirmation;
     setNote(c?.returnedToRep ? "Saved as revision " + r.data!.seq + ". The customer total changed, so the Rep's confirmation was withdrawn and the quotation is back with the Rep to reconfirm." : `Saved as revision ${r.data!.seq}. The customer total did not change; the Estimator sign-off (if any) was withdrawn because the content changed.`);
-    setReason(""); load(); reload?.();
+    setReason(""); await load(); reload?.();
   }
   async function verify() {
     setBusy(true); setErrors([]); setNote(null);
@@ -102,7 +109,7 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = tru
     setBusy(false);
     if (!r.ok) { setErrors(r.errors?.length ? r.errors : [r.error ?? "Could not verify."]); return; }
     setNote(`Recorded as revision ${r.data!.seq}: ${r.data!.verified} supplier cost${r.data!.verified === 1 ? "" : "s"} independently verified. No price changed; the Estimator sign-off (if any) was withdrawn.`);
-    setPicked([]); setEvidence(""); load(); reload?.();
+    setPicked([]); setEvidence(""); await load(); reload?.();
   }
   async function attest() {
     setBusy(true); setErrors([]); setNote(null);
@@ -110,7 +117,7 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = tru
     setBusy(false);
     if (!r.ok) { setErrors(r.errors?.length ? r.errors : [r.error ?? "Could not attest."]); return; }
     setNote(`Recorded as revision ${r.data!.seq}: ${r.data!.attested} forward-cover rate${r.data!.attested === 1 ? "" : "s"} independently attested. No price changed; the Estimator sign-off (if any) was withdrawn.`);
-    setPickedRates([]); setRateEvidence(""); load(); reload?.();
+    setPickedRates([]); setRateEvidence(""); await load(); reload?.();
   }
   async function saveEvidence() {
     const items = Object.entries(notes).filter(([, n]) => n.note.trim().length > 0).map(([itemKey, n]) => ({ itemKey, note: n.note, ...(n.reference.trim() ? { reference: n.reference } : {}) }));
@@ -119,14 +126,14 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = tru
     setBusy(false);
     if (!r.ok) { setErrors(r.errors?.length ? r.errors : [r.error ?? "Could not record the evidence."]); return; }
     setNote(`Recorded as revision ${r.data!.seq}: pricing evidence for ${r.data!.recorded} item${r.data!.recorded === 1 ? "" : "s"}. No price changed; the Estimator sign-off (if any) was withdrawn.`);
-    setNotes({}); load(); reload?.();
+    setNotes({}); await load(); reload?.();
   }
   async function off() {
     setBusy(true); setErrors([]); setNote(null);
     const r = await disableEstimatorPricingAction(quoteId, reason);
     setBusy(false);
     if (!r.ok) { setErrors(r.errors?.length ? r.errors : [r.error ?? "Could not switch off."]); return; }
-    setNote("Supplier pricing switched off: this quotation is priced from the POC workbook again."); setReason(""); load(); reload?.();
+    setNote("Supplier pricing switched off: this quotation is priced from the POC workbook again."); setReason(""); await load(); reload?.();
   }
 
   const addSku = (sku: string) => { const s = sku.trim(); if (s) set((d) => { d.skus[s] = d.skus[s] ?? blankSku(); }); };
@@ -193,6 +200,12 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = tru
                       <Input label={`${cur} forward-cover reason`} disabled={!edit} defaultValue={fc.reason} onBlur={(e) => set((d) => { if (d.forwardCover[cur]) d.forwardCover[cur]!.reason = e.target.value; })} />
                     </>}
                   </div>
+                  {c?.spot && (() => { const pt = providerTimestampOf(c.spot.source); return (
+                    <p className="mt-1 text-xs text-slate-800" data-testid={`fx-times-${cur}`}>
+                      <span data-testid={`fx-provider-ts-${cur}`}><b>Provider timestamp:</b> {pt ? formatSast(pt) : "not stated in the rate source"}</span>{" · "}
+                      <span data-testid={`fx-recorded-ts-${cur}`}><b>Recorded:</b> {formatSast(c.spot.asOf)}</span>
+                    </p>
+                  ); })()}
                   <p className="mt-1 text-xs text-slate-700" data-testid={`fx-note-${cur}`}>
                     {c?.spot ? `Spot recorded ${formatSast(c.spot.asOf)}${rt?.spotAgeHours != null ? ` (${rt.spotAgeHours} h ago)` : ""}.` : "No spot rate recorded yet: lines in this currency are not priced."}
                     {rt?.spotExpired ? " EXPIRED: record a current rate." : ""}
