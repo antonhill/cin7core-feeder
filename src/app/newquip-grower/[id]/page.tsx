@@ -1057,13 +1057,16 @@ export default function QuoteEditorPage() {
       {stage === 2 && (
         <>
         {workspaceMode && budget && (
+          <>
+          {/* The announcements stay OUTSIDE the closed Details disclosure so a screen reader still hears them. */}
+          <p className="sr-only" role="status" aria-live="polite" data-testid="stage2-status-line">{wizard2.statusLine}{amountChange.changed && q.state === "ESTIMATOR_REVIEW" ? ` ${amountChange.text}` : ""}</p>
           <EstimatorWorkspace quoteId={id} state={q.state} confirmedCents={q.customer_confirmed_cents} signedOff={signedNow} draft={draft} budget={budget} pageDirty={dirty} canEdit={s2Edit}
             title={`${draft.siteName || "Quotation"} · ${draft.customerName || "Customer"}`} subtitle={`${cfg.rooms || 0} rooms · ${draft.quoteType === "project" ? "Project pricing" : "Day-to-day pricing"} · Revision ${q.revision} · Supplier pricing on`}
             siteName={draft.siteName || "Quotation"} reference={`${q.quote_ref} rev ${q.revision}`} customerName={draft.customerName || "Customer"} rooms={cfg.rooms || 0} basis={`${draft.quoteType === "project" ? "Project" : "Day-to-day"} pricing`}
             phases={<PhaseStepper stages={stagesView} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state, estimatorOpen: mappingOpen.length, signedOff: s2Base.signoff === "current" }} />}
             details={(
               <>
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1" data-testid="stage2-owner"><span className="font-semibold text-slate-900">Stage 2 is the Estimator&apos;s review.</span><span role="status" className="text-slate-800" data-testid="stage2-status-line">{wizard2.statusLine}</span><OwnerTag role={wizard2.nextOwner} /><Status tone={READY_TONE[rd.state]}>Readiness: {rd.state}</Status>{commercial && !commercial.complete && <span data-testid="commercial-chip"><Status tone="warning">{commercial.headline}</Status></span>}</div>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1" data-testid="stage2-owner"><span className="font-semibold text-slate-900">Stage 2 is the Estimator&apos;s review.</span><span className="text-slate-800" data-testid="stage2-status-detail">{wizard2.statusLine}</span><OwnerTag role={wizard2.nextOwner} /><Status tone={READY_TONE[rd.state]}>Readiness: {rd.state}</Status>{commercial && !commercial.complete && <span data-testid="commercial-chip"><Status tone="warning">{commercial.headline}</Status></span>}</div>
                 {amountChange.changed && q.state === "ESTIMATOR_REVIEW" && <p className="text-amber-950" data-testid="amount-change-detail">{amountChange.text}</p>}
                 {q.state !== "MANAGER_APPROVED_FINAL" && !previewFailure && <PricingFeedbackNote feedback={pricingFeedback(budget, { canViewCommercials: !!view.viewer.canViewCommercials })} />}
                 {repSummary}
@@ -1072,6 +1075,7 @@ export default function QuoteEditorPage() {
             )}
             refreshKey={`${q.draft_hash}|${q.revision}|${q.state}`} saveDraft={wsSaveDraft} reload={reloadQuote} comparison={view.indicativeComparison ?? null}
             onGoSignoff={() => document.getElementById("ws-signoff")?.scrollIntoView({ behavior: "smooth" })} onGoApproval={() => goStage(3)} reviewNeeded={costNeedsMark} onMarkReviewed={markReviewed} onDirtyChange={setWsDirty} />
+          </>
         )}
         {workspaceMode && (
           <details className="mt-6 rounded-xl border border-slate-200 bg-white px-4 py-2" data-testid="ws-record">

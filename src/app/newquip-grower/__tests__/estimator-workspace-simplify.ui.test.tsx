@@ -92,6 +92,19 @@ describe("final simplification: one compact header, one status per line, a compa
     expect(g.hasAttribute("open")).toBe(false);
     expect(screen.getByTestId("complete-count").textContent).toMatch(/\d+ lines? · 3 charges/);
   });
+  it("the collapsed Complete header keeps provisional lines visible, and the editor header counts evidence lines like the list", async () => {
+    const m75 = line({ itemKey: "flex_auger", label: "M75 feed system", pricedBy: "estimator_input", quantity: 12, unitPrice: 200_000, revenueExTax: 2_400_000 });
+    const ev = { itemKey: "flex_auger", label: "M75 feed system", pricedBy: "estimator_input", state: "missing", stateText: "no pricing evidence has been recorded", note: null, reference: null, by: null, at: null };
+    mount({ budget: { lines: [m75, line({ itemKey: "concrete_slat", label: "Concrete slats", status: "not_in_price_source", sku: "NQ1161", quantity: 10 })], totals: { subtotalExTax: 2_400_000 }, incomplete: true, charges: [] } }, { view: { rows: [], costs: { required: 0, verified: 0 }, totals: { margin: null }, currencies: [], manualEvidence: [ev] } } as never);
+    fireEvent.click(await screen.findByRole("button", { name: /Enter cost: Concrete slats/ }));
+    expect(await screen.findByText(/2 tasks open/)).toBeTruthy(); // 1 task + 1 evidence line, as in the list header
+  });
+  it("shows 'N provisional' in the collapsed Complete header", async () => {
+    mount({ draft: (() => { const d = bareDraft(); d.estimator.priceResolutions = { led_light: { unitPriceExVat: 100, reason: "REASON: x\nEVIDENCE: quote 1" } } as never; return d; })(), budget: { lines: [line({ itemKey: "led_light", label: "FORTIS 1.2 LED light", status: "priced", pricedBy: "estimator_resolution", quantity: 4, unitPrice: 100, revenueExTax: 400 })], totals: { subtotalExTax: 400 }, incomplete: false, charges: [] } });
+    const p = await screen.findByTestId("complete-provisional");
+    expect(p.textContent).toMatch(/1 provisional/);
+    expect(screen.getByTestId("complete-group").hasAttribute("open")).toBe(false);
+  });
   it("the product editor shows the four readiness checks as a small list", async () => {
     mount();
     fireEvent.click(await screen.findByRole("button", { name: /Enter cost: Bulk tank/ }));

@@ -240,7 +240,7 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
 
       {open && editor ? (
         <div className="flex min-w-0 flex-col gap-4">
-          <div className="flex flex-wrap items-center justify-between gap-2"><button type="button" onClick={() => go("list")} className="inline-flex min-h-11 items-center text-sm font-semibold text-blue-800 underline">← Back to tasks</button><span className="text-sm text-slate-700">{p.title} · {ws.tasks.length} task{ws.tasks.length === 1 ? "" : "s"} open · partial total {money(s.totalExVat)}</span></div>
+          <div className="flex flex-wrap items-center justify-between gap-2"><button type="button" onClick={() => go("list")} className="inline-flex min-h-11 items-center text-sm font-semibold text-blue-800 underline">← Back to tasks</button><span className="text-sm text-slate-700">{p.title} · {openRows} task{openRows === 1 ? "" : "s"} open · partial total {money(s.totalExVat)}</span></div>
           <div className="flex min-w-0 flex-col gap-5 sm:flex-row">
             <Rail tasks={rail} activeId={open.id} onSelect={(id) => { const t = taskById(id); if (t) openTask(t); }} />
             <div className="min-w-0 flex-1"><h3 className="text-2xl font-bold" data-testid="editor-title">{lineOf(open.id)?.label ?? open.id}</h3>{taskById(open.id) && <div className="mb-3 mt-1"><ReadinessList value={taskById(open.id)!.indicators} /></div>}{editor}</div>
@@ -262,7 +262,7 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
             <CompleteGroup lines={doneLines} charges={p.budget.charges} onEdit={openLine} canEdit={canEdit} onRecordEvidence={recordEvidence} />
             <p className="text-[13px] text-slate-700">Room measurements, quantities, delivery, installation and the M75 price belong to the Rep.</p>
           </div>
-          <div className="flex min-w-0 flex-[1_1_18rem] flex-col gap-3 lg:sticky lg:top-4 lg:max-w-sm lg:self-start"><SummaryPanel s={s} /><HowItWorks s={s} step={step} verified={bundle.view.costs.verified} required={bundle.view.costs.required} /></div>
+          <div className="flex min-w-0 flex-[1_1_18rem] flex-col gap-3 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:max-w-sm lg:self-start lg:overflow-y-auto"><SummaryPanel s={s} /><HowItWorks s={s} step={step} verified={bundle.view.costs.verified} required={bundle.view.costs.required} /></div>
         </div>
       )}
 

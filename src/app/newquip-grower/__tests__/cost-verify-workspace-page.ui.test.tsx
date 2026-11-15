@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeDb } from "@/lib/projects/__tests__/fake-db";
@@ -211,10 +211,23 @@ describe("Phase 2 workspace mode: no conflicting legacy commercial summary in th
     await screen.findByTestId("commercial-summary");
     expect(screen.queryByTestId("quote-summary-bar")).toBeNull(); // the legacy calculation strip is gone: ONE compact header replaces it
     expect(screen.queryByTestId("calc-banner-figures")).toBeNull();
-    const figures = document.body;
+    // the legacy calculation banner's price-list margin and total are absent from the whole primary view in workspace mode
+    expect(screen.queryByText(/Indicative margin \(price-list basis\)/i)).toBeNull();
+    expect(screen.queryByTestId("total-caption")).toBeNull();
     expect(screen.queryByTestId("total-changed")).toBeNull();
     const rec = screen.queryByTestId("ws-record");
     if (rec) expect(rec.hasAttribute("open")).toBe(false);
-    for (const dt of screen.queryAllByText(/Indicative margin \(price-list basis\)/i, { selector: "dt" })) expect(dt.closest('[data-testid="calc-banner-figures"]')).toBe(figures); // only ever inside the hidden block
+  }, 60000);
+  it("the 'total changed, return to the Rep to reconfirm' explanation sits inside the closed Details AND is announced by a live status outside it", async () => {
+    await openWs(verified());
+    await screen.findByTestId("commercial-summary");
+    const details = screen.getByTestId("header-details");
+    expect(details.hasAttribute("open")).toBe(false);
+    const detail = within(details).getByTestId("amount-change-detail");
+    expect(detail.textContent).toMatch(/reconfirm/i);
+    const live = screen.getByTestId("stage2-status-line");
+    expect(details.contains(live)).toBe(false);
+    expect(live.getAttribute("role")).toBe("status");
+    expect(live.textContent).toContain(detail.textContent!);
   }, 60000);
 });
