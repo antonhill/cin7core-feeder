@@ -1,5 +1,6 @@
 "use client";
 
+import { manualReasonText } from "@/newquip/quote/estimator-workspace";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Status } from "@/components/ui/Status";
 import { formatSast } from "@/lib/approvals/time";
@@ -133,7 +134,7 @@ export function EstimatorResult(p: EstimatorResultProps) {
         {p.priceExceptions.length === 0 && (!p.costOverrides || p.costOverrides.length === 0) ? <p className="mt-1 text-sm text-slate-800">None: every line is priced from the approved price source.</p> : (
           <ul className="mt-1 space-y-1 text-sm text-slate-800">
             {p.priceExceptions.map((e) => p.showPriceDetail
-              ? <li key={`p:${e.label}`}><b>{e.label}</b>: manual quotation price {fmtZar(e.unitPrice)} ex VAT · {e.reason.trim() || "no reason"}{e.by ? ` · ${e.by}` : ""}{e.at ? ` at ${formatSast(e.at)}` : ""}</li>
+              ? <li key={`p:${e.label}`}><b>{e.label}</b>: manual quotation price {fmtZar(e.unitPrice)} ex VAT · {manualReasonText(e.reason)}{e.by ? ` · ${e.by}` : ""}{e.at ? ` at ${formatSast(e.at)}` : ""}</li>
               : <li key={`p:${e.label}`}><b>{e.label}</b>: manually priced by the Estimator</li>)}
             {(p.costOverrides ?? []).map((o) => <li key={`c:${o.label}`}><b>{o.label}</b>: cost override {fmtCents(o.costCents)} · {o.reason.trim()}{o.by ? ` · ${o.by}` : ""}</li>)}
           </ul>

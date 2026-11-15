@@ -74,7 +74,7 @@ describe("a genuine Manager (no Estimator role) on the REAL Stage 2 page", () =>
   it("can tick a verifiable cost, type evidence and submit the verification - and can edit NOTHING else in the supplier-pricing workspace", async () => {
     await open({ roles: ["MANAGER"], commercials: true, enteredBy: "estimator@example.test" });
     const block = await screen.findByTestId("verify-block", {}, { timeout: 15000 });
-    const panel = screen.getByTestId("estimator-pricing-panel");
+    const panel = screen.getByTestId("estimator-workspace");
     expect(block.closest("fieldset[disabled]")).toBeNull(); // not under any disabled fieldset
     const ticks = screen.getAllByLabelText(/^Verify .* cost$/) as HTMLInputElement[];
     expect(ticks.length).toBeGreaterThan(0);
@@ -110,7 +110,7 @@ describe("a genuine Manager (no Estimator role) on the REAL Stage 2 page", () =>
   it("the rest of Stage 2 stays Estimator-only: no enabled editing control outside the verification block anywhere in the costs step", async () => {
     await open({ roles: ["MANAGER"], commercials: true, enteredBy: "estimator@example.test" });
     await screen.findByTestId("verify-block", {}, { timeout: 15000 });
-    const costs = document.querySelector('[data-step-panel="costs"]')!;
+    const costs = screen.getByTestId("estimator-workspace");
     // EVERY enabled control in the costs step - buttons included - must be one of the verify / attest controls (verify ticks, evidence input, Verify, Select-all, attest controls)
     const stray = enabledControls(costs).filter((e) => !ALLOWED(e)).map(name);
     expect(stray).toEqual([]);
@@ -145,7 +145,7 @@ describe("a verify-only Manager sees the outcome of the verification", () => {
 describe("separation of duties", () => {
   it("the person who ENTERED the costs gets no verify tick for them (UI), and the server refuses their verification", async () => {
     const id = await open({ roles: ["MANAGER"], commercials: true, enteredBy: ME });
-    await waitFor(() => expect(screen.getByTestId("estimator-pricing-panel")).toBeTruthy(), { timeout: 15000 });
+    await waitFor(() => expect(screen.getByTestId("estimator-workspace")).toBeTruthy(), { timeout: 15000 });
     await waitFor(() => expect(screen.getAllByTestId("pricing-row").length).toBeGreaterThan(0));
     expect(screen.queryAllByLabelText(/^Verify .* cost$/)).toHaveLength(0);
     // use the REAL cost hash the server shows, so the refusal can only come from the independence rule (a wrong hash would fail regardless)
@@ -161,7 +161,7 @@ describe("separation of duties", () => {
 
   it("a viewer with no reviewer role (Estimator only) sees no verification block and the server refuses to verify", async () => {
     const id = await open({ roles: ["ESTIMATOR"], commercials: true, enteredBy: "estimator@example.test" });
-    await waitFor(() => expect(screen.getByTestId("estimator-pricing-panel")).toBeTruthy(), { timeout: 15000 });
+    await waitFor(() => expect(screen.getByTestId("estimator-workspace")).toBeTruthy(), { timeout: 15000 });
     expect(screen.queryByTestId("verify-block")).toBeNull();
     const r = await pricingActions.verifyEstimatorCostsAction(id, [{ sku: "PNQ082", costHash: "x" }], "Supplier quote SQ-1");
     expect(r.ok).toBe(false);
@@ -171,7 +171,7 @@ describe("separation of duties", () => {
   it("a Rep sees no supplier-pricing workspace, no verification and no cost; the server refuses", async () => {
     const id = await open({ roles: ["REP"], commercials: false, enteredBy: "estimator@example.test" });
     await screen.findByTestId("step-rail", {}, { timeout: 15000 });
-    expect(screen.queryByTestId("estimator-pricing-panel")).toBeNull();
+    expect(screen.queryByTestId("estimator-workspace")).toBeNull();
     expect(screen.queryByTestId("verify-block")).toBeNull();
     expect(screen.queryByTestId("disc-supplier-pricing")).toBeNull();
     const r = await pricingActions.verifyEstimatorCostsAction(id, [{ sku: "PNQ082", costHash: "x" }], "Supplier quote SQ-1");
