@@ -62,7 +62,8 @@ describe("UX-006 integration: mounts in the new Stage 2/3/6 structure", () => {
     expect(page).toMatch(/<BaselineExceptionNote view=\{view\.baselineException\}/);
     expect(page).toMatch(/<BaselineExceptionsSummary exceptions=\{q\.accepted_baseline\.exceptions\}/);
     expect(page).toMatch(/baselineException: view\.baselineException \?\? null/); // feeds deriveApprovalChecklist
-    expect(page).toMatch(/approveNotReady \|\| bxRequired/); // plain Approve disabled while an exception is required
+    expect(page).toMatch(/baselineExceptionRequired: bxRequired/); // plain Approve disabled while an exception is required: the shared approvalBlockers list (also read by the banner) carries it
+    expect(page).toMatch(/approveBlockers\.length > 0/);
     expect(page).toMatch(/approveGrowerQuoteAction\(id, \{ baselineException: request \}\)/);
   });
   it("D5: the Rep banner reads the server returnInfo; Estimator/Manager get their own notice; Rep gets only the neutral line", () => {
@@ -75,7 +76,8 @@ describe("UX-006 integration: mounts in the new Stage 2/3/6 structure", () => {
     expect(page.match(/<EstimatorReturnNotice/g)).toHaveLength(1);
   });
   it("D-19: plain Approve is disabled and explained while an unmapped product blocks; the Estimator sees the non-blocking typed-price notice", () => {
-    expect(page).toMatch(/approveNotReady \|\| bxRequired \|\| bxBlocking\.length > 0/);
+    expect(page).toMatch(/blockingLabels: bxBlocking\.map/);
+    expect(page).toMatch(/approveBlockers\.length > 0/);
     expect(page).toMatch(/needs\" : \"need\"\} an active library mapping/);
     expect(page).toMatch(/<UnmappedTypedPriceNote view=\{view\.baselineException\} \/>/);
   });

@@ -46,7 +46,7 @@ import { ScheduleChooser } from "./ScheduleChooser";
 import { CostPanel } from "./CostPanel";
 import { EstimatorPricingPanel } from "./EstimatorPricingPanel";
 import { CostVerifyBanner, LegacyCostingDisclosure } from "./CostVerifyBanner";
-import { buildPricingWorkspace, nextCostVerifyAction, phase2CostNote, phase2CostStatus, phase2CostingReason, selectRuleVersion } from "@/newquip/pricing/estimator";
+import { approvalBlockers, buildPricingWorkspace, nextCostVerifyAction, phase2CostNote, phase2CostStatus, phase2CostingReason, selectRuleVersion } from "@/newquip/pricing/estimator";
 import { AuditDetails } from "./AuditDetails";
 import { BaselineExceptionBlock, BaselineExceptionNote, BaselineExceptionsSummary, UnmappedTypedPriceNote } from "./BaselineExceptionBlock";
 import { CustomerPanel } from "./CustomerPanel";
@@ -373,6 +373,9 @@ export default function QuoteEditorPage() {
   const approveDescribedBy = [isWorking && `${uid}-approve-busy`, !roles.has("manager") && `${uid}-approve-role`, approveNotReady && `${uid}-approve-notready`, approveSignoffMissing && `${uid}-approve-signoff`, approveSignoffStale && `${uid}-approve-stale`, dirty && `${uid}-approve-dirty`].filter(Boolean).join(" ") || undefined;
   const bxRequired = !!view?.baselineException?.baselineExceptionRequired;
   const bxBlocking = view?.baselineException?.blocking ?? []; // D-19: unmapped products no exception can cover
+  // ONE list of what blocks the Manager's plain Approve (the button below is disabled from it and so is the Cost & Verify banner): they can never disagree.
+  const approveBlockers = approvalBlockers({ signoff: !q.estimator_signoff_hash ? "none" : q.estimator_signoff_hash === q.draft_hash ? "current" : "stale", dirty, notReadyReasons: rd.state !== "READY" ? rd.reasons : null, costingOpen: approveCostingOpen && costingSrv != null, costingReason: costingSrv?.reason ?? null,
+    baselineExceptionRequired: bxRequired, baselineExceptionItems: (view?.baselineException?.items ?? []).map((x) => x.label), blockingLabels: bxBlocking.map((b) => b.label) });
   const returnWhy = isWorking ? "Another action is in progress. Please wait." : !returnReason.trim() ? "Enter the reason for returning it to enable this." : undefined;
   // The same rounding the server uses for the saved total (quote-store totalCents), so the Stage 3 checklist compares like with like; unsaved edits are covered by its own row.
   // UX-006 S1a: the amount the Rep confirms is the SERVER's indicative total (subtotalExTax, the same figure quote-store's indicativeTotalCents uses) even while Estimator-owned lines are still open.
@@ -619,7 +622,7 @@ export default function QuoteEditorPage() {
   const finalBlocked = canCommercials && !costNeedsMark && !costAcknowledged && !finalStepDone && finalBlockText != null; // nothing can be recorded: say why instead of offering an ineffective action
   // The ONE next action of the Cost & Verify step (Phase 2 supplier pricing only), from the state above: no new server call, no gate changed.
   const costNextAction = p2Status ? nextCostVerifyAction({ status: p2Status, state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", roles: { rep: roles.has("rep"), estimator: isEstimator, manager: roles.has("manager") }, reviewerRoles: p2Roles, dirty,
-    signoff: s2Base.signoff, costAcknowledged, costNeedsMark, readinessBlocked: rd.state !== "READY" || mappingOpen.length > 0 ? [...new Set([...(rd.state !== "READY" ? (rd.reasons.length > 0 ? rd.reasons : ["The quotation is not READY"]) : []), ...mappingOpen])] : [], amountChanged: amountChange.changed, serverIncomplete: costingIncomplete, serverReason: costingReason }) : null;
+    signoff: s2Base.signoff, costAcknowledged, costNeedsMark, readinessBlocked: rd.state !== "READY" || mappingOpen.length > 0 ? [...new Set([...(rd.state !== "READY" ? (rd.reasons.length > 0 ? rd.reasons : ["The quotation is not READY"]) : []), ...mappingOpen])] : [], amountChanged: amountChange.changed, approvalBlockers: approveBlockers, serverIncomplete: costingIncomplete, serverReason: costingReason }) : null;
   const markReviewed = () => {
     setCostAck(costKey);
     if (showAllSteps) setTimeout(() => document.getElementById("cost-ack-done")?.focus(), 0); else goStep2Id("signoff"); // step mode: the Sign-off heading takes focus; show-all: the "marked reviewed" text does
@@ -1319,7 +1322,7 @@ export default function QuoteEditorPage() {
                     {poc ? (
                       <Button variant="primary" className="min-h-12 px-6 text-base" data-testid="poc-approve" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty}
                         onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. Continuing as the Rep.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL", undefined, OP.approveQuotation)}>Approve &amp; Continue</Button>
-                    ) : (<Button variant={bxRequired ? "secondary" : "primary"} className="min-h-11" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty || approveNotReady || bxRequired || bxBlocking.length > 0} aria-describedby={[approveDescribedBy, bxRequired && `${uid}-approve-bx`, bxBlocking.length > 0 && `${uid}-approve-map`].filter(Boolean).join(" ") || undefined}
+                    ) : (<Button variant={bxRequired ? "secondary" : "primary"} className="min-h-11" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || approveBlockers.length > 0} aria-describedby={[approveDescribedBy, bxRequired && `${uid}-approve-bx`, bxBlocking.length > 0 && `${uid}-approve-map`].filter(Boolean).join(" ") || undefined}
                       onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL", undefined, OP.approveQuotation)}>Approve</Button>)}
                     {roles.has("manager") && (<>
                       <Button variant="secondary" className="min-h-11" loading={acts.isPending("return-mgr")} aria-describedby={returnWhy ? "return-mgr-why" : undefined} disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "return-mgr", (v) => v.quote.state === "REP_DRAFT", undefined, OP.returnToRep)}>Return to rep (reject)</Button>

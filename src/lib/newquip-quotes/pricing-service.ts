@@ -3,7 +3,7 @@ import "server-only";
 import type { createServiceRoleClient } from "@/supabase/server";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
-import { buildPricingWorkspace, canEnterPricingInputs, mayAttestRate, mayAttestRates, mayReviewCosts, mayVerifySku, selectRuleVersion, submissionFrom, type PricingSubmission, type PricingWorkspaceView, type AttestItem, type EvidenceItem, type VerifyItem, type Viewer } from "@/newquip/pricing/estimator";
+import { buildPricingWorkspace, canEnterPricingInputs, mayAttestRate, mayAttestRates, mayReviewCosts, mayVerifySku, selectRuleVersion, submissionFrom, type PricingConflict, type PricingSubmission, type PricingWorkspaceView, type AttestItem, type EvidenceItem, type VerifyItem, type Viewer } from "@/newquip/pricing/estimator";
 import { returnByOf } from "./return-store";
 import { reconcileConfirmationAmount, resyncApprovalsLogged, type AmountInvalidation } from "./confirmation-reconcile";
 import { latestIndicativeSnapshot } from "./indicative-store";
@@ -66,8 +66,8 @@ export async function verifyCosts(db: Db, a: PricingActor, quoteId: string, item
  * customer-facing total moved, the Rep's confirmation is withdrawn and the quotation returns to the Rep as a new revision; otherwise only the Estimator's sign-off is
  * withdrawn (the function already did that) and the approval request is re-synced. The Rep-confirmed NQ-008A snapshot is never touched.
  */
-export async function applyPricingChange(db: Db, a: PricingActor, quoteId: string, submission: PricingSubmission | null, reason: string): Promise<{ ok: true; report: ApplyReport } | { ok: false; errors: string[] }> {
-  const out = await applyEstimatorPricing(db, a.orgId, quoteId, viewerOf(a), a.email, submission, reason);
+export async function applyPricingChange(db: Db, a: PricingActor, quoteId: string, submission: PricingSubmission | null, reason: string, base?: PricingSubmission | null): Promise<{ ok: true; report: ApplyReport } | { ok: false; errors: string[]; conflicts?: PricingConflict[] }> {
+  const out = await applyEstimatorPricing(db, a.orgId, quoteId, viewerOf(a), a.email, submission, reason, new Date().toISOString(), base);
   if (!out.ok) return out;
   const who = { orgId: a.orgId, userId: a.userId, email: a.email };
   const confirmation = await reconcileConfirmationAmount(db, who, quoteId, evaluationContext(true), returnByOf({ email: a.email, roles: a.roles }, "estimator"));

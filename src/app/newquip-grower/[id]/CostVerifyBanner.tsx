@@ -21,7 +21,7 @@ export function CostVerifyBanner({ action }: { action: NextAction }) {
       {action.detail && <p className="mt-1 text-sm" data-testid="cost-next-action-detail">{action.detail}</p>}
       {action.outstanding.length > 0 && (
         <details className="mt-2 text-sm" data-testid="cost-outstanding">
-          <summary className="inline-flex min-h-11 cursor-pointer items-center font-semibold underline">{action.outstanding.length} outstanding supplier-pricing item{action.outstanding.length === 1 ? "" : "s"}</summary>
+          <summary className="inline-flex min-h-11 cursor-pointer items-center font-semibold underline">{action.outstanding.length} outstanding item{action.outstanding.length === 1 ? "" : "s"}</summary>
           <ul className="list-disc pl-5">{action.outstanding.map((t) => <li key={t}>{t}</li>)}</ul>
         </details>
       )}
