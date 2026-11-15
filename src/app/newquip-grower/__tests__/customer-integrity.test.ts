@@ -408,14 +408,14 @@ describe("POC Presentation Mode (designated demonstration only)", () => {
 
   it("the same POC quotation CAN be signed off after a genuine, reasoned, audited exception is recorded through the normal action (not POC-labelled)", async () => {
     await confirmed(); on(); markPoc();
-    jar.clear(); // the real owner session (Demo Mode impersonation is refused by the cost actions); in this base acceptIncompleteCostsAction is open to owner/admin/Estimator/Manager - #243 narrows it to Manager
+    jar.clear(); session = { userId: U.mgr, orgId: NQ, email: EMAIL[U.mgr] }; // a REAL (non-Demo) session of the user holding the MANAGER role: the Manager-only incomplete-costing waiver action refuses Demo impersonation
     const rec = await costActions.acceptIncompleteCostsAction("q1", REASON);
     expect(rec.ok, rec.error).toBe(true);
     const w = quote().draft.estimator.costBasis.incompleteAccepted;
     expect(w.reason).toBe(REASON); expect(w.reason).not.toMatch(/^POC PRESENTATION/); expect(w.by).not.toMatch(/POC/);
     expect(acts().some((x) => x.action === "newquip.incomplete_costs_accepted")).toBe(true);
     expect(acts().some((x) => x.action === "newquip.poc_presentation_cost_exception")).toBe(false);
-    await as("estimator");
+    jar.clear(); session = { userId: U.owner, orgId: NQ, email: DEMO_OWNER_EMAIL }; await as("estimator");
     const r = await grower.signOffGrowerQuoteAction("q1");
     expect(r.error, r.error).toBeUndefined();
     expect(quote().estimator_signoff_hash).toBe(quote().draft_hash);
