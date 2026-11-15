@@ -68,7 +68,7 @@ async function open(o: { roles: Role[]; commercials: boolean; enteredBy?: string
 const name = (e: Element) => e.getAttribute("aria-label") || ((e as HTMLInputElement).labels?.[0]?.textContent ?? "") || (e.closest("label")?.textContent ?? "") || e.textContent || e.getAttribute("data-testid") || e.tagName;
 const enabledControls = (root: ParentNode) => [...root.querySelectorAll("input,select,textarea,button")].filter((e) => !(e as HTMLInputElement).disabled && !e.matches(":disabled"));
 // The ONLY controls a verify-only viewer may operate inside the supplier-pricing workspace.
-const ALLOWED = (e: Element) => /^Verify .+ cost$/.test(e.getAttribute("aria-label") ?? "") || /^Evidence checked/.test(name(e)) || ["verify-save", "verify-all", "attest-save"].includes(e.getAttribute("data-testid") ?? "") || /^Attest .* forward-cover rate$/.test(e.getAttribute("aria-label") ?? "");
+const ALLOWED = (e: Element) => !!e.closest('nav[aria-label="Quotation phases"]') /* phase navigation is not an editing control */ || /^Verify .+ cost$/.test(e.getAttribute("aria-label") ?? "") || /^Evidence checked/.test(name(e)) || ["verify-save", "verify-all", "attest-save"].includes(e.getAttribute("data-testid") ?? "") || /^Attest .* forward-cover rate$/.test(e.getAttribute("aria-label") ?? "");
 
 describe("a genuine Manager (no Estimator role) on the REAL Stage 2 page", () => {
   it("can tick a verifiable cost, type evidence and submit the verification - and can edit NOTHING else in the supplier-pricing workspace", async () => {

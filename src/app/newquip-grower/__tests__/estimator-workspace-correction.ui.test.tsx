@@ -149,7 +149,8 @@ describe("excluded until costed: the summary names the lines that dropped out of
     expect(box.textContent).toMatch(/Excluded from this total until costed/);
     expect(within(box).getByTestId("excluded-bulk_tank").textContent).toMatch(/Bulk tank.*needs a supplier cost.*was R434,808\.00/);
     expect(within(box).getByTestId("excluded-total").textContent).toBe("R434,808.00");
-    expect(screen.getByTestId("summary-kind").textContent).toMatch(/PARTIAL AND INDICATIVE/);
+    expect(screen.getByTestId("header-total-label").textContent).toMatch(/PARTIAL TOTAL/);
+    expect(screen.getByTestId("header-total-note").textContent).toMatch(/Not a contract value/);
   });
 });
 

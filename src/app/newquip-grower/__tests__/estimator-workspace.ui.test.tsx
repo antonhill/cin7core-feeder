@@ -59,10 +59,13 @@ describe("the workspace: header, exception-first tasks and compact indicators", 
     const list = await screen.findByTestId("needs-you");
     const ids = [...list.querySelectorAll("[data-testid^='task-']")].map((e) => e.getAttribute("data-testid"));
     expect(ids).toEqual(["task-cup_drinker", "task-led_light", "task-pvc_door", "task-concrete_slat", "task-bulk_tank"]);
-    const tank = within(screen.getByTestId("indicators-bulk_tank")).getAllByRole("img").map((i) => i.getAttribute("aria-label"));
-    expect(tank).toEqual(["Mapping complete", "Selling price needed", "Supplier cost needed", "Verified not yet"]);
-    expect(within(screen.getByTestId("indicators-pvc_door")).getAllByRole("img").map((i) => i.getAttribute("aria-label"))[0]).toBe("Mapping needed");
-    expect(screen.getByTestId("indicator-legend").textContent).toMatch(/Mapping.*Selling price.*Supplier cost.*Verified/);
+    // ONE plain status and ONE action per line; no M/S/C/V indicators or legend in the primary list
+    expect(within(screen.getByTestId("task-bulk_tank")).getByTestId("row-status").textContent).toBe("Supplier cost needed");
+    expect(within(screen.getByTestId("task-pvc_door")).getByTestId("row-status").textContent).toBe("Product selection needed");
+    expect(within(screen.getByTestId("task-cup_drinker")).getByTestId("row-status").textContent).toBe("Component pricing needed");
+    expect(within(screen.getByTestId("task-bulk_tank")).getAllByRole("button")).toHaveLength(1);
+    expect(screen.queryByTestId("indicator-legend")).toBeNull();
+    expect(screen.queryByTestId("indicators-bulk_tank")).toBeNull();
   });
   it("M75 and penning are completed Estimator-priced lines, not tasks", async () => {
     mount();
@@ -74,7 +77,7 @@ describe("the workspace: header, exception-first tasks and compact indicators", 
   it("a partial quotation is never a contract value and its margin is never verified", async () => {
     mount();
     await screen.findByTestId("commercial-summary");
-    expect(screen.getByTestId("summary-kind").textContent).toBe("PARTIAL AND INDICATIVE. NOT A CONTRACT VALUE.");
+    expect(screen.getByTestId("header-total-note").textContent).toBe("Not a contract value.");
     expect(screen.getByTestId("header-total-label").textContent).toBe("PARTIAL TOTAL, EX VAT");
     expect(screen.getByTestId("header-total").textContent).toBe("R7,607,144.00");
     expect(screen.getByTestId("summary-confirmed").textContent).toMatch(/R5,132,000/);
@@ -328,7 +331,7 @@ describe("unpriced M75 is an explicit price task", () => {
     vi.mocked(pricing.getEstimatorPricingAction).mockResolvedValue({ ok: true, data: bundle() });
     render(createElement(EstimatorWorkspace, { quoteId: "q1", state: "ESTIMATOR_REVIEW", confirmedCents: 513_200_000, signedOff: false, draft: bareDraft(), budget: m75Budget(), pageDirty: false, canEdit: true, title: "T", subtitle: "s", refreshKey: "k", saveDraft, reload: vi.fn(), onGoSignoff: vi.fn(), onGoApproval: vi.fn(), reviewNeeded: false, onMarkReviewed: vi.fn() }));
     const row = await screen.findByTestId("task-flex_auger");
-    expect(row.textContent).toMatch(/PRICE/);
+    expect(row.textContent).toMatch(/Price needed/);
     expect(row.textContent).not.toMatch(/COMPONENTS/);
     expect(screen.getByTestId("next-action").textContent).toMatch(/Enter the M75 system price/);
     fireEvent.click(within(row).getByRole("button", { name: /Enter price: M75 feed system/ }));

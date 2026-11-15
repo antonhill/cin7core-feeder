@@ -128,6 +128,13 @@ export interface Workspace {
   next: NextAction;
 }
 
+/** The ONE plain-English status shown for a line in the primary list (the four underlying readiness checks stay in the editor and in the derivation). */
+export type StatusWord = "Supplier cost needed" | "Product selection needed" | "Component pricing needed" | "Price needed" | "Evidence needed" | "Provisional" | "Complete";
+export const taskStatusWord = (t: Pick<WorkspaceTask, "kind">): StatusWord => (t.kind === "cost" ? "Supplier cost needed" : t.kind === "product" ? "Product selection needed" : t.kind === "m75" ? "Price needed" : "Component pricing needed");
+/** A line whose only open item is its pricing-evidence record (it gates sign-off, so it belongs in the OPEN list, not the completed group). */
+export const needsEvidence = (c: Pick<CompleteLine, "evidence">): boolean => !!c.evidence && c.evidence.state !== "recorded";
+export const completeStatusWord = (c: CompleteLine): StatusWord => (needsEvidence(c) ? "Evidence needed" : c.provisional ? "Provisional" : "Complete");
+
 /** Rand with its cents, always: R193.60 stays R193.60 (never rounded to a whole rand). Formats only: the amount comes from the model's exact cents. */
 export const money = (n: number): string => { const r = Math.round(Math.abs(n) * 100) / 100; return `${n < 0 && r !== 0 ? "-" : ""}R${r.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }; // grouping as shipped in #251 (commas), cents added; a negative reads -R1.00
 /** An exact supplier cost (units of 1e-7): up to 7 decimals as entered, at least 2 (193.60, 6.5454755). */
@@ -246,7 +253,8 @@ export function buildWorkspace(i: { budget: BudgetQuote; view: PricingWorkspaceV
   const evidenceMissing = complete.filter((c) => c.evidence && c.evidence.state !== "recorded");
   type Gate = { id: "tasks" | "rep_items" | "incomplete" | "evidence" | "with_rep" | "amount" | "costs"; text: string };
   const gates: Gate[] = [];
-  if (open > 0) gates.push({ id: "tasks", text: `${open} task${open === 1 ? "" : "s"} open` });
+  const openItems = open + evidenceMissing.length; // evidence still to record is listed with the open tasks, so it is counted with them
+  if (open > 0) gates.push({ id: "tasks", text: `${openItems} task${openItems === 1 ? "" : "s"} open` });
   if (repWaiting.length > 0) gates.push({ id: "rep_items", text: `Waiting for the Rep: ${repWaiting.join("; ")}` });
   if (incompleteReason) gates.push({ id: "incomplete", text: `The quotation is incomplete: ${incompleteReason}` });
   if (open === 0 && repWaiting.length === 0 && !incompleteReason && evidenceMissing.length > 0) gates.push({ id: "evidence", text: `Pricing evidence to record: ${evidenceMissing.map((c) => c.label).join(", ")}` });
