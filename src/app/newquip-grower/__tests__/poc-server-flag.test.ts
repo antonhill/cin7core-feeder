@@ -143,7 +143,17 @@ describe("the server POC flag cannot be set, cleared or forged by any client dra
     on();
     const plain = await grower.createGrowerQuoteAction(); // mode on, not asked for: normal quotation
     expect(hasPocFlag((db.rows("newquip_quotes").find((x) => x.id === plain.data!.id) as Row).draft)).toBe(false);
-    expect((await grower.createGrowerQuoteAction(forged({ pocPresentation: true }), { demonstration: "yes" as never })).ok).toBe(true); // only a literal true asks for it
+    for (const bad of ["yes", 1, {}, [], null, { demonstration: "true" }]) { // only a literal true asks for it; anything else is an ordinary quotation with no flag and no seed
+      const o = await grower.createGrowerQuoteAction(forged({ pocPresentation: true }), { demonstration: bad as never });
+      expect(o.ok, o.error).toBe(true);
+      const row = db.rows("newquip_quotes").find((x) => x.id === o.data!.id) as Row;
+      expect(hasPocFlag(row.draft)).toBe(false); expect(row.draft.estimator.priceResolutions ?? {}).toEqual({});
+    }
+    vi.mocked(requireNewquipPocOrg).mockRejectedValueOnce(new Error("This tool isn't available for your organization.")); // another organisation: refused, nothing created
+    const before = db.rows("newquip_quotes").length;
+    expect((await grower.createGrowerQuoteAction(undefined, { demonstration: true })).ok).toBe(false);
+    expect(db.rows("newquip_quotes").length).toBe(before);
+    as(false, "u-rep");
     const r2 = await grower.createGrowerQuoteAction(undefined, { demonstration: true });
     expect(hasPocFlag((db.rows("newquip_quotes").find((x) => x.id === r2.data!.id) as Row).draft)).toBe(true); // genuine POC creation
     expect(isPocQuote((db.rows("newquip_quotes").find((x) => x.id === r2.data!.id) as Row).draft, ORG)).toBe(true);
