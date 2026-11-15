@@ -10,7 +10,6 @@ import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
 import { evaluateDraft, type QuoteEvaluation } from "@/newquip/grower/evaluate";
 import { blankExclusions, previewDraftOf } from "@/newquip/grower/preview-draft";
 import { emptyDraft, type QuoteDraft } from "@/newquip/grower/draft";
-import { rolesFor } from "@/newquip/quote/roles";
 import { stampPriceResolutions } from "@/newquip/quote/price-resolution";
 import { stampChanges } from "@/newquip/pricing/change-stamps";
 import { keepServerOwnedPricing } from "@/newquip/pricing/estimator/ownership";
@@ -36,7 +35,7 @@ import { fieldValue } from "@/lib/newquip-quotes/customer-snapshot";
 import { reconcileConfirmationAmount, resyncApprovalsLogged } from "@/lib/newquip-quotes/confirmation-reconcile";
 import { assertConfirmationCurrent, assertNameMatchesSnapshot } from "@/lib/newquip-quotes/confirmation-guard";
 import { keepServerOwnedCostBasis, keepServerOwnedCosts, redactEvaluationFinancials, redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
-import { isPocQuote, pocPresentationEnabled, seedPocEstimator, POC_COST_REASON, POC_BASELINE_REASON } from "@/lib/newquip-quotes/poc-presentation";
+import { isPocQuote, pocPresentationEnabled, seedPocEstimator, POC_BASELINE_REASON } from "@/lib/newquip-quotes/poc-presentation";
 import { approvalsAvailable, decideDocument, legacyCtx, resyncQuoteApprovals, stagedAvailable, submitForApproval, withdrawPendingFor } from "@/lib/approvals/approval-store";
 import { BASELINE_EXCEPTION_TITLE, exceptionDecisionText, validateExceptionReason, type BaselineExceptionItem, type BaselineExceptionRequest, type BaselineExceptionView } from "@/newquip/quote/baseline-exception";
 import type { ScheduleChoice } from "@/newquip/quote/billing-schedule";
@@ -426,16 +425,7 @@ export async function returnGrowerQuoteToRepAction(quoteId: string, reason: stri
 export async function signOffGrowerQuoteAction(quoteId: string) {
   return step(quoteId, "Estimator signed off a NewQuip quote", "newquip.quote_estimator_signed_off", (a, db) =>
     (async () => {
-      // POC Presentation Mode: on a quotation created in the mode, an Estimator's sign-off records the standard incomplete-cost exception (labelled POC PRESENTATION, audited) instead of asking the presenter for it.
-      if (a.roles.has("estimator") && pocPresentationEnabled(process.env as Record<string, string | undefined>, a.orgId)) {
-        const q = await loadQuote(db, a.orgId, quoteId);
-        if (q && q.state === "ESTIMATOR_REVIEW" && isPocQuote(q.draft) && !q.draft.estimator.costBasis?.incompleteAccepted) {
-          const draft = structuredClone(q.draft);
-          draft.estimator.costBasis = { ...(draft.estimator.costBasis ?? {}), incompleteAccepted: { reason: POC_COST_REASON, by: `${a.email} (POC PRESENTATION)`, at: new Date().toISOString() } };
-          await saveDraft(db, a.orgId, rolesFor("admin"), quoteId, draft, undefined, { keepStoredPricing: true });
-          await audit(db, a, { action: "newquip.poc_presentation_cost_exception", summary: "POC Presentation Mode recorded the incomplete-cost exception at sign-off (demonstration only; not commercially validated)", detail: { quoteId } });
-        }
-      }
+      // No automatic incomplete-costing waiver, in any mode: a quotation with incomplete costing is signed off only when costing is complete or an authorised person has recorded the exception (acceptIncompleteCostsAction).
       // Staged: the sign-off IS the estimator-stage decision (named assignment, role, history), and it opens the manager stage.
       if (await stagedAvailable(db)) { await decideDocument(db, ctxOf(a), "QUOTE", quoteId, "APPROVE", { stage: "ESTIMATOR" }); return "STAGED" as const; }
       await estimatorSignOff(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true));
