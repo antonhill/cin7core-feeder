@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { NextAction } from "@/newquip/pricing/estimator";
 
 // The ONE prominent "what do I do next" banner of the Cost & Verify step for a quotation that uses Phase 2 supplier pricing. It renders a NextAction that a pure function derived from data the page
@@ -34,10 +34,10 @@ export function CostVerifyBanner({ action }: { action: NextAction }) {
  * only once opened, so the legacy panels do not run beside the supplier-pricing workspace. It opens by itself when an incomplete legacy cost override needs fixing.
  */
 export function LegacyCostingDisclosure({ children, defaultOpen = false }: { children: React.ReactNode; defaultOpen?: boolean }) {
-  const [open, setOpen] = useState(defaultOpen);
-  useEffect(() => { if (defaultOpen) setOpen(true); }, [defaultOpen]); // an incomplete legacy cost override that must be fixed opens it
+  const [chosen, setChosen] = useState<boolean | null>(null);
+  const open = chosen ?? defaultOpen; // opens by itself when an incomplete legacy cost override must be fixed, until the viewer chooses
   return (
-    <details className="rounded-lg border border-slate-200 bg-white p-3" open={open} onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)} data-testid="disc-legacy-costing">
+    <details className="rounded-lg border border-slate-200 bg-white p-3" open={open} onToggle={(e) => setChosen((e.currentTarget as HTMLDetailsElement).open)} data-testid="disc-legacy-costing">
       <summary className="flex min-h-11 cursor-pointer flex-wrap items-center gap-x-3 gap-y-1">
         <span className="text-sm font-semibold text-slate-900">Legacy costing (not used for this quotation)</span>
         <span className="text-xs text-slate-700">Cin7 cost capture, cost overrides and the price-list margin sheet. This quotation is priced from the supplier pricing above; existing legacy data is kept and unchanged.</span>
