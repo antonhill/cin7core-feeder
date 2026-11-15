@@ -1,7 +1,7 @@
 import { computeLine, computeQuote, type QuoteLineInput, type QuoteResult } from "@/lib/quote-margin";
 import { isOptionalItemKey } from "./types";
 import type { FeederVariant, GeneratedLine, GrowerItemKey, PenningPigSize } from "./types";
-import { estimatorPricedFor, feederSkuFor, manualLinesFor, packageFor, recommendedSkuFor, type PackageComponent } from "./commercial";
+import { estimatorPricedFor, feederSkuFor, isCatalogueDefaultItem, manualLinesFor, packageAutoConfirmable, packageFor, recommendedSkuFor, type PackageComponent } from "./commercial";
 import { PENNING_RATE_PER_RM } from "./workbook-price-source";
 import { QUOTE_TYPE_BASIS, type PriceSource, type PriceSourceDescriptor, type QuoteType } from "./pricing-source";
 
@@ -78,6 +78,8 @@ export interface BridgeLine {
   pricedBy: PricedBy | null;
   /** Present for package outputs. */
   components?: BridgeComponent[];
+  /** Where the product came from: the established catalogue default (no Estimator decision needed) or an explicit per-quotation Estimator confirmation. Absent when no product is mapped. */
+  mappingSource?: "catalogue_default" | "estimator";
 }
 
 /** How much of the quote can be trusted as money. Never show a zero total as a quote. */
@@ -270,7 +272,7 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
     if (pkg) {
       const evals = pkg.components.map((c) => evaluateComponent(c, g.projectQuantity!, opts));
       const comps = evals.map((e) => e.comp);
-      if (!opts.confirmedPackages?.has(g.itemKey)) {
+      if (!opts.confirmedPackages?.has(g.itemKey) && !packageAutoConfirmable(pkg)) {
         fail({ ...emptyLine(g), status: "package_unconfirmed", reason: "Package awaiting estimator confirmation.", components: comps }, `${g.label}: package awaiting confirmation`);
         continue;
       }
@@ -297,7 +299,10 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
 
     // ---- SINGLE SKU ----
     const expected = expectedSkuFor(g.itemKey, opts.feederVariant);
-    const confirmed = opts.confirmedMappings?.[g.itemKey] ?? null;
+    // An explicit Estimator confirmation is authoritative and is still validated against the expected product below. Without one, an established catalogue item resolves to its catalogue product.
+    const explicit = opts.confirmedMappings?.[g.itemKey] ?? null;
+    const defaulted = !explicit && isCatalogueDefaultItem(g.itemKey) ? expected : null;
+    const confirmed = explicit ?? defaulted;
     // pvc_door and the optional additional elements have no recommended SKU: the estimator's confirmed Cin7 choice IS the SKU. Everything else must be the expected one.
     const sku = g.itemKey === "pvc_door" || isOptionalItemKey(g.itemKey) ? confirmed : confirmed && confirmed === expected ? confirmed : null;
     if (!sku) {
@@ -306,11 +311,11 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
     }
     const r = opts.priceSource.priceFor(sku, opts.quoteType);
     if (r.status === "supplier_quote_required") {
-      fail({ ...emptyLine(g), sku, status: "supplier_quote_required", reason: r.reason }, `${g.label}: ${sku} supplier quote required`);
+      fail({ ...emptyLine(g), sku, status: "supplier_quote_required", reason: r.reason, mappingSource: defaulted ? "catalogue_default" : "estimator" }, `${g.label}: ${sku} supplier quote required`);
       continue;
     }
     if (r.status === "not_in_source") {
-      fail({ ...emptyLine(g), sku, status: "not_in_price_source", reason: r.reason }, `${g.label}: ${sku} has no price in the price source`);
+      fail({ ...emptyLine(g), sku, status: "not_in_price_source", reason: r.reason, mappingSource: defaulted ? "catalogue_default" : "estimator" }, `${g.label}: ${sku} has no price in the price source`);
       continue;
     }
     const input: QuoteLineInput = { quantity: g.projectQuantity, unitPrice: r.unitPriceExVat, taxRatePct: sellRate, averageCost: r.landedCostExVat };
@@ -318,7 +323,7 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
     pricedOutputs += 1;
     const line = computeLine(input, { taxInclusive: opts.taxInclusive });
     bridge.push({
-      ...emptyLine(g), sku, status: "priced", reason: "Priced from the price source.", pricedBy: "price_source",
+      ...emptyLine(g), sku, status: "priced", reason: "Priced from the price source.", pricedBy: "price_source", mappingSource: defaulted ? "catalogue_default" : "estimator",
       unitPrice: r.unitPriceExVat, revenueExTax: line.revenueExTax,
       estimatedCost: withhold ? null : line.estimatedCost, estimatedGP: withhold ? null : line.estimatedGP, marginPct: withhold ? null : line.marginPct,
     });

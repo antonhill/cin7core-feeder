@@ -251,6 +251,26 @@ export function estimatorPricedFor(itemKey: GrowerItemKey): EstimatorPricedMappi
   return m?.kind === "estimator_priced" ? m : undefined;
 }
 
+/**
+ * Items whose product is established and unambiguous in the approved catalogue, so a new quotation uses it without an Estimator reconfirming it
+ * (the Estimator still can override it on a quotation, and it is re-checked against the live catalogue at sign-off). Deliberately an explicit list:
+ * a mapping becomes automatic only by being named here, never by being merely source-backed. LED light, PVC door, M75, penning and the optional extras are NOT here.
+ */
+export const CATALOGUE_DEFAULT_ITEMS: ReadonlySet<GrowerItemKey> = new Set<GrowerItemKey>(["bulk_tank", "feeder", "concrete_slat", "feed_saver_mat"]);
+
+/** True when the item resolves to its catalogue product by default (no per-quotation confirmation needed). */
+export const isCatalogueDefaultItem = (itemKey: GrowerItemKey): boolean => CATALOGUE_DEFAULT_ITEMS.has(itemKey);
+
+/**
+ * A package may be treated as confirmed without an Estimator only when its definition is authoritative and complete: every component has a source-backed SKU and a
+ * fixed source quantity, it is not layout- or estimator-priced, and no later source disputes which representation prices it. The cup drinker fails the last test
+ * (the Master lists a single sellable SKU, NB3542-03, and which one prices the drinker is for NewQuip to settle), so it keeps an explicit Estimator decision.
+ */
+export function packageAutoConfirmable(pkg: PackageMapping | undefined): boolean {
+  if (!pkg || pkg.estimatorPriced || pkg.layoutDriven || pkg.alternativeIdentity) return false;
+  return pkg.components.length > 0 && pkg.components.every((c) => c.identity === "source_backed" && !!c.sku && c.quantityStatus === "source_fixed" && c.qtyPerUnit != null && !c.pricingException);
+}
+
 /** SKUs an estimator may pick BETWEEN by hand for an item (never auto-confirmed). */
 export function manualSelectionSkusFor(itemKey: GrowerItemKey): string[] {
   const m = COMMERCIAL_MAPPINGS[itemKey];

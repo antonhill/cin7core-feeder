@@ -83,7 +83,7 @@ describe("deriveStage1Steps (UX-006a): completion comes from data only", () => {
 
 describe("ownedWork / open items (UX-006i1): who has to resolve what", () => {
   const work = (over: Partial<NonNullable<Stage1Input["work"]>> = {}): NonNullable<Stage1Input["work"]> => ({ lines: [], budgetLines: [], charges: [], blankExclusionCount: 0, blankPriceReasonCount: 0, ...over });
-  it("quantities, the M75 price, override reasons, exclusion reasons and charges are the Rep's; mappings and manual prices are the Estimator's", () => {
+  it("quantities, the M75 price, override reasons, exclusion reasons and charges are the Rep's; product choices, pricing gaps and manual prices are the Estimator's", () => {
     const w = work({
       lines: [{ label: "LED light", basis: "manual_override", exclusionReason: null, overrideState: "manual_override", overrideReason: null }],
       budgetLines: [{ label: "Feeder", status: "no_quantity", reason: "Estimator input required" }, { label: "M75 system", status: "estimator_price_required", reason: "M75 is entered by hand." }, { label: "Cup drinker", status: "unmapped", reason: "x" }, { label: "Door", status: "supplier_quote_required", reason: "x" }],
@@ -91,7 +91,7 @@ describe("ownedWork / open items (UX-006i1): who has to resolve what", () => {
     });
     const o = ownedWork(w);
     expect(o.rep).toEqual(["Feeder: enter the quantity", "M75 system: M75 is entered by hand", "LED light: give the reason for the quantity override", "2 excluded items need a reason", "Delivery: enter the amount"]);
-    expect(o.estimator).toEqual(["Estimator product choice needed: Cup drinker", "Estimator product choice needed: Door", "Estimator: 1 manual price needs a reason"]);
+    expect(o.estimator).toEqual(["Estimator product choice needed: Cup drinker", "Estimator pricing needed: Door", "Estimator: 1 manual price needs a reason"]);
   });
   it("Rep-owned work puts Equipment in Needs attention; Estimator-owned work never does (it is named, not blocking the Rep's steps)", () => {
     const rep = deriveStage1Steps({ ...ok, work: work({ budgetLines: [{ label: "Feeder", status: "no_quantity", reason: "r" }] }) });

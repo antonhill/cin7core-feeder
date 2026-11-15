@@ -122,7 +122,7 @@ describe("mapping changes are authorised and normalised on the server", () => {
   it("estimator sign-off re-verifies EVERY mapped SKU against the catalogue before stamping (not only at draft save)", () => {
     const src = readFileSync(new URL("../../../lib/newquip-quotes/quote-store.ts", import.meta.url), "utf8");
     const fn = src.slice(src.indexOf("export async function estimatorSignOff("), src.indexOf("export async function managerApprove("));
-    const verify = fn.indexOf("verifyMappings(db, orgId, mappedSkus(q.draft.estimator.confirmedMappings)");
+    const verify = fn.indexOf("verifyMappings(db, orgId, effectiveMappings(q.draft.estimator.confirmedMappings");
     expect(verify).toBeGreaterThan(0);
     expect(verify).toBeLessThan(fn.indexOf('.update({ estimator_signoff_hash'));
     expect(fn).toMatch(/Cannot sign off/);
