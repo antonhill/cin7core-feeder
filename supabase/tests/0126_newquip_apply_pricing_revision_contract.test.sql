@@ -32,7 +32,7 @@ create or replace function pg_temp.price(cost integer, by text default 'a@x') re
 $$;
 
 -- 1. A and B both read the quotation at (seq 0, hash k0). B saves first: revision + draft + sign-off withdrawal in ONE call.
-select pg_temp.ap('00000000-0000-0000-0000-0000000127c1', 0, 'k0', 'k1', null, pg_temp.price(100), 'b@x');
+select pg_temp.ap('00000000-0000-0000-0000-0000000127c1', 0, 'k0', 'k1', null, pg_temp.price(100, 'b@x'), 'b@x');
 do $$ begin
   if (select count(*) from newquip_pricing_revisions where quote_id = '00000000-0000-0000-0000-0000000127c1') <> 1 then raise exception 'one revision expected'; end if;
   if (select draft_hash from newquip_quotes where quote_ref = 'CT-1') <> 'k1' then raise exception 'draft hash must advance'; end if;
