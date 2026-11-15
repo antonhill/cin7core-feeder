@@ -75,25 +75,47 @@ describe("stale save: field-level three-way merge on the server", () => {
     const r = await applyPricingChange(db as never, A, id, a.draft, "A changes X", a.base);
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.errors[0]).toMatch(new RegExp(`SKU ${X} cost was changed by b@nq at 20\\d\\d-`));
+    expect(r.errors[0]).toMatch(new RegExp(`SKU ${X} cost entry \\(cost\\) was changed by b@nq at 20\\d\\d-`));
     expect(r.errors[0]).toMatch(/Reload to review/);
-    expect(r.conflicts).toEqual([expect.objectContaining({ key: `sku:${X}:nativeUnitCostE7`, by: "b@nq" })]);
+    expect(r.conflicts).toEqual([expect.objectContaining({ key: `sku:${X}`, by: "b@nq" })]);
     expect(JSON.stringify(await stored(id))).toBe(before);
     expect(await revs(id)).toBe(n);
   });
-  it("different fields of the SAME SKU merge (A edits the supplier name, B the cost); an identical concurrent edit is not a conflict", async () => {
+  it("the coupled cost entry is NOT merged field by field: supplier name vs cost, currency vs cost and cost vs cost on the SAME SKU are conflicts naming the fields; nothing hybrid is saved", async () => {
+    const id = await inReview();
+    await applyPricingChange(db as never, A, id, submissionOf(), "Initial supplier pricing");
+    const cases: Array<[string, (b: PricingSubmission) => void, (a: PricingSubmission) => void, RegExp]> = [
+      ["supplier name vs cost", (b) => { b.skus[X].supplierName = "Renamed Supplier"; }, (a) => { a.skus[X].nativeUnitCostE7 = cost7("9.9999999"); }, /cost entry \(supplier, cost\)/],
+      ["currency vs cost", (b) => { b.skus[X].currency = b.skus[X].currency === "EUR" ? "USD" : "EUR"; }, (a) => { a.skus[X].nativeUnitCostE7 = cost7("110"); }, /cost entry \(currency, cost\)/],
+      ["cost vs cost", (b) => { b.skus[X].nativeUnitCostE7 = cost7("7.1000001"); }, (a) => { a.skus[X].nativeUnitCostE7 = cost7("8.2000002"); }, /cost entry \(cost\)/],
+    ];
+    for (const [label, byB, byA, re] of cases) {
+      const a = await load(id, A), b = await load(id, B);
+      byB(b.draft); byA(a.draft);
+      expect((await applyPricingChange(db as never, B, id, b.draft, `B ${label}`, b.base)).ok, label).toBe(true);
+      const before = JSON.stringify(await stored(id)); const n = await revs(id);
+      const r = await applyPricingChange(db as never, A, id, a.draft, `A ${label}`, a.base);
+      expect(r.ok, label).toBe(false);
+      if (r.ok) continue;
+      expect(r.errors[0], label).toMatch(re);
+      expect(r.errors[0], label).toMatch(/changed by b@nq/);
+      expect(JSON.stringify(await stored(id)), label).toBe(before); // no hybrid cost, no re-stamp, no review dropped
+      expect(await revs(id), label).toBe(n);
+    }
+  });
+  it("non-overlapping edits on DIFFERENT SKUs still merge; an identical concurrent edit is not a conflict", async () => {
     const id = await inReview();
     await applyPricingChange(db as never, A, id, submissionOf(), "Initial supplier pricing");
     const a = await load(id, A), b = await load(id, B);
-    b.draft.skus[X].nativeUnitCostE7 = cost7("9.9999999");
-    await applyPricingChange(db as never, B, id, b.draft, "B cost", b.base);
-    a.draft.skus[X].supplierName = "Renamed Supplier";
-    expect((await applyPricingChange(db as never, A, id, a.draft, "A name", a.base)).ok).toBe(true);
+    b.draft.skus[X].supplierName = "B renamed X";
+    await applyPricingChange(db as never, B, id, b.draft, "B X", b.base);
+    a.draft.skus[Y].nativeUnitCostE7 = cost7("3.3333333");
+    expect((await applyPricingChange(db as never, A, id, a.draft, "A Y", a.base)).ok).toBe(true);
     const p = await stored(id);
-    expect(p.skus[X]).toMatchObject({ nativeUnitCostE7: 99_999_999, supplierName: "Renamed Supplier" });
-    // both set Y to the same value: no conflict
+    expect(p.skus[X]).toMatchObject({ supplierName: "B renamed X", by: "b@nq" });
+    expect(p.skus[Y]).toMatchObject({ nativeUnitCostE7: 33_333_333, by: "a@nq" });
     const a2 = await load(id, A), b2 = await load(id, B);
-    a2.draft.skus[Y].nativeUnitCostE7 = b2.draft.skus[Y].nativeUnitCostE7 = cost7("3.3333333");
+    a2.draft.skus[Y].nativeUnitCostE7 = b2.draft.skus[Y].nativeUnitCostE7 = cost7("4.4444444");
     expect((await applyPricingChange(db as never, B, id, b2.draft, "B Y", b2.base)).ok).toBe(true);
     expect((await applyPricingChange(db as never, A, id, a2.draft, "A Y", a2.base))).toMatchObject({ ok: false, errors: ["Nothing changed."] });
   });
@@ -133,7 +155,7 @@ describe("mergePricing (pure)", () => {
     expect(m.merged.skus[Y].nativeUnitCostE7).toBe(base.skus[Y].nativeUnitCostE7 + 1);
     expect(m.merged.projectMarkup).toEqual({ markupBps: 500, reason: "stored" });
     d.skus[X].nativeUnitCostE7 += 2;
-    expect(mergePricing(base, s, d).conflicts.map((c) => c.key)).toEqual([`sku:${X}:nativeUnitCostE7`]);
+    expect(mergePricing(base, s, d).conflicts.map((c) => c.key)).toEqual([`sku:${X}`]);
   });
   it("dirty tracking is a diff: an identical value is not a change", () => {
     const d = structuredClone(base);

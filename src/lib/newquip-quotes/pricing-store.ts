@@ -5,7 +5,7 @@ import type { QuoteDraft } from "@/newquip/grower/draft";
 import type { EstimatorPricing } from "@/newquip/pricing/estimator/types";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { evaluationContext } from "./context";
-import { applyCostVerification, conflictMessage, emptySubmission, mergePricing, canEnterPricingInputs, submissionFrom, type PricingConflict, applyManualEvidence, applyPricingSubmission, applyRateAttestation, disablePricing, selectRuleVersion, type ApplyResult, type AttestItem, type EvidenceItem, type PricingChange, type PricingSubmission, type RevisionKind, type VerifyItem, type Viewer } from "@/newquip/pricing/estimator";
+import { applyCostVerification, changedUnits, conflictMessage, emptySubmission, mergePricing, canEnterPricingInputs, submissionFrom, type PricingConflict, applyManualEvidence, applyPricingSubmission, applyRateAttestation, disablePricing, selectRuleVersion, type ApplyResult, type AttestItem, type EvidenceItem, type PricingChange, type PricingSubmission, type RevisionKind, type VerifyItem, type Viewer } from "@/newquip/pricing/estimator";
 import { loadQuote, type QuoteRecord } from "./quote-store";
 
 // IMMUTABLE ESTIMATOR PRICING REVISIONS (NQ-008B Phase 2, migration 0126). The change and its revision are ONE database transaction (newquip_apply_pricing_revision): a pricing
@@ -72,6 +72,11 @@ export function applyEstimatorPricing(
     const prior = q.draft.estimator.pricing;
     // NO SILENT OVERWRITE. When the caller says what its edits were based on (`base`; null = pricing was off), the submission is merged field by field onto what is stored NOW: fields the user did
     // not touch take the current stored values, and a field both sides changed differently refuses the whole save (nothing written). Without a base the submission is applied as it always was.
+    // A SWITCH-OFF is conflict-aware too: refused when the stored pricing is no longer what the user saw.
+    if (!submission && base && prior && canEnterPricingInputs(viewer)) {
+      const ch = changedUnits(base, submissionFrom(prior));
+      if (ch.length > 0) return { ok: false, errors: ["The supplier pricing changed since you loaded it, so it was not switched off. Nothing was saved. Reload to review."], conflicts: [{ key: "pricing", label: "supplier pricing" }] };
+    }
     if (submission && base !== undefined && canEnterPricingInputs(viewer)) {
       const baseSub = base ?? emptySubmission(submission.ruleVersionId);
       if (base !== null && !prior) return { ok: false, errors: ["Supplier pricing was switched off by someone else since you loaded it. Nothing was saved. Reload to review; your typed values are kept until you choose."], conflicts: [{ key: "pricing", label: "supplier pricing (switched off)" }] };

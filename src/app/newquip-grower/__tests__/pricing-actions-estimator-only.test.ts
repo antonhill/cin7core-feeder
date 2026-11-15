@@ -54,10 +54,10 @@ describe("direct server-action calls from a Manager-only session", () => {
     const id = await inReview();
     actor = MGR_ONLY();
     const empty = await state(id);
-    expect(await actions.applyEstimatorPricingAction(id, submissionOf(), "Manager enables")).toMatchObject({ ok: false, error: expect.stringMatching(/Only an Estimator/) });
+    expect(await actions.applyEstimatorPricingAction(id, submissionOf(), "Manager enables", null)).toMatchObject({ ok: false, error: expect.stringMatching(/Only an Estimator/) });
     expect(await state(id)).toEqual(empty);
     actor = EST();
-    expect((await actions.applyEstimatorPricingAction(id, submissionOf(), "Initial supplier pricing")).ok).toBe(true);
+    expect((await actions.applyEstimatorPricingAction(id, submissionOf(), "Initial supplier pricing", null)).ok).toBe(true);
     const base = submissionOf(), sku = Object.keys(base.skus)[0], cur = Object.keys(base.fxQuotes)[0];
     const before = await state(id);
     actor = MGR_ONLY();
@@ -66,23 +66,23 @@ describe("direct server-action calls from a Manager-only session", () => {
       { ...base, skus: { ...base.skus, [sku]: { ...base.skus[sku], freight: { factorMicro: micro("3"), source: "Manager" } } } },
       { ...base, fxQuotes: { ...base.fxQuotes, [cur]: { ...base.fxQuotes[cur], rateMicro: micro("30") } } },
       { ...base, projectMarkup: { markupBps: 4000, reason: "Manager" } },
-    ] as PricingSubmission[]) expect(await actions.applyEstimatorPricingAction(id, sub, "Manager edit")).toMatchObject({ ok: false, error: expect.stringMatching(/Only an Estimator/) });
+    ] as PricingSubmission[]) expect(await actions.applyEstimatorPricingAction(id, sub, "Manager edit", submissionOf())).toMatchObject({ ok: false, error: expect.stringMatching(/Only an Estimator/) });
     expect(await state(id)).toEqual(before);
   });
   it("disableEstimatorPricingAction cannot switch pricing off", async () => {
     const id = await inReview();
     actor = EST();
-    await actions.applyEstimatorPricingAction(id, submissionOf(), "Initial supplier pricing");
+    await actions.applyEstimatorPricingAction(id, submissionOf(), "Initial supplier pricing", null);
     const before = await state(id);
     actor = MGR_ONLY();
-    expect(await actions.disableEstimatorPricingAction(id, "Manager disables")).toMatchObject({ ok: false, error: expect.stringMatching(/Only an Estimator/) });
+    expect(await actions.disableEstimatorPricingAction(id, "Manager disables", submissionOf())).toMatchObject({ ok: false, error: expect.stringMatching(/Only an Estimator/) });
     expect(await state(id)).toEqual(before);
     expect((await loaded(id)).draft.estimator.pricing).toMatchObject({ enabled: true });
   });
   it("recordManualPriceEvidenceAction cannot record evidence", async () => {
     const id = await inReview();
     actor = EST();
-    await actions.applyEstimatorPricingAction(id, submissionOf(), "Initial supplier pricing");
+    await actions.applyEstimatorPricingAction(id, submissionOf(), "Initial supplier pricing", null);
     const before = await state(id);
     actor = MGR_ONLY();
     const items = evidenceItemsFor((await loaded(id)).draft).map((i) => ({ itemKey: i.itemKey, note: "Manager note" }));
@@ -93,10 +93,38 @@ describe("direct server-action calls from a Manager-only session", () => {
     const id = await inReview();
     for (const a of [asActor("rep@nq", ["rep"], { canSeeCost: false }), asActor("mgr@nq", ["manager"], { canSeeCost: false }), asActor("est@nq", ["rep", "estimator"], { canSeeCost: false })]) {
       actor = a;
-      expect((await actions.applyEstimatorPricingAction(id, submissionOf(), "x")).ok).toBe(false);
+      expect((await actions.applyEstimatorPricingAction(id, submissionOf(), "x", null)).ok).toBe(false);
       expect((await actions.getEstimatorPricingAction(id)).ok).toBe(false);
     }
     expect((await loaded(id)).draft.estimator.pricing).toBeUndefined();
+  });
+});
+
+describe("a baseless call can never be last-write-wins (base is required)", () => {
+  it("applyEstimatorPricingAction without a base is refused with a plain message and writes nothing; an explicit null still means 'pricing was off'", async () => {
+    const id = await inReview();
+    actor = EST();
+    const before = await state(id);
+    const r = await (actions.applyEstimatorPricingAction as unknown as (...a: unknown[]) => Promise<{ ok: boolean; error?: string }>)(id, submissionOf(), "No base");
+    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/did not say which saved pricing/) });
+    expect(await state(id)).toEqual(before);
+    expect((await actions.applyEstimatorPricingAction(id, submissionOf(), "Explicit null base", null)).ok).toBe(true);
+  });
+  it("disableEstimatorPricingAction needs a base and is refused when the stored pricing changed since it", async () => {
+    const id = await inReview();
+    actor = EST();
+    await actions.applyEstimatorPricingAction(id, submissionOf(), "Initial supplier pricing", null);
+    const before = await state(id);
+    expect(await (actions.disableEstimatorPricingAction as unknown as (...a: unknown[]) => Promise<{ ok: boolean; error?: string }>)(id, "Off")).toMatchObject({ ok: false, error: expect.stringMatching(/did not say which saved pricing/) });
+    const sku = Object.keys(submissionOf().skus)[0];
+    const seen = submissionOf();
+    const other = submissionOf(); other.skus[sku].nativeUnitCostE7 += 1;
+    expect((await actions.applyEstimatorPricingAction(id, other, "Someone else", seen)).ok).toBe(true); // another estimator changes a cost after `seen` was loaded
+    const mid = await state(id);
+    expect(mid).not.toEqual(before);
+    expect(await actions.disableEstimatorPricingAction(id, "Off", seen)).toMatchObject({ ok: false, error: expect.stringMatching(/changed since you loaded it, so it was not switched off/) });
+    expect(await state(id)).toEqual(mid);
+    expect((await actions.disableEstimatorPricingAction(id, "Off", other)).ok).toBe(true);
   });
 });
 
@@ -104,7 +132,7 @@ describe("preserved through the same server actions", () => {
   it("the Estimator enters; the Manager-only session reads the workspace (canEdit false) and independently verifies; the Estimator cannot verify their own cost", async () => {
     const id = await inReview();
     actor = EST();
-    expect(await actions.applyEstimatorPricingAction(id, submissionOf(), "Initial supplier pricing")).toMatchObject({ ok: true });
+    expect(await actions.applyEstimatorPricingAction(id, submissionOf(), "Initial supplier pricing", null)).toMatchObject({ ok: true });
     const p = (await loaded(id)).draft.estimator.pricing!;
     const items = itemsOf(p, Object.keys(p.skus));
     expect(await actions.verifyEstimatorCostsAction(id, items, "Supplier quote SQ-1")).toMatchObject({ ok: false });

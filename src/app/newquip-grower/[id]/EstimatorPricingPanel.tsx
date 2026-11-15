@@ -78,6 +78,7 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = tru
   const draftRef = useRef<Draft | null>(null);
   const [readError, setReadError] = useState<string | null>(null);
   const [confirmReload, setConfirmReload] = useState(false);
+  const [switchedOff, setSwitchedOff] = useState(false); // someone else switched supplier pricing off while this draft was open
   useEffect(() => { draftRef.current = draft; }, [draft]);
   const blankDraft = (): Draft => ({ ruleVersionId: LEGACY_RULE_VERSION.id, skus: {}, fxQuotes: {}, forwardCover: {}, skuPriceOverrides: {}, projectMarkup: null, targetAdjustment: null });
   /** Resolves true when the read succeeded (or was superseded by a newer one); NEVER rejects: a failed read leaves the draft exactly as it was and is reported by `readError` / `error`. */
@@ -91,6 +92,13 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = tru
       const fresh = r.data;
       const storedNow: Draft = fresh.current ?? blankDraft();
       const d0 = draftRef.current, b0 = baseRef.current;
+      if (mode === "rebase" && d0 && b0 && fresh.current == null && !baseOff.current) {
+        // Pricing was switched OFF elsewhere. Nothing the user typed is lost: the whole draft is kept as THEIR values (the base becomes "off", so all of it counts as unsaved) and Save switches pricing back on with it.
+        const nb = blankDraft(); nb.ruleVersionId = d0.ruleVersionId;
+        baseOff.current = true; baseRef.current = nb; setBase(nb); setSwitchedOff(true);
+        bRef.current = fresh; setB(fresh);
+        return true;
+      }
       if (mode === "rebase" && d0 && b0) {
         const m = mergePricing(b0, fresh.current ?? emptySubmission(d0.ruleVersionId), d0);
         const nextBase = structuredClone(storedNow); for (const c of m.conflicts) copyUnit(nextBase, b0, c.key); // a conflicting unit keeps its OLD base until the user resolves it
@@ -102,7 +110,7 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = tru
         return true;
       }
       baseOff.current = fresh.current == null;
-      setCostProblems({}); setConfirmReload(false); setEpoch((e) => e + 1);
+      setCostProblems({}); setConfirmReload(false); setSwitchedOff(false); setEpoch((e) => e + 1);
       bRef.current = fresh; setB(fresh);
       const d = structuredClone(storedNow), bs = structuredClone(storedNow);
       baseRef.current = bs; setBase(bs); draftRef.current = d; setDraft(d);
@@ -131,7 +139,7 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = tru
   const v = b.view;
   const edit = b.canEdit && editable;
   const editInputs = edit && !busy; // while an action is in flight nothing can be typed that the action's re-read could then replace
-  const set = (f: (d: Draft) => void) => { setDraft((d) => { const n = structuredClone(d!); f(n); draftRef.current = n; return n; }); };
+  const set = (f: (d: Draft) => void) => { const n = structuredClone(draftRef.current ?? draft!); f(n); draftRef.current = n; setDraft(n); }; // the ref is assigned synchronously: a rebase can never read a draft missing the last keystroke
   const rowsToShow = v.rows;
   // Exchange-rate rows appear as soon as a SKU is in a foreign currency (not only after a save).
   const foreign = [...new Set([...Object.values(draft.skus).map((s) => s?.currency ?? "").filter((c) => /^[A-Z]{3}$/.test(c) && c !== "ZAR"), ...v.currencies.map((c) => c.currency)])].sort();
@@ -190,7 +198,7 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = tru
   async function off() {
     if (unsavedCount > 0) { setErrors([unsavedMsg(unsavedCount)]); return; } // switching off replaces the draft: never while typed values would be lost
     await guarded(async () => {
-      const r = await disableEstimatorPricingAction(quoteId, reason);
+      const r = await disableEstimatorPricingAction(quoteId, reason, baseOff.current ? null : base);
       if (!r.ok) { setErrors(r.errors?.length ? r.errors : [r.error ?? "Could not switch off."]); return; }
       setNote("Supplier pricing switched off: this quotation is priced from the POC workbook again."); setReason(""); await afterAction("replace");
     });
@@ -199,7 +207,7 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = tru
   function discard() {
     const st = structuredClone(b!.current ?? blankDraft());
     baseRef.current = structuredClone(st); setBase(structuredClone(st)); draftRef.current = st; setDraft(st);
-    setCostProblems({}); setConfirmReload(false); setPicked([]); setEpoch((e) => e + 1); setErrors([]);
+    setCostProblems({}); setConfirmReload(false); setSwitchedOff(false); setPicked([]); setEpoch((e) => e + 1); setErrors([]);
   }
   /** Resolves ONE conflict: keep my value (it becomes the base, so the save is a deliberate overwrite of what is stored) or use the stored value (replacing mine). */
   function resolve(c: PricingConflict, choice: "mine" | "stored") {
@@ -221,6 +229,7 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = tru
         <Status tone={v.enabled ? (v.finality.final ? "success" : "warning") : "neutral"}>{v.enabled ? (v.finality.final ? `On · revision ${v.revision}` : `On · indicative only · revision ${v.revision}`) : "Off: priced from the POC workbook"}</Status>
       </div>
       {readError && <Alert tone="warning"><div className="flex flex-wrap items-center gap-2"><span data-testid="pricing-read-error">{readError}</span><Button variant="secondary" size="sm" onClick={() => void load("rebase")} data-testid="pricing-read-retry">Try again</Button></div></Alert>}
+      {switchedOff && !v.enabled && <Alert tone="warning"><span data-testid="switched-off-elsewhere">Supplier pricing was switched off by someone else while you were editing. Your values are kept as a draft: Save will switch supplier pricing back on with your values, or Discard changes to leave it off.</span></Alert>}
       {unsavedCount > 0 && edit && (
         <div className="rounded-md border-2 border-amber-600 bg-amber-50 p-3" role="status" data-testid="unsaved-banner">
           <div className="flex flex-wrap items-center gap-2">

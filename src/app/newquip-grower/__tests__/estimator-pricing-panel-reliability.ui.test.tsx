@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readyDraft } from "@/newquip/grower/__tests__/golden";
 import { equivalentInputs, evalOf, withPricing } from "@/newquip/pricing/estimator/__tests__/helpers";
 import { buildPricingWorkspace, submissionFrom, type EstimatorPricing } from "@/newquip/pricing/estimator";
 import type { WorkspaceBundle } from "@/lib/newquip-quotes/pricing-service";
@@ -300,5 +301,39 @@ describe("another estimator changed the stored pricing: rebase, conflicts, and a
     expect((screen.getByTestId("pricing-save") as HTMLButtonElement).disabled).toBe(true);
     expect(within(screen.getByTestId("changed-elsewhere")).getAllByRole("button").length).toBeGreaterThan(1);
     await act(async () => {});
+  });
+  it("pricing switched OFF by someone else: nothing typed is lost, a notice explains it, and Save switches pricing back on with the user's values (base null)", async () => {
+    const r = await mount(bundle(stored()), { refreshKey: "h1" });
+    typeIn("PNQ082 supplier cost", "61.5");
+    const offView = buildPricingWorkspace({ quoteType: "project", pricing: undefined, budget: evalOf(readyDraft()).budget, originalTotalCents: 860_954_240, originalCapturedAt: "2026-11-12T08:00:00.000Z", nowIso: "2026-11-12T09:00:00.000Z" });
+    get.mockResolvedValue({ ok: true, data: { ...bundle(stored()), view: offView, current: null } });
+    r.rerender(createElement(EstimatorPricingPanel, { quoteId: "q1", refreshKey: "h2" }));
+    await screen.findByTestId("switched-off-elsewhere");
+    expect(screen.getByTestId("switched-off-elsewhere").textContent).toMatch(/Save will switch supplier pricing back on with your values/);
+    expect(field("PNQ082 supplier cost").value).toBe("61.5"); // typed value kept
+    expect(field("ERT053 supplier$").value).toBe("EUR Supplier".replace("EUR", stored().skus.ERT053!.currency)); // the rest of the draft kept too
+    expect(screen.getByTestId("unsaved-banner")).toBeTruthy();
+    expect(screen.queryByTestId("changed-elsewhere")).toBeNull(); // not a dead end: no conflict to resolve
+    fireEvent.change(screen.getByLabelText("Reason for this pricing revision"), { target: { value: "Re-enable" } });
+    const save = screen.getByTestId("pricing-save") as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    vi.mocked(actions.applyEstimatorPricingAction).mockResolvedValue({ ok: true, data: { seq: 3, kind: "ENABLED", changedValues: 1, confirmation: null } });
+    fireEvent.click(save);
+    await waitFor(() => expect(actions.applyEstimatorPricingAction).toHaveBeenCalledTimes(1));
+    const [, sent, , base] = vi.mocked(actions.applyEstimatorPricingAction).mock.calls[0];
+    expect(base).toBeNull();
+    expect(sent.skus.PNQ082.nativeUnitCostE7).toBe(615_000_000);
+  });
+  it("a keystroke committed in the same tick as a page re-read is never lost by the rebase (the draft ref is assigned synchronously)", async () => {
+    const r = await mount(bundle(stored()), { refreshKey: "h1" });
+    const el = field("PNQ082 supplier cost");
+    await act(async () => {
+      fireEvent.change(el, { target: { value: "61.5" } }); fireEvent.blur(el, { target: { value: "61.5" } });
+      r.rerender(createElement(EstimatorPricingPanel, { quoteId: "q1", refreshKey: "h2" }));
+    });
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    await act(async () => {});
+    expect(field("PNQ082 supplier cost").value).toBe("61.5");
+    expect(screen.getByTestId("unsaved-count").textContent).toBe("1 unsaved change");
   });
 });

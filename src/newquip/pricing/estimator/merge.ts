@@ -34,7 +34,7 @@ const own = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k)
 export function pricingUnits(s: PricingSubmission): Map<string, unknown> {
   const m = new Map<string, unknown>();
   m.set("rule", s.ruleVersionId);
-  for (const [k, v] of Object.entries(s.skus)) { if (!v) continue; for (const f of SKU_FIELDS) m.set(`sku:${k}:${f}`, (v as Record<string, unknown>)[f] ?? null); m.set(`sku:${k}`, "present"); }
+  for (const [k, v] of Object.entries(s.skus)) if (v) m.set(`sku:${k}`, v); // ONE coupled cost-entry unit per SKU (see mergePricing)
   for (const [k, v] of Object.entries(s.fxQuotes)) m.set(`fx:${k}`, v);
   for (const [k, v] of Object.entries(s.forwardCover)) m.set(`fwd:${k}`, v);
   for (const [k, v] of Object.entries(s.skuPriceOverrides)) m.set(`override:${k}`, v);
@@ -60,9 +60,10 @@ function resolve<T>(b: T | undefined, s: T | undefined, d: T | undefined): { val
   return { value: d, conflict: true };
 }
 
-const unitLabel = (key: string): string => {
-  const [kind, id, field] = key.split(":");
-  if (kind === "sku") return field ? `SKU ${id} ${({ supplierId: "supplier", supplierName: "supplier", currency: "currency", nativeUnitCostE7: "cost", source: "cost source", freight: "freight" } as Record<string, string>)[field] ?? field}` : `SKU ${id}`;
+const FIELD_WORDS: Record<string, string> = { supplierId: "supplier", supplierName: "supplier", currency: "currency", nativeUnitCostE7: "cost", source: "cost source", freight: "freight" };
+const unitLabel = (key: string, fields?: readonly string[]): string => {
+  const [kind, id] = key.split(":");
+  if (kind === "sku") return fields && fields.length ? `SKU ${id} cost entry (${[...new Set(fields.map((f) => FIELD_WORDS[f] ?? f))].join(", ")})` : `SKU ${id} cost entry`;
   if (kind === "fx") return `${id} exchange rate`;
   if (kind === "fwd") return `${id} forward-cover rate`;
   if (kind === "override") return `SKU ${id} price override`;
@@ -85,7 +86,7 @@ const stampOf = (stored: EstimatorPricing | null | undefined, key: string): { by
  */
 export function mergePricing(base: PricingSubmission, stored: PricingSubmission, draft: PricingSubmission, storedPricing?: EstimatorPricing | null): MergeResult {
   const conflicts: PricingConflict[] = [];
-  const flag = (key: string) => { if (!conflicts.some((c) => c.key === key)) conflicts.push({ key, label: unitLabel(key), ...stampOf(storedPricing, key) }); };
+  const flag = (key: string, fields?: readonly string[]) => { if (!conflicts.some((c) => c.key === key)) conflicts.push({ key, label: unitLabel(key, fields), ...stampOf(storedPricing, key) }); };
   const merged: PricingSubmission = emptySubmission(draft.ruleVersionId);
 
   { const r = resolve(base.ruleVersionId, stored.ruleVersionId, draft.ruleVersionId); merged.ruleVersionId = r.value ?? draft.ruleVersionId; if (r.conflict) flag("rule"); }
@@ -93,18 +94,10 @@ export function mergePricing(base: PricingSubmission, stored: PricingSubmission,
   const skuKeys = new Set([...Object.keys(base.skus), ...Object.keys(stored.skus), ...Object.keys(draft.skus)]);
   for (const k of [...skuKeys].sort()) {
     const b = own(base.skus, k) ? base.skus[k] : undefined, s = own(stored.skus, k) ? stored.skus[k] : undefined, d = own(draft.skus, k) ? draft.skus[k] : undefined;
-    if (!b || !s || !d) { // the entry appears or disappears somewhere: it is decided as ONE unit
-      const r = resolve(b, s, d); if (r.value) merged.skus[k] = structuredClone(r.value);
-      if (r.conflict) flag(`sku:${k}`);
-      continue;
-    }
-    const out: Record<string, unknown> = {};
-    for (const f of SKU_FIELDS) {
-      const r = resolve((b as Record<string, unknown>)[f], (s as Record<string, unknown>)[f], (d as Record<string, unknown>)[f]);
-      if (r.value !== undefined) out[f] = structuredClone(r.value);
-      if (r.conflict) flag(`sku:${k}:${f}`);
-    }
-    merged.skus[k] = out as PricingSubmission["skus"][string];
+    // supplier, currency, cost, source and freight are ONE coupled cost entry: merging them field by field could create a hybrid cost (e.g. one person's currency with another's amount) that
+    // nobody chose, and would re-stamp it as the saver's. If both sides changed it (any fields) relative to the base, it is a conflict naming the fields each side changed.
+    const r = resolve(b, s, d); if (r.value) merged.skus[k] = structuredClone(r.value);
+    if (r.conflict) { const g = (o: unknown, f: string) => (o as Record<string, unknown> | undefined)?.[f]; flag(`sku:${k}`, SKU_FIELDS.filter((f) => !samePricingValue(g(b, f), g(d, f)) || !samePricingValue(g(b, f), g(s, f)))); }
   }
   const maps = [["fxQuotes", "fx"], ["forwardCover", "fwd"], ["skuPriceOverrides", "override"]] as const;
   for (const [field, tag] of maps) {
