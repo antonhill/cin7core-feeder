@@ -163,7 +163,7 @@ export function ManualPriceForm({ itemKey, label, quantity, existing, canEdit, p
   return (
     <div className="flex min-w-0 flex-col gap-4 lg:flex-row lg:items-start" data-testid="manual-form">
       <div className="flex min-w-0 flex-[1_1_28rem] flex-col gap-4">
-        <div className="flex gap-3 rounded-xl border-2 border-amber-600 bg-amber-50 px-4 py-3 text-sm text-amber-950" data-testid="provisional-banner"><span className="mt-0.5 h-fit shrink-0 rounded bg-amber-800 px-2 py-0.5 text-[11px] font-bold text-white">PROVISIONAL</span><span><strong>Manual quotation price.</strong> This line is not priced from a supplier cost or the approved price source. It is labelled manual and provisional wherever it appears, including Manager approval, until NewQuip settles the product.</span></div>
+        <div className="flex gap-3 rounded-xl border-2 border-amber-600 bg-amber-50 px-4 py-3 text-sm text-amber-950" data-testid="provisional-banner"><span className="mt-0.5 h-fit shrink-0 rounded bg-amber-800 px-2 py-0.5 text-xs font-bold text-white">PROVISIONAL</span><span><strong>Manual quotation price.</strong> This line is not priced from a supplier cost or the approved price source. It is labelled manual and provisional wherever it appears, including Manager approval, until NewQuip settles the product.</span></div>
         {parts}
         <Section title="Your quotation price" hint={`${label} · per unit, ex VAT`}>
           <div className="w-56"><Input label="Price each (R)" inputMode="decimal" className="tabular-nums" value={price} disabled={!canEdit || busy} onChange={(e) => { setSaved(null); setPrice(e.target.value); }} helperText="Required. Must be more than zero." /></div>
@@ -181,7 +181,7 @@ export function ManualPriceForm({ itemKey, label, quantity, existing, canEdit, p
       </div>
       <aside className="flex min-w-0 flex-[1_1_16rem] flex-col gap-2 rounded-xl border border-slate-200 bg-white p-5 text-sm lg:max-w-xs" aria-label="This line">
         <h3 className="text-base font-bold">This line</h3>
-        <span className="w-fit rounded bg-amber-800 px-2 py-0.5 text-[11px] font-bold text-white">PROVISIONAL · MANUAL PRICE</span>
+        <span className="w-fit rounded bg-amber-800 px-2 py-0.5 text-xs font-bold text-white">PROVISIONAL · MANUAL PRICE</span>
         <div className="flex justify-between"><span>Price each</span><span className="tabular-nums">{unit && unit > 0 ? money(unit) : "—"}</span></div>
         <div className="flex justify-between text-slate-700"><span>Supplier cost</span><span>not applicable</span></div>
         <div className="flex justify-between text-slate-700"><span>Margin</span><span>none for this line</span></div>

@@ -75,6 +75,7 @@ describe("legacy quotations (no Phase 2 pricing) render EXACTLY as before", () =
       expect(cap.textContent).toMatch(/Cin7 cost capture and FX rates/);
       expect(screen.getByTestId("disc-margin").textContent).toMatch(/Margin detail/);
       expect(screen.queryByTestId("disc-legacy-costing")).toBeNull();
+      expect(screen.queryByTestId("estimator-workspace")).toBeNull(); // the workspace only mounts when supplier pricing is ON
       expect(screen.queryByTestId("cost-next-action")).toBeNull();
       expect(document.querySelector('[data-supplier-pricing="optional"]')).toBeTruthy();
       expect(screen.getByTestId("disc-supplier-pricing").hasAttribute("open")).toBe(false); // still the collapsed, optional disclosure it always was
@@ -132,7 +133,7 @@ describe("Phase 2: viewers without cost visibility see nothing of it", () => {
     it(`${label}: no banner, no legacy disclosure, no supplier-pricing workspace, no supplier data`, async () => {
       await open(verified(), [...roles], { commercials: false, waitFor: "step-rail" });
       await waitFor(() => expect(screen.getByTestId("step-rail")).toBeTruthy());
-      for (const id of ["cost-next-action", "disc-legacy-costing", "disc-cost-capture", "disc-supplier-pricing", "estimator-pricing-panel", "verify-block"]) expect(screen.queryByTestId(id), id).toBeNull();
+      for (const id of ["cost-next-action", "disc-legacy-costing", "disc-cost-capture", "disc-supplier-pricing", "estimator-pricing-panel", "verify-block", "estimator-workspace", "commercial-summary"]) expect(screen.queryByTestId(id), id).toBeNull();
       expect(document.body.textContent ?? "").not.toMatch(/Fixture supplier|Supplier pricing and verification|Legacy costing/);
     }, 60000);
   }

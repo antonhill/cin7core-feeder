@@ -14,7 +14,7 @@ const CLASS: Record<IndicatorState, string> = {
   done: "bg-emerald-700 text-white border-emerald-700",
   open: "bg-white text-amber-900 border-amber-600",
   wait: "bg-white text-slate-600 border-slate-300",
-  na: "bg-slate-100 text-slate-400 border-slate-200",
+  na: "bg-slate-100 text-slate-700 border-slate-200",
 };
 
 export function Indicator({ state, name, size = 26 }: { state: IndicatorState; name: string; size?: number }) {
@@ -34,14 +34,14 @@ export function Indicators({ value, testId }: { value: TaskIndicators; testId?: 
 export function Legend() {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-700" aria-label="Legend" data-testid="indicator-legend">
-      {INDICATOR_NAMES.map(([k, letter, name]) => <span key={k}><span className="mr-1.5 inline-flex size-[22px] items-center justify-center rounded bg-slate-200 text-[11px] font-bold text-slate-900">{letter}</span>{name}</span>)}
+      {INDICATOR_NAMES.map(([k, letter, name]) => <span key={k}><span className="mr-1.5 inline-flex size-[22px] items-center justify-center rounded bg-slate-200 text-xs font-bold text-slate-900">{letter}</span>{name}</span>)}
       <span className="inline-flex items-center gap-1"><Indicator state="done" name="Done" size={18} />done <Indicator state="open" name="Needed" size={18} />needed <Indicator state="wait" name="Not yet" size={18} />not yet</span>
     </div>
   );
 }
 
 const TAG_CLASS: Record<TaskTag, string> = { PRICE: "bg-blue-700 text-white", COST: "bg-blue-700 text-white", PRODUCT: "border-2 border-purple-800 bg-white text-purple-900", COMPONENTS: "border-2 border-purple-800 bg-white text-purple-900" };
-export const Tag = ({ t }: { t: TaskTag }) => <span className={`inline-flex h-[22px] items-center rounded px-2 text-[11px] font-bold tracking-wide ${TAG_CLASS[t]}`}>{t}</span>;
+export const Tag = ({ t }: { t: TaskTag }) => <span className={`inline-flex h-[22px] items-center rounded px-2 text-xs font-bold tracking-wide ${TAG_CLASS[t]}`}>{t}</span>;
 
 export function TaskRow({ task, active, onOpen, canEdit }: { task: WorkspaceTask; active: boolean; onOpen: () => void; canEdit: boolean }) {
   return (
@@ -76,7 +76,7 @@ export function CompleteGroup({ lines, charges, onEdit, canEdit }: { lines: Comp
         <tbody>
           {lines.map((c) => (
             <tr key={c.id} className="border-t border-slate-200" data-testid={`complete-${c.id}`}>
-              <td className="px-4 py-2.5 sm:px-6"><span aria-hidden className="text-emerald-700">✓ </span>{c.label}{c.provisional && <span className="ml-2 rounded bg-amber-800 px-1.5 py-0.5 text-[10.5px] font-bold text-white">PROVISIONAL</span>}</td>
+              <td className="px-4 py-2.5 sm:px-6"><span aria-hidden className="text-emerald-700">✓ </span>{c.label}{c.provisional && <span className="ml-2 rounded bg-amber-800 px-1.5 py-0.5 text-xs font-bold text-white">PROVISIONAL</span>}</td>
               <td className="px-2 py-2.5 text-slate-700">{c.how}{!c.estimatorPriced && canEdit && <> · <button type="button" className="font-semibold text-blue-800 underline" onClick={() => onEdit(c.id)}>Edit</button></>}</td>
               <td className="px-2 py-2.5 text-right tabular-nums">{c.quantity ?? "—"} × {c.unit == null ? "—" : money(c.unit)}</td>
               <td className="px-4 py-2.5 text-right font-semibold tabular-nums sm:px-6">{c.revenue == null ? "—" : money(c.revenue)}</td>
