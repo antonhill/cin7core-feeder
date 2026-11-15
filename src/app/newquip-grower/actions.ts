@@ -17,6 +17,7 @@ import { manualEvidenceRows } from "@/newquip/pricing/estimator/workspace-view";
 import { compareToIndicative, type IndicativeComparison } from "@/newquip/pricing/comparison";
 import { allIndicativeSnapshots } from "@/lib/newquip-quotes/indicative-store";
 import { keepEstimatorOwnedFields } from "@/newquip/quote/draft-ownership";
+import { costingSaveRefusal } from "@/newquip/quote/cost-authority";
 import { changedMappings, mappingsChanged, normaliseMappings } from "@/newquip/grower/mapping-integrity";
 import { verifyMappings } from "@/lib/newquip-quotes/mapping-check";
 import { searchCatalogue, type CatalogueResult } from "@/lib/projects/catalogue-search";
@@ -201,6 +202,10 @@ async function sanitiseSubmittedDraft(a: Actor, db: ReturnType<typeof createServ
   // The live preview applies a ticked exclusion at once, so a blank reason must never be stored: saved figures would then differ from the previewed ones.
   if (blankExclusions(draft).length > 0) throw new Error("Give a reason for every exclusion before saving (it is shown to the customer and frozen at approval).");
   let d = normaliseMappings(draft);
+  // Costing is Estimator-owned (owner decision): a Manager-only session (mapping decisions, verification and approval stay) may resubmit the draft unchanged but cannot change cost overrides,
+  // price resolutions, captured costs or cost-basis declarations. The whole save is refused, nothing is written.
+  const refusal = costingSaveRefusal(a.roles, d, prior);
+  if (refusal) throw new Error(refusal);
   // Any change to any product mapping (a Rep included, on create or on save) is an Estimator/Manager decision.
   if (mappingsChanged(prior?.estimator.confirmedMappings, d.estimator.confirmedMappings) && !hasAny(a.roles, ["estimator", "manager"])) throw new Error("Only an Estimator or Manager can map a product.");
   // Only new or changed mappings are verified here, so a SKU that later goes inactive cannot block unrelated edits; sign-off re-verifies all of them.
