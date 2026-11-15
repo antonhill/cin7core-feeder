@@ -141,9 +141,17 @@ describe("the server POC flag cannot be set, cleared or forged by any client dra
     expect(r.ok, r.error).toBe(true);
     expect(hasPocFlag((db.rows("newquip_quotes").find((x) => x.id === r.data!.id) as Row).draft)).toBe(false);
     on();
-    const r2 = await grower.createGrowerQuoteAction();
+    const plain = await grower.createGrowerQuoteAction(); // mode on, not asked for: normal quotation
+    expect(hasPocFlag((db.rows("newquip_quotes").find((x) => x.id === plain.data!.id) as Row).draft)).toBe(false);
+    expect((await grower.createGrowerQuoteAction(forged({ pocPresentation: true }), { demonstration: "yes" as never })).ok).toBe(true); // only a literal true asks for it
+    const r2 = await grower.createGrowerQuoteAction(undefined, { demonstration: true });
     expect(hasPocFlag((db.rows("newquip_quotes").find((x) => x.id === r2.data!.id) as Row).draft)).toBe(true); // genuine POC creation
     expect(isPocQuote((db.rows("newquip_quotes").find((x) => x.id === r2.data!.id) as Row).draft, ORG)).toBe(true);
+  });
+  it("pocDemonstrationAvailableAction: true only for a Rep while the mode is in force", async () => {
+    as(false, "u-rep");
+    expect((await grower.pocDemonstrationAvailableAction()).data).toBe(false);
+    on(); expect((await grower.pocDemonstrationAvailableAction()).data).toBe(true);
   });
   it("saveGrowerDraftAction as Rep-level member and as Manager: cannot SET the flag", async () => {
     for (const admin of [false, true]) {

@@ -219,21 +219,36 @@ async function sanitiseSubmittedDraft(a: Actor, db: ReturnType<typeof createServ
   return stampChanges(owned, prior, { state: at?.state ?? "REP_DRAFT", revision: at?.revision ?? 1, email: a.email, nowIso });
 }
 
-export async function createGrowerQuoteAction(draft?: QuoteDraft): Promise<GrowerActionResult<{ id: string; quoteRef: string }>> {
+/**
+ * Starts a quotation. A POC DEMONSTRATION quotation (server-owned flag, seeded illustrative Estimator inputs, automatic Manager baseline exception for unmapped lines) is created ONLY when the
+ * caller explicitly asks for one (`demonstration: true`, the separate "Start demonstration quotation" button) AND POC Presentation Mode is in force (Preview + switch + NewQuip organisation).
+ * An ordinary call never gets the flag, even while the mode is on, so a real UAT quotation always follows the normal mapping-readiness and baseline-exception rules. Asking for a demonstration
+ * where the mode is not in force is refused (never silently downgraded to an ordinary quotation).
+ */
+export async function createGrowerQuoteAction(draft?: QuoteDraft, opts?: { demonstration?: boolean }): Promise<GrowerActionResult<{ id: string; quoteRef: string }>> {
   try {
     const a = await authorise();
     if (!a.roles.has("rep")) throw new Error("Only a rep can start a quote.");
+    const demonstration = opts?.demonstration === true;
+    const poc = demonstration && pocPresentationEnabled(process.env as Record<string, string | undefined>, a.orgId);
+    if (demonstration && !poc) throw new Error("Demonstration quotations are not available here.");
     const db = createServiceRoleClient();
     let start = draft ? await sanitiseSubmittedDraft(a, db, draft, undefined) : emptyDraft();
-    // POC Presentation Mode (Preview + switch + NewQuip organisation only): the NEW quotation gets the SERVER-OWNED POC flag and is seeded with the Estimator inputs the workbook cannot supply.
-    const poc = pocPresentationEnabled(process.env as Record<string, string | undefined>, a.orgId);
     if (poc) start = seedPocEstimator(start, new Date().toISOString());
     const r = await createQuote(db, a.orgId, a.email, start, { pocPresentation: poc });
-    await audit(db, a, { action: "newquip.quote_created", summary: `Started NewQuip quote ${r.quoteRef} (local only; no Cin7 write)`, detail: { quoteId: r.id } });
+    await audit(db, a, { action: "newquip.quote_created", summary: `Started NewQuip ${poc ? "DEMONSTRATION " : ""}quote ${r.quoteRef} (local only; no Cin7 write)`, detail: { quoteId: r.id, ...(poc ? { demonstration: true } : {}) } });
     return { ok: true, data: r };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
+}
+
+/** SERVER-derived: may the signed-in person start a demonstration quotation right now? (Rep, and POC Presentation Mode in force.) Only decides whether the separate button is shown; createGrowerQuoteAction re-checks. */
+export async function pocDemonstrationAvailableAction(): Promise<GrowerActionResult<boolean>> {
+  try {
+    const a = await authorise();
+    return { ok: true, data: a.roles.has("rep") && pocPresentationEnabled(process.env as Record<string, string | undefined>, a.orgId) };
+  } catch { return { ok: true, data: false }; }
 }
 
 export async function getGrowerQuoteAction(quoteId: string): Promise<GrowerActionResult<QuoteView>> {
