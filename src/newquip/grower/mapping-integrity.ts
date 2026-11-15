@@ -3,6 +3,7 @@
 // They cover EVERY item key (the optional additional elements, pvc_door and the source-backed items alike). The server applies them when a draft is stored and again
 // at estimator sign-off.
 
+import { isCatalogueDefaultItem } from "./commercial";
 import { expectedSkuFor } from "./quote-bridge";
 import { GROWER_ITEM_KEYS, isOptionalItemKey, type FeederVariant, type GrowerItemKey } from "./types";
 
@@ -62,4 +63,19 @@ export function mappingsChanged(prior: Mappings, next: Mappings): boolean {
   if (a.size !== b.size) return true;
   for (const [k, v] of b) if (a.get(k) !== v) return true;
   return false;
+}
+
+/**
+ * The mappings a quotation is actually built from: the explicit confirmations, plus the established catalogue default for each item that resolves by default and has none.
+ * Used to check default-resolved products against the live catalogue (at sign-off) exactly as an explicit mapping is.
+ */
+export function effectiveMappings(confirmedMappings: Mappings, feederVariant?: FeederVariant, itemKeys: ReadonlyArray<string> = GROWER_ITEM_KEYS): Array<{ itemKey: string; sku: string }> {
+  const out = mappedSkus(confirmedMappings);
+  const have = new Set(out.map((m) => m.itemKey));
+  for (const k of itemKeys) {
+    if (!isItemKey(k) || have.has(k) || !isCatalogueDefaultItem(k)) continue;
+    const sku = expectedSkuFor(k, feederVariant);
+    if (sku) out.push({ itemKey: k, sku });
+  }
+  return out;
 }

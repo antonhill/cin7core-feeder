@@ -26,11 +26,11 @@ let db: FakeDb;
 const err = async (p: Promise<unknown>): Promise<string> => p.then(() => "", (e: Error) => e.message);
 const cents = (d: QuoteDraft) => Math.round(evaluateDraft(d, ctx).budget!.totals.subtotalExTax * 100);
 
-/** The acceptance shape: tank x1 and feeder x2 included, every other package excluded, R0.00 delivery and installation, NOTHING mapped or priced yet (all Estimator-owned). */
+/** The acceptance shape: only the PVC door (x2) included, every other item excluded, R0.00 delivery and installation, NOTHING mapped or priced yet (the door product is always an Estimator choice; the established catalogue products such as the tank and feeder now price by default, so they cannot stand for "unpriced"). */
 function unpriced(): QuoteDraft {
   const d = readyDraft();
-  d.config.exclusions = Object.fromEntries(["flex_auger", "feed_saver_mat", "cup_drinker", "concrete_slat", "penning_package", "led_light", "pvc_door"].map((k) => [k, "Acceptance test: excluded"]));
-  d.config.estimatorQuantities = { bulk_tank: 1, feeder: 2 };
+  d.config.exclusions = Object.fromEntries(["flex_auger", "feed_saver_mat", "cup_drinker", "concrete_slat", "penning_package", "led_light", "bulk_tank", "feeder"].map((k) => [k, "Acceptance test: excluded"]));
+  d.config.estimatorQuantities = { pvc_door: 2 };
   d.estimator.charges = { delivery: 0, installation: 0 };
   d.estimator.unitPrices = {}; d.estimator.priceResolutions = {}; d.estimator.confirmedMappings = {}; d.estimator.confirmedPackages = [];
   delete d.estimator.costBasis;
@@ -82,9 +82,9 @@ describe("initial handoff with no indicative price", () => {
   });
   it("is blocked when no chargeable product is included (everything excluded or quantity 0)", async () => {
     const all = unpriced();
-    all.config.exclusions = { ...all.config.exclusions, bulk_tank: "Acceptance test: excluded", feeder: "Acceptance test: excluded" };
+    all.config.exclusions = { ...all.config.exclusions, pvc_door: "Acceptance test: excluded" };
     expect(await err(sendUnpriced(await stored(all)))).toMatch(/No chargeable product is included|no commercial amount|nothing for the Estimator/i);
-    const zeroQty = unpriced(); zeroQty.config.estimatorQuantities = { bulk_tank: 0, feeder: 0 };
+    const zeroQty = unpriced(); zeroQty.config.estimatorQuantities = { pvc_door: 0 };
     expect(await err(sendUnpriced(await stored(zeroQty)))).toMatch(/No chargeable product is included|no commercial amount|nothing for the Estimator/i);
   });
   it("an explicit R0.00 on a service that is not required is accepted (that is the fixture); a negative amount is not", async () => {
@@ -132,7 +132,7 @@ describe("a positive indicative price keeps the existing confirmation: the ackno
 
 describe("after the unpriced handoff the quotation cannot progress without the Rep's confirmation of the calculated amount", () => {
   /** The Estimator's prices: map the two products (what makes the total > 0), leaving the rest as the fixture. */
-  function priced(d: QuoteDraft): QuoteDraft { const c = structuredClone(d); c.estimator.confirmedMappings = { bulk_tank: "SYSH-2750-3", feeder: "PNQ082" }; return withCapturedSupplierCosts(c, ctx).draft; }
+  function priced(d: QuoteDraft): QuoteDraft { const c = structuredClone(d); c.estimator.confirmedMappings = { pvc_door: "NQ2114" }; return withCapturedSupplierCosts(c, ctx).draft; }
   it("sign-off is refused with the explicit no-customer-price message, even when pricing is complete and the total is positive", async () => {
     const id = await stored(unpriced());
     await sendUnpriced(id);

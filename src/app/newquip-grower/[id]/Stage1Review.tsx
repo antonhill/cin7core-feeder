@@ -47,8 +47,9 @@ export function Stage1Review({ awaiting, draft, floorAreaM2, totalLabel, derived
   ];
   const rep = derived.open.filter((o) => o.owner === "Rep");
   const est = derived.open.filter((o) => o.owner === "Estimator");
-  const estMaps = est.filter((o) => o.message.startsWith("Estimator product choice needed:"));
-  const estOther = est.filter((o) => !o.message.startsWith("Estimator product choice needed:"));
+  const isLineItem = (m: string) => m.startsWith("Estimator product choice needed:") || m.startsWith("Estimator pricing needed:");
+  const estMaps = est.filter((o) => isLineItem(o.message));
+  const estOther = est.filter((o) => !isLineItem(o.message));
   const nextLine = rep.length > 0 ? `Next: finish ${rep.length} item${rep.length === 1 ? "" : "s"} listed below.`
     : est.length > 0 ? `Everything you can do is complete - submit to the Estimator (step 5). ${awaiting.lines || est.length} item${(awaiting.lines || est.length) === 1 ? "" : "s"} will be resolved by the Estimator afterwards.`
     : "Everything you can do is complete - submit to the Estimator (step 5).";
@@ -101,7 +102,7 @@ export function Stage1Review({ awaiting, draft, floorAreaM2, totalLabel, derived
                       <span className="text-slate-900">Awaiting the Estimator: {awaiting.choices} product choice{awaiting.choices === 1 ? "" : "s"}, {awaiting.prices} price{awaiting.prices === 1 ? "" : "s"}.</span>
                     </div>
                     <details className="mt-1 pl-1 text-xs text-slate-700"><summary className="inline-flex min-h-11 cursor-pointer items-center">Show the {estMaps.length === 1 ? "item" : "list"}</summary>
-                      <ul className="mt-1 list-disc pl-5">{estMaps.map((i) => <li key={i.message}>{i.message.replace(/^Estimator product choice needed: /, "")}</li>)}</ul></details>
+                      <ul className="mt-1 list-disc pl-5">{estMaps.map((i) => <li key={i.message}>{i.message.replace(/^Estimator (?:product choice|pricing) needed: /, "")}</li>)}</ul></details>
                   </li>
                 )}
                 {estOther.map((i) => (

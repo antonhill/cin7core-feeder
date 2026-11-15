@@ -22,7 +22,7 @@ import { CCM_FEEDER_CAPACITY_PIGS } from "@/newquip/grower/rules";
 import { buildCustomerSummary } from "@/newquip/grower/customer-summary";
 import { READINESS_LABEL, type ReadinessCategory, type ReadinessState } from "@/newquip/grower/readiness";
 import { expectedSkuFor } from "@/newquip/grower/quote-bridge";
-import { packageFor, manualSelectionSkusFor } from "@/newquip/grower/commercial";
+import { isCatalogueDefaultItem, packageFor, manualSelectionSkusFor } from "@/newquip/grower/commercial";
 import { ROOMS_HELP, VENTILATION_SCOPE_STATUS } from "@/newquip/grower/open-items";
 import { QUOTE_TYPE_LABEL, QUOTE_TYPE_NEUTRAL, neutralPriceText, type QuoteType } from "@/newquip/grower/pricing-source";
 import { DEMO_DEFAULTS_SOURCE, RECOMMENDED_CONFIG_FILLS, SAMPLE_MEASUREMENTS_FILLS, applyDemoDefaults, applyMeasurementsSample, applyRecommendedConfiguration, hasEntries, hasEquipmentEntries, hasMeasurementEntries } from "@/newquip/grower/demo-defaults";
@@ -517,7 +517,7 @@ export default function QuoteEditorPage() {
   // One-line status chips for the collapsible sections of step 3 (counts from the same facts as the step status).
   const qtyOpen = (budget?.lines ?? []).filter((b) => b.status === "no_quantity").length + ev.calc.lines.filter((l) => l.basis !== "not_selected" && l.overrideState === "manual_override" && !l.overrideReason).length;
   const chargeOpen = (budget?.charges ?? []).filter((c) => c.status === "required").length + (budget?.lines ?? []).filter((b) => b.status === "estimator_price_required").length;
-  const estChoices = estItems.filter((o) => o.message.startsWith("Estimator product choice needed:")).length;
+  const estChoices = estItems.filter((o) => o.message.startsWith("Estimator product choice needed:") || o.message.startsWith("Estimator pricing needed:")).length;
   const qtyChip = `${qtyOpen > 0 ? `${qtyOpen} to enter - needs attention` : "Complete"}${estChoices > 0 ? ` · Waiting on the Estimator: ${estChoices}` : ""}`;
   const chargeChip = chargeOpen > 0 ? `${chargeOpen} to enter - needs attention` : "Complete";
   const exclCount = Object.keys(cfg.exclusions ?? {}).length;
@@ -1090,7 +1090,7 @@ export default function QuoteEditorPage() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <PanelTitle>Product mappings</PanelTitle>
               </div>
-              <p className="mt-2 text-xs text-slate-600">Source-backed SKUs are recommendations until you confirm them. A historic surrogate (e.g. FERAX for FORTIS 1.2) is never substituted.</p>
+              <p className="mt-2 text-xs text-slate-600">Established catalogue products (bulk tank, feeder, slat, feed saver mat) are selected automatically; other source-backed SKUs are recommendations until you confirm them. A historic surrogate (e.g. FERAX for FORTIS 1.2) is never substituted.</p>
               <ul className="mt-3 space-y-2 text-sm">
                 {ev.calc.lines.filter((l) => l.basis !== "not_selected").map((l) => {
                   const exp = expectedSkuFor(l.itemKey, cfg.feederVariant);
@@ -1111,7 +1111,8 @@ export default function QuoteEditorPage() {
                       ) : pkg ? (
                         <Status tone={draft.estimator.confirmedPackages.includes(l.itemKey) ? "success" : "warning"}>{draft.estimator.confirmedPackages.includes(l.itemKey) ? "Package confirmed" : "Package unconfirmed"}</Status>
                       ) : (
-                        <Status tone={confirmed && confirmed === exp ? "success" : "warning"}>{confirmed && confirmed === exp ? `Confirmed ${confirmed}` : `Recommended ${exp ?? "—"}`}</Status>
+                        isCatalogueDefaultItem(l.itemKey) && !confirmed && exp ? <Status tone="success">Standard catalogue product {exp} (automatic; checked again at sign-off)</Status>
+                          : <Status tone={confirmed && confirmed === exp ? "success" : "warning"}>{confirmed && confirmed === exp ? `Confirmed ${confirmed}` : `Recommended ${exp ?? "—"}`}</Status>
                       )}
                     </li>
                   );

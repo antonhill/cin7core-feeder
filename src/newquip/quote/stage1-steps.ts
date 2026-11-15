@@ -87,6 +87,8 @@ const friendly = (i: { field: string; message: string }) => (i.message.startsWit
 
 /** Budget-line statuses that only an Estimator/Manager can resolve (product mapping, package confirmation, a manual quotation price): the mapping-access rule on the server. */
 export const ESTIMATOR_LINE_STATUSES: ReadonlySet<string> = new Set(["unmapped", "package_unconfirmed", "package_incomplete", "not_in_price_source", "supplier_quote_required"]);
+/** The subset that is a COSTING task (the product is chosen but the price source has no usable price), kept apart from a product-choice task: mapping readiness and pricing readiness are separate. */
+export const ESTIMATOR_PRICING_STATUSES: ReadonlySet<string> = new Set(["package_incomplete", "not_in_price_source", "supplier_quote_required"]);
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /** Who must resolve what, from the same facts the Stage 2 steps and readiness use. Pure. The Rep's items belong to the Equipment step; the Estimator's are named, never editable by the Rep. */
@@ -97,6 +99,7 @@ export function ownedWork(w: Stage1WorkFacts): { rep: string[]; estimator: strin
   for (const b of w.budgetLines ?? []) {
     if (b.status === "no_quantity") rep.push(`${b.label}: enter the quantity`);
     else if (b.status === "estimator_price_required") rep.push(`${b.label}: ${b.reason.replace(/\.$/, "")}`);
+    else if (ESTIMATOR_PRICING_STATUSES.has(b.status)) estimator.push(`Estimator pricing needed: ${b.label}`);
     else if (ESTIMATOR_LINE_STATUSES.has(b.status)) estimator.push(`Estimator product choice needed: ${b.label}`);
   }
   const noReason = live.filter((l) => l.overrideState === "manual_override" && !l.overrideReason);

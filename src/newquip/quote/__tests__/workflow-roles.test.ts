@@ -123,10 +123,11 @@ describe("readiness states", () => {
     expect(ev.readiness.items.supplierQuoteRequired[0].detail).toMatch(/Covered by the estimator's higher-level price/);
     expect(assessReadiness(readyDraft(), ev.calc, ev.budget).state).toBe("READY");
   });
-  it("unconfirmed mappings are listed as missing product mappings", () => {
+  it("unconfirmed mappings are listed as missing product mappings (established catalogue products resolve by default and are not)", () => {
     const d = readyDraft();
     const ev = evaluateDraft({ ...d, estimator: { ...d.estimator, confirmedMappings: {} } }, ctx);
     expect(ev.readiness.state).toBe("BLOCKED");
-    expect(ev.readiness.counts.missingMappings).toBeGreaterThanOrEqual(4);
+    expect(ev.readiness.counts.missingMappings).toBeGreaterThanOrEqual(1);
+    expect(ev.budget!.lines.filter((l) => ["bulk_tank", "feeder", "concrete_slat", "feed_saver_mat"].includes(l.itemKey)).every((l) => l.status !== "unmapped")).toBe(true);
   });
 });

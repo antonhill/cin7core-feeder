@@ -88,7 +88,7 @@ export function LineDecisionsTable({ draft, ev, edit, roles, editable, mode, qua
                 </td>
                 <td className="py-3 pr-3 text-right tabular-nums">{l.projectQuantity ?? "—"}</td>
                 <td className="py-3 pr-3 text-xs text-slate-700">{rep ? (
-                  b?.sku ? b.sku : estimatorOwned ? <span className="text-amber-800" data-testid={`owner-row-${l.itemKey}`}>Estimator product choice needed: {l.label}</span> : b?.pricedBy === "penning_rate" ? "Pig-size / running-metre basis" : b?.pricedBy === "estimator_input" ? "Priced from your system price" : b?.pricedBy === "estimator_resolution" ? "Estimator-resolved" : "—"
+                  b?.sku ? (b.mappingSource === "catalogue_default" ? <span data-testid={`catalogue-default-${l.itemKey}`}>{b.sku} <span className="text-slate-600">· standard product, selected automatically</span></span> : b.sku) : estimatorOwned ? <span className="text-amber-800" data-testid={`owner-row-${l.itemKey}`}>Estimator product choice needed: {l.label}</span> : b?.pricedBy === "penning_rate" ? "Pig-size / running-metre basis" : b?.pricedBy === "estimator_input" ? "Priced from your system price" : b?.pricedBy === "estimator_resolution" ? "Estimator-resolved" : "—"
                 ) : mapControl === "chooser" ? (
                   <div className="min-w-[280px]" data-testid={`mapping-chooser-${l.itemKey}`}>
                     <ProductMappingPicker label={l.label} value={draft.estimator.confirmedMappings[l.itemKey]}

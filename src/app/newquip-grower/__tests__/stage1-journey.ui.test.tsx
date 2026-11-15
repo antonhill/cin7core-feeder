@@ -184,6 +184,17 @@ describe("locks unlock only when the earlier steps are complete (and say why)", 
     expect(status("submit")).not.toBe("Locked"); // S1a: the Rep submits with the Estimator's items open
   }, 30000);
 
+  it("established catalogue products are shown to the Rep as automatic selections, distinct from the Estimator's genuine product choices", async () => {
+    await open({ view: snapshotView(true), draftOver: { config: { ...readyDraft.config }, estimator: { ...readyDraft.estimator, confirmedMappings: {}, priceResolutions: {} } }, step: "3" });
+    for (const k of ["bulk_tank", "feeder", "concrete_slat", "feed_saver_mat"]) {
+      expect(screen.getByTestId(`catalogue-default-${k}`).textContent).toMatch(/standard product, selected automatically/);
+      expect(screen.queryByTestId(`owner-row-${k}`)).toBeNull();
+    }
+    const remaining = screen.getAllByTestId(/^owner-row-/);
+    expect(remaining.length).toBeGreaterThan(0); // the genuine Estimator decisions are still named
+    for (const r of remaining) expect(r.textContent).toMatch(/^Estimator product choice needed: /);
+  }, 30000);
+
   it("Review lists the missing information WITH its owner (Rep items link to the step; Estimator items are text only)", async () => {
     await open({ view: snapshotView(true), draftOver: { config: { ...readyDraft.config }, estimator: { ...readyDraft.estimator, confirmedMappings: {}, priceResolutions: {} } }, step: "4" });
     const issues = screen.getByTestId("stage1-review-issues");

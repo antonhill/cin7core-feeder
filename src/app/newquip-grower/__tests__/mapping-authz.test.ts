@@ -184,6 +184,34 @@ describe("mapping integrity is re-verified at estimator sign-off", () => {
     db.tables["products"] = db.rows("products").filter((p) => p.sku !== "SYSH-2750-3");
     await expect(estimatorSignOff(db as never, ORG, member, "est@nq", id, ctx)).rejects.toThrow(/SYSH-2750-3 is not in the synced Cin7 catalogue/);
   });
+  describe("default-resolved catalogue mappings (no stored confirmation) get the same sign-off checks", () => {
+    async function inReviewWithoutConfirmations() {
+      const { id } = await createQuote(db as never, ORG, "rep@nq");
+      const d = readyDraft();
+      for (const k of ["bulk_tank", "feeder", "concrete_slat", "feed_saver_mat"] as const) delete d.estimator.confirmedMappings[k];
+      await saveDraft(db as never, ORG, member, id, d);
+      const total = evaluateDraft(d, ctx).budget!.totals.subtotalExTax;
+      await sendToEstimator(db as never, ORG, member, "rep@nq", id, ctx, { confirmedAmountCents: Math.round(total * 100), confirmedBy: "Joe" });
+      return id;
+    }
+    it("the quotation reaches Estimator review and signs off with defaults only when the catalogue is intact", async () => {
+      const id = await inReviewWithoutConfirmations();
+      expect(await mapped(id)).not.toHaveProperty("bulk_tank");
+      await estimatorSignOff(db as never, ORG, member, "est@nq", id, ctx);
+      expect((await loadQuote(db as never, ORG, id))!.estimator_signoff_hash).not.toBeNull();
+    });
+    it("a default product that is inactive in the catalogue blocks sign-off and nothing is stamped", async () => {
+      const id = await inReviewWithoutConfirmations();
+      deactivate("SYSH-2750-3", false);
+      await expect(estimatorSignOff(db as never, ORG, member, "est@nq", id, ctx)).rejects.toThrow(/Cannot sign off: SYSH-2750-3 is inactive/);
+      expect((await loadQuote(db as never, ORG, id))!.estimator_signoff_hash).toBeNull();
+    });
+    it("a default product missing from the catalogue blocks sign-off", async () => {
+      const id = await inReviewWithoutConfirmations();
+      db.tables["products"] = db.rows("products").filter((p) => p.sku !== "ERT053");
+      await expect(estimatorSignOff(db as never, ORG, member, "est@nq", id, ctx)).rejects.toThrow(/ERT053 is not in the synced Cin7 catalogue/);
+    });
+  });
   it("a catalogue row belonging to ANOTHER organisation does not satisfy the check", async () => {
     const id = await inReview();
     for (const p of db.rows("products")) if (p.sku === "NQ1161") p.org_id = "org-other";
