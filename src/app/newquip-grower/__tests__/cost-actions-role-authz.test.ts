@@ -167,6 +167,20 @@ describe("the incomplete-costing WAIVER is reserved to a Manager, with evidence 
       delete quote().draft.estimator.costBasis.incompleteAccepted;
     }
   });
+  it("the audit row is NON-OPTIONAL: if its insert fails the acceptance fails closed, no waiver is stored", async () => {
+    await seeded(); as("mgr");
+    const before = JSON.stringify(quote());
+    const realFrom = db.from.bind(db);
+    const spy = vi.spyOn(db, "from").mockImplementation(((t: string) => {
+      const b = realFrom(t as never) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+      return t === "activity_log" ? { ...b, insert: async () => ({ data: null, error: { message: "audit down" } }) } : b;
+    }) as never);
+    const r = await cost.acceptIncompleteCostsAction("q1", REASON);
+    spy.mockRestore();
+    expect(r.ok).toBe(false); expect(r.error).toMatch(/audit record could not be written/);
+    expect(JSON.stringify(quote())).toBe(before);
+    expect(quote().draft.estimator.costBasis.incompleteAccepted).toBeUndefined();
+  });
   it("evidence is required: a missing or short reason is refused even for a Manager, and nothing is written", async () => {
     await seeded(); const before = snap(); as("mgr");
     for (const bad of ["", "   ", "short", "123456789"]) expect((await cost.acceptIncompleteCostsAction("q1", bad)).error).toMatch(/written reason/);
@@ -217,8 +231,6 @@ describe("saveGrowerDraftAction: field-level ownership of the costing fields (a 
   const CHANGES: Array<[string, (d: ReturnType<typeof stored>) => void]> = [
     ["costOverrides (add)", (d) => { d.estimator.costOverrides = { x: { lineCostCents: 1, reason: "sneaky override", by: "m", at: "t" } }; }],
     ["priceResolutions (add)", (d) => { d.estimator.priceResolutions = { y: { unitPriceExVat: 1, reason: "sneaky price", by: "m", at: "t" } }; }],
-    ["physicalCosts (change)", (d) => { const k = Object.keys(d.estimator.physicalCosts)[0]; d.estimator.physicalCosts[k] = { ...d.estimator.physicalCosts[k], unitCostCents: 1 }; }],
-    ["costBasis (forge a waiver)", (d) => { d.estimator.costBasis = { ...d.estimator.costBasis, incompleteAccepted: { reason: "forged", by: "m", at: "t" } }; }],
   ];
   for (const [name, change] of CHANGES) {
     it(`Rep+Manager changing ${name} is refused, the WHOLE save is refused, nothing is written`, async () => {
@@ -229,6 +241,35 @@ describe("saveGrowerDraftAction: field-level ownership of the costing fields (a 
       expect(snap()).toBe(before);
     });
   }
+  it("Rep+Manager submitting forged physicalCosts / a forged waiver: the save SUCCEEDS but the stored values (and no waiver) are untouched", async () => {
+    await seeded(); as("repmgr");
+    const costs = JSON.stringify(quote().draft.estimator.physicalCosts), basis = JSON.stringify(quote().draft.estimator.costBasis);
+    const d = stored(); const k = Object.keys(d.estimator.physicalCosts)[0];
+    d.estimator.physicalCosts[k] = { ...d.estimator.physicalCosts[k], unitCostCents: 1 };
+    d.estimator.costBasis = { ...d.estimator.costBasis, incompleteAccepted: { reason: "forged", by: "m", at: "t" } };
+    const r = await save(d);
+    expect(r.error).toBeUndefined();
+    expect(JSON.stringify(quote().draft.estimator.physicalCosts)).toBe(costs);
+    expect(JSON.stringify(quote().draft.estimator.costBasis)).toBe(basis);
+    expect(quote().draft.estimator.costBasis.incompleteAccepted).toBeUndefined();
+  });
+  it("a STALE draft copy (an Estimator changed the costs since) is accepted from Rep+Manager, stored costs untouched; a changed costOverride in the same save is still refused", async () => {
+    await seeded(); as("repmgr");
+    const stale = stored();
+    as("est"); expect((await cost.recalculateCostsAction("q1")).ok).toBe(true);
+    const k = Object.keys(quote().draft.estimator.physicalCosts)[0];
+    quote().draft.estimator.physicalCosts[k] = { ...quote().draft.estimator.physicalCosts[k], unitCostCents: 424242 };
+    quote().draft.estimator.costBasis = { ...quote().draft.estimator.costBasis, incompleteAccepted: { reason: "Estimator-side legacy value", by: "legacy@nq", at: "t" } };
+    const costs = JSON.stringify(quote().draft.estimator.physicalCosts), basis = JSON.stringify(quote().draft.estimator.costBasis);
+    as("repmgr");
+    expect((await save(stale)).error).toBeUndefined();
+    expect(JSON.stringify(quote().draft.estimator.physicalCosts)).toBe(costs);
+    expect(JSON.stringify(quote().draft.estimator.costBasis)).toBe(basis);
+    const before = snap();
+    stale.estimator.costOverrides = { x: { lineCostCents: 1, reason: "sneaky override", by: "m", at: "t" } };
+    expect((await save(stale)).error).toMatch(refusal);
+    expect(snap()).toBe(before);
+  });
   it("Rep+Manager REMOVING an existing override or price resolution is also refused", async () => {
     await seeded(); quote().draft.estimator.costOverrides = { x: { lineCostCents: 5000, reason: "supplier quote", by: "e@nq", at: "t" } };
     const before = snap(); as("repmgr");

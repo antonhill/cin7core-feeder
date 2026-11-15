@@ -11,7 +11,7 @@ import { canSeeCosts, resolveRoles } from "@/lib/approvals/role-store";
 import { toQuoteRoles } from "@/lib/approvals/roles";
 import { narrowTier } from "@/lib/approvals/role-switch-store";
 import { canAcceptIncompleteCosting, canMutateCosting, COSTING_DENIED, WAIVER_DENIED, WAIVER_REASON_MIN } from "@/newquip/quote/cost-authority";
-import { logActivity } from "@/lib/activity-log";
+import { logActivity, logActivityStrict } from "@/lib/activity-log";
 import { createServiceRoleClient } from "@/supabase/server";
 import { QUOTES_MODULE } from "@/app/module-nav";
 import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
@@ -125,15 +125,20 @@ export async function getQuoteCostEstimateAction(quoteId: string, unsavedDraft?:
 }
 
 /** One audited draft write. The draft changes, so the estimator's sign-off is withdrawn and the approval request follows the document. */
-async function writeDraftCosts(db: Db, a: Actor, quoteId: string, next: { physicalCosts?: Record<string, CostEntry>; costBasis?: CostBasis | undefined }, summary: string, action: string, detail: Record<string, unknown>) {
+async function writeDraftCosts(db: Db, a: Actor, quoteId: string, next: { physicalCosts?: Record<string, CostEntry>; costBasis?: CostBasis | undefined }, summary: string, action: string, detail: Record<string, unknown>, opts: { strictAudit?: boolean } = {}) {
   const q = await loadQuote(db, a.orgId, quoteId);
   if (!q) throw new Error("Quote not found.");
   if (q.state === "MANAGER_APPROVED_FINAL") throw new Error("The quotation is approved: its cost estimate is frozen and cannot be changed.");
+  // A strict audit (the incomplete-costing waiver) is written FIRST and must succeed: no stored waiver can exist without its audit row. A failed write fails the action before the draft changes.
+  if (opts.strictAudit) {
+    try { await logActivityStrict(db, { orgId: a.orgId, actor: { userId: a.userId, email: a.email }, action, summary: `${summary} (read-only against Cin7)`, detail: { quoteId, ...detail } }); }
+    catch { throw new Error("The audit record could not be written, so nothing was changed. Try again."); }
+  }
   const draft = structuredClone(q.draft);
   const physicalCosts = next.physicalCosts ?? draft.estimator.physicalCosts;
   const costBasis = "costBasis" in next ? next.costBasis : draft.estimator.costBasis;
   const saved = await saveDraft(db, a.orgId, rolesFor("admin"), quoteId, keepServerOwnedCostBasis(keepServerOwnedCosts(draft, physicalCosts), costBasis), undefined, { keepStoredPricing: true });
-  await logActivity(db, { orgId: a.orgId, actor: { userId: a.userId, email: a.email }, action, summary: `${summary} (read-only against Cin7)`, detail: { quoteId, ...detail } });
+  if (!opts.strictAudit) await logActivity(db, { orgId: a.orgId, actor: { userId: a.userId, email: a.email }, action, summary: `${summary} (read-only against Cin7)`, detail: { quoteId, ...detail } });
   // The same single helper as every draft writer: a changed commercial total withdraws the confirmation (a cost-only edit does not); a failed approval re-sync is audited, not swallowed.
   const amount = await reconcileConfirmationAmount(db, { orgId: a.orgId, userId: a.userId, email: a.email, isAdmin: true }, quoteId, evaluationContext(true),
     // The return is attributed to the capacity the server resolved for this writer (Estimator for costing, Manager for the waiver); the actor email is exact.
@@ -244,7 +249,7 @@ export async function acceptIncompleteCostsAction(quoteId: string, reason: strin
     const q = await loadQuote(db, a.orgId, quoteId);
     if (!q) throw new Error("Quote not found.");
     const now = new Date().toISOString();
-    await writeDraftCosts(db, a, quoteId, { costBasis: { ...(q.draft.estimator.costBasis ?? {}), incompleteAccepted: { reason: reason.trim(), by: a.email, at: now } } }, "Accepted an incomplete cost estimate for a NewQuip quotation", "newquip.incomplete_costs_accepted", { reason: reason.trim() });
+    await writeDraftCosts(db, a, quoteId, { costBasis: { ...(q.draft.estimator.costBasis ?? {}), incompleteAccepted: { reason: reason.trim(), by: a.email, at: now } } }, "Accepted an incomplete cost estimate for a NewQuip quotation", "newquip.incomplete_costs_accepted", { reason: reason.trim() }, { strictAudit: true });
     return { ok: true, data: null };
   } catch (e) { return { ok: false, error: msg(e) }; }
 }

@@ -26,29 +26,24 @@ export const WAIVER_DENIED = "Only a Manager who can see costs can accept an inc
 export const WAIVER_REASON_MIN = 10;
 
 /** Fields of the draft that are Estimator-owned costing. Mappings are deliberately NOT here: a Manager may decide them. */
-export const ESTIMATOR_COSTING_FIELDS = ["costOverrides", "priceResolutions", "physicalCosts", "costBasis"] as const;
+export const ESTIMATOR_COSTING_FIELDS = ["costOverrides", "priceResolutions"] as const;
 export type EstimatorCostingField = (typeof ESTIMATOR_COSTING_FIELDS)[number];
 
 const canon = (v: unknown): string => JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x as object).sort(([a], [b]) => (a < b ? -1 : 1))) : x));
-const isEmpty = (v: unknown): boolean => v === undefined || v === null || (typeof v === "object" && !Array.isArray(v) && Object.keys(v as object).length === 0);
 type Entry = { lineCostCents?: number; unitPriceExVat?: number; reason?: string };
 /** Overrides / resolutions compare by what they MEAN (amount and trimmed reason); the by/at stamps are server-owned and ignored. */
 const meaning = (m: unknown): string => canon(Object.fromEntries(Object.entries((m ?? {}) as Record<string, Entry | undefined>).filter(([, e]) => e).map(([k, e]) => [k, [e!.lineCostCents ?? null, e!.unitPriceExVat ?? null, (e!.reason ?? "").trim()]])));
 
 /**
- * Which Estimator-owned costing fields does the submitted draft CHANGE relative to the stored one? Fields resubmitted verbatim are unchanged (the Manager UI resubmits the
- * whole draft). physicalCosts and costBasis are server-owned and ignored on a save anyway, so an ABSENT submitted value is "not submitting", only a present, different one is a change.
+ * Which Estimator-owned costing fields does the submitted draft CHANGE relative to the stored one? Only costOverrides and priceResolutions, by amount and trimmed reason (the by/at
+ * stamps are server-owned). physicalCosts and costBasis are NOT compared: the server replaces both with the stored values on every save (keepServerOwnedCosts /
+ * keepServerOwnedCostBasis), so a stale client copy can neither change them nor be a reason to refuse the save.
  */
 export function changedCostingFields(submitted: QuoteDraft, prior: QuoteDraft | undefined): EstimatorCostingField[] {
   const s = submitted.estimator, p = prior?.estimator;
   const out: EstimatorCostingField[] = [];
   if (meaning(s.costOverrides) !== meaning(p?.costOverrides)) out.push("costOverrides");
   if (meaning(s.priceResolutions) !== meaning(p?.priceResolutions)) out.push("priceResolutions");
-  for (const k of ["physicalCosts", "costBasis"] as const) {
-    if (s[k] === undefined) continue;
-    if (isEmpty(s[k]) && isEmpty(p?.[k])) continue;
-    if (canon(s[k]) !== canon(p?.[k])) out.push(k);
-  }
   return out;
 }
 

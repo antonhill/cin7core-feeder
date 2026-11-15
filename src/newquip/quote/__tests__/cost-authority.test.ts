@@ -36,29 +36,29 @@ describe("changedCostingFields / costingSaveRefusal", () => {
     (s.estimator.costOverrides as never as Record<string, { by: string }>).a.by = "someone else";
     expect(changedCostingFields(s, p)).toEqual([]);
   });
-  it("absent physicalCosts / costBasis in the submission is not a change (server-owned, ignored on save); empty equals absent", () => {
-    const p = base(), s = structuredClone(p); delete s.estimator.physicalCosts; delete s.estimator.costBasis;
+  it("physicalCosts and costBasis are not compared at all (server-owned; a stale copy is not a change)", () => {
+    const p = base(), s = structuredClone(p);
+    (s.estimator.physicalCosts as never as Record<string, { unitCostCents: number }>).S.unitCostCents = 6;
+    s.estimator.costBasis = { incompleteAccepted: { reason: "r", by: "m", at: "t" } };
+    expect(changedCostingFields(s, p)).toEqual([]);
+    delete s.estimator.physicalCosts; delete s.estimator.costBasis;
     expect(changedCostingFields(s, p)).toEqual([]);
     expect(changedCostingFields(emptyDraft(), undefined)).toEqual([]);
   });
-  it("detects each protected field", () => {
+  it("detects costOverrides and priceResolutions", () => {
     const p = base();
     const o = structuredClone(p); (o.estimator.costOverrides as never as Record<string, { lineCostCents: number }>).a.lineCostCents = 1;
     const r = structuredClone(p); r.estimator.priceResolutions = { k: { unitPriceExVat: 1, reason: "x", by: "m", at: "t" } } as never;
-    const c = structuredClone(p); (c.estimator.physicalCosts as never as Record<string, { unitCostCents: number }>).S.unitCostCents = 6;
-    const b = structuredClone(p); b.estimator.costBasis = { incompleteAccepted: { reason: "r", by: "m", at: "t" } };
     expect(changedCostingFields(o, p)).toEqual(["costOverrides"]);
     expect(changedCostingFields(r, p)).toEqual(["priceResolutions"]);
-    expect(changedCostingFields(c, p)).toEqual(["physicalCosts"]);
-    expect(changedCostingFields(b, p)).toEqual(["costBasis"]);
   });
   it("mapping changes are never costing changes", () => {
     const p = base(), s = structuredClone(p); s.estimator.confirmedMappings = { x: { sku: "Z" } } as never;
     expect(changedCostingFields(s, p)).toEqual([]);
   });
   it("only a manager-without-estimator session is refused", () => {
-    const p = base(), s = structuredClone(p); s.estimator.costBasis = { incompleteAccepted: { reason: "r", by: "m", at: "t" } };
-    expect(costingSaveRefusal(R("manager"), s, p)).toMatch(/costBasis/);
+    const p = base(), s = structuredClone(p); s.estimator.priceResolutions = { k: { unitPriceExVat: 1, reason: "x", by: "m", at: "t" } } as never;
+    expect(costingSaveRefusal(R("manager"), s, p)).toMatch(/priceResolutions/);
     expect(costingSaveRefusal(R("rep", "manager"), s, p)).toMatch(/Only an Estimator/);
     expect(costingSaveRefusal(R("estimator"), s, p)).toBeNull();
     expect(costingSaveRefusal(R("estimator", "manager"), s, p)).toBeNull();
