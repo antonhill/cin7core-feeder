@@ -75,6 +75,9 @@ describe("FakeDb newquip_apply_pricing_revision == the real function's contract 
     expect((await call(id, 1, "k1", "k2", price(110, "a@x"), rv("a@x"), "a@x")).error?.message).toMatch(/cannot be verified by the person who entered it/);
     expect((await call(id, 1, "k1", "k2", price(110, "a@x"), rv("m@x"), "someone.else@x")).error?.message).toMatch(/must be recorded by the reviewer/);
     expect((await call(id, 1, "k1", "k2", price(110, "a@x"), rv("m@x", 111), "m@x")).error?.message).toMatch(/changed cost cannot carry a review/);
+    const withZ = { skus: { ...price(110, "a@x").skus, Z: { nativeUnitCostE7: 5, currency: "EUR", by: "a@x", at: "t", review: { by: "m@x", at: "t", evidence: "e", inputHash: "h" } } } };
+    expect((await call(id, 1, "k1", "k2", price(110, "a@x"), withZ, "m@x")).error?.message).toMatch(/review cannot be recorded for a new cost/);
+    expect((await call(id, 1, "k1", "k2", price(110, "a@x"), rv("m@x", 110, { by: "c@x" }), "m@x")).error?.message).toMatch(/review cannot be recorded together with a change to the cost/);
     expect((await call(id, 1, "k1", "k2", price(110, "a@x"), rv("m@x"), "m@x")).error).toBeNull();
     const reviewed = rv("m@x");
     expect((await call(id, 2, "k2", "k3", reviewed, { skus: { X: { ...reviewed.skus.X, currency: "USD" } } }, "a@x")).error?.message).toMatch(/changed cost cannot carry a review/);

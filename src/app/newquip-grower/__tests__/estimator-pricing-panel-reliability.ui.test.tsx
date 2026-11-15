@@ -324,6 +324,30 @@ describe("another estimator changed the stored pricing: rebase, conflicts, and a
     expect(base).toBeNull();
     expect(sent.skus.PNQ082.nativeUnitCostE7).toBe(615_000_000);
   });
+  it("pricing switched off elsewhere while the user typed NOTHING: the panel simply shows pricing off (no draft, no re-enable notice, nothing unsaved)", async () => {
+    const r = await mount(bundle(stored()), { refreshKey: "h1" });
+    const offView = buildPricingWorkspace({ quoteType: "project", pricing: undefined, budget: evalOf(readyDraft()).budget, originalTotalCents: 860_954_240, originalCapturedAt: "2026-11-12T08:00:00.000Z", nowIso: "2026-11-12T09:00:00.000Z" });
+    get.mockResolvedValue({ ok: true, data: { ...bundle(stored()), view: offView, current: null } });
+    r.rerender(createElement(EstimatorPricingPanel, { quoteId: "q1", refreshKey: "h2" }));
+    await waitFor(() => expect(screen.getByText(/Off: priced from the POC workbook/)).toBeTruthy());
+    expect(screen.queryByTestId("switched-off-elsewhere")).toBeNull();
+    expect(screen.queryByTestId("unsaved-banner")).toBeNull();
+    expect(screen.getByTestId("pricing-save").textContent).toBe("Switch on supplier pricing");
+  });
+  it("the 're-enable' notice is not shown to a viewer who has no Save (read-only)", async () => {
+    const r = await mount(bundle(stored()), { refreshKey: "h1" });
+    typeIn("PNQ082 supplier cost", "61.5");
+    const offView = buildPricingWorkspace({ quoteType: "project", pricing: undefined, budget: evalOf(readyDraft()).budget, originalTotalCents: 860_954_240, originalCapturedAt: "2026-11-12T08:00:00.000Z", nowIso: "2026-11-12T09:00:00.000Z" });
+    get.mockResolvedValue({ ok: true, data: { ...bundle(stored()), view: offView, current: null } });
+    r.rerender(createElement(EstimatorPricingPanel, { quoteId: "q1", refreshKey: "h2", editable: false }));
+    await waitFor(() => expect(screen.getByText(/Off: priced from the POC workbook/)).toBeTruthy());
+    expect(screen.queryByTestId("switched-off-elsewhere")).toBeNull();
+    expect(screen.queryByTestId("pricing-save")).toBeNull();
+  });
+  it("Switch off says it discards verifications, attestations and evidence", async () => {
+    await mount(bundle(stored()));
+    expect(screen.getByTestId("off-discards").textContent).toMatch(/discards the verifications, attestations and evidence/);
+  });
   it("a keystroke committed in the same tick as a page re-read is never lost by the rebase (the draft ref is assigned synchronously)", async () => {
     const r = await mount(bundle(stored()), { refreshKey: "h1" });
     const el = field("PNQ082 supplier cost");

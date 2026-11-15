@@ -73,9 +73,10 @@ export function applyEstimatorPricing(
     // NO SILENT OVERWRITE. When the caller says what its edits were based on (`base`; null = pricing was off), the submission is merged field by field onto what is stored NOW: fields the user did
     // not touch take the current stored values, and a field both sides changed differently refuses the whole save (nothing written). Without a base the submission is applied as it always was.
     // A SWITCH-OFF is conflict-aware too: refused when the stored pricing is no longer what the user saw.
-    if (!submission && base && prior && canEnterPricingInputs(viewer)) {
-      const ch = changedUnits(base, submissionFrom(prior));
-      if (ch.length > 0) return { ok: false, errors: ["The supplier pricing changed since you loaded it, so it was not switched off. Nothing was saved. Reload to review."], conflicts: [{ key: "pricing", label: "supplier pricing" }] };
+    // A null base means "pricing was OFF when loaded": switching off pricing that is ON now is therefore stale. (An undefined base never reaches here from the actions: it is refused there.)
+    // Concurrent Manager verifications / attestations / evidence are deliberately not conflicts: a switch-off discards them with the pricing.
+    if (!submission && base !== undefined && prior && canEnterPricingInputs(viewer)) {
+      if (base === null || changedUnits(base, submissionFrom(prior)).length > 0) return { ok: false, errors: ["The supplier pricing was switched on or changed since you loaded it, so it was not switched off. Nothing was saved. Reload to review. (Switching off discards the verifications, attestations and evidence recorded on it.)"], conflicts: [{ key: "pricing", label: "supplier pricing" }] };
     }
     if (submission && base !== undefined && canEnterPricingInputs(viewer)) {
       const baseSub = base ?? emptySubmission(submission.ruleVersionId);

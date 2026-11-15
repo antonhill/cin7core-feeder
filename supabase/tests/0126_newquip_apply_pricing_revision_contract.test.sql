@@ -36,7 +36,7 @@ select pg_temp.ap('00000000-0000-0000-0000-0000000127c1', 0, 'k0', 'k1', null, p
 do $$ begin
   if (select count(*) from newquip_pricing_revisions where quote_id = '00000000-0000-0000-0000-0000000127c1') <> 1 then raise exception 'one revision expected'; end if;
   if (select draft_hash from newquip_quotes where quote_ref = 'CT-1') <> 'k1' then raise exception 'draft hash must advance'; end if;
-  if (select draft #>> '{estimator,pricing,skus,X,nativeUnitCostE7}' from newquip_quotes where quote_ref = 'CT-1') <> '100' then raise exception 'the new draft must be stored'; end if;
+  if (select draft #>> '{estimator,pricing,skus,X,nativeUnitCostE7}' from newquip_quotes where quote_ref = 'CT-1') is distinct from '100' then raise exception 'the new draft must be stored'; end if;
   if (select estimator_signoff_hash from newquip_quotes where quote_ref = 'CT-1') is not null then raise exception 'sign-off must be withdrawn in the same transaction'; end if;
   if (select changed_by_email from newquip_pricing_revisions where quote_id = '00000000-0000-0000-0000-0000000127c1') <> 'b@x' then raise exception 'who must be recorded'; end if;
 end $$;
@@ -54,7 +54,7 @@ end $$;
 -- 2d. a save based on the CURRENT hash and seq (what the application's merge produces after re-reading) succeeds
 select pg_temp.ap('00000000-0000-0000-0000-0000000127c1', 1, 'k1', 'k2', pg_temp.price(100, 'b@x'), pg_temp.price(110, 'a@x'), 'a@x');
 do $$ begin
-  if (select array_agg(seq order by seq) from newquip_pricing_revisions where quote_id = '00000000-0000-0000-0000-0000000127c1') <> array[1, 2] then raise exception 'seq must be 1 then 2'; end if;
+  if (select array_agg(seq order by seq) from newquip_pricing_revisions where quote_id = '00000000-0000-0000-0000-0000000127c1') is distinct from array[1, 2] then raise exception 'seq must be 1 then 2'; end if;
 end $$;
 
 -- 3. A non-pricing draft change under a pricing revision is refused (only estimator.pricing may differ)
@@ -72,6 +72,11 @@ select pg_temp.expect_denied($q$select pg_temp.ap('00000000-0000-0000-0000-00000
   '{"skus":{"X":{"nativeUnitCostE7":110,"currency":"EUR","by":"a@x","at":"t","review":{"by":"m@x","at":"t","evidence":"e","inputHash":"h"}}}}'::jsonb, 'someone.else@x')$q$, 'reviewer != the person recording', 'must be recorded by the reviewer');
 select pg_temp.expect_denied($q$select pg_temp.ap('00000000-0000-0000-0000-0000000127c1', 2, 'k2', 'k3', pg_temp.price(110, 'a@x'),
   '{"skus":{"X":{"nativeUnitCostE7":111,"currency":"EUR","by":"a@x","at":"t","review":{"by":"m@x","at":"t","evidence":"e","inputHash":"h"}}}}'::jsonb, 'm@x')$q$, 'review on a changed cost', 'review cannot be recorded together with a change|a changed cost cannot carry a review');
+-- a review for a NEW cost, and a review recorded together with a change to the entrant of the cost, are refused
+select pg_temp.expect_denied($q$select pg_temp.ap('00000000-0000-0000-0000-0000000127c1', 2, 'k2', 'k3', pg_temp.price(110, 'a@x'),
+  '{"skus":{"X":{"nativeUnitCostE7":110,"currency":"EUR","by":"a@x","at":"t"},"Z":{"nativeUnitCostE7":5,"currency":"EUR","by":"a@x","at":"t","review":{"by":"m@x","at":"t","evidence":"e","inputHash":"h"}}}}'::jsonb, 'm@x')$q$, 'review for a new cost', 'review cannot be recorded for a new cost');
+select pg_temp.expect_denied($q$select pg_temp.ap('00000000-0000-0000-0000-0000000127c1', 2, 'k2', 'k3', pg_temp.price(110, 'a@x'),
+  '{"skus":{"X":{"nativeUnitCostE7":110,"currency":"EUR","by":"c@x","at":"t","review":{"by":"m@x","at":"t","evidence":"e","inputHash":"h"}}}}'::jsonb, 'm@x')$q$, 'review together with a change to the cost entrant', 'review cannot be recorded together with a change to the cost');
 -- a genuine independent review of the unchanged entry is accepted; a LATER change of that cost (a merged save that touched it) must drop the review
 select pg_temp.ap('00000000-0000-0000-0000-0000000127c1', 2, 'k2', 'k3', pg_temp.price(110, 'a@x'),
   '{"skus":{"X":{"nativeUnitCostE7":110,"currency":"EUR","by":"a@x","at":"t","review":{"by":"m@x","at":"t","evidence":"e","inputHash":"h"}}}}'::jsonb, 'm@x');

@@ -79,7 +79,6 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = tru
   const [readError, setReadError] = useState<string | null>(null);
   const [confirmReload, setConfirmReload] = useState(false);
   const [switchedOff, setSwitchedOff] = useState(false); // someone else switched supplier pricing off while this draft was open
-  useEffect(() => { draftRef.current = draft; }, [draft]);
   const blankDraft = (): Draft => ({ ruleVersionId: LEGACY_RULE_VERSION.id, skus: {}, fxQuotes: {}, forwardCover: {}, skuPriceOverrides: {}, projectMarkup: null, targetAdjustment: null });
   /** Resolves true when the read succeeded (or was superseded by a newer one); NEVER rejects: a failed read leaves the draft exactly as it was and is reported by `readError` / `error`. */
   const load = useCallback((mode: "replace" | "rebase" = "replace"): Promise<boolean> => {
@@ -92,14 +91,16 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = tru
       const fresh = r.data;
       const storedNow: Draft = fresh.current ?? blankDraft();
       const d0 = draftRef.current, b0 = baseRef.current;
-      if (mode === "rebase" && d0 && b0 && fresh.current == null && !baseOff.current) {
+      // With NO local changes there is nothing to keep: the panel simply shows pricing as it is now (off), never a draft that is one click from re-enabling what someone deliberately switched off.
+      const hasLocal = !!d0 && !!b0 && changedOwners(b0, d0).length > 0;
+      if (mode === "rebase" && d0 && b0 && fresh.current == null && !baseOff.current && hasLocal) {
         // Pricing was switched OFF elsewhere. Nothing the user typed is lost: the whole draft is kept as THEIR values (the base becomes "off", so all of it counts as unsaved) and Save switches pricing back on with it.
         const nb = blankDraft(); nb.ruleVersionId = d0.ruleVersionId;
         baseOff.current = true; baseRef.current = nb; setBase(nb); setSwitchedOff(true);
         bRef.current = fresh; setB(fresh);
         return true;
       }
-      if (mode === "rebase" && d0 && b0) {
+      if (mode === "rebase" && d0 && b0 && !(fresh.current == null && !hasLocal)) {
         const m = mergePricing(b0, fresh.current ?? emptySubmission(d0.ruleVersionId), d0);
         const nextBase = structuredClone(storedNow); for (const c of m.conflicts) copyUnit(nextBase, b0, c.key); // a conflicting unit keeps its OLD base until the user resolves it
         baseRef.current = nextBase; setBase(nextBase);
@@ -229,7 +230,7 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = tru
         <Status tone={v.enabled ? (v.finality.final ? "success" : "warning") : "neutral"}>{v.enabled ? (v.finality.final ? `On · revision ${v.revision}` : `On · indicative only · revision ${v.revision}`) : "Off: priced from the POC workbook"}</Status>
       </div>
       {readError && <Alert tone="warning"><div className="flex flex-wrap items-center gap-2"><span data-testid="pricing-read-error">{readError}</span><Button variant="secondary" size="sm" onClick={() => void load("rebase")} data-testid="pricing-read-retry">Try again</Button></div></Alert>}
-      {switchedOff && !v.enabled && <Alert tone="warning"><span data-testid="switched-off-elsewhere">Supplier pricing was switched off by someone else while you were editing. Your values are kept as a draft: Save will switch supplier pricing back on with your values, or Discard changes to leave it off.</span></Alert>}
+      {switchedOff && !v.enabled && edit && <Alert tone="warning"><span data-testid="switched-off-elsewhere">Supplier pricing was switched off by someone else while you were editing. Your values are kept as a draft: Save will switch supplier pricing back on with your values, or Discard changes to leave it off.</span></Alert>}
       {unsavedCount > 0 && edit && (
         <div className="rounded-md border-2 border-amber-600 bg-amber-50 p-3" role="status" data-testid="unsaved-banner">
           <div className="flex flex-wrap items-center gap-2">
@@ -415,6 +416,7 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = tru
           <div className="flex flex-wrap gap-2">
             <Button size="sm" onClick={() => void save()} disabled={busy || unsaved || reason.trim().length < 3 || Object.keys(costProblems).length > 0 || conflicts.length > 0} loading={busy} data-testid="pricing-save">{v.enabled ? "Save pricing revision" : "Switch on supplier pricing"}</Button>
             {v.enabled && <Button size="sm" variant="secondary" onClick={off} disabled={busy || unsaved || unsavedCount > 0 || reason.trim().length < 3} data-testid="pricing-off">Switch off (back to POC prices)</Button>}
+            {v.enabled && <span className="self-center text-xs text-slate-900" data-testid="off-discards">Switching off discards the verifications, attestations and evidence recorded on the pricing.</span>}
             {v.enabled && unsavedCount > 0 && <span className="self-center text-xs text-slate-900" data-testid="off-blocked">{unsavedMsg(unsavedCount)}</span>}
           </div>
           <p className="text-xs text-slate-700">Saving withdraws any Estimator sign-off. If the customer-facing total changes, the Rep&apos;s confirmation is withdrawn and the quotation returns to the Rep to reconfirm; the amount the Rep confirmed at handoff is kept as it was.</p>

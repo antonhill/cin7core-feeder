@@ -128,6 +128,24 @@ describe("a baseless call can never be last-write-wins (base is required)", () =
   });
 });
 
+describe("a switch-off is conflict-aware: null base means 'pricing was off when loaded'", () => {
+  it("null base + pricing ON now: refused with a plain message that says what a switch-off discards, nothing written; null base + pricing off: not a conflict; an unchanged non-null base: allowed", async () => {
+    const id = await inReview();
+    actor = EST();
+    const offBefore = await state(id);
+    const noop = await actions.disableEstimatorPricingAction(id, "Off", null);
+    expect(noop.ok).toBe(false);
+    expect(noop.error).not.toMatch(/switched on or changed/); // pricing is off: the usual "not switched on" answer, not a conflict
+    expect(await state(id)).toEqual(offBefore);
+    await actions.applyEstimatorPricingAction(id, submissionOf(), "Initial supplier pricing", null);
+    const on = await state(id);
+    const r = await actions.disableEstimatorPricingAction(id, "Off", null);
+    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/switched on or changed since you loaded it.*discards the verifications, attestations and evidence/), conflicts: [expect.objectContaining({ key: "pricing" })] });
+    expect(await state(id)).toEqual(on);
+    expect((await actions.disableEstimatorPricingAction(id, "Off", submissionOf())).ok).toBe(true);
+  });
+});
+
 describe("preserved through the same server actions", () => {
   it("the Estimator enters; the Manager-only session reads the workspace (canEdit false) and independently verifies; the Estimator cannot verify their own cost", async () => {
     const id = await inReview();
