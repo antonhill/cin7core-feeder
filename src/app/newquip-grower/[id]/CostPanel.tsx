@@ -38,6 +38,8 @@ export interface CostPanelBodyProps {
   onSelect?: (sku: string, supplier: { supplierId: string | null; supplierName: string | null }, reason: string) => void;
   onRecalculate?: () => void; onRecordFx?: (currency: string, rate: string, source: string, asOfIso: string) => void;
   onConfirmUnit?: (reason: string) => void; onAcceptIncomplete?: (reason: string) => void;
+  /** The viewer's roles. When given, the legacy cost mutations (capture, supplier choice, recalculation, exchange rates, manual estimates, unit basis) are offered only to an Estimator and the incomplete-costing waiver only to a Manager, matching what the server accepts; others see a read-only note. Omitted: every control the server allows this viewer (previous behaviour). */
+  roles?: { estimator: boolean; manager: boolean };
 }
 
 /** A datetime-local keeps focus on its inner segments, so the host never matches :focus-visible and showed only the browser's segment highlight: the ring follows :focus-within instead (same ring as the app-wide rule). */
@@ -102,7 +104,7 @@ function exceptionText(x: UnitException): string {
   return `${who}: ${x.message}`;
 }
 
-function Declarations({ v, busy, onConfirmUnit, onAcceptIncomplete }: { v: QuoteCostView; busy: boolean; onConfirmUnit?: CostPanelBodyProps["onConfirmUnit"]; onAcceptIncomplete?: CostPanelBodyProps["onAcceptIncomplete"] }) {
+function Declarations({ v, busy, onConfirmUnit, onAcceptIncomplete, waiverNote }: { waiverNote?: boolean; v: QuoteCostView; busy: boolean; onConfirmUnit?: CostPanelBodyProps["onConfirmUnit"]; onAcceptIncomplete?: CostPanelBodyProps["onAcceptIncomplete"] }) {
   const [unitReason, setUnitReason] = useState(""); const [exception, setException] = useState("");
   const uid = useId();
   const us = deriveUnitStatus(v.skuOptions);
@@ -133,6 +135,7 @@ function Declarations({ v, busy, onConfirmUnit, onAcceptIncomplete }: { v: Quote
         {v.incompleteAccepted ? <div className="text-slate-700">Exception accepted by {v.incompleteAccepted.by} ({formatSast(v.incompleteAccepted.at)}): {v.incompleteAccepted.reason}</div> : (
           <>
             <div className="text-slate-600">Approval is refused while a captured estimate is incomplete, unless an authorised exception is recorded.</div>
+            {waiverNote && !onAcceptIncomplete && !v.frozen && <div className="mt-1 text-slate-700" data-testid="waiver-manager-only">Only a Manager can record an incomplete-costing exception.</div>}
             {onAcceptIncomplete && !v.frozen && (
               <><div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-end"><div className="min-w-0 max-w-2xl flex-1"><Input label="Exception reason (required)" value={exception} onChange={(e) => setException(e.target.value)} /></div><Button size="sm" className="min-h-11" variant="secondary" disabled={busy || exception.trim().length < 10} aria-describedby={exceptionWhy ? `${uid}-exception-why` : undefined} onClick={() => onAcceptIncomplete(exception)}>Record exception</Button></div>
               <DisabledReason id={`${uid}-exception-why`}>{exceptionWhy}</DisabledReason></>
@@ -149,13 +152,16 @@ export function CostPanelBody(p: CostPanelBodyProps) {
   const e = v?.estimate ?? null;
   const noSkus = !!v && !v.frozen && (!e || e.lines.length === 0);
   const stale = !!v && Object.values(v.skuOptions).some((o) => o.needsRecalculation);
+  const canEstimate = p.roles ? p.roles.estimator : true; // legacy cost mutations: Estimator only
+  const canWaive = p.roles ? p.roles.manager : true; // the incomplete-costing waiver: Manager only
   return (
     <Panel>
       <div className="flex flex-wrap items-center gap-2">
         <PanelTitle>Cin7 latest cost - capture and margin (physical SKUs)</PanelTitle>
         {v && (v.frozen ? <Status tone="info">Frozen with the approval</Status> : <Status tone="neutral">Draft</Status>)}
       </div>
-      {v?.canCapture && (
+      {v && !v.frozen && !canEstimate && <p className="mt-2 text-xs text-slate-700" data-testid="cost-readonly-note">Read-only for you: capturing Cin7 costs, choosing suppliers, manual estimates, the unit basis and exchange rates are recorded by an Estimator.</p>}
+      {v?.canCapture && canEstimate && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <Button size="sm" className="min-h-11" disabled={busy || noSkus} loading={busy} onClick={() => p.onCapture(false)}>Capture latest costs from Cin7</Button>
           {noSkus && <span className="text-xs text-amber-700">No physical SKUs yet: map the packages to Cin7 SKUs in the physical scope first, then capture.</span>}
@@ -175,10 +181,10 @@ export function CostPanelBody(p: CostPanelBodyProps) {
       {p.busyLabel && <PendingNotice label={p.busyLabel} />}
       {note && <div className="mt-2"><Alert tone="success">{note}</Alert></div>}
       {stale && (
-        <div className="mt-2 flex flex-wrap items-center gap-2"><Alert tone="warning">An exchange rate or declaration has changed since these costs were captured.</Alert>{p.onRecalculate && <Button size="sm" className="min-h-11" variant="secondary" disabled={busy} onClick={p.onRecalculate}>Recalculate with current rates</Button>}</div>
+        <div className="mt-2 flex flex-wrap items-center gap-2"><Alert tone="warning">An exchange rate or declaration has changed since these costs were captured.</Alert>{p.onRecalculate && canEstimate && <Button size="sm" className="min-h-11" variant="secondary" disabled={busy} onClick={p.onRecalculate}>Recalculate with current rates</Button>}</div>
       )}
-      {v && !v.frozen && <FxForm v={v} busy={busy} onRecordFx={p.onRecordFx} />}
-      {v && <Declarations v={v} busy={busy} onConfirmUnit={p.onConfirmUnit} onAcceptIncomplete={p.onAcceptIncomplete} />}
+      {v && !v.frozen && <FxForm v={v} busy={busy} onRecordFx={canEstimate ? p.onRecordFx : undefined} />}
+      {v && <Declarations v={v} busy={busy} onConfirmUnit={canEstimate ? p.onConfirmUnit : undefined} onAcceptIncomplete={canWaive ? p.onAcceptIncomplete : undefined} waiverNote={!!p.roles} />}
       {v && (!e || e.lines.length === 0 ? <p className="mt-2 text-sm text-slate-600">{v.frozen ? "No physical costs were captured before approval." : "No physical SKUs yet - resolve the package mappings first."}</p> : (
         <div className="mt-3 overflow-x-auto">
           <table className="w-full text-sm">
@@ -190,7 +196,7 @@ export function CostPanelBody(p: CostPanelBodyProps) {
                 return (
                   <tr key={l.sku} className="border-t border-slate-100 align-top">
                     <td className="py-1 pr-3"><span className="font-medium">{l.sku}</span><div className="text-xs text-slate-600">{l.description}</div>
-                      {multi && (v.canCapture || !v.frozen) && <SupplierChooser sku={l.sku} opts={so!.options} selectedKey={so!.selection ? `${so!.selection.supplierId ?? ""}|${so!.selection.supplierName ?? ""}` : null} busy={busy} onSelect={v.canCapture ? p.onSelect : undefined} />}
+                      {multi && (v.canCapture || !v.frozen) && <SupplierChooser sku={l.sku} opts={so!.options} selectedKey={so!.selection ? `${so!.selection.supplierId ?? ""}|${so!.selection.supplierName ?? ""}` : null} busy={busy} onSelect={v.canCapture && canEstimate ? p.onSelect : undefined} />}
                     </td>
                     <td className="pr-3 text-right tabular-nums">{l.quantity}</td>
                     <td className="pr-3 text-xs">{l.supplier ?? "-"}{so?.selection ? <div className="text-slate-600">{so.selection.method === "AUTO_SINGLE" ? "automatic (only supplier)" : so.selection.method === "PREFERRED" ? "preferred supplier" : `chosen by estimator${so.selection.reason ? `: ${so.selection.reason}` : ""}`}</div> : null}{!so && l.basis ? <div className="text-slate-600">{l.basis.selectionMethod === "AUTO_SINGLE" ? "automatic (only supplier)" : l.basis.selectionMethod === "PREFERRED" ? "preferred supplier" : "chosen by estimator"}</div> : null}</td>
@@ -198,7 +204,7 @@ export function CostPanelBody(p: CostPanelBodyProps) {
                     <td className="whitespace-nowrap pr-3 text-right tabular-nums">{l.unitCostCents === null ? <Status tone="danger">Missing cost</Status> : fmtCents(l.unitCostCents)}</td>
                     <td className="whitespace-nowrap pr-3 text-right tabular-nums">{l.totalCostCents === null ? "-" : fmtCents(l.totalCostCents)}</td>
                     <td className="pr-3 text-xs">{l.status === "LATEST" ? "Cin7 supplier price" : l.status === "MANUAL" ? <span title={l.reason ?? ""}>Manual estimate: {l.reason}</span> : <span className="text-amber-700">{(l.issue && ISSUE[l.issue]) ?? "No cost"}{so?.message ? ` - ${so.message}` : ""}</span>}{l.retrievedAt ? <div className="text-slate-600">read {formatSast(l.retrievedAt)}</div> : null}</td>
-                    <td>{v.canCapture && (l.status === "MISSING" || l.status === "MANUAL") && (l.status === "MANUAL"
+                    <td>{v.canCapture && canEstimate && (l.status === "MISSING" || l.status === "MANUAL") && (l.status === "MANUAL"
                       ? <Button size="sm" className="min-h-11" variant="secondary" disabled={busy} onClick={() => p.onClearManual(l.sku)}>Remove</Button>
                       : <Button size="sm" className="min-h-11" variant="secondary" disabled={busy} onClick={() => p.onStartManual(l.sku)}>Add manual estimate</Button>)}</td>
                   </tr>
@@ -228,7 +234,7 @@ export function CostPanelBody(p: CostPanelBodyProps) {
   );
 }
 
-export function CostPanel({ quoteId, reload, unsaved, previewDraft }: { quoteId: string; reload?: () => void; unsaved?: boolean; previewDraft?: QuoteDraft | null }) {
+export function CostPanel({ quoteId, reload, unsaved, previewDraft, roles }: { quoteId: string; reload?: () => void; unsaved?: boolean; previewDraft?: QuoteDraft | null; roles?: { estimator: boolean; manager: boolean } }) {
   const [v, setV] = useState<QuoteCostView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -270,7 +276,7 @@ export function CostPanel({ quoteId, reload, unsaved, previewDraft }: { quoteId:
   };
   return (
     <CostPanelBody
-      v={v} loading={!v && !error} error={error} note={note} busy={busy} busyLabel={busyLabel} manual={manual} unsaved={unsaved}
+      v={v} loading={!v && !error} error={error} note={note} busy={busy} busyLabel={busyLabel} manual={manual} unsaved={unsaved} roles={roles}
       onRetry={() => { setError(null); load(); }}
       onCapture={(replace) => run(() => captureLatestCostsAction(quoteId, { replaceSelections: !!replace }), "Supplier prices read from Cin7 (read-only). Select a supplier where asked. The estimator's sign-off, if any, must be given again on the new costs.", OP.fetchCin7Costs)}
       onSelect={(sku, s, reason) => run(() => selectSupplierAction(quoteId, sku, s, reason), "Supplier selected and recorded.", OP.saveSupplier)}

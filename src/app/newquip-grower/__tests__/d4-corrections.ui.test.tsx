@@ -59,9 +59,9 @@ async function storedQuote() {
   return id;
 }
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
-async function open(stage = "2", state?: string) {
+async function open(stage = "2", state?: string, withManager = false) {
   (globalThis as { __STAGE?: string }).__STAGE = stage;
-  asRoles("REP", "ESTIMATOR");
+  if (withManager) asRoles("REP", "ESTIMATOR", "MANAGER"); else asRoles("REP", "ESTIMATOR");
   vi.mocked(canSeeCosts).mockResolvedValue(true);
   const id = await storedQuote();
   // UX-006i2: the costing steps open once the Rep has submitted (they are locked on a Rep draft), so the cost-panel checks run on a quotation in Estimator review.
@@ -91,7 +91,7 @@ describe("D4 corrections on the Solution Builder quote page", () => {
   }, 30000);
 
   it("F-07: the unit / exception declarations stack below sm and their cards may shrink, so a phone does not scroll sideways", async () => {
-    await open("2", "ESTIMATOR_REVIEW");
+    await open("2", "ESTIMATOR_REVIEW", true); // the incomplete-costing waiver ("Record exception") is the Manager's, so this layout check needs a viewer who holds it
     await screen.findByText("Unit of measure", {}, { timeout: 8000 });
     const rows = ["Confirm per stock unit", "Record exception"].map((n) => screen.queryByRole("button", { name: n })?.parentElement).filter(Boolean) as HTMLElement[];
     expect(rows.length).toBeGreaterThan(0);

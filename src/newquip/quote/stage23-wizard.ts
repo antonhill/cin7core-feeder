@@ -46,6 +46,8 @@ export interface Stage2WizardInput {
   /** The SERVER's costing verdict (QuoteView.costing, cost-entitled callers only): when not complete the Costs step needs attention with its reason and sign-off is refused. */
   costingIncomplete?: boolean;
   costingReason?: string | null;
+  /** NQ-008B Phase 2 supplier pricing is on: the costing wording comes from the supplier-pricing state, not the legacy Cin7 cost capture. */
+  supplierPricing?: boolean;
   /** Optional one-line summary of the open Estimator items by kind ("3 lines unmapped · 2 supplier quotes required"), used as the mapping step note. */
   mappingSummary?: string;
 }
@@ -61,7 +63,7 @@ export interface StageWizard<I extends string> extends Omit<Wizard<I>, "nextOwne
 export interface FinalReviewItem { id: "mapping" | "ready" | "costing" | "amount" | "saved"; label: string; met: boolean; detail: string | null }
 
 /** The compact readiness checklist of the Final review step. Facts only; the buttons keep their own gates. */
-export function deriveFinalReviewChecklist(i: Pick<Stage2WizardInput, "mappingOpen" | "readiness" | "cost" | "confirmedCents" | "totalCents" | "dirty" | "calcValid" | "costMissingLines" | "costingIncomplete" | "costingReason">): FinalReviewItem[] {
+export function deriveFinalReviewChecklist(i: Pick<Stage2WizardInput, "mappingOpen" | "readiness" | "cost" | "confirmedCents" | "totalCents" | "dirty" | "calcValid" | "costMissingLines" | "costingIncomplete" | "costingReason" | "supplierPricing">): FinalReviewItem[] {
   const items: FinalReviewItem[] = [
     { id: "mapping", label: "Product lines are mapped and priced", met: i.calcValid && i.mappingOpen.length === 0, detail: !i.calcValid ? "The Rep's configuration is not complete yet." : i.mappingOpen.length === 0 ? null : `${i.mappingOpen[0]}${i.mappingOpen.length > 1 ? ` (+${i.mappingOpen.length - 1} more)` : ""}. Step 1.` },
     { id: "ready", label: "The quotation is READY", met: i.readiness.state === "READY", detail: i.readiness.state === "READY" ? null : (i.readiness.reasons[0] ?? "The quote must be READY (nothing outstanding) before it can be signed off.") },
@@ -70,8 +72,8 @@ export function deriveFinalReviewChecklist(i: Pick<Stage2WizardInput, "mappingOp
     const ok = i.cost.status === "review" || i.cost.status === "complete";
     const missing = i.costMissingLines ?? 0;
     // ONE margin story: with incomplete project costs the check says so (attention), never "Met".
-    if (missing > 0 || i.costingIncomplete) items.push({ id: "costing", label: missing > 0 ? `Costing figures: incomplete (${missing} line${missing === 1 ? " has" : "s have"} no cost)` : "Costing figures: incomplete", met: false, detail: `${i.costingReason ?? "Supplier costs are unresolved."} The margin shown is indicative (price-list basis). Sign-off and approval need costing complete.` });
-    else items.push({ id: "costing", label: "Costing figures are available", met: ok, detail: ok ? "Check the Cin7 cost capture in step 2: it may still show incomplete, so review with care." : (i.cost.note ?? "The costing needs attention.") });
+    if (missing > 0 || i.costingIncomplete) items.push({ id: "costing", label: missing > 0 ? `Costing figures: incomplete (${missing} line${missing === 1 ? " has" : "s have"} no cost)` : i.supplierPricing ? "Supplier costs: not complete" : "Costing figures: incomplete", met: false, detail: i.supplierPricing ? `${(i.costingReason ?? "Supplier costs are unresolved").replace(/\.$/, "")}. Sign-off and approval need the supplier costs verified.` : `${i.costingReason ?? "Supplier costs are unresolved."} The margin shown is indicative (price-list basis). Sign-off and approval need costing complete.` });
+    else items.push({ id: "costing", label: "Costing figures are available", met: ok, detail: ok ? (i.supplierPricing ? (i.cost.note ?? "Supplier costs are verified.") : "Check the Cin7 cost capture in step 2: it may still show incomplete, so review with care.") : (i.cost.note ?? "The costing needs attention.") });
   }
   const both = i.confirmedCents != null && i.totalCents != null;
   items.push({ id: "amount", label: "The confirmed amount equals the quote total", met: both && i.confirmedCents === i.totalCents, detail: i.confirmedCents == null ? "No customer price confirmation is recorded." : i.totalCents == null ? "The quote total is not available yet." : i.confirmedCents === i.totalCents ? null : "The total changed after the customer confirmed it. Return it to the Rep to reconfirm." });
@@ -257,11 +259,11 @@ const n1 = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : man
  * Commercial readiness for a viewer with cost visibility, from facts the page already holds (the budget's lines, the blank-reason count and the margin sheet's missing-cost count). It is a PRESENTATION of
  * what is still unresolved: an incomplete estimate is never shown as ready, and its amounts are "indicative". It decides nothing and gates nothing by itself.
  */
-export function commercialReadiness(i: { lines: ReadonlyArray<{ label: string; status: string }> | null; blankPriceReasonCount: number; costMissingLines: number; /** The server says costing is incomplete (QuoteView.costing) even if no single line count explains it. */ costingIncomplete?: boolean; costingReason?: string | null }): CommercialReadiness {
+export function commercialReadiness(i: { lines: ReadonlyArray<{ label: string; status: string }> | null; blankPriceReasonCount: number; costMissingLines: number; /** The server says costing is incomplete (QuoteView.costing) even if no single line count explains it. */ costingIncomplete?: boolean; costingReason?: string | null; /** Phase 2 supplier pricing is on: the wording comes from the supplier-pricing state. */ supplierPricing?: boolean }): CommercialReadiness {
   const w = estimatorWork(i.lines, i.blankPriceReasonCount);
   const unmapped = w.map.length; const quotesRequired = w.price.length; const noCost = i.costMissingLines; const reasonsOpen = i.blankPriceReasonCount;
-  const parts = [unmapped > 0 && `${n1(unmapped, "line", "lines")} unmapped`, quotesRequired > 0 && `${n1(quotesRequired, "supplier quote", "supplier quotes")} required`, noCost > 0 ? `${n1(noCost, "line has", "lines have")} no cost` : !!i.costingIncomplete && "costing incomplete", reasonsOpen > 0 && `${n1(reasonsOpen, "manual price needs", "manual prices need")} a reason`].filter(Boolean) as string[];
-  const items = [...w.all.map((text) => ({ owner: "Estimator" as const, text })), ...(noCost > 0 ? [{ owner: "Estimator" as const, text: `${n1(noCost, "line has", "lines have")} no cost: capture it from Cin7 or enter a manual estimate (step 2)` }] : i.costingIncomplete ? [{ owner: "Estimator" as const, text: `Costing is incomplete: ${i.costingReason ?? "supplier costs are unresolved"} (step 2)` }] : [])];
+  const parts = [unmapped > 0 && `${n1(unmapped, "line", "lines")} unmapped`, quotesRequired > 0 && `${n1(quotesRequired, "supplier quote", "supplier quotes")} required`, noCost > 0 ? `${n1(noCost, "line has", "lines have")} no cost` : !!i.costingIncomplete && (i.supplierPricing ? "supplier costs not complete" : "costing incomplete"), reasonsOpen > 0 && `${n1(reasonsOpen, "manual price needs", "manual prices need")} a reason`].filter(Boolean) as string[];
+  const items = [...w.all.map((text) => ({ owner: "Estimator" as const, text })), ...(noCost > 0 ? [{ owner: "Estimator" as const, text: `${n1(noCost, "line has", "lines have")} no cost: capture it from Cin7 or enter a manual estimate (step 2)` }] : i.costingIncomplete ? [{ owner: "Estimator" as const, text: i.supplierPricing ? `${i.costingReason ?? "Supplier costs are unresolved"} (step 2)` : `Costing is incomplete: ${i.costingReason ?? "supplier costs are unresolved"} (step 2)` }] : [])];
   return { complete: parts.length === 0, unmapped, quotesRequired, noCost, reasonsOpen, headline: parts.length ? `Not commercially ready: ${parts.join(" \u00B7 ")} (amounts are indicative)` : null, items };
 }
 

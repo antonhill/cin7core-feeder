@@ -150,9 +150,9 @@ export function EstimatorResult(p: EstimatorResultProps) {
 }
 
 /** A labelled disclosure with a one-line summary, closed by default unless something in it needs attention. Its content stays MOUNTED when closed (so the requests it makes are unchanged). */
-export function Disclosure({ title, summary, attention = false, testId, children }: { title: string; summary: string; attention?: boolean; testId: string; children: React.ReactNode }) {
+export function Disclosure({ title, summary, attention = false, forceOpen = false, testId, children }: { title: string; summary: string; attention?: boolean; /** Open without the amber attention styling (the primary workspace of the step). */ forceOpen?: boolean; testId: string; children: React.ReactNode }) {
   return (
-    <details className="rounded-lg border border-slate-200 bg-white p-3" open={attention || undefined} data-testid={testId}>
+    <details className="rounded-lg border border-slate-200 bg-white p-3" open={attention || forceOpen || undefined} data-testid={testId}>
       <summary className="flex min-h-11 cursor-pointer flex-wrap items-center gap-x-3 gap-y-1">
         <span className="text-sm font-semibold text-slate-900">{title}</span>
         <span className={`text-xs ${attention ? "font-semibold text-amber-900" : "text-slate-700"}`}>{summary}</span>
