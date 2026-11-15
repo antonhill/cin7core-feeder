@@ -5,7 +5,7 @@ import type { ScopeItem } from "@/lib/projects/product-scope";
 
 // NEWQUIP POC PRESENTATION MODE (pure). For the designated demonstration only: a quotation CREATED while the mode is on carries a POC marker and is seeded with the Estimator inputs the
 // workbook cannot supply, so the presenter never types prices or mappings live. At approval the Manager's recorded baseline exception (M75 / penning, Estimator-priced by design) is recorded automatically with a reason that says
-// "POC PRESENTATION". There is NO automatic incomplete-COSTING waiver: that always needs an authorised person's recorded decision. No gate is removed, no normal quotation is touched, and nothing here
+// "POC PRESENTATION" and the sealed baseline records pocPresentation. The mode is keyed on a SERVER-OWNED flag, never on assumptions text. There is NO automatic incomplete-COSTING waiver: that always needs an authorised person's recorded decision. No gate is removed, no normal quotation is touched, and nothing here
 // marks a price or cost as commercially validated: the marker is carried into the audit trail and the frozen baseline.
 
 export const POC_MARKER = "POC PRESENTATION";
@@ -22,8 +22,25 @@ export function pocPresentationEnabled(env: Record<string, string | undefined>, 
   return isNewquipPocOrg(orgId);
 }
 
-/** A quotation created in POC Presentation Mode (and only such a quotation) is marked in its assumptions. */
-export const isPocQuote = (draft: Pick<QuoteDraft, "estimator"> | null | undefined): boolean => (draft?.estimator?.assumptions ?? "").startsWith(POC_MARKER);
+/**
+ * The SERVER-OWNED flag on a stored draft: set ONLY by createGrowerQuoteAction while pocPresentationEnabled(...) holds. It is NOT the assumptions text (Rep-owned free text, which now has NO effect).
+ * Whatever a client sends for it is discarded on every path (createQuote / saveDraft / sanitiseSubmittedDraft); it is carried from the stored draft only.
+ */
+export const hasPocFlag = (draft: Pick<QuoteDraft, "estimator"> | null | undefined): boolean => draft?.estimator?.pocPresentation === true;
+
+/**
+ * Is POC Presentation Mode IN FORCE for this quotation right now? The stored server flag AND the environment/organisation gate, re-checked at every use, so the flag is inert in
+ * Production, when the switch is off, and outside the NewQuip POC organisation.
+ */
+export const isPocQuote = (draft: Pick<QuoteDraft, "estimator"> | null | undefined, orgId: string, env: Record<string, string | undefined> = process.env as Record<string, string | undefined>): boolean =>
+  hasPocFlag(draft) && pocPresentationEnabled(env, orgId);
+
+/** A client-supplied draft never decides the flag: the STORED value (if any) is carried over, otherwise it is removed. */
+export function keepServerOwnedPocFlag<D extends QuoteDraft>(draft: D, prior: Pick<QuoteDraft, "estimator"> | null | undefined): D {
+  const next = structuredClone(draft);
+  if (hasPocFlag(prior)) next.estimator.pocPresentation = true; else delete next.estimator.pocPresentation;
+  return next;
+}
 
 const RES = (unitPriceExVat: number, at: string) => ({ at, by: "poc-presentation-seed", reason: "POC PRESENTATION: illustrative demonstration price, not a validated commercial price.", unitPriceExVat });
 
@@ -34,6 +51,7 @@ export function seedPocEstimator(draft: QuoteDraft, nowIso: string): QuoteDraft 
     quoteType: "project",
     estimator: {
       ...draft.estimator,
+      pocPresentation: true,
       confirmedMappings: { feeder: "PNQ082", pvc_door: "NQ2114", bulk_tank: "SYSH-2750-3", concrete_slat: "NQ1161", feed_saver_mat: "ERT053" },
       confirmedPackages: ["cup_drinker", "led_light"],
       charges: { delivery: 979992, installation: 1200000, concrete_slat_delivery: 250000 },
@@ -54,5 +72,15 @@ export function excludeUnverifiedScope(items: readonly ScopeItem[], nowIso: stri
   return items.map((it) => (!it.resolution && it.mapping.status === "UNMAPPED" ? { ...it, resolution: { kind: "EXCLUDE" as const, reason: POC_SCOPE_REASON, by: "POC PRESENTATION", at: nowIso } } : it));
 }
 
-/** The sealed baseline's own record that this quotation was approved in POC Presentation Mode. */
-export const approvedInPocMode = (baseline: { exceptions?: Array<{ reason?: string }> } | null | undefined): boolean => !!baseline?.exceptions?.some((e) => (e.reason ?? "").startsWith(POC_MARKER));
+/**
+ * The sealed baseline's own record that this quotation was approved in POC Presentation Mode: `pocPresentation`, set by the server at approval from the server flag (never from a typed reason).
+ *
+ * READ-COMPAT, sealed baselines ONLY: a baseline sealed BEFORE this field existed (no boolean `pocPresentation` at all) is still recognised by the old exception-reason prefix, so quotations
+ * already approved in POC mode keep their scope exclusion at project creation. Every baseline sealed from now on carries an explicit boolean (see buildAcceptedBaseline), so this path can
+ * never apply to a new approval and a Manager-typed reason can never trigger it. It reads stored data only; nothing is rewritten.
+ */
+export const approvedInPocMode = (baseline: { pocPresentation?: boolean; exceptions?: Array<{ reason?: string }> } | null | undefined): boolean => {
+  if (!baseline) return false;
+  if (typeof baseline.pocPresentation === "boolean") return baseline.pocPresentation;
+  return !!baseline.exceptions?.some((e) => (e.reason ?? "").startsWith(POC_MARKER));
+};

@@ -1,4 +1,4 @@
-import { approvedInPocMode, excludeUnverifiedScope, isPocQuote, pocPresentationEnabled } from "./poc-presentation";
+import { approvedInPocMode, excludeUnverifiedScope, isPocQuote, keepServerOwnedPocFlag, pocPresentationEnabled } from "./poc-presentation";
 import "server-only";
 // NewQuip quotes — persistence orchestration. LOCAL ONLY: this module imports nothing from src/cin7 and never calls fetch
 // (pinned by no-cin7-write.test.ts). Every query is scoped by org_id; a quote of another org is indistinguishable from "not
@@ -101,7 +101,7 @@ export async function baselineExceptionOf(db: Db, orgId: string, draft: QuoteDra
   const scope = buildPhysicalScope(lines);
   const lib = library ? libraryOf(library) : undefined;
   const costEx = draft.estimator.costBasis?.incompleteAccepted;
-  return baselineExceptionView(baselineMappingGate({ lines, scope: lib && lib.size ? applyMappingLibrary(scope, lib, asOfIso) : scope, physicalCosts: draft.estimator.physicalCosts, costExceptionAccepted: !!costEx, pocWaiver: isPocQuote(draft) && pocPresentationEnabled(process.env as Record<string, string | undefined>, orgId), phase2Coverage: legacyCostCoverageFor(draft.estimator.pricing, asOfIso) }), costEx ?? null);
+  return baselineExceptionView(baselineMappingGate({ lines, scope: lib && lib.size ? applyMappingLibrary(scope, lib, asOfIso) : scope, physicalCosts: draft.estimator.physicalCosts, costExceptionAccepted: !!costEx, pocWaiver: isPocQuote(draft, orgId), phase2Coverage: legacyCostCoverageFor(draft.estimator.pricing, asOfIso) }), costEx ?? null);
 }
 
 // ── reads ───────────────────────────────────────────────────────────────────
@@ -124,7 +124,10 @@ async function mustLoad(db: Db, orgId: string, quoteId: string): Promise<QuoteRe
 
 // ── drafting ────────────────────────────────────────────────────────────────
 
-export async function createQuote(db: Db, orgId: string, email: string, draft: QuoteDraft = emptyDraft()): Promise<{ id: string; quoteRef: string }> {
+export async function createQuote(db: Db, orgId: string, email: string, submitted: QuoteDraft = emptyDraft(), opts: { pocPresentation?: boolean } = {}): Promise<{ id: string; quoteRef: string }> {
+  // The POC flag is server-owned: whatever the caller's draft carries is discarded; only the server's own `opts.pocPresentation` (createGrowerQuoteAction, mode on) sets it.
+  const stripped = keepServerOwnedPocFlag(submitted, null);
+  const draft = opts.pocPresentation === true ? { ...stripped, estimator: { ...stripped.estimator, pocPresentation: true as const } } : stripped;
   for (let attempt = 0; attempt < 3; attempt++) {
     const existing = await db.from("newquip_quotes").select("quote_ref").eq("org_id", orgId);
     if (existing.error) fail(existing.error.message);
@@ -156,7 +159,7 @@ export async function saveDraft(
 ): Promise<{ draftHash: string; signoffCleared: boolean }> {
   const q = await mustLoad(db, orgId, quoteId);
   const named = authoritativeCustomerName ? { ...submitted, customerName: authoritativeCustomerName } : submitted;
-  const draft = opts.keepStoredPricing ? keepServerOwnedPricing(named, q.draft) : named;
+  const draft = keepServerOwnedPocFlag(opts.keepStoredPricing ? keepServerOwnedPricing(named, q.draft) : named, q.draft); // POC flag: ALWAYS the stored value, whoever saves
   if (!canEditDraft(roles, q.state)) fail(q.state === "MANAGER_APPROVED_FINAL" ? "The accepted quote is final and cannot be edited. Post-acceptance changes must be Variations." : "You do not have permission to edit this quote.");
   const draftHash = hashOf(draft);
   const changed = draftHash !== q.draft_hash;
@@ -373,7 +376,7 @@ export async function managerApprove(db: Db, orgId: string, roles: ReadonlySet<Q
   const { baseline, hash } = buildAcceptedBaseline({
     mappingLibrary: library ? libraryOf(library) : undefined,
     quoteRef: q.quote_ref, revision: q.revision, draft: q.draft, evaluation: ev,
-    ...(isPocQuote(q.draft) && pocPresentationEnabled(process.env as Record<string, string | undefined>, orgId) ? { pocPresentation: true } : {}),
+    ...(isPocQuote(q.draft, orgId) ? { pocPresentation: true } : {}),
     ...(bx ? { baselineException: { reason: bx.reason, draftHash: q.draft_hash } } : {}),
     phase2Coverage: legacyCostCoverageFor(q.draft.estimator.pricing, now),
     // Cost-visible evaluation of the SAME draft, used only for the internal margin sheet frozen with the baseline.

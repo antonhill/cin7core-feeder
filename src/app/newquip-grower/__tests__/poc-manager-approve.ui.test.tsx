@@ -12,6 +12,7 @@ import * as costActions from "../cost-actions";
 import { emptyDraft } from "@/newquip/grower/draft";
 import { rolesFor } from "@/newquip/quote/roles";
 import * as actions from "../actions";
+import { hashOf } from "@/newquip/quote/baseline";
 import { POC_MARKER } from "@/lib/newquip-quotes/poc-presentation";
 const demoAvail = vi.fn(); const demoSelect = vi.fn();
 vi.mock("@/app/demo-mode/actions", () => ({ demoSwitchAvailableAction: (...a: unknown[]) => demoAvail(...a), selectDemoIdentityAction: (...a: unknown[]) => demoSelect(...a) }));
@@ -93,13 +94,13 @@ type Role = "REP" | "ESTIMATOR" | "MANAGER";
 const g = globalThis as { __QID?: string; __STAGE?: string; __STEP?: string };
 
 /** Opens Stage 2 as `roles`. `commercials` is the viewer's cost visibility (an Estimator/Manager in practice). */
-async function open(o: { stage?: string; roles?: Role[]; commercials?: boolean; state?: string; row?: Record<string, unknown>; step?: string; draftOver?: Record<string, unknown> } = {}) {
+async function open(o: { stage?: string; roles?: Role[]; commercials?: boolean; state?: string; row?: Record<string, unknown>; step?: string; draftOver?: Record<string, unknown>; serverPocFlag?: boolean } = {}) {
   g.__STAGE = o.stage ?? "2"; g.__STEP = o.step;
   asRoles(...(o.roles ?? ["REP"]));
   vi.mocked(canSeeCosts).mockResolvedValue(o.commercials ?? false);
   const { id } = await createQuote(db as never, ORG, "rep@nq");
   await saveDraft(db as never, ORG, member, id, { ...draft, customerName: "Acme Pigs", siteName: "Farm 1", ...o.draftOver });
-  for (const row of db.rows("newquip_quotes") as Array<Record<string, unknown>>) if (row.id === id) { if (o.state) row.state = o.state; const { __useDraftHash, ...rest } = (o.row ?? {}) as Record<string, unknown>; Object.assign(row, rest); if (__useDraftHash) Object.assign(row, { estimator_signoff_hash: row.draft_hash, estimator_signoff_by_email: "e@nq" }); }
+  for (const row of db.rows("newquip_quotes") as Array<Record<string, unknown>>) if (row.id === id) { if (o.serverPocFlag) { const d = row.draft as { estimator: Record<string, unknown> }; d.estimator.pocPresentation = true; row.draft_hash = hashOf(d); } if (o.state) row.state = o.state; const { __useDraftHash, ...rest } = (o.row ?? {}) as Record<string, unknown>; Object.assign(row, rest); if (__useDraftHash) Object.assign(row, { estimator_signoff_hash: row.draft_hash, estimator_signoff_by_email: "e@nq" }); }
   g.__QID = id;
   const { default: Page } = await import("../[id]/page");
   render(createElement(Page));
@@ -123,7 +124,7 @@ describe("POC Presentation Mode: the Manager has ONE Approve & Continue action a
     pocOn(); demoAvail.mockResolvedValue(true); demoSelect.mockResolvedValue({ ok: true });
     db.rows("newquip_package_mappings").length = 0;
     const replace = vi.fn(); vi.stubGlobal("location", { pathname: "/newquip-grower/x", replace, assign: vi.fn() });
-    await open({ stage: "3", roles: ["MANAGER"], commercials: true, ...SIGNED, draftOver: marked });
+    await open({ stage: "3", roles: ["MANAGER"], commercials: true, ...SIGNED, draftOver: marked, serverPocFlag: true });
     const btn = await screen.findByTestId("poc-approve", {}, { timeout: 8000 }) as HTMLButtonElement;
     await waitFor(() => expect(btn.disabled).toBe(false), { timeout: 8000 });
     expect(btn.textContent).toMatch(/Approve & Continue/);

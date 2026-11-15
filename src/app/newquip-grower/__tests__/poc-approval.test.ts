@@ -76,7 +76,7 @@ beforeEach(() => {
 
 const REF = "pnzwjqjovxxdikxtfngq";
 const on = () => { process.env.VERCEL_ENV = "preview"; process.env.NEWQUIP_POC_PRESENTATION = "true"; process.env.SUPABASE_URL = `https://${REF}.supabase.co`; process.env.NEXT_PUBLIC_SUPABASE_URL = `https://${REF}.supabase.co`; };
-const mark = () => { const q = quote(); q.draft.estimator.assumptions = `${POC_MARKER}: test`; };
+const mark = () => { const q = quote(); q.draft.estimator.pocPresentation = true; };
 import { afterEach } from "vitest";
 afterEach(() => { delete process.env.NEWQUIP_POC_PRESENTATION; delete process.env.SUPABASE_URL; delete process.env.NEXT_PUBLIC_SUPABASE_URL; delete process.env.VERCEL_ENV; });
 
