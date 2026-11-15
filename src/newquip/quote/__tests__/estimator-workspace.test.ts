@@ -171,11 +171,13 @@ describe("manual quotation price: reason and evidence in the existing reason fie
     expect(decodeManualReason(undefined)).toEqual({ reason: "", evidence: "", legacy: true });
   });
   it("is complete only with a positive price, a reason and evidence", () => {
-    expect(manualPriceComplete("why", "quote 1", 881)).toBe(true);
+    expect(manualPriceComplete("why", "quote ref 0001", 881)).toBe(true);
+    expect(manualPriceComplete("why", "quote 1", 881)).toBe(false); // the evidence record needs at least 10 characters
+    expect(manualPriceComplete("why", "x".repeat(501), 881)).toBe(false);
     expect(manualPriceComplete("why", "", 881)).toBe(false);
-    expect(manualPriceComplete("", "quote 1", 881)).toBe(false);
-    expect(manualPriceComplete("why", "quote 1", 0)).toBe(false);
-    expect(manualPriceComplete("why", "quote 1", null)).toBe(false);
+    expect(manualPriceComplete("", "quote ref 0001", 881)).toBe(false);
+    expect(manualPriceComplete("why", "quote ref 0001", 0)).toBe(false);
+    expect(manualPriceComplete("why", "quote ref 0001", null)).toBe(false);
   });
 });
 

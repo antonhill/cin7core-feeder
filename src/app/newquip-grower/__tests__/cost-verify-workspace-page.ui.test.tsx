@@ -50,13 +50,14 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 const fresh = () => new Date().toISOString();
 /** Verified, complete supplier pricing with CURRENT exchange rates (so nothing is outstanding). */
 const verified = (): EstimatorPricing => equivalentInputs({ pricingDate: fresh(), fxQuotes: { EUR: { rateMicro: 20_000_000, source: "Fixture spot", asOf: fresh() }, USD: { rateMicro: 20_000_000, source: "Fixture spot", asOf: fresh() } } }, "verified");
-async function open(pricing: EstimatorPricing | undefined, roles: Role[] = ["ESTIMATOR"], o: { state?: string; commercials?: boolean; waitFor?: string; unmapped?: boolean; noWaiver?: boolean } = {}) {
+async function open(pricing: EstimatorPricing | undefined, roles: Role[] = ["ESTIMATOR"], o: { state?: string; commercials?: boolean; waitFor?: string; unmapped?: boolean; noWaiver?: boolean; quoteType?: "project" | "day_to_day" } = {}) {
   vi.mocked(canSeeCosts).mockResolvedValue(o.commercials ?? true);
   vi.mocked(resolveRoles).mockResolvedValue(new Set(roles) as never);
   const { id } = await createQuote(db as never, ORG, "rep@nq");
   const d0 = readyDraft();
   const d1 = o.noWaiver ? { ...d0, estimator: { ...d0.estimator, costBasis: {} } } : d0; // the golden fixture already carries an accepted incomplete-cost exception
-  const d = o.unmapped ? { ...d1, estimator: { ...d1.estimator, priceResolutions: { ...d1.estimator.priceResolutions, feeder: { unitPriceExVat: 1000, reason: "" } } } } : d1;
+  const dq = o.quoteType ? { ...d1, quoteType: o.quoteType } : d1;
+  const d = o.unmapped ? { ...dq, estimator: { ...dq.estimator, priceResolutions: { ...dq.estimator.priceResolutions, feeder: { unitPriceExVat: 1000, reason: "" } } } } : dq;
   await saveDraft(db as never, ORG, member, id, pricing ? { ...d, estimator: { ...d.estimator, pricing } } : d);
   for (const row of db.rows("newquip_quotes") as Array<Record<string, unknown>>) if (row.id === id) { row.state = o.state ?? SUBMITTED.state; Object.assign(row, SUBMITTED.row); }
   g.__QID = id;
@@ -178,4 +179,41 @@ describe("the incomplete-costing waiver mirrors the server: Manager only, enable
     await screen.findByTestId("waiver-manager-only", {}, { timeout: 15000 });
     expect(screen.queryByLabelText(/Exception reason/)).toBeNull();
   }, 90000);
+});
+
+// ── UX correction pass: the new experience owns activation, and the legacy commercial summaries leave the primary Estimator view ─────────────────────────────────────────────────────────────────
+describe("switching supplier pricing on is offered inside the new Estimator experience", () => {
+  it("a project quotation with supplier pricing OFF, for the Estimator, offers the entry at the top of Stage 2 (and still renders the legacy forms for older use)", async () => {
+    await open(undefined, ["ESTIMATOR"], { waitFor: "activation-panel" });
+    expect(screen.getByTestId("activation-panel").textContent).toMatch(/Estimator workspace.*supplier pricing is off/);
+    expect(screen.getByTestId("activation-start").textContent).toMatch(/Switch on supplier pricing/);
+    expect(screen.getByTestId("disc-cost-capture")).toBeTruthy(); // legacy untouched
+    expect(screen.queryByTestId(WS)).toBeNull();
+  }, 60000);
+  it("is not offered to a Manager-only viewer, a viewer without cost visibility, a day-to-day quotation, or once supplier pricing is on", async () => {
+    await open(undefined, ["MANAGER"], { waitFor: "stage2-status-line" });
+    expect(screen.queryByTestId("activation-panel")).toBeNull();
+    cleanup();
+    await open(undefined, ["ESTIMATOR"], { commercials: false, waitFor: "stage2-status-line" });
+    expect(screen.queryByTestId("activation-panel")).toBeNull();
+    cleanup();
+    await open(undefined, ["ESTIMATOR"], { quoteType: "day_to_day", waitFor: "stage2-status-line" });
+    expect(screen.queryByTestId("activation-panel")).toBeNull();
+    cleanup();
+    await openWs(verified());
+    expect(screen.queryByTestId("activation-panel")).toBeNull();
+  }, 120000);
+});
+
+describe("Phase 2 workspace mode: no conflicting legacy commercial summary in the primary view", () => {
+  it("the banner's price-list margin/total are hidden, the legacy total-changed alert is gone, and the handoff comparison and evidence panels sit in a collapsed Record area", async () => {
+    await openWs(verified());
+    await screen.findByTestId("commercial-summary");
+    const figures = screen.getByTestId("calc-banner-figures");
+    expect(figures.className).toMatch(/\bhidden\b/);
+    expect(screen.queryByTestId("total-changed")).toBeNull();
+    const rec = screen.queryByTestId("ws-record");
+    if (rec) expect(rec.hasAttribute("open")).toBe(false);
+    for (const dt of screen.queryAllByText(/Indicative margin \(price-list basis\)/i, { selector: "dt" })) expect(dt.closest('[data-testid="calc-banner-figures"]')).toBe(figures); // only ever inside the hidden block
+  }, 60000);
 });

@@ -163,3 +163,29 @@ describe("preserved through the same server actions", () => {
     expect(after.fxQuotes).toEqual(p.fxQuotes);
   });
 });
+
+describe("a successful pricing write returns the workspace as it is after the write (one round trip for the page)", () => {
+  it("applyEstimatorPricingAction: the result carries the post-write workspace (same shape as getEstimatorPricingAction), and a refusal carries none", async () => {
+    const id = await inReview();
+    const r = await actions.applyEstimatorPricingAction(id, submissionOf(), "Initial supplier pricing", null);
+    expect(r.ok).toBe(true);
+    const fresh = await actions.getEstimatorPricingAction(id);
+    expect(r.data!.workspace).toBeTruthy();
+    expect(r.data!.workspace!.current).toEqual(fresh.data!.current);
+    expect(r.data!.workspace!.revisions.length).toBe(fresh.data!.revisions.length);
+    expect(r.data!.workspace!.view.rows.map((x) => x.sku)).toEqual(fresh.data!.view.rows.map((x) => x.sku));
+    expect(r.data!.seq).toBe(1);
+    actor = MGR_ONLY();
+    const refused = await actions.applyEstimatorPricingAction(id, submissionOf(), "Manager edit", submissionOf());
+    expect(refused.ok).toBe(false);
+    expect((refused as { data?: unknown }).data).toBeUndefined();
+  });
+  it("disableEstimatorPricingAction also returns the refreshed workspace", async () => {
+    const id = await inReview();
+    expect((await actions.applyEstimatorPricingAction(id, submissionOf(), "Initial supplier pricing", null)).ok).toBe(true);
+    const base = (await actions.getEstimatorPricingAction(id)).data!.current;
+    const off = await actions.disableEstimatorPricingAction(id, "Back to the POC source", base);
+    expect(off.ok).toBe(true);
+    expect(off.data!.workspace!.current).toBeNull();
+  });
+});

@@ -76,8 +76,10 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
       if (r.ok && r.data) { setBundle(r.data); setLoadError(null); } else setLoadError(r.error ?? "Supplier pricing could not be loaded.");
     }, () => { if (seq === readSeq.current) setLoadError("Supplier pricing could not be read (the connection or the server failed). Nothing you typed was lost."); });
   }, [p.quoteId]);
-  useEffect(() => { if (busyRef.current > 0) return; void load(); }, [load, p.refreshKey]);
-  async function own<T>(fn: () => Promise<T>): Promise<T> { busyRef.current += 1; try { return await fn(); } finally { busyRef.current -= 1; } }
+  /** The page change a save of this workspace causes commits a moment AFTER the save's promise settles, so its own refresh-key change is ignored for a short window after it. */
+  const ownUntil = useRef(0);
+  useEffect(() => { if (busyRef.current > 0 || Date.now() < ownUntil.current) return; void load(); }, [load, p.refreshKey]);
+  async function own<T>(fn: () => Promise<T>): Promise<T> { busyRef.current += 1; try { return await fn(); } finally { busyRef.current -= 1; ownUntil.current = Date.now() + 1500; } }
   /** Waits for the page to show the new figures (the heading, task count, summary, readiness and next action all derive from them), with an honest status line meanwhile. */
   async function refreshPage() { setRefreshing(true); try { await p.reload(); } finally { setRefreshing(false); } }
 
