@@ -517,7 +517,7 @@ export default function QuoteEditorPage() {
   // One-line status chips for the collapsible sections of step 3 (counts from the same facts as the step status).
   const qtyOpen = (budget?.lines ?? []).filter((b) => b.status === "no_quantity").length + ev.calc.lines.filter((l) => l.basis !== "not_selected" && l.overrideState === "manual_override" && !l.overrideReason).length;
   const chargeOpen = (budget?.charges ?? []).filter((c) => c.status === "required").length + (budget?.lines ?? []).filter((b) => b.status === "estimator_price_required").length;
-  const estChoices = estItems.filter((o) => o.message.startsWith("Estimator product choice needed:")).length;
+  const estChoices = estItems.filter((o) => o.message.startsWith("Estimator product choice needed:") || o.message.startsWith("Estimator pricing needed:")).length;
   const qtyChip = `${qtyOpen > 0 ? `${qtyOpen} to enter - needs attention` : "Complete"}${estChoices > 0 ? ` · Waiting on the Estimator: ${estChoices}` : ""}`;
   const chargeChip = chargeOpen > 0 ? `${chargeOpen} to enter - needs attention` : "Complete";
   const exclCount = Object.keys(cfg.exclusions ?? {}).length;
