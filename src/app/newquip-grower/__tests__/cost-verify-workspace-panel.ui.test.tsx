@@ -74,6 +74,38 @@ describe("SKU rows refresh after the saved quotation changes elsewhere (e.g. a c
   });
 });
 
+describe("a refresh caused by the page never clobbers what the user is typing", () => {
+  it("typed-but-unsaved input survives a refreshKey change; the view still refreshes; a SKU changed elsewhere is flagged", async () => {
+    const p = equivalentInputs({}, "verified");
+    const changed = { ...p, skus: { ...p.skus, PNQ082: { ...p.skus.PNQ082!, supplierName: "Changed Elsewhere Ltd" } } };
+    vi.mocked(actions.getEstimatorPricingAction).mockResolvedValueOnce({ ok: true, data: bundle(p) }).mockResolvedValue({ ok: true, data: bundle(changed) });
+    const { rerender } = render(createElement(EstimatorPricingPanel, { quoteId: "q1", refreshKey: "h1" }));
+    await waitFor(() => expect(screen.getByTestId("pricing-table")).toBeTruthy());
+    const input = screen.getByLabelText("PNQ082 supplier") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "My Typed Supplier" } }); fireEvent.blur(input, { target: { value: "My Typed Supplier" } });
+    rerender(createElement(EstimatorPricingPanel, { quoteId: "q1", refreshKey: "h2" }));
+    await waitFor(() => expect(actions.getEstimatorPricingAction).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByTestId("changed-elsewhere").textContent).toMatch(/PNQ082/));
+    expect((screen.getByLabelText("PNQ082 supplier") as HTMLInputElement).value).toBe("My Typed Supplier");
+  });
+  it("buttons stay disabled until the post-action re-read finishes", async () => {
+    const before = bundle(equivalentInputs({}, "unverified"));
+    let release: (v: { ok: true; data: WorkspaceBundle }) => void = () => {};
+    vi.mocked(actions.getEstimatorPricingAction).mockResolvedValueOnce({ ok: true, data: { ...before, verification: { canReview: true, reviewerRoles: ["manager"], verifiableSkus: ["PNQ082"] } } })
+      .mockImplementationOnce(() => new Promise((res) => { release = res as typeof release; }));
+    vi.mocked(actions.verifyEstimatorCostsAction).mockResolvedValue({ ok: true, data: { seq: 2, verified: 1 } });
+    render(createElement(EstimatorPricingPanel, { quoteId: "q1" }));
+    await waitFor(() => expect(screen.getByTestId("verify-block")).toBeTruthy());
+    fireEvent.click(screen.getByLabelText("Verify PNQ082 cost"));
+    fireEvent.change(screen.getByLabelText("Evidence checked (for example the supplier quote reference)"), { target: { value: "SQ-1" } });
+    fireEvent.click(screen.getByTestId("verify-save"));
+    await waitFor(() => expect(actions.getEstimatorPricingAction).toHaveBeenCalledTimes(2));
+    expect((screen.getByTestId("verify-all") as HTMLButtonElement).disabled).toBe(true); // still refreshing
+    release({ ok: true, data: bundle(equivalentInputs({}, "verified")) });
+    await waitFor(() => expect(screen.getByTestId("sum-verified").textContent).toMatch(/^(\d+) of \1$/));
+  });
+});
+
 describe("FX: provider timestamp and recorded time are distinct", () => {
   const withSource = (source: string, asOf = "2026-11-14T19:05:00.000Z") => equivalentInputs({ fxQuotes: { EUR: { rateMicro: 20_000_000, source, asOf }, USD: { rateMicro: 20_000_000, source: "Fixture spot", asOf } } }, "verified");
   const mount = (p: EstimatorPricing) => { vi.mocked(actions.getEstimatorPricingAction).mockResolvedValue({ ok: true, data: bundle(p) }); render(createElement(EstimatorPricingPanel, { quoteId: "q1" })); };

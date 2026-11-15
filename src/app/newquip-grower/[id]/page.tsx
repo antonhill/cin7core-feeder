@@ -362,7 +362,7 @@ export default function QuoteEditorPage() {
   })();
   const costingIncomplete = poc ? false : costingSrv ? !costingSrv.complete : p2Status ? !p2Status.complete : (marginInfo?.missing ?? 0) > 0;
   const costingReason = p2Status && costingIncomplete ? phase2CostingReason(p2Status, costingSrv?.reason) : (costingSrv?.reason ?? null);
-  const costPanelRoles = { estimator: roles.has("estimator"), manager: roles.has("manager") }; // the legacy CostPanel offers each control only to the role the server accepts
+  const costPanelRoles = { estimator: roles.has("estimator") && !final, manager: roles.has("manager") && !final }; // the legacy CostPanel offers each control only to the role the server accepts
   const costMissingShown = p2Status ? 0 : (marginInfo?.missing ?? 0); // the legacy margin sheet's per-line "no cost" count describes the Cin7 capture, not Phase 2 supplier pricing
   const marginNote = marginIncomplete ? (marginInfo!.missing > 0 ? `project margin not available: ${marginInfo!.missing} line${marginInfo!.missing === 1 ? " has" : "s have"} no cost` : marginInfo!.exempt.length > 0 ? `margin is indicative: ${marginInfo!.exempt.length} line${marginInfo!.exempt.length === 1 ? " is" : "s are"} Estimator-priced (no supplier cost by design)` : "margin is indicative (price-list basis)") : null;
   // "Approve" is described by whichever of the existing messages currently applies (each is already on the page, so nothing is duplicated). Role/process wording only.
@@ -619,7 +619,7 @@ export default function QuoteEditorPage() {
   const finalBlocked = canCommercials && !costNeedsMark && !costAcknowledged && !finalStepDone && finalBlockText != null; // nothing can be recorded: say why instead of offering an ineffective action
   // The ONE next action of the Cost & Verify step (Phase 2 supplier pricing only), from the state above: no new server call, no gate changed.
   const costNextAction = p2Status ? nextCostVerifyAction({ status: p2Status, state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", roles: { rep: roles.has("rep"), estimator: isEstimator, manager: roles.has("manager") }, reviewerRoles: p2Roles, dirty,
-    signoff: s2Base.signoff, costAcknowledged, costNeedsMark, amountChanged: amountChange.changed, serverIncomplete: costingIncomplete, serverReason: costingReason }) : null;
+    signoff: s2Base.signoff, costAcknowledged, costNeedsMark, readinessBlocked: rd.state !== "READY" || mappingOpen.length > 0 ? [...new Set([...(rd.state !== "READY" ? (rd.reasons.length > 0 ? rd.reasons : ["The quotation is not READY"]) : []), ...mappingOpen])] : [], amountChanged: amountChange.changed, serverIncomplete: costingIncomplete, serverReason: costingReason }) : null;
   const markReviewed = () => {
     setCostAck(costKey);
     if (showAllSteps) setTimeout(() => document.getElementById("cost-ack-done")?.focus(), 0); else goStep2Id("signoff"); // step mode: the Sign-off heading takes focus; show-all: the "marked reviewed" text does
@@ -1154,10 +1154,11 @@ export default function QuoteEditorPage() {
                 </div>
               )}
               {/* Everything below the supplier-pricing workspace stays Estimator-only: it keeps the disabled fieldset. The workspace itself sits OUTSIDE it (its editing controls are gated by `editable`) so a Manager can run the independent verification. */}
-              <fieldset disabled={!s2Edit} className="min-w-0 space-y-6 border-0 p-0">
+              {/* The legacy Cin7 cost capture sits OUTSIDE the Stage-2 disabled fieldset: each of its controls is gated by role (Estimator mutations, Manager waiver), so a Manager can use the waiver the server allows them. */}
               {!poc && !p2Status && (<Disclosure testId="disc-cost-capture" title="Cin7 cost capture and FX rates" summary={costingIncomplete ? (marginInfo && marginInfo.missing > 0 ? `Costs are incomplete for ${marginInfo.missing} line${marginInfo.missing === 1 ? "" : "s"}: capture or enter them here` : `Costing is incomplete: ${costingReason ?? "supplier costs are unresolved"}`) : "Latest supplier prices from Cin7, exchange rates and exceptions"} attention={costingIncomplete}>
                 {final ? <CostPanel quoteId={id} roles={costPanelRoles} /> : <CostPanel quoteId={id} unsaved={dirty} previewDraft={dirty ? previewedFor : null} roles={costPanelRoles} />}
               </Disclosure>)}
+              <fieldset disabled={!s2Edit} className="min-w-0 space-y-6 border-0 p-0">
               {!p2Status && marginInfo && marginInfo.exempt.length > 0 && <p className="text-sm text-slate-800" data-testid="est-priced-note">Estimator-priced (no supplier cost by design): {marginInfo.exempt.join("; ")}. They keep the margin indicative; they are not missing costs.</p>}
               {totalsPanel}
               {/* The detail sits in labelled disclosures (closed unless something needs attention); they stay mounted, so nothing is requested differently. */}
@@ -1168,14 +1169,14 @@ export default function QuoteEditorPage() {
                 </Disclosure>
               )}
               {!final && !p2Status && <Alert tone="info">SKU mapping and the Cin7 latest-supplier-price capture work on the frozen physical scope, so they open for the Estimator once the quotation is approved. Until then the estimator review above, the margin sheet and the readiness items are the costing evidence.</Alert>}
+              </fieldset>
               {p2Status && (
                 <LegacyCostingDisclosure defaultOpen={incompleteOverrides}>
                   <CostPanel quoteId={id} roles={costPanelRoles} {...(final ? {} : { unsaved: dirty, previewDraft: dirty ? previewedFor : null })} />
-                  {budget && <MarginPanel budget={budget} draft={draft} final={final} frozen={q.accepted_baseline?.internalMargin} editable={s2Edit} edit={edit} />}
+                  {budget && <fieldset disabled={!s2Edit} className="min-w-0 border-0 p-0"><MarginPanel budget={budget} draft={draft} final={final} frozen={q.accepted_baseline?.internalMargin} editable={s2Edit} edit={edit} /></fieldset>}
                   {!final && <p className="text-xs text-slate-700">SKU mapping and the Cin7 latest-supplier-price capture work on the frozen physical scope, so they open for the Estimator once the quotation is approved.</p>}
                 </LegacyCostingDisclosure>
               )}
-              </fieldset>
             </StepPanel>
           )}
         </div>

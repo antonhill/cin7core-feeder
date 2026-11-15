@@ -68,25 +68,42 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = tru
 
   // Only the LATEST read may replace what is shown: an earlier, slower read can never overwrite a newer one (the verification counts and cost status must follow the last action at once).
   const readSeq = useRef(0);
-  const load = useCallback((): Promise<void> => {
+  // Panel-local edits not yet saved. A re-read caused by the page (refreshKey) must never clobber them; a re-read after this panel's OWN successful action may replace the draft.
+  const localDirty = useRef(false);
+  const bRef = useRef<WorkspaceBundle | null>(null);
+  const draftRef = useRef<Draft | null>(null);
+  const [changedElsewhere, setChangedElsewhere] = useState<string[]>([]);
+  useEffect(() => { draftRef.current = draft; }, [draft]);
+  const load = useCallback((mode: "own" | "external" = "own"): Promise<void> => {
     const seq = ++readSeq.current;
     return getEstimatorPricingAction(quoteId).then((r) => {
       if (seq !== readSeq.current) return;
-      if (r.ok && r.data) { setError(null); setCostProblems({}); setEpoch((e) => e + 1); setB(r.data); setDraft(r.data.current ?? { ruleVersionId: LEGACY_RULE_VERSION.id, skus: {}, fxQuotes: {}, forwardCover: {}, skuPriceOverrides: {}, projectMarkup: null, targetAdjustment: null }); }
-      else setError(r.error ?? "Supplier pricing could not be loaded.");
+      if (r.ok && r.data) {
+        setError(null);
+        const fresh = r.data;
+        const blank: Draft = { ruleVersionId: LEGACY_RULE_VERSION.id, skus: {}, fxQuotes: {}, forwardCover: {}, skuPriceOverrides: {}, projectMarkup: null, targetAdjustment: null };
+        if (mode === "external" && localDirty.current && draftRef.current) {
+          // refresh the view (rows, counts, status) but keep what the user typed; flag SKUs whose stored cost changed elsewhere while they hold their own edit of it
+          const prev = bRef.current?.current?.skus ?? {}; const next = fresh.current?.skus ?? {}; const mine = draftRef.current.skus;
+          setChangedElsewhere([...new Set([...Object.keys(prev), ...Object.keys(next)])].filter((k) => JSON.stringify(prev[k]) !== JSON.stringify(next[k]) && JSON.stringify(mine[k]) !== JSON.stringify(prev[k])).sort());
+          bRef.current = fresh; setB(fresh);
+          return;
+        }
+        localDirty.current = false; setChangedElsewhere([]); setCostProblems({}); setEpoch((e) => e + 1); bRef.current = fresh; setB(fresh); setDraft(fresh.current ?? blank);
+      } else setError(r.error ?? "Supplier pricing could not be loaded.");
     });
   }, [quoteId]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load("own"); }, [load]);
   // The saved quotation changed elsewhere (e.g. a product mapping was confirmed and saved): re-read the workspace so the SKU rows follow it. The first value is the one already loaded above.
   const firstKey = useRef(refreshKey);
-  useEffect(() => { if (refreshKey === firstKey.current) return; firstKey.current = refreshKey; void load(); }, [refreshKey, load]);
+  useEffect(() => { if (refreshKey === firstKey.current) return; firstKey.current = refreshKey; void load("external"); }, [refreshKey, load]);
 
-  if (error) return (<Panel><PanelTitle>Supplier pricing</PanelTitle><Alert tone="warning"><span data-testid="pricing-error">{error}</span></Alert><Button variant="secondary" size="sm" onClick={() => void load()}>Try again</Button></Panel>);
+  if (error) return (<Panel><PanelTitle>Supplier pricing</PanelTitle><Alert tone="warning"><span data-testid="pricing-error">{error}</span></Alert><Button variant="secondary" size="sm" onClick={() => void load("own")}>Try again</Button></Panel>);
   if (!b || !draft) return (<Panel><PanelTitle>Supplier pricing</PanelTitle><p className="text-sm text-slate-800" data-testid="pricing-loading">Loading supplier pricing…</p></Panel>);
 
   const v = b.view;
   const edit = b.canEdit && editable;
-  const set = (f: (d: Draft) => void) => setDraft((d) => { const n = structuredClone(d!); f(n); return n; });
+  const set = (f: (d: Draft) => void) => { localDirty.current = true; setDraft((d) => { const n = structuredClone(d!); f(n); return n; }); };
   const rowsToShow = v.rows;
   // Exchange-rate rows appear as soon as a SKU is in a foreign currency (not only after a save).
   const foreign = [...new Set([...Object.values(draft.skus).map((s) => s?.currency ?? "").filter((c) => /^[A-Z]{3}$/.test(c) && c !== "ZAR"), ...v.currencies.map((c) => c.currency)])].sort();
@@ -97,43 +114,38 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = tru
     if (!draft || Object.keys(costProblems).length > 0) return; // belt and braces: the button is disabled too
     setBusy(true); setErrors([]); setNote(null);
     const r = await applyEstimatorPricingAction(quoteId, draft, reason);
-    setBusy(false);
-    if (!r.ok) { setErrors(r.errors?.length ? r.errors : [r.error ?? "Could not save."]); return; }
+    if (!r.ok) { setBusy(false); setErrors(r.errors?.length ? r.errors : [r.error ?? "Could not save."]); return; }
     const c = r.data?.confirmation;
     setNote(c?.returnedToRep ? "Saved as revision " + r.data!.seq + ". The customer total changed, so the Rep's confirmation was withdrawn and the quotation is back with the Rep to reconfirm." : `Saved as revision ${r.data!.seq}. The customer total did not change; the Estimator sign-off (if any) was withdrawn because the content changed.`);
-    setReason(""); await load(); reload?.();
+    setReason(""); await load("own"); setBusy(false); reload?.();
   }
   async function verify() {
     setBusy(true); setErrors([]); setNote(null);
     const r = await verifyEstimatorCostsAction(quoteId, picked.map((sku) => ({ sku, costHash: v.rows.find((r) => r.sku === sku)?.costHash ?? "" })), evidence);
-    setBusy(false);
-    if (!r.ok) { setErrors(r.errors?.length ? r.errors : [r.error ?? "Could not verify."]); return; }
+    if (!r.ok) { setBusy(false); setErrors(r.errors?.length ? r.errors : [r.error ?? "Could not verify."]); return; }
     setNote(`Recorded as revision ${r.data!.seq}: ${r.data!.verified} supplier cost${r.data!.verified === 1 ? "" : "s"} independently verified. No price changed; the Estimator sign-off (if any) was withdrawn.`);
-    setPicked([]); setEvidence(""); await load(); reload?.();
+    setPicked([]); setEvidence(""); await load("own"); setBusy(false); reload?.();
   }
   async function attest() {
     setBusy(true); setErrors([]); setNote(null);
     const r = await attestEstimatorRatesAction(quoteId, pickedRates.map((currency) => ({ currency, rateHash: v.currencies.find((c) => c.currency === currency)?.forwardCover?.rateHash ?? "" })), rateEvidence);
-    setBusy(false);
-    if (!r.ok) { setErrors(r.errors?.length ? r.errors : [r.error ?? "Could not attest."]); return; }
+    if (!r.ok) { setBusy(false); setErrors(r.errors?.length ? r.errors : [r.error ?? "Could not attest."]); return; }
     setNote(`Recorded as revision ${r.data!.seq}: ${r.data!.attested} forward-cover rate${r.data!.attested === 1 ? "" : "s"} independently attested. No price changed; the Estimator sign-off (if any) was withdrawn.`);
-    setPickedRates([]); setRateEvidence(""); await load(); reload?.();
+    setPickedRates([]); setRateEvidence(""); await load("own"); setBusy(false); reload?.();
   }
   async function saveEvidence() {
     const items = Object.entries(notes).filter(([, n]) => n.note.trim().length > 0).map(([itemKey, n]) => ({ itemKey, note: n.note, ...(n.reference.trim() ? { reference: n.reference } : {}) }));
     setBusy(true); setErrors([]); setNote(null);
     const r = await recordManualPriceEvidenceAction(quoteId, items);
-    setBusy(false);
-    if (!r.ok) { setErrors(r.errors?.length ? r.errors : [r.error ?? "Could not record the evidence."]); return; }
+    if (!r.ok) { setBusy(false); setErrors(r.errors?.length ? r.errors : [r.error ?? "Could not record the evidence."]); return; }
     setNote(`Recorded as revision ${r.data!.seq}: pricing evidence for ${r.data!.recorded} item${r.data!.recorded === 1 ? "" : "s"}. No price changed; the Estimator sign-off (if any) was withdrawn.`);
-    setNotes({}); await load(); reload?.();
+    setNotes({}); await load("own"); setBusy(false); reload?.();
   }
   async function off() {
     setBusy(true); setErrors([]); setNote(null);
     const r = await disableEstimatorPricingAction(quoteId, reason);
-    setBusy(false);
-    if (!r.ok) { setErrors(r.errors?.length ? r.errors : [r.error ?? "Could not switch off."]); return; }
-    setNote("Supplier pricing switched off: this quotation is priced from the POC workbook again."); setReason(""); await load(); reload?.();
+    if (!r.ok) { setBusy(false); setErrors(r.errors?.length ? r.errors : [r.error ?? "Could not switch off."]); return; }
+    setNote("Supplier pricing switched off: this quotation is priced from the POC workbook again."); setReason(""); await load("own"); setBusy(false); reload?.();
   }
 
   const addSku = (sku: string) => { const s = sku.trim(); if (s) set((d) => { d.skus[s] = d.skus[s] ?? blankSku(); }); };
@@ -144,6 +156,7 @@ export function EstimatorPricingPanel({ quoteId, reload, unsaved, editable = tru
         <PanelTitle>Supplier pricing (Estimator)</PanelTitle>
         <Status tone={v.enabled ? (v.finality.final ? "success" : "warning") : "neutral"}>{v.enabled ? (v.finality.final ? `On · revision ${v.revision}` : `On · indicative only · revision ${v.revision}`) : "Off: priced from the POC workbook"}</Status>
       </div>
+      {changedElsewhere.length > 0 && <Alert tone="warning"><span data-testid="changed-elsewhere">The saved supplier cost for {changedElsewhere.join(", ")} changed elsewhere while you were editing it. Your typed value is kept: review it before saving.</span></Alert>}
       {unsaved && <Alert tone="warning">This workspace reflects the SAVED quotation. Save or discard your unsaved edits first.</Alert>}
       {!v.available && <Alert tone="info">Supplier pricing applies to project quotations only.</Alert>}
       {!v.enabled && v.available && <Alert tone="info">Supplier pricing is off, so this quotation uses its existing POC prices and nothing changes. Enter the supplier costs below and save to switch it on: the quotation is then priced from supplier cost × exchange rate × freight, plus the project markup.</Alert>}

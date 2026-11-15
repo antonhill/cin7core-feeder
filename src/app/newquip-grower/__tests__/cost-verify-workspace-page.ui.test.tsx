@@ -50,16 +50,19 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 const fresh = () => new Date().toISOString();
 /** Verified, complete supplier pricing with CURRENT exchange rates (so nothing is outstanding). */
 const verified = (): EstimatorPricing => equivalentInputs({ pricingDate: fresh(), fxQuotes: { EUR: { rateMicro: 20_000_000, source: "Fixture spot", asOf: fresh() }, USD: { rateMicro: 20_000_000, source: "Fixture spot", asOf: fresh() } } }, "verified");
-async function open(pricing: EstimatorPricing | undefined, roles: Role[] = ["ESTIMATOR"]) {
+async function open(pricing: EstimatorPricing | undefined, roles: Role[] = ["ESTIMATOR"], o: { state?: string; commercials?: boolean; waitFor?: string; unmapped?: boolean; noWaiver?: boolean } = {}) {
+  vi.mocked(canSeeCosts).mockResolvedValue(o.commercials ?? true);
   vi.mocked(resolveRoles).mockResolvedValue(new Set(roles) as never);
   const { id } = await createQuote(db as never, ORG, "rep@nq");
-  const d = readyDraft();
+  const d0 = readyDraft();
+  const d1 = o.noWaiver ? { ...d0, estimator: { ...d0.estimator, costBasis: {} } } : d0; // the golden fixture already carries an accepted incomplete-cost exception
+  const d = o.unmapped ? { ...d1, estimator: { ...d1.estimator, priceResolutions: { ...d1.estimator.priceResolutions, feeder: { unitPriceExVat: 1000, reason: "" } } } } : d1;
   await saveDraft(db as never, ORG, member, id, pricing ? { ...d, estimator: { ...d.estimator, pricing } } : d);
-  for (const row of db.rows("newquip_quotes") as Array<Record<string, unknown>>) if (row.id === id) { row.state = SUBMITTED.state; Object.assign(row, SUBMITTED.row); }
+  for (const row of db.rows("newquip_quotes") as Array<Record<string, unknown>>) if (row.id === id) { row.state = o.state ?? SUBMITTED.state; Object.assign(row, SUBMITTED.row); }
   g.__QID = id;
   const { default: Page } = await import("../[id]/page");
   render(createElement(Page));
-  await screen.findByTestId("disc-supplier-pricing", {}, { timeout: 15000 });
+  await screen.findByTestId(o.waitFor ?? "disc-supplier-pricing", {}, { timeout: 15000 });
   return id;
 }
 const LEGACY_PHRASES = [/Costing is incomplete/, /no supplier cost selected/i, /Cin7 cost capture is checked/];
@@ -110,7 +113,7 @@ describe("Phase 2 verified and complete", () => {
     for (const re of LEGACY_PHRASES) expect(text, String(re)).not.toMatch(re);
     expect(text).toMatch(/Supplier costs verified \(\d+ of \d+\)/); // the step summary now speaks for Phase 2
     // verified: nothing about supplier costs is outstanding any more (this fixture's confirmed amount differs from the total, so the next step is the Rep's reconfirmation)
-    expect(["mark", "reconfirm"]).toContain(screen.getByTestId("cost-next-action").getAttribute("data-next-action"));
+    expect(["mark", "reconfirm", "readiness"]).toContain(screen.getByTestId("cost-next-action").getAttribute("data-next-action"));
     expect(screen.queryByTestId("cost-outstanding")).toBeNull();
   }, 60000);
 });
@@ -135,4 +138,45 @@ describe("Phase 2 NOT yet verified: the outstanding items are phrased from the P
     expect(screen.getByTestId("cost-next-action-headline").textContent).toBe("Enter supplier costs");
     expect(screen.getByTestId("cost-next-action-detail").textContent).toMatch(/ERT053/);
   }, 60000);
+});
+
+describe("Phase 2: viewers without cost visibility see nothing of it", () => {
+  for (const [label, roles] of [["a Rep", ["REP"]], ["an Estimator who cannot see costs", ["ESTIMATOR"]]] as const) {
+    it(`${label}: no banner, no legacy disclosure, no supplier-pricing workspace, no supplier data`, async () => {
+      await open(verified(), [...roles], { commercials: false, waitFor: "step-rail" });
+      await waitFor(() => expect(screen.getByTestId("step-rail")).toBeTruthy());
+      for (const id of ["cost-next-action", "disc-legacy-costing", "disc-cost-capture", "disc-supplier-pricing", "estimator-pricing-panel", "verify-block"]) expect(screen.queryByTestId(id), id).toBeNull();
+      expect(document.body.textContent ?? "").not.toMatch(/Fixture supplier|Supplier pricing and verification|Legacy costing/);
+    }, 60000);
+  }
+});
+
+describe("the banner never names an action the sign-off would refuse", () => {
+  it("verified costs but the quotation is not READY: 'Resolve readiness items' (the page's own blocker text), not sign-off / approval", async () => {
+    await open(verified(), ["ESTIMATOR"], { unmapped: true });
+    const b = screen.getByTestId("cost-next-action");
+    expect(b.getAttribute("data-next-action")).toBe("readiness");
+    expect(screen.getByTestId("cost-next-action-headline").textContent).toBe("Resolve readiness items");
+    expect(screen.getByTestId("cost-next-action-detail").textContent).toMatch(/cannot be signed off or approved until it is READY/);
+    expect(b.textContent).not.toMatch(/Mark reviewed|Sign off for|Ready for/);
+  }, 60000);
+  it("an approved (final) quotation shows the frozen banner", async () => {
+    await open(verified(), ["MANAGER"], { state: "MANAGER_APPROVED_FINAL", waitFor: "cost-next-action" });
+    expect(screen.getByTestId("cost-next-action-headline").textContent).toMatch(/frozen/);
+  }, 60000);
+});
+
+describe("the incomplete-costing waiver mirrors the server: Manager only, enabled for a Manager", () => {
+  it("a Manager on a legacy quotation can use the waiver form (not under a disabled fieldset); the Estimator-only viewer gets no form and a note", async () => {
+    await open(undefined, ["MANAGER"], { waitFor: "disc-cost-capture", noWaiver: true });
+    fireEvent.click(screen.getByTestId("disc-cost-capture").querySelector("summary")!);
+    const input = (await screen.findByLabelText(/Exception reason/, {}, { timeout: 15000 })) as HTMLInputElement;
+    expect(input.disabled).toBe(false);
+    expect(input.closest("fieldset[disabled]")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Capture latest costs from Cin7/ })).toBeNull(); // Estimator-only controls are not offered to a Manager
+    cleanup();
+    await open(undefined, ["ESTIMATOR"], { waitFor: "disc-cost-capture", noWaiver: true });
+    await screen.findByTestId("waiver-manager-only", {}, { timeout: 15000 });
+    expect(screen.queryByLabelText(/Exception reason/)).toBeNull();
+  }, 90000);
 });

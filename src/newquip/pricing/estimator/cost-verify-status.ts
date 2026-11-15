@@ -80,6 +80,8 @@ export interface NextActionInput {
   costAcknowledged: boolean;
   /** The Estimator still has to mark the costing reviewed before signing off. */
   costNeedsMark: boolean;
+  /** The page's own readiness blockers (quotation not READY, open mappings / manual prices), already phrased. Sign-off is refused while any exist, so no sign-off style action may be named. */
+  readinessBlocked?: readonly string[];
   /** The Rep-confirmed amount no longer equals the quote total. */
   amountChanged: boolean;
   /** The SERVER's costing verdict still lists something Phase 2 does not explain. */
@@ -100,6 +102,7 @@ export function nextCostVerifyAction(i: NextActionInput): NextAction {
   if (s.needsVerification.length > 0) return A("verify", "warning", `${plural(s.needsVerification.length, "cost needs", "costs need")} independent verification by ${roleText(roles)}`, `${list(s.needsVerification)}: a cost cannot be verified by the person who entered it. Unverified costs support an indicative price only; they block sign-off and approval.`);
   if (s.other.length > 0) return A("resolve", "warning", `Resolve ${plural(s.other.length, "supplier-pricing item", "supplier-pricing items")}`, `${s.other[0]}${s.other.length > 1 ? ` (and ${s.other.length - 1} more)` : ""}.`);
   if (s.outstanding.length > 0) return A("resolve", "warning", "Resolve the outstanding supplier-pricing items", s.outstanding[0]);
+  if (i.readinessBlocked && i.readinessBlocked.length > 0) { const r = i.readinessBlocked; return A("readiness", "warning", "Resolve readiness items", `${r[0]}${r.length > 1 ? ` (and ${r.length - 1} more)` : ""}. The quotation cannot be signed off or approved until it is READY.`); }
   if (i.amountChanged) return A("reconfirm", "info", "Waiting for Rep reconfirmation", "The total changed after the customer confirmed it. Return the quotation to the Rep to reconfirm the amount.");
   if (i.serverIncomplete) return A("costing", "warning", "Costing is not complete", i.serverReason ?? "A supplier cost the quotation needs is unresolved.");
   if (i.signoff === "current") return A("approve", "success", i.roles.manager ? "Ready for your approval" : "Ready for Manager approval", "Supplier costs are verified and the Estimator sign-off is current.");
