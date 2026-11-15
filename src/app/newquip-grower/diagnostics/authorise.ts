@@ -32,7 +32,7 @@ export async function authoriseDiagnostic(db: SupabaseClient): Promise<Diagnosti
   try {
     const access = await requireModuleAccess(QUOTES_MODULE.href);
     await requireOrgAdmin("run the Cin7 read-only diagnostic");
-    if (!(await canSeeCosts(db, identity.orgId, access.userId, true))) return refuse("not_admin", identity);
+    if (!(await canSeeCosts(db, identity.orgId, access.userId, true, { adminTierOverridesAssignments: true }))) return refuse("not_admin", identity);
     return { ok: true, actor: { orgId: identity.orgId, userId: access.userId, email: access.email ?? identity.email } };
   } catch { return refuse("not_admin", identity); }
 }

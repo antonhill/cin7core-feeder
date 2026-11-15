@@ -196,23 +196,13 @@ describe("D5: a quotation returned to the Rep carries its reason", () => {
   });
 });
 
-describe("D5: LEGACY paths (before the roles / staged approvals migration) store the reason too", () => {
-  it("approvals not installed: an Estimator return is recorded and read back", async () => {
-    db.approvalsApplied = false; db.rolesApplied = false;
-    await as("rep"); expect((await send()).error).toBeUndefined();
-    await as("estimator");
-    expect((await grower.returnGrowerQuoteToRepAction("q1", "Legacy: gate width is wrong")).error).toBeUndefined();
-    expect(quote()).toMatchObject({ state: "REP_DRAFT", revision: 2 });
-    expect(await info("rep")).toMatchObject({ kind: "RETURN", reason: "Legacy: gate width is wrong", byEmail: EMAIL[U.est], byRole: "estimator", destination: "REP", source: "RECORD" });
-  });
-
-  it("approvals installed but not staged: the Estimator pull-back is recorded (the withdrawn request carries no RETURN decision, the record does)", async () => {
-    db.rolesApplied = false;
-    await as("rep"); expect((await send()).error).toBeUndefined();
-    await as("estimator");
-    expect((await grower.returnGrowerQuoteToRepAction("q1", "Legacy with approvals")).error).toBeUndefined();
-    expect(await info("rep")).toMatchObject({ reason: "Legacy with approvals", byEmail: EMAIL[U.est], byRole: "estimator", source: "RECORD" });
-    expect(db.rows("approval_requests").filter((r) => r.status === "RETURNED")).toEqual([]);
+describe("D5: before the roles / staged approvals migration the NewQuip organisation FAILS CLOSED (no tier default grants Rep or Estimator)", () => {
+  it.each([["approvals and roles not installed", { approvalsApplied: false, rolesApplied: false }], ["approvals installed, roles not", { approvalsApplied: true, rolesApplied: false }]])("%s: nobody can hand a quotation to the Estimator, and nothing is written", async (_n, flags) => {
+    Object.assign(db, flags);
+    const before = JSON.stringify(quote());
+    await as("rep");
+    expect((await send()).error).toMatch(/Only a Rep/);
+    expect(JSON.stringify(quote())).toBe(before);
   });
 });
 

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { installStaged } from "@/lib/approvals/__tests__/staged-emulator";
 import { FakeDb } from "@/lib/projects/__tests__/fake-db";
 import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
@@ -53,12 +54,17 @@ const as = (admin: boolean, userId = "u1") => {
   vi.mocked(requireNewquipPocOrg).mockResolvedValue({ orgId: ORG } as never);
   vi.mocked(requireModuleAccess).mockResolvedValue({ orgId: ORG, userId, email: `${userId}@nq` } as never);
   vi.mocked(requireOrgAdmin).mockImplementation(async () => { if (!admin) throw new Error("not admin"); return undefined as never; });
+  // The NewQuip organisation is fail-closed: roles come ONLY from explicit assignments. These tests are about the POC flag, so each identity is given EXPLICITLY the roles the old tier default implied.
+  db.rolesApplied = true; db.approvalsApplied = true; installStaged(db); // the hosted organisation runs the staged approval path
+  const rows = db.rows("org_functional_roles");
+  for (const role of admin ? ["REP", "ESTIMATOR", "MANAGER"] : ["REP", "ESTIMATOR"]) if (!rows.some((r) => r.user_id === userId && r.role === role)) rows.push({ id: `r-${userId}-${role}`, org_id: ORG, user_id: userId, user_email: `${userId}@nq`, role, assigned_by_email: "o@nq", assigned_at: "t" });
 };
 type Row = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 const quote = () => db.rows("newquip_quotes")[0] as Row;
 const acts = () => db.rows("activity_log") as Row[];
 // A read creates an empty table in the fake; only rows count. Every refusal must leave all rows byte-identical AND record no write.
-const snapshot = () => JSON.stringify(Object.fromEntries(Object.entries(db.tables).filter(([, rows]) => rows.length > 0)));
+// On the staged path (what the hosted organisation runs) a refused approval can leave its pending approval_requests/approval_events; the quotation, baseline, audit and every other table must stay byte-identical.
+const snapshot = () => JSON.stringify(Object.fromEntries(Object.entries(db.tables).filter(([t, rows]) => rows.length > 0 && !t.startsWith("approval_"))));
 const req = (over: Partial<{ reason: string; expectedRevision: number; expectedDraftHash: string }> = {}) => ({ reason: REASON, expectedRevision: quote().revision, expectedDraftHash: quote().draft_hash, ...over });
 
 beforeEach(() => {

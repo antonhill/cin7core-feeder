@@ -6,6 +6,7 @@ import { DEFAULT_POLICIES, effectiveRoles, isFunctionalRole, validatePolicy, typ
 import type { ApprovalDocType } from "./types";
 import { activeSeesCosts, narrowToActive } from "./active-role";
 import { resolveSwitchState } from "./role-switch-store";
+import { isNewquipPocOrg } from "@/newquip/access";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 function fail(message: string): never { throw new Error(message); }
@@ -30,6 +31,9 @@ export async function listAssignments(db: Db, orgId: string): Promise<RoleAssign
 }
 
 export async function strictRoles(db: Db, orgId: string): Promise<boolean> {
+  // The NewQuip organisation is ALWAYS strict, in code: explicit assignments are the only source of roles, and a missing / unreadable / switched-off
+  // approval_settings row can never fall back to the wide tier behaviour (member = Rep + Estimator, owner/admin = everything).
+  if (isNewquipPocOrg(orgId)) return true;
   const r = await db.from("approval_settings").select("roles_enforced").eq("org_id", orgId).maybeSingle();
   if (r.error || !r.data) return false;
   return !!(r.data as { roles_enforced?: boolean }).roles_enforced;
@@ -38,7 +42,8 @@ export async function strictRoles(db: Db, orgId: string): Promise<boolean> {
 /** The roles this person effectively holds in the organisation (server-side; never trusted from the client). A role-switch user holds only their ACTIVE process role. */
 export async function resolveRoles(db: Db, orgId: string, userId: string, adminTier: boolean): Promise<ReadonlySet<FunctionalRole>> {
   const all = await listAssignments(db, orgId);
-  const roles = all === null ? effectiveRoles([], adminTier, false) : effectiveRoles(all.filter((a) => a.user_id === userId).map((a) => a.role), adminTier, await strictRoles(db, orgId));
+  // roles table unavailable: every other organisation keeps the Phase H tier behaviour; the NewQuip organisation gets NO process roles (fail closed).
+  const roles = all === null ? effectiveRoles([], adminTier, isNewquipPocOrg(orgId)) : effectiveRoles(all.filter((a) => a.user_id === userId).map((a) => a.role), adminTier, await strictRoles(db, orgId));
   if (all === null) return roles;
   const sw = await resolveSwitchState(db, orgId, userId);
   return sw ? narrowToActive(roles, sw.active) : roles;
@@ -49,12 +54,16 @@ export async function resolveRoles(db: Db, orgId: string, userId: string, adminT
  * Manager role. The tier fallback never grants it (otherwise every member would see cost), and Procurement / Rep / Project Manager / Administrator alone do not.
  * A role-switch user sees costs only while acting as Estimator or Manager: in Rep mode neither their admin tier nor their other roles reveal anything.
  */
-export async function canSeeCosts(db: Db, orgId: string, userId: string, adminTier: boolean): Promise<boolean> {
+export async function canSeeCosts(db: Db, orgId: string, userId: string, adminTier: boolean, opts?: { adminTierOverridesAssignments?: boolean }): Promise<boolean> {
   const sw = await resolveSwitchState(db, orgId, userId);
   if (sw) return activeSeesCosts(sw.active);
-  if (adminTier) return true;
   const all = await listAssignments(db, orgId);
-  return !!all && all.some((a) => a.user_id === userId && (a.role === "ESTIMATOR" || a.role === "MANAGER"));
+  const mine = (all ?? []).filter((a) => a.user_id === userId);
+  // Explicit assignments are authoritative in the NewQuip organisation: an owner/admin whose assignments do not include Estimator or Manager (Administrator only,
+  // Rep, or no assignment at all) does NOT see cost just because of their tier. Only a caller that has itself verified admin and asks for the override (the
+  // read-only Cin7 diagnostic) keeps the tier rule.
+  if (adminTier && (!isNewquipPocOrg(orgId) || opts?.adminTierOverridesAssignments === true)) return true;
+  return mine.some((a) => a.role === "ESTIMATOR" || a.role === "MANAGER");
 }
 
 export interface OrgUser { userId: string; email: string; tier: "owner" | "admin" | "member"; roles: FunctionalRole[] }
