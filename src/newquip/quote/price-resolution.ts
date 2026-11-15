@@ -3,11 +3,18 @@
 // changes, and only an Estimator or Manager may create or change one. Everything is pure so the rules can be proved without a database.
 
 import type { EstimatorResolution } from "../grower/quote-bridge";
+import { neutraliseCostWording } from "./margin";
 import type { QuoteRole } from "./roles";
 
 export type ResolutionMap = Partial<Record<string, EstimatorResolution>>;
 const same = (a: EstimatorResolution | undefined, b: EstimatorResolution | undefined): boolean =>
   !!a && !!b && a.unitPriceExVat === b.unitPriceExVat && (a.reason ?? "").trim() === (b.reason ?? "").trim();
+/**
+ * A caller who may not see cost (a Rep) is sent the REDACTED reason (the evidence of a manual price is internal) and may save the draft back with it. That is not a change: it equals the
+ * redacted form of the stored reason, by the very same function that produced it, so the two can never drift. Any other price or reason from such a caller is still a change (and is refused).
+ */
+const sameForViewer = (a: EstimatorResolution | undefined, b: EstimatorResolution | undefined): boolean =>
+  same(a, b) || (!!a && !!b && a.unitPriceExVat === b.unitPriceExVat && (b.reason ?? "").trim() === neutraliseCostWording(a.reason ?? "").trim());
 
 /** Returns the draft's resolutions with server-owned provenance. Throws a plain message when the caller may not change them. */
 export function stampPriceResolutions(
@@ -18,7 +25,7 @@ export function stampPriceResolutions(
   for (const [k, r] of Object.entries(submitted ?? {})) {
     if (!r) continue;
     const before = prior?.[k];
-    if (same(before, r)) { out[k] = before; continue; } // unchanged: keep the earlier stamp, ignore anything the client sent
+    if (mayEdit ? same(before, r) : sameForViewer(before, r)) { out[k] = before; continue; } // unchanged: keep the earlier stored value and stamp byte for byte, ignore anything the client sent
     if (!mayEdit) throw new Error("Only an Estimator or Manager can enter or change a manual quotation price.");
     out[k] = { unitPriceExVat: r.unitPriceExVat, reason: (r.reason ?? "").trim(), by: email, at: nowIso };
   }

@@ -87,8 +87,8 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
   // ── navigation with an unsaved-editor guard ──
   const go = (to: Open | "list") => { if (dirty) { setPendingNav(to); return; } setOpen(to === "list" ? null : to); setNote(null); };
   const hasChoices = (id: string) => manualSelectionSkusFor(id as GrowerItemKey).length > 0;
-  const openTask = (t: WorkspaceTask) => go({ id: t.id, kind: hasChoices(t.id) ? "product" : t.kind });
-  const openLine = (id: string) => { const l = lineOf(id); if (!l) return; const tg = targetOf(l); go({ id, kind: tg.kind === "complete_manual" ? "manual" : hasChoices(id) ? "product" : tg.kind }); };
+  const openTask = (t: WorkspaceTask) => go({ id: t.id, kind: t.kind !== "m75" && hasChoices(t.id) ? "product" : t.kind });
+  const openLine = (id: string) => { const l = lineOf(id); if (!l) return; const tg = targetOf(l); go({ id, kind: tg.kind === "complete_manual" ? "manual" : tg.kind !== "m75" && hasChoices(id) ? "product" : tg.kind }); };
 
   // ── saves ──
   /** Supplier pricing: ONE product's inputs merged onto the CURRENT stored pricing; the base is read just before saving, so a change by someone else is a refusal that keeps every typed value. */
