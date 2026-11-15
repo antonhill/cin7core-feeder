@@ -4,11 +4,12 @@ import type { QuoteDraft } from "@/newquip/grower/draft";
 import type { ScopeItem } from "@/lib/projects/product-scope";
 
 // NEWQUIP POC PRESENTATION MODE (pure). For the designated demonstration only: a quotation CREATED while the mode is on carries a POC marker and is seeded with the Estimator inputs the
-// workbook cannot supply, so the presenter never types prices or mappings live. At sign-off / approval the SAME audited mechanisms the business already uses (the Estimator's incomplete-cost
-// exception, the Manager's recorded baseline exception) are recorded automatically with a reason that says "POC PRESENTATION". No gate is removed, no normal quotation is touched, and nothing here
+// workbook cannot supply, so the presenter never types prices or mappings live. At approval the Manager's recorded baseline exception (M75 / penning, Estimator-priced by design) is recorded automatically with a reason that says
+// "POC PRESENTATION". There is NO automatic incomplete-COSTING waiver: that always needs an authorised person's recorded decision. No gate is removed, no normal quotation is touched, and nothing here
 // marks a price or cost as commercially validated: the marker is carried into the audit trail and the frozen baseline.
 
 export const POC_MARKER = "POC PRESENTATION";
+/** LEGACY: the reason text of costing waivers recorded by an earlier POC build. Nothing writes it any more; stored waivers carrying it are honoured unchanged. */
 export const POC_COST_REASON = "POC PRESENTATION: supplier costs are not captured for this demonstration; the margin is indicative only and is not commercially validated.";
 export const POC_BASELINE_REASON = "POC PRESENTATION: M75 and penning are Estimator-priced by design and have no Cin7 SKU; accepted for the demonstration only, not commercially validated.";
 

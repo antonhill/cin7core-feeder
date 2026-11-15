@@ -353,11 +353,12 @@ describe("Estimator handover (the NQ-Q-0026 scenario)", () => {
   });
 });
 
-import { POC_MARKER, isPocQuote } from "@/lib/newquip-quotes/poc-presentation";
+import * as costActions from "@/app/newquip-grower/cost-actions";
+import { POC_MARKER, POC_COST_REASON, isPocQuote } from "@/lib/newquip-quotes/poc-presentation";
 
 describe("POC Presentation Mode (designated demonstration only)", () => {
   const REF = "pnzwjqjovxxdikxtfngq";
-  const on = () => { process.env.NEWQUIP_POC_PRESENTATION = "true"; process.env.SUPABASE_URL = `https://${REF}.supabase.co`; process.env.NEXT_PUBLIC_SUPABASE_URL = `https://${REF}.supabase.co`; };
+  const on = () => { process.env.VERCEL_ENV = "preview"; process.env.NEWQUIP_POC_PRESENTATION = "true"; process.env.SUPABASE_URL = `https://${REF}.supabase.co`; process.env.NEXT_PUBLIC_SUPABASE_URL = `https://${REF}.supabase.co`; };
   const off = () => { delete process.env.NEWQUIP_POC_PRESENTATION; delete process.env.SUPABASE_URL; delete process.env.NEXT_PUBLIC_SUPABASE_URL; };
   afterEach(off);
   const confirmed = async () => { await as("rep"); expect((await send({ source: "QUOTATION_CONTACT" })).error).toBeUndefined(); };
@@ -388,18 +389,51 @@ describe("POC Presentation Mode (designated demonstration only)", () => {
     const o = await grower.createGrowerQuoteAction(); expect(isPocQuote((db.rows("newquip_quotes").find((x) => x.id === o.data!.id) as Record<string, any>).draft)).toBe(false); // eslint-disable-line @typescript-eslint/no-explicit-any
   });
 
-  it("Estimator sign-off on an incomplete-cost POC quotation records the labelled exception and succeeds; a NORMAL quotation is still refused", async () => {
-    await confirmed(); await as("estimator");
-    const normal = await grower.signOffGrowerQuoteAction("q1");
-    expect(normal.error).toMatch(/Costing is incomplete|incomplete/i);
-    expect(quote().draft.estimator.costBasis?.incompleteAccepted).toBeUndefined();
-    on();
-    (quote().draft as any).estimator.assumptions = `${POC_MARKER}: test`; // eslint-disable-line @typescript-eslint/no-explicit-any
+  // POC mode must NOT create or imply an incomplete-COSTING waiver: that needs an authorised person's recorded decision (acceptIncompleteCostsAction), also in Preview.
+  const markPoc = () => { (quote().draft as any).estimator.assumptions = `${POC_MARKER}: test`; }; // eslint-disable-line @typescript-eslint/no-explicit-any
+  const COSTING_REFUSAL = /^Costing is incomplete: The cost estimate is incomplete: \d+ SKU\(s\) have no supplier cost selected \(.+\)\. Complete it \(or record an authorised incomplete-cost exception\) before signing off\.$/;
+  const REASON = "Supplier costs not yet available; margin indicative only (manager decision)";
+
+  it("POC mode ENABLED: an Estimator's sign-off of an incomplete-costing POC quotation records NO waiver and is refused by the normal costing gate; nothing is written", async () => {
+    await confirmed(); await as("estimator"); on(); markPoc();
+    const before = JSON.stringify([quote(), acts()]);
     const r = await grower.signOffGrowerQuoteAction("q1");
-    expect(r.error).toBeUndefined();
-    expect(quote().draft.estimator.costBasis.incompleteAccepted.reason).toMatch(/^POC PRESENTATION/);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(COSTING_REFUSAL);
+    expect(quote().draft.estimator.costBasis?.incompleteAccepted).toBeUndefined();
+    expect(quote().estimator_signoff_hash).toBeNull();
+    expect(acts().some((x) => x.action === "newquip.poc_presentation_cost_exception")).toBe(false);
+    expect(JSON.stringify([quote(), acts()])).toBe(before);
+  });
+
+  it("the same POC quotation CAN be signed off after a genuine, reasoned, audited exception is recorded through the normal action (not POC-labelled)", async () => {
+    await confirmed(); on(); markPoc();
+    jar.clear(); session = { userId: U.mgr, orgId: NQ, email: EMAIL[U.mgr] }; // a REAL (non-Demo) session of the user holding the MANAGER role: the Manager-only incomplete-costing waiver action refuses Demo impersonation
+    const rec = await costActions.acceptIncompleteCostsAction("q1", REASON);
+    expect(rec.ok, rec.error).toBe(true);
+    const w = quote().draft.estimator.costBasis.incompleteAccepted;
+    expect(w.reason).toBe(REASON); expect(w.reason).not.toMatch(/^POC PRESENTATION/); expect(w.by).not.toMatch(/POC/);
+    expect(acts().some((x) => x.action === "newquip.incomplete_costs_accepted")).toBe(true);
+    expect(acts().some((x) => x.action === "newquip.poc_presentation_cost_exception")).toBe(false);
+    jar.clear(); session = { userId: U.owner, orgId: NQ, email: DEMO_OWNER_EMAIL }; await as("estimator");
+    const r = await grower.signOffGrowerQuoteAction("q1");
+    expect(r.error, r.error).toBeUndefined();
     expect(quote().estimator_signoff_hash).toBe(quote().draft_hash);
-    expect(acts().some((x) => x.action === "newquip.poc_presentation_cost_exception")).toBe(true);
+  });
+
+  it("a waiver ALREADY STORED by an earlier POC build is still honoured, unchanged, at sign-off and at the Manager's approval", async () => {
+    await confirmed(); on(); markPoc();
+    const stored = { reason: POC_COST_REASON, by: "estimator@sparkconsulting.co.za (POC PRESENTATION)", at: "2026-11-01T00:00:00.000Z" };
+    (quote().draft as any).estimator.costBasis = { incompleteAccepted: stored }; // eslint-disable-line @typescript-eslint/no-explicit-any
+    await as("estimator");
+    const r = await grower.signOffGrowerQuoteAction("q1");
+    expect(r.error, r.error).toBeUndefined();
+    expect(quote().estimator_signoff_hash).toBe(quote().draft_hash);
+    await as("manager");
+    const ap = await grower.approveGrowerQuoteAction("q1");
+    expect(ap.error, ap.error).toBeUndefined();
+    expect(quote().state).toBe("MANAGER_APPROVED_FINAL");
+    expect(quote().draft.estimator.costBasis.incompleteAccepted).toEqual(stored);
   });
 
   it("the mode does nothing for a non-Estimator, or when the mode is off, even on a marked quotation", async () => {
