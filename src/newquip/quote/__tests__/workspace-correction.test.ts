@@ -17,6 +17,9 @@ describe("money keeps its cents", () => {
     expect(money(3_679_948.8)).toBe("R3,679,948.80");
     expect(money(34_426_756.8)).toBe("R34,426,756.80");
     expect(money(0.1 + 0.2)).toBe("R0.30");
+    expect(money(-1)).toBe("-R1.00");
+    expect(money(-2_475_144.5)).toBe("-R2,475,144.50");
+    expect(money(-0.001)).toBe("R0.00");
   });
   it("a supplier cost shows its exact decimals, at least two", () => {
     expect(costText(1_936_000_000)).toBe("193.60");

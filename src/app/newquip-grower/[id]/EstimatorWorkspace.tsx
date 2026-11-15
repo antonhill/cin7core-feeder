@@ -146,9 +146,17 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
     const r = await draftSave((d) => { d.estimator.priceResolutions = { ...d.estimator.priceResolutions, [itemKey]: { unitPriceExVat: unit, reason } }; }, { rereadWorkspace: false });
     if (!r.ok) return r;
     const evidence = decodeManualReason(reason).evidence.trim();
-    const e = await recordManualPriceEvidenceAction(p.quoteId, [{ itemKey, note: evidence }]);
-    await load();
-    if (!e.ok) return { ok: false, errors: ["The price was saved, but its evidence could not be recorded in the approval's evidence record.", ...(e.errors?.length ? e.errors : [e.error ?? ""])].filter(Boolean) };
+    // Decide from the SERVER's own record of which lines need pricing evidence (the same rule it enforces) and whether it already covers the current price: a line the server does not list (for example a package with a SKU-bearing component) gets no
+    // evidence call and no gate, and an unchanged price with the same evidence note is already recorded (nothing to do).
+    const fresh = await getEstimatorPricingAction(p.quoteId);
+    if (fresh.ok && fresh.data) setBundle(fresh.data);
+    const row = fresh.ok && fresh.data ? (fresh.data.view.manualEvidence ?? []).find((m) => m.itemKey === itemKey) : undefined;
+    if (row && !(row.state === "recorded" && (row.note ?? "").trim() === evidence)) {
+      const e = await recordManualPriceEvidenceAction(p.quoteId, [{ itemKey, note: evidence }]);
+      const already = !e.ok && /nothing changed/i.test([e.error ?? "", ...(e.errors ?? [])].join(" "));
+      await load();
+      if (!e.ok && !already) return { ok: false, errors: ["The price was saved, but its evidence could not be recorded in the approval's evidence record.", ...(e.errors?.length ? e.errors : [e.error ?? ""])].filter(Boolean) };
+    }
     await refreshPage();
     return { ok: true };
   });

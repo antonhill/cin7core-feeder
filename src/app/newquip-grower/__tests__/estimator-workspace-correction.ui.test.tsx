@@ -198,3 +198,46 @@ describe("switching supplier pricing on from the new experience", () => {
     expect(screen.queryByTestId("activation-start")).toBeNull();
   });
 });
+
+describe("saving a manual price records its evidence only where the server needs it, and never reports a false failure", () => {
+  const led = () => line({ itemKey: "led_light", label: "FORTIS 1.2 LED light", status: "package_unconfirmed", quantity: 456, components: [{ id: "lum", sku: null, description: "lum", qtyPerUnit: 1, quantity: 456, status: "identity_unresolved", reason: "", unitPrice: null, revenueExTax: null, estimatedCost: null }] as never });
+  const row = (state: string, note: string | null) => ({ itemKey: "led_light", label: "FORTIS 1.2 LED light", pricedBy: "estimator_resolution", state, stateText: state, note, reference: null, by: "e", at: "t" });
+  const ws = (rows: unknown[]) => bundle({ view: { rows: [], costs: { required: 0, verified: 0 }, totals: { margin: null }, currencies: [], manualEvidence: rows } });
+  const EVID = "Supplier quote UXT-001 dated 15 Nov";
+  async function saveLed(rows: unknown[], fresh: unknown[] = rows) {
+    vi.mocked(pricing.getEstimatorPricingAction).mockResolvedValueOnce({ ok: true, data: ws(rows) }).mockResolvedValue({ ok: true, data: ws(fresh) });
+    render(createElement(EstimatorWorkspace, { quoteId: "q1", state: "ESTIMATOR_REVIEW", confirmedCents: 100_000, signedOff: false, draft: bare(), budget: budgetOf([led()], 1_000), pageDirty: false, canEdit: true, title: "T", subtitle: "s", refreshKey: "k", saveDraft: async () => ({ ok: true }), reload: async () => {}, onGoSignoff: () => {}, onGoApproval: () => {}, reviewNeeded: false, onMarkReviewed: () => {} }));
+    fireEvent.click(await screen.findByRole("button", { name: /Quote price: FORTIS/ }));
+    type("Price each (R)", "881"); type("Reason", "No SKU yet"); type("Pricing evidence", EVID);
+    fireEvent.click(screen.getByRole("button", { name: "Save manual price" }));
+  }
+  it("a reason-only re-save (same price, evidence already recorded and matching) calls no evidence action and shows success", async () => {
+    await saveLed([row("recorded", EVID)]);
+    await waitFor(() => expect(screen.getByTestId("save-why").textContent).toMatch(/Saved\./));
+    expect(pricing.recordManualPriceEvidenceAction).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("save-errors")).toBeNull();
+  });
+  it("a changed price (evidence outdated) re-records the evidence", async () => {
+    vi.mocked(pricing.recordManualPriceEvidenceAction).mockResolvedValue({ ok: true, data: { seq: 4, recorded: 1 } });
+    await saveLed([row("outdated", EVID)]);
+    await waitFor(() => expect(pricing.recordManualPriceEvidenceAction).toHaveBeenCalledWith("q1", [{ itemKey: "led_light", note: EVID }]));
+    await waitFor(() => expect(screen.getByTestId("save-why").textContent).toMatch(/Saved\./));
+  });
+  it("'Nothing changed.' from the server means already recorded: success, not a false partial failure", async () => {
+    vi.mocked(pricing.recordManualPriceEvidenceAction).mockResolvedValue({ ok: false, error: "Nothing changed.", errors: ["Nothing changed."] });
+    await saveLed([row("missing", null)]);
+    await waitFor(() => expect(screen.getByTestId("save-why").textContent).toMatch(/Saved\./));
+    expect(screen.queryByTestId("save-errors")).toBeNull();
+  });
+  it("a genuine refusal still says honestly that the price was saved but the evidence was not", async () => {
+    vi.mocked(pricing.recordManualPriceEvidenceAction).mockResolvedValue({ ok: false, error: "The note is too short.", errors: ["The note is too short."] });
+    await saveLed([row("missing", null)]);
+    await waitFor(() => expect(screen.getByTestId("save-errors").textContent).toMatch(/The price was saved, but its evidence could not be recorded.*too short/));
+  });
+  it("a mixed package (the server lists no evidence row for it): no evidence call, no evidence gate", async () => {
+    await saveLed([], []);
+    await waitFor(() => expect(screen.getByTestId("save-why").textContent).toMatch(/Saved\./));
+    expect(pricing.recordManualPriceEvidenceAction).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("evidence-led_light")).toBeNull();
+  });
+});

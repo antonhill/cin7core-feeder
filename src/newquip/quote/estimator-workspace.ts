@@ -129,7 +129,7 @@ export interface Workspace {
 }
 
 /** Rand with its cents, always: R193.60 stays R193.60 (never rounded to a whole rand). Formats only: the amount comes from the model's exact cents. */
-export const money = (n: number): string => `R${(Math.round(n * 100) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export const money = (n: number): string => { const r = Math.round(Math.abs(n) * 100) / 100; return `${n < 0 && r !== 0 ? "-" : ""}R${r.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }; // grouping as shipped in #251 (commas), cents added; a negative reads -R1.00
 /** An exact supplier cost (units of 1e-7): up to 7 decimals as entered, at least 2 (193.60, 6.5454755). */
 export const costText = (e7: number): string => { const t = formatCost7(e7); const [i, f = ""] = t.split("."); return f.length >= 2 ? t : `${i}.${f.padEnd(2, "0")}`; };
 const qtyText = (n: number | null): string => (n == null ? "" : n.toLocaleString("en-ZA").replace(/\s/g, ","));

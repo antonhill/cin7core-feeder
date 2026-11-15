@@ -64,8 +64,8 @@ export function ActivationPanel({ quoteId, budget, confirmedCents, canEdit, relo
               </>
             )}
             <p className="mt-2 flex justify-between font-semibold"><span>Total today</span><span className="tabular-nums">{money(pv.currentTotal)}</span></p>
-            <p className="flex justify-between font-semibold"><span>Partial total once it is on, before any cost</span><span className="tabular-nums" data-testid="activation-total-after">{money(pv.totalAfter)}</span></p>
-            <p className="mt-2">That is a partial, indicative total, never a completed quotation value.{confirmedCents !== null ? <> The Rep confirmed {money(confirmedCents / 100)}. If the total moves, the Rep&apos;s confirmation is withdrawn and the quotation returns to the Rep to reconfirm.</> : null}</p>
+            <p className="flex justify-between font-semibold"><span>Estimated partial total once it is on, before any cost</span><span className="tabular-nums" data-testid="activation-total-after">{money(pv.totalAfter)}</span></p>
+            <p className="mt-2">The estimated figure is the total today less the lines above. It is an estimate, not a pricing-model result; the model shows the real total once supplier pricing is on. It is a partial, indicative total, never a completed quotation value.{confirmedCents !== null ? <> The Rep confirmed {money(confirmedCents / 100)}. If the total moves, the Rep&apos;s confirmation is withdrawn and the quotation returns to the Rep to reconfirm.</> : null}</p>
           </div>
           {pv.starters.length === 0 ? <Alert tone="warning"><span data-testid="activation-no-starter">No single-product line can take the first cost here. Use the older costing panel below to switch supplier pricing on.</span></Alert> : (
             <>
