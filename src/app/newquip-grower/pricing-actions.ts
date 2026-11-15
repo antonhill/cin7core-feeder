@@ -1,7 +1,7 @@
 "use server";
 
 // NewQuip: the Estimator supplier-pricing workspace (NQ-008B Phase 2). INTERNAL: supplier costs, rates, freight, markup and margin. Every action re-establishes the same
-// authority as the rest of the Estimator workflow (NewQuip organisation, module access, Estimator or Manager role AND cost visibility) and none writes to Cin7 or Xero.
+// authority as the rest of the Estimator workflow (NewQuip organisation, module access, cost visibility AND the role the action needs: ENTERING or CHANGING pricing needs the Estimator role; reading and independent cost verification / rate attestation are open to the reviewer role, the Manager) and none writes to Cin7 or Xero.
 // The change and its immutable revision are one database transaction; the existing amount-change workflow then withdraws the Rep's confirmation when the customer total moved.
 // Only async functions and erased types are exported.
 import { createServiceRoleClient } from "@/supabase/server";

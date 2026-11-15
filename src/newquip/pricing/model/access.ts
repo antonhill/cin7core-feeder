@@ -5,14 +5,16 @@ import type { ForwardCover, ItemOverride, ProjectAdjustment, ProjectMarkupChange
 
 // WHO MAY ENTER, WHO MAY SEE (NQ-008B Phase 1). Pure. Two independent gates, matching the rest of the NewQuip module:
 //   • cost visibility (`canSeeCost`, resolved by the server from the org's cost-visibility setting) decides who may SEE cost, rates, freight, markup and margin;
-//   • the Estimator or Manager role decides who may ENTER or CHANGE a pricing input (a rate, an override, a markup, an adjustment).
+//   • the ESTIMATOR role decides who may ENTER or CHANGE a pricing input (a rate, an override, a markup, an adjustment, a supplier cost, freight, the on/off switch, evidence).
+// A Manager independently VERIFIES and APPROVES (see verification.ts / attestation.ts); a Manager-only account never enters or changes a pricing input, at the server boundary
+// as well as in the UI, so the person who approves is never also able to alter what is being approved.
 // Entering an input needs BOTH: every pricing input is itself a cost fact. The model invents no approval threshold: whether an adjustment needs a Manager's sign-off, and
 // from what size, is an open commercial decision (see the Phase 1 report), so no such rule exists here.
 
 export type QuoteRoleSet = ReadonlySet<QuoteRole>;
 export interface Viewer { roles: QuoteRoleSet; canSeeCost: boolean }
 
-export const canEnterPricingInputs = (v: Viewer): boolean => v.canSeeCost && (v.roles.has("estimator") || v.roles.has("manager"));
+export const canEnterPricingInputs = (v: Viewer): boolean => v.canSeeCost && v.roles.has("estimator");
 
 // ── what a viewer is given ─────────────────────────────────────────────────
 
@@ -86,6 +88,6 @@ export function stampPricingInputs(submitted: PricingInputRecord, prior: Pricing
   out.projectMarkup = stampOne(submitted.projectMarkup, prior.projectMarkup, email, nowIso); mark(out.projectMarkup, prior.projectMarkup);
   out.projectAdjustment = stampOne(submitted.projectAdjustment, prior.projectAdjustment, email, nowIso); mark(out.projectAdjustment, prior.projectAdjustment);
 
-  if (changes.some(Boolean) && !canEnterPricingInputs(viewer)) throw new Error("Only an Estimator or Manager who can see costs can enter or change pricing inputs.");
+  if (changes.some(Boolean) && !canEnterPricingInputs(viewer)) throw new Error("Only an Estimator who can see costs can enter or change pricing inputs.");
   return out;
 }
