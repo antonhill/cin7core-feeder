@@ -23,7 +23,8 @@ export async function loadPricingWorkspace(db: Db, a: PricingActor, quoteId: str
   if (!q) throw new Error("Quote not found.");
   // Cost VISIBLE evaluation of the stored draft; the snapshot supplies the Rep-confirmed original.
   const ev = evaluateDraft(q.draft, evaluationContext(false));
-  const snap = await latestIndicativeSnapshot(db, a.orgId, quoteId);
+  // The snapshot and the revision list are independent reads: one round trip, not two (the quote load above is the only dependency).
+  const [snap, revisions] = await Promise.all([latestIndicativeSnapshot(db, a.orgId, quoteId), listPricingRevisions(db, a.orgId, quoteId)]);
   const view = buildPricingWorkspace({ quoteType: q.draft.quoteType, pricing: q.draft.estimator.pricing, budget: ev.budget, originalTotalCents: snap?.snapshot.customerSafe.subtotalCents ?? null, originalCapturedAt: snap?.created_at ?? null });
   const sel = selectRuleVersion(q.draft.estimator.pricing?.ruleVersionId ?? null);
   const verification = sel.ok
@@ -32,7 +33,7 @@ export async function loadPricingWorkspace(db: Db, a: PricingActor, quoteId: str
   const rateAttestation = sel.ok
     ? { canReview: mayAttestRates(viewerOf(a), sel.rules), reviewerRoles: [...sel.rules.rateReview.reviewerRoles], attestableCurrencies: Object.keys(q.draft.estimator.pricing?.forwardCover ?? {}).filter((c) => mayAttestRate(viewerOf(a), a.email, c, q.draft.estimator.pricing!.forwardCover[c], sel.rules)).sort() }
     : { canReview: false, reviewerRoles: [], attestableCurrencies: [] };
-  return { view, verification, rateAttestation, current: q.draft.estimator.pricing ? submissionFrom(q.draft.estimator.pricing) : null, revisions: await listPricingRevisions(db, a.orgId, quoteId), state: q.state, revision: q.revision, canEdit: canEnterPricingInputs(viewerOf(a)) && q.state !== "MANAGER_APPROVED_FINAL" };
+  return { view, verification, rateAttestation, current: q.draft.estimator.pricing ? submissionFrom(q.draft.estimator.pricing) : null, revisions, state: q.state, revision: q.revision, canEdit: canEnterPricingInputs(viewerOf(a)) && q.state !== "MANAGER_APPROVED_FINAL" };
 }
 
 /** An independent forward-cover rate attestation: one immutable revision, no price moves; the Estimator's sign-off is withdrawn by the write itself. */

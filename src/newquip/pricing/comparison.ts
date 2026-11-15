@@ -4,6 +4,7 @@ import { changeStampLabel, stampsSince, type ChangeStamps } from "./change-stamp
 import { completenessOf, type PricingCompleteness } from "./pricing-feedback";
 import { currentPricingRuleSet } from "./rule-set";
 import type { IndicativeSnapshot, SnapshotCharge, SnapshotLine } from "./indicative-snapshot";
+import { plainManualText } from "../quote/estimator-workspace";
 
 // ORIGINAL INDICATIVE PRICE VERSUS CURRENT PRICE, for the Estimator (NQ-008A). Pure. It compares the immutable snapshot taken at handoff with a fresh evaluation of the
 // draft as it stands now, line by line, and says why and who. It decides nothing, changes nothing and does no pricing of its own: every figure is read from the snapshot or
@@ -76,12 +77,12 @@ function currentLines(ev: QuoteEvaluation): { lines: (SnapshotLine & { reason: s
 function reasonsFor(itemKey: string, status: string, statusReason: string, draft: QuoteDraft): string[] {
   const out: string[] = [];
   const res = (draft.estimator.priceResolutions as Record<string, { reason?: string } | undefined>)[itemKey];
-  if (res?.reason?.trim() && status === "priced") out.push(`Estimator price: ${res.reason.trim()}`);
+  if (res?.reason?.trim() && status === "priced") out.push(`Estimator price: ${plainManualText(res.reason.trim())}`);
   const ov = (draft.config.quantityOverrideReasons as Record<string, string | undefined> | undefined)?.[itemKey];
   if ((draft.config.quantityOverrides as Record<string, number | undefined> | undefined)?.[itemKey] !== undefined && ov?.trim()) out.push(`Quantity override: ${ov.trim()}`);
   const ex = (draft.config.exclusions as Record<string, string | undefined> | undefined)?.[itemKey];
   if (ex?.trim()) out.push(`Excluded: ${ex.trim()}`);
-  if (status !== "priced" && status !== "not_selected" && statusReason.trim()) out.push(statusReason.trim());
+  if (status !== "priced" && status !== "not_selected" && statusReason.trim()) out.push(plainManualText(statusReason.trim()));
   return out;
 }
 

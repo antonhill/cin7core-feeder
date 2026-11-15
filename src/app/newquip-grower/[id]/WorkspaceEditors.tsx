@@ -152,7 +152,7 @@ export function ManualPriceForm({ itemKey, label, quantity, existing, canEdit, p
   const dirty = price !== initial.price || reason !== initial.reason || evidence !== initial.evidence;
   useEffect(() => { onDirty(dirty); }, [dirty, onDirty]);
   const complete = manualPriceComplete(reason, evidence, unit);
-  const missing = unit === null || unit <= 0 ? "Enter a price above zero." : reason.trim().length < 3 ? "Enter the reason." : evidence.trim().length < 3 ? "Enter the pricing evidence (quote reference, date, who gave it)." : null;
+  const missing = unit === null || unit <= 0 ? "Enter a price above zero." : reason.trim().length < 3 ? "Enter the reason." : evidence.trim().length < 10 ? "Enter the pricing evidence (at least 10 characters: quote reference, date, who gave it)." : evidence.trim().length > 500 ? "The pricing evidence is too long (at most 500 characters)." : null;
   async function doSave() {
     if (!complete || busy || unit === null) return;
     setBusy(true); setErrors([]); setSaved(null);
@@ -170,7 +170,7 @@ export function ManualPriceForm({ itemKey, label, quantity, existing, canEdit, p
         <Section title="Your quotation price" hint={`${label} · per unit, ex VAT`}>
           <div className="w-56"><Input label="Price each (R)" inputMode="decimal" className="tabular-nums" value={price} disabled={!canEdit || busy} onChange={(e) => { setSaved(null); setPrice(e.target.value); }} helperText="Required. Must be more than zero." /></div>
           <div className="mt-4"><label htmlFor="mp-reason" className="mb-1.5 block text-[13px] font-semibold">Reason</label><textarea id="mp-reason" rows={2} className={areaCls} value={reason} disabled={!canEdit || busy} onChange={(e) => { setSaved(null); setReason(e.target.value); }} /><Hint>Required. Why the normal price source cannot price this line.</Hint></div>
-          <div className="mt-4"><label htmlFor="mp-evidence" className="mb-1.5 block text-[13px] font-semibold">Pricing evidence</label><textarea id="mp-evidence" rows={2} className={areaCls} value={evidence} disabled={!canEdit || busy} onChange={(e) => { setSaved(null); setEvidence(e.target.value); }} /><Hint>Required. Quote reference, date, validity and who gave it. Shown to the Manager with your reason, and stored with it as &ldquo;REASON: … EVIDENCE: …&rdquo;.</Hint></div>
+          <div className="mt-4"><label htmlFor="mp-evidence" className="mb-1.5 block text-[13px] font-semibold">Pricing evidence</label><textarea id="mp-evidence" rows={2} className={areaCls} value={evidence} disabled={!canEdit || busy} onChange={(e) => { setSaved(null); setEvidence(e.target.value); }} /><Hint>Required. Quote reference, date, validity and who gave it. Shown to the Manager with your reason, and kept with the price (it also satisfies the approval&apos;s pricing-evidence record). At least 10 characters.</Hint></div>
           {complete && unit !== null && <p className="mt-3 rounded-lg bg-slate-100 px-3 py-2 text-sm tabular-nums">{quantity.toLocaleString("en-ZA").replace(/\s/g, ",")} × {money(unit)} = <strong>{money(unit * quantity)}</strong> ex VAT <span className="text-slate-700">· no cost, so no margin is calculated for this line</span></p>}
         </Section>
         <div className="rounded-lg bg-sky-50 px-4 py-3 text-[13px] text-sky-950">There is no supplier cost to verify on a manual price. The Manager reads your reason and evidence at approval and sees the line marked manual and provisional. The Rep sees only the price.</div>

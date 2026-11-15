@@ -9,6 +9,8 @@
 
 import type { BridgeComponent, BridgeLine, BudgetQuote } from "@/newquip/grower/quote-bridge";
 import type { PricingWorkspaceView, SkuRow } from "@/newquip/pricing/estimator";
+import type { IndicativeComparison } from "@/newquip/pricing/comparison";
+import { formatCost7 } from "@/newquip/pricing/estimator";
 
 // ── manual quotation price: reason + evidence in the existing reason field ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 // Stored as `REASON: <reason>` + a line break + `EVIDENCE: <evidence>`. Each part is ESCAPED (a backslash becomes `\\`, a line break becomes `\n`, a carriage return `\r`), so neither part can ever contain the
@@ -35,8 +37,13 @@ export function manualReasonText(stored: string | null | undefined): string {
   if (d.legacy) return d.reason.trim() || "no reason";
   return `reason: ${d.reason || "—"} · evidence: ${d.evidence || "—"}`;
 }
-/** Both parts are mandatory for a manual quotation price. */
-export const manualPriceComplete = (reason: string, evidence: string, unitPrice: number | null): boolean => reason.trim().length >= 3 && evidence.trim().length >= 3 && unitPrice !== null && Number.isFinite(unitPrice) && unitPrice > 0;
+/**
+ * Any text that may CONTAIN the stored `REASON: …⏎EVIDENCE: …` pair (a bridge line reason, a comparison row), made plain for a cost-entitled reader: "<reason> (evidence: <evidence>)". The raw labels
+ * are never shown to a person. Text without the pair is returned unchanged, byte for byte.
+ */
+export const plainManualText = (t: string): string => t.replace(/REASON: ([^\n]*)\nEVIDENCE: ([^\n]*)/g, (_m, r: string, e: string) => `${unesc(r)} (evidence: ${unesc(e)})`);
+/** Both parts are mandatory for a manual quotation price. The evidence note is the same text the existing pricing-evidence record takes (at least 10 characters, at most 500). */
+export const manualPriceComplete = (reason: string, evidence: string, unitPrice: number | null): boolean => reason.trim().length >= 3 && evidence.trim().length >= 10 && evidence.trim().length <= 500 && unitPrice !== null && Number.isFinite(unitPrice) && unitPrice > 0;
 
 // ── types ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 /** done = complete; open = needed from someone now; wait = cannot start yet; na = does not apply to this line. */
@@ -62,10 +69,16 @@ export interface WorkspaceTask {
   action: string;
   quantity: number | null;
 }
-export interface CompleteLine { /** the stored reason of a manual quotation price, decoded (reason and evidence) */ manual?: DecodedManualReason; id: string; label: string; how: string; quantity: number | null; unit: number | null; revenue: number | null; provisional: boolean; estimatorPriced: boolean; costState: "n/a" | "unverified" | "verified" }
+export type EvidenceView = { state: "missing" | "recorded" | "outdated"; text: string; note: string | null; reference: string | null };
+/** A line that WAS priced on the reference basis (the Rep's handoff) and is now excluded from the total until it has a supplier cost. */
+export interface ExcludedLine { id: string; label: string; /** What it was worth on the reference basis, ex VAT, rand. */ previous: number; why: string }
+export interface CompleteLine { /** the SKU-less manual item's pricing-evidence record (the existing approval requirement) */ evidence?: EvidenceView; /** the stored reason of a manual quotation price, decoded (reason and evidence) */ manual?: DecodedManualReason; id: string; label: string; how: string; quantity: number | null; unit: number | null; revenue: number | null; provisional: boolean; estimatorPriced: boolean; costState: "n/a" | "unverified" | "verified" }
 export type TotalKind = "partial" | "calculated" | "confirmed";
 export interface Summary {
   totalKind: TotalKind;
+  /** Lines that were priced on the reference basis and now wait for a supplier cost, with their previous amounts. Never part of the total. */
+  excluded: ExcludedLine[];
+  excludedPreviousTotal: number;
   /** The heading wording next to the total. Never "contract value" until a Manager has approved. */
   totalLabel: string;
   totalNote: string;
@@ -85,7 +98,7 @@ export interface Summary {
   marginNote: string;
   blockers: string[];
 }
-export type NextActionKind = "open_task" | "wait_rep_items" | "wait_rep" | "return_to_rep" | "verify_costs" | "wait_manager" | "sign_off" | "wait_manager_approval" | "approved" | "read_only";
+export type NextActionKind = "open_task" | "wait_rep_items" | "wait_rep" | "return_to_rep" | "verify_costs" | "wait_manager" | "sign_off" | "wait_manager_approval" | "approved" | "read_only" | "record_evidence";
 export interface NextAction { kind: NextActionKind; headline: string; detail: string; /** The task to open, for open_task. */ taskId?: string; button: string | null }
 export interface WorkspaceFacts {
   /** REP_DRAFT | ESTIMATOR_REVIEW | MANAGER_APPROVED_FINAL */
@@ -102,6 +115,8 @@ export interface WorkspaceFacts {
   confirmedMappings: Readonly<Record<string, string | undefined>>;
   /** The stored manual quotation prices (item key -> reason text), to show their reason and evidence. */
   priceResolutionReasons?: Readonly<Record<string, string | undefined>>;
+  /** The Rep's handoff comparison (cost-entitled viewers only): what each line was worth on the reference basis. */
+  reference?: Pick<IndicativeComparison, "rows"> | null;
 }
 /** Something only the Rep can supply (a quantity, a charge, the pig size): named, never a task button for the Estimator. */
 export interface RepItem { id: string; label: string; why: string }
@@ -113,8 +128,10 @@ export interface Workspace {
   next: NextAction;
 }
 
-const rand = (n: number): string => `R${Math.round(n).toLocaleString("en-ZA").replace(/\s/g, ",")}`;
-export const money = rand;
+/** Rand with its cents, always: R193.60 stays R193.60 (never rounded to a whole rand). Formats only: the amount comes from the model's exact cents. */
+export const money = (n: number): string => { const r = Math.round(Math.abs(n) * 100) / 100; return `${n < 0 && r !== 0 ? "-" : ""}R${r.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }; // grouping as shipped in #251 (commas), cents added; a negative reads -R1.00
+/** An exact supplier cost (units of 1e-7): up to 7 decimals as entered, at least 2 (193.60, 6.5454755). */
+export const costText = (e7: number): string => { const t = formatCost7(e7); const [i, f = ""] = t.split("."); return f.length >= 2 ? t : `${i}.${f.padEnd(2, "0")}`; };
 const qtyText = (n: number | null): string => (n == null ? "" : n.toLocaleString("en-ZA").replace(/\s/g, ","));
 const componentSkus = (l: BridgeLine): string[] => (l.components ?? []).map((c: BridgeComponent) => c.sku).filter((s): s is string => !!s);
 const rowOf = (rows: readonly SkuRow[], sku: string): SkuRow | undefined => rows.find((r) => r.sku === sku);
@@ -147,12 +164,13 @@ export function buildWorkspace(i: { budget: BudgetQuote; view: PricingWorkspaceV
   const complete: CompleteLine[] = [];
   const repItems: RepItem[] = [];
   const live = budget.lines.filter((l) => l.status !== "not_selected");
+  const evidenceOf = (id: string): EvidenceView | undefined => { const r = (view.manualEvidence ?? []).find((x) => x.itemKey === id); return r ? { state: r.state, text: r.stateText, note: r.note, reference: r.reference } : undefined; };
 
   for (const l of live) {
     const base = { id: l.itemKey as string, label: l.label, quantity: l.quantity };
     // Estimator-priced by design (M75, penning): never a product mapping, no supplier cost.
     if (l.pricedBy === "estimator_input" || l.pricedBy === "penning_rate") {
-      complete.push({ ...base, how: l.pricedBy === "penning_rate" ? "Pig-size rate (not a product mapping)" : "Your price, by design (not a product mapping)", unit: l.unitPrice, revenue: l.revenueExTax, provisional: false, estimatorPriced: true, costState: "n/a" });
+      complete.push({ ...base, how: l.pricedBy === "penning_rate" ? "Pig-size rate (not a product mapping)" : "Your price, by design (not a product mapping)", unit: l.unitPrice, revenue: l.revenueExTax, provisional: false, estimatorPriced: true, costState: "n/a", evidence: evidenceOf(l.itemKey as string) });
       continue;
     }
     // The M75 system price: the Estimator's own commercial price per system. It has no supplier cost and is not a product mapping, so it is a PRICE task (never a package or component task).
@@ -164,7 +182,7 @@ export function buildWorkspace(i: { budget: BudgetQuote; view: PricingWorkspaceV
     if (l.status === "no_quantity" || l.status === "estimator_price_required") { repItems.push({ id: l.itemKey as string, label: l.label, why: l.status === "no_quantity" ? "quantity not entered" : l.reason.replace(/\.$/, "") }); continue; }
     // A manual quotation price: exceptional and provisional, no supplier cost to verify.
     if (l.pricedBy === "estimator_resolution") {
-      complete.push({ ...base, manual: decodeManualReason(facts.priceResolutionReasons?.[l.itemKey as string]), how: "Manual quotation price, provisional (reason and evidence recorded)", unit: l.unitPrice, revenue: l.revenueExTax, provisional: true, estimatorPriced: false, costState: "n/a" });
+      complete.push({ ...base, manual: decodeManualReason(facts.priceResolutionReasons?.[l.itemKey as string]), how: `Manual quotation price, provisional${evidenceOf(l.itemKey as string)?.state === "recorded" ? " · evidence recorded" : " · pricing evidence still to record"}`, unit: l.unitPrice, revenue: l.revenueExTax, provisional: true, estimatorPriced: false, costState: "n/a", evidence: evidenceOf(l.itemKey as string) });
       continue;
     }
     const skus = l.sku ? [l.sku] : componentSkus(l);
@@ -191,6 +209,18 @@ export function buildWorkspace(i: { budget: BudgetQuote; view: PricingWorkspaceV
   }
   const ordered = [...tasks.filter((t) => t.group === "decision"), ...tasks.filter((t) => t.group === "cost")].map((t, k) => ({ ...t, n: k + 1 }));
 
+  // ── lines that WERE priced on the reference basis (the Rep's handoff) and now wait for a supplier cost: named, with their previous amounts, never in the total ──
+  const taskOf = new Map(ordered.map((t) => [t.id, t]));
+  const excluded: ExcludedLine[] = [];
+  for (const row of facts.reference?.rows ?? []) {
+    if (row.kind !== "line") continue;
+    const t = taskOf.get(row.key);
+    const was = row.original?.revenueCents ?? null;
+    if (!t || was == null || was <= 0 || row.current?.revenueCents != null) continue;
+    excluded.push({ id: row.key, label: row.label, previous: was / 100, why: t.kind === "cost" ? "needs a supplier cost" : t.kind === "product" ? "needs a product choice and a supplier cost" : t.kind === "package" ? "needs the package confirmed and each component costed" : t.kind === "m75" ? "needs your system price" : "needs a manual price with a reason and evidence" });
+  }
+  const excludedPreviousTotal = excluded.reduce((a, e) => a + e.previous, 0);
+
   // ── commercial summary ──
   const chargesExVat = budget.charges.reduce((a, c) => a + (c.amountExTax ?? 0), 0);
   const pricedLines = live.filter((l) => l.status === "priced");
@@ -213,12 +243,14 @@ export function buildWorkspace(i: { budget: BudgetQuote; view: PricingWorkspaceV
   const repWaiting = [...repItems.map((r) => `${r.label}: ${r.why}`), ...budget.charges.filter((c) => c.status === "required").map((c) => `${c.label}: amount not entered`)];
   const incompleteReason = budget.incomplete && open === 0 && repWaiting.length === 0 ? (budget.blockers?.[0] ?? "a line is not priced yet") : null;
   const costsOpen = required > verifiedN;
-  type Gate = { id: "tasks" | "rep_items" | "incomplete" | "with_rep" | "amount" | "costs"; text: string };
+  const evidenceMissing = complete.filter((c) => c.evidence && c.evidence.state !== "recorded");
+  type Gate = { id: "tasks" | "rep_items" | "incomplete" | "evidence" | "with_rep" | "amount" | "costs"; text: string };
   const gates: Gate[] = [];
   if (open > 0) gates.push({ id: "tasks", text: `${open} task${open === 1 ? "" : "s"} open` });
   if (repWaiting.length > 0) gates.push({ id: "rep_items", text: `Waiting for the Rep: ${repWaiting.join("; ")}` });
   if (incompleteReason) gates.push({ id: "incomplete", text: `The quotation is incomplete: ${incompleteReason}` });
-  if (open === 0 && repWaiting.length === 0 && !incompleteReason) {
+  if (open === 0 && repWaiting.length === 0 && !incompleteReason && evidenceMissing.length > 0) gates.push({ id: "evidence", text: `Pricing evidence to record: ${evidenceMissing.map((c) => c.label).join(", ")}` });
+  if (open === 0 && repWaiting.length === 0 && !incompleteReason && evidenceMissing.length === 0) {
     if (facts.state === "REP_DRAFT") gates.push({ id: "with_rep", text: "With the Rep to reconfirm the amount" });
     else if (confirmed === null) gates.push({ id: "amount", text: "No amount confirmed by the Rep yet" });
     else if (!equal) gates.push({ id: "amount", text: "Amount differs from the Rep's confirmation" });
@@ -226,7 +258,7 @@ export function buildWorkspace(i: { budget: BudgetQuote; view: PricingWorkspaceV
   if (costsOpen) gates.push({ id: "costs", text: "Costs not independently verified" });
   const blockers = gates.map((g) => g.text);
   const summary: Summary = {
-    totalKind,
+    totalKind, excluded, excludedPreviousTotal,
     totalLabel: totalKind === "partial" ? "PARTIAL TOTAL, EX VAT" : totalKind === "calculated" ? "CALCULATED TOTAL, NOT YET CONFIRMED" : "AMOUNT CONFIRMED BY THE REP",
     totalNote: totalKind === "partial" ? "Indicative only. Not a contract value." : totalKind === "calculated" ? "Not a contract value until the Rep confirms it and the costs are verified." : "Matches the Rep's confirmation. Costs still need independent verification before approval.",
     totalExVat, pricedLinesExVat, pricedLineCount: pricedLines.length, chargesExVat, unpricedLineCount: live.length - pricedLines.length,
@@ -249,6 +281,9 @@ export function buildWorkspace(i: { budget: BudgetQuote; view: PricingWorkspaceV
       ? { kind: "open_task", headline: taskHeadline(first), detail: first.why, taskId: first.id, button: `Open task 1 of ${open}` }
       : { kind: "read_only", headline: `${open} task${open === 1 ? "" : "s"} waiting for the Estimator`, detail: "Only an Estimator enters pricing.", button: null };
   } else if (g0?.id === "rep_items" || g0?.id === "incomplete") next = { kind: "wait_rep_items", headline: g0.text, detail: "These belong to the Rep. Nothing here can be signed off until they are complete.", button: null };
+  else if (g0?.id === "evidence") next = facts.canEdit
+    ? { kind: "record_evidence", headline: `Record the pricing evidence for ${evidenceMissing[0].label.toLowerCase()}`, detail: "Manual and Estimator-priced lines need a short evidence note before sign-off. It does not change any price.", button: "Record evidence" }
+    : { kind: "read_only", headline: "The Estimator records the pricing evidence", detail: "", button: null };
   else if (g0?.id === "with_rep") next = { kind: "wait_rep", headline: "Waiting for the Rep to confirm the new amount", detail: "The amount changed, so the Rep reconfirms it with the customer before anyone verifies costs. You will see it again when they submit.", button: null };
   else if (g0?.id === "amount") next = facts.canEdit
     ? { kind: "return_to_rep", headline: "Return to the Rep to reconfirm the new amount", detail: "The total is no longer the amount the customer confirmed. The Rep sees only the new price, never your costs. Sign-off stays locked until they confirm it.", button: "Return to Rep" }
@@ -262,4 +297,27 @@ export function buildWorkspace(i: { budget: BudgetQuote; view: PricingWorkspaceV
   else next = { kind: "wait_manager_approval", headline: "Next: Manager approval", detail: "The Estimator has signed off. A Manager approves or returns it.", button: "Open Manager approval" };
 
   return { tasks: ordered, repItems, complete, summary, next };
+}
+
+// ── switching supplier pricing ON: what changes, before it happens ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
+export interface ActivationStarter { sku: string; label: string; itemKey: string; quantity: number | null }
+export interface ActivationPreview {
+  /** Lines priced from the reference price source today: with supplier pricing on they have no price until a supplier cost is entered, so they drop out of the total. */
+  excluded: ExcludedLine[];
+  excludedTotal: number;
+  currentTotal: number;
+  /** What the total would be the moment supplier pricing is on and before any cost: the current total less the excluded lines. Partial, never a contract value. */
+  totalAfter: number;
+  /** Single-SKU lines that can take the first supplier cost (the server needs at least one to switch the model on). */
+  starters: ActivationStarter[];
+}
+export function activationPreview(budget: BudgetQuote): ActivationPreview {
+  const live = budget.lines.filter((l) => l.status === "priced" && l.pricedBy === "price_source");
+  const excluded: ExcludedLine[] = live.map((l) => ({ id: l.itemKey as string, label: l.label, previous: l.revenueExTax ?? 0, why: l.sku ? "needs a supplier cost" : "needs each component costed" }));
+  const excludedTotal = excluded.reduce((a, e) => a + e.previous, 0);
+  const currentTotal = budget.totals.subtotalExTax;
+  return {
+    excluded, excludedTotal, currentTotal, totalAfter: Math.round((currentTotal - excludedTotal) * 100) / 100,
+    starters: live.filter((l) => !!l.sku).map((l) => ({ sku: l.sku as string, label: l.label, itemKey: l.itemKey as string, quantity: l.quantity })),
+  };
 }

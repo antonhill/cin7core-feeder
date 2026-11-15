@@ -10,9 +10,10 @@ import type { QuoteDraft } from "@/newquip/grower/draft";
 import type { BudgetQuote } from "@/newquip/grower/quote-bridge";
 import { manualSelectionSkusFor } from "@/newquip/grower/commercial";
 import type { GrowerItemKey } from "@/newquip/grower/types";
-import { buildWorkspace, money, targetOf, type TaskKind, type WorkspaceTask } from "@/newquip/quote/estimator-workspace";
+import { buildWorkspace, costText, decodeManualReason, money, targetOf, type TaskKind, type WorkspaceTask } from "@/newquip/quote/estimator-workspace";
 import { applyEditor, revisionReason, type SkuEditor } from "@/newquip/quote/workspace-submission";
-import { applyEstimatorPricingAction, attestEstimatorRatesAction, getEstimatorPricingAction, verifyEstimatorCostsAction } from "../pricing-actions";
+import { applyEstimatorPricingAction, attestEstimatorRatesAction, getEstimatorPricingAction, recordManualPriceEvidenceAction, verifyEstimatorCostsAction } from "../pricing-actions";
+import type { IndicativeComparison } from "@/newquip/pricing/comparison";
 import { M75PriceForm, ManualPriceForm, PackageConfirm, ProductChoice, Rail, SkuCostForm, type SaveResult } from "./WorkspaceEditors";
 import { CompleteGroup, Legend, NextActionBar, RepItems, SummaryPanel, TaskRow, WhatNext } from "./WorkspaceParts";
 
@@ -38,8 +39,10 @@ export interface EstimatorWorkspaceProps {
   refreshKey: string;
   /** Saves the page's CURRENT draft with one change applied, through the existing draft save (server rules, sign-off withdrawal and concurrency unchanged). */
   saveDraft: (mut: (d: QuoteDraft) => void) => Promise<SaveResult>;
-  /** Re-reads the quotation (after a pricing revision). */
-  reload: () => void;
+  /** Re-reads the quotation (after a pricing revision). The promise settles when the page shows the new figures, so a save can wait for them. */
+  reload: () => Promise<void> | void;
+  /** The Rep's handoff comparison (cost-entitled viewers only): what each line was worth on the reference basis, for the "excluded until costed" explanation. */
+  comparison?: IndicativeComparison | null;
   onGoSignoff: () => void;
   onGoApproval: () => void;
   /** The Estimator's final-review mark is still needed before sign-off (the existing in-session acknowledgement). */
@@ -59,6 +62,9 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
   const [pendingNav, setPendingNav] = useState<Open | "list" | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const readSeq = useRef(0);
+  /** > 0 while one of THIS workspace's own saves is running: the page changes that follow it are its own, so they do not trigger a second read of the workspace (the save already carries it). */
+  const busyRef = useRef(0);
+  const [refreshing, setRefreshing] = useState(false);
   useUnsavedGuard(dirty, "You have unsaved changes in this editor. If you leave now they are lost.");
   const { onDirtyChange } = p;
   useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
@@ -70,16 +76,22 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
       if (r.ok && r.data) { setBundle(r.data); setLoadError(null); } else setLoadError(r.error ?? "Supplier pricing could not be loaded.");
     }, () => { if (seq === readSeq.current) setLoadError("Supplier pricing could not be read (the connection or the server failed). Nothing you typed was lost."); });
   }, [p.quoteId]);
-  useEffect(() => { void load(); }, [load, p.refreshKey]);
+  /** The page change a save of this workspace causes commits a moment AFTER the save's promise settles, so its own refresh-key change is ignored for a short window after it. */
+  const ownUntil = useRef(0);
+  useEffect(() => { if (busyRef.current > 0 || Date.now() < ownUntil.current) return; void load(); }, [load, p.refreshKey]);
+  async function own<T>(fn: () => Promise<T>): Promise<T> { busyRef.current += 1; try { return await fn(); } finally { busyRef.current -= 1; ownUntil.current = Date.now() + 1500; } }
+  /** Waits for the page to show the new figures (the heading, task count, summary, readiness and next action all derive from them), with an honest status line meanwhile. */
+  async function refreshPage() { setRefreshing(true); try { await p.reload(); } finally { setRefreshing(false); } }
 
   const ws = useMemo(() => (bundle ? buildWorkspace({
     budget: p.budget, view: bundle.view,
-    facts: { state: p.state, confirmedCents: p.confirmedCents, signedOff: p.signedOff, canEdit: p.canEdit && bundle.canEdit, canReview: bundle.verification.canReview, confirmedPackages: p.draft.estimator.confirmedPackages, confirmedMappings: p.draft.estimator.confirmedMappings, priceResolutionReasons: Object.fromEntries(Object.entries(p.draft.estimator.priceResolutions).map(([k, v]) => [k, v?.reason])) },
-  }) : null), [bundle, p.budget, p.state, p.confirmedCents, p.signedOff, p.canEdit, p.draft]);
+    facts: { state: p.state, confirmedCents: p.confirmedCents, signedOff: p.signedOff, canEdit: p.canEdit && bundle.canEdit, canReview: bundle.verification.canReview, confirmedPackages: p.draft.estimator.confirmedPackages, reference: p.comparison ?? null, confirmedMappings: p.draft.estimator.confirmedMappings, priceResolutionReasons: Object.fromEntries(Object.entries(p.draft.estimator.priceResolutions).map(([k, v]) => [k, v?.reason])) },
+  }) : null), [bundle, p.budget, p.state, p.confirmedCents, p.signedOff, p.canEdit, p.draft, p.comparison]);
 
   if (loadError && !bundle) return <div className="mt-4"><Alert tone="warning"><span data-testid="workspace-error">{loadError}</span></Alert><Button className="mt-2 min-h-11" variant="secondary" onClick={() => void load()}>Try again</Button></div>;
   if (!bundle || !ws) return <p className="mt-4 text-sm text-slate-800" data-testid="workspace-loading">Loading the Estimator workspace…</p>;
 
+  const bnd = bundle; // narrowed once: the save closures below use it
   const canEdit = p.canEdit && bundle.canEdit;
   const live = p.budget.lines.filter((l) => l.status !== "not_selected");
   const lineOf = (id: string) => live.find((l) => l.itemKey === id);
@@ -91,28 +103,65 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
   const openLine = (id: string) => { const l = lineOf(id); if (!l) return; const tg = targetOf(l); go({ id, kind: tg.kind === "complete_manual" ? "manual" : tg.kind !== "m75" && hasChoices(id) ? "product" : tg.kind }); };
 
   // ── saves ──
-  /** Supplier pricing: ONE product's inputs merged onto the CURRENT stored pricing; the base is read just before saving, so a change by someone else is a refusal that keeps every typed value. */
+  /**
+   * Supplier pricing: ONE product's inputs merged onto the stored pricing. The base is the stored pricing these edits were made AGAINST (the workspace as last read, which every save of this
+   * workspace refreshes), so the server's field-by-field merge refuses a real conflict with a change made by someone else and every typed value is kept. A save is ONE write call (it returns the
+   * workspace as it is after the write) plus ONE page read; nothing here reads the workspace a second time.
+   */
   async function saveSku(sku: string, ed: SkuEditor, beforeMapping?: () => Promise<SaveResult>): Promise<SaveResult> {
-    let productSaved = false;
-    if (beforeMapping) { const m = await beforeMapping(); if (!m.ok) return m; productSaved = true; }
-    const withProduct = (errs: string[]): string[] => (productSaved ? ["The product was saved, but the cost was not.", ...errs] : errs);
-    const fresh = await getEstimatorPricingAction(p.quoteId);
-    if (!fresh.ok || !fresh.data) return { ok: false, errors: withProduct([fresh.error ?? "Supplier pricing could not be read, so the cost was not saved."]) };
-    const base = fresh.data.current;
-    const sub = applyEditor(base, sku, ed, new Date().toISOString());
-    if (!sub) return { ok: false, errors: withProduct(["The values are not complete, so the cost was not saved."]) };
-    const r = await applyEstimatorPricingAction(p.quoteId, sub, revisionReason(`supplier cost for ${sku}`), base);
-    if (!r.ok) { if (r.conflicts?.length) void load(); return { ok: false, errors: withProduct(r.errors?.length ? r.errors : [r.error ?? "Could not save."]) }; }
-    const c = r.data?.confirmation;
-    setNote(c?.returnedToRep ? `Saved as revision ${r.data!.seq}. The customer total changed, so the Rep's confirmation was withdrawn and the quotation is back with the Rep to reconfirm.` : `Saved as revision ${r.data!.seq}.`);
-    await load(); p.reload();
-    return { ok: true };
+    return own(async () => {
+      let productSaved = false;
+      if (beforeMapping) { const m = await beforeMapping(); if (!m.ok) return m; productSaved = true; }
+      const withProduct = (errs: string[]): string[] => (productSaved ? ["The product was saved, but the cost was not.", ...errs] : errs);
+      const base = bnd.current;
+      const sub = applyEditor(base, sku, ed, new Date().toISOString());
+      if (!sub) return { ok: false, errors: withProduct(["The values are not complete, so the cost was not saved."]) };
+      const r = await applyEstimatorPricingAction(p.quoteId, sub, revisionReason(`supplier cost for ${sku}`), base);
+      if (!r.ok) { if (r.conflicts?.length) await load(); return { ok: false, errors: withProduct(r.errors?.length ? r.errors : [r.error ?? "Could not save."]) }; }
+      const c = r.data?.confirmation;
+      setNote(c?.returnedToRep ? `Saved as revision ${r.data!.seq}. The customer total changed, so the Rep's confirmation was withdrawn and the quotation is back with the Rep to reconfirm.` : `Saved as revision ${r.data!.seq}.`);
+      if (r.data?.workspace) { setBundle(r.data.workspace); setLoadError(null); } else await load();
+      await refreshPage();
+      return { ok: true };
+    });
   }
-  const saveMapping = (itemKey: string, sku: string | null) => p.saveDraft((d) => { if (sku) d.estimator.confirmedMappings[itemKey as GrowerItemKey] = sku; else delete d.estimator.confirmedMappings[itemKey as GrowerItemKey]; });
-  const saveConfirmed = (itemKey: string, yes: boolean) => p.saveDraft((d) => { const rest = d.estimator.confirmedPackages.filter((k) => k !== itemKey); d.estimator.confirmedPackages = yes ? [...rest, itemKey as GrowerItemKey] : rest; });
-  const saveManual = (itemKey: string, unit: number, reason: string) => p.saveDraft((d) => { d.estimator.priceResolutions = { ...d.estimator.priceResolutions, [itemKey]: { unitPriceExVat: unit, reason } }; });
-  const saveM75 = (itemKey: string, unit: number) => p.saveDraft((d) => { d.estimator.unitPrices = { ...d.estimator.unitPrices, [itemKey]: unit }; });
-  const removeManual = (itemKey: string) => p.saveDraft((d) => { const n = { ...d.estimator.priceResolutions }; delete n[itemKey as GrowerItemKey]; d.estimator.priceResolutions = n; });
+  /** A draft-level decision (product, package confirmation, manual price, M75 price): the existing draft save, then the workspace re-read once (a product choice changes which supplier costs are needed). */
+  const draftSave = (mut: (d: QuoteDraft) => void, opts: { rereadWorkspace?: boolean } = {}): Promise<SaveResult> => own(async () => {
+    const r = await p.saveDraft(mut);
+    if (r.ok && opts.rereadWorkspace !== false) await load();
+    return r;
+  });
+  const saveMapping = (itemKey: string, sku: string | null, opts?: { rereadWorkspace?: boolean }) => draftSave((d) => { if (sku) d.estimator.confirmedMappings[itemKey as GrowerItemKey] = sku; else delete d.estimator.confirmedMappings[itemKey as GrowerItemKey]; }, opts);
+  const saveConfirmed = (itemKey: string, yes: boolean) => draftSave((d) => { const rest = d.estimator.confirmedPackages.filter((k) => k !== itemKey); d.estimator.confirmedPackages = yes ? [...rest, itemKey as GrowerItemKey] : rest; });
+  /** The pricing-evidence record the approval needs for a SKU-less manual line (the EXISTING action; it never changes a price and binds the note to the current price). */
+  const recordEvidence = (itemKey: string, note: string, reference: string): Promise<SaveResult> => own(async () => {
+    const r = await recordManualPriceEvidenceAction(p.quoteId, [{ itemKey, note, ...(reference ? { reference } : {}) }]);
+    if (!r.ok) return { ok: false, errors: r.errors?.length ? r.errors : [r.error ?? "Could not record the evidence."] };
+    setNote("Pricing evidence recorded. No price changed.");
+    await load(); await refreshPage();
+    return { ok: true };
+  });
+  /** A manual quotation price: the draft save carries the labelled reason + evidence; the SAME evidence is then recorded in the approval's pricing-evidence record, so one input satisfies both. */
+  const saveManual = (itemKey: string, unit: number, reason: string): Promise<SaveResult> => own(async () => {
+    const r = await draftSave((d) => { d.estimator.priceResolutions = { ...d.estimator.priceResolutions, [itemKey]: { unitPriceExVat: unit, reason } }; }, { rereadWorkspace: false });
+    if (!r.ok) return r;
+    const evidence = decodeManualReason(reason).evidence.trim();
+    // Decide from the SERVER's own record of which lines need pricing evidence (the same rule it enforces) and whether it already covers the current price: a line the server does not list (for example a package with a SKU-bearing component) gets no
+    // evidence call and no gate, and an unchanged price with the same evidence note is already recorded (nothing to do).
+    const fresh = await getEstimatorPricingAction(p.quoteId);
+    if (fresh.ok && fresh.data) setBundle(fresh.data);
+    const row = fresh.ok && fresh.data ? (fresh.data.view.manualEvidence ?? []).find((m) => m.itemKey === itemKey) : undefined;
+    if (row && !(row.state === "recorded" && (row.note ?? "").trim() === evidence)) {
+      const e = await recordManualPriceEvidenceAction(p.quoteId, [{ itemKey, note: evidence }]);
+      const already = !e.ok && /nothing changed/i.test([e.error ?? "", ...(e.errors ?? [])].join(" "));
+      await load();
+      if (!e.ok && !already) return { ok: false, errors: ["The price was saved, but its evidence could not be recorded in the approval's evidence record.", ...(e.errors?.length ? e.errors : [e.error ?? ""])].filter(Boolean) };
+    }
+    await refreshPage();
+    return { ok: true };
+  });
+  const saveM75 = (itemKey: string, unit: number) => draftSave((d) => { d.estimator.unitPrices = { ...d.estimator.unitPrices, [itemKey]: unit }; });
+  const removeManual = (itemKey: string) => draftSave((d) => { const n = { ...d.estimator.priceResolutions }; delete n[itemKey as GrowerItemKey]; d.estimator.priceResolutions = n; });
 
   const s = ws.summary;
   const taskById = (id: string) => ws.tasks.find((t) => t.id === id);
@@ -123,6 +172,7 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
       case "return_to_rep": case "sign_off": return p.reviewNeeded && ws.next.kind === "sign_off" ? p.onMarkReviewed : p.onGoSignoff;
       case "verify_costs": return () => document.getElementById("ws-verify")?.scrollIntoView({ behavior: "smooth" });
       case "wait_manager_approval": return p.onGoApproval;
+      case "record_evidence": return () => document.getElementById("ws-complete")?.scrollIntoView({ behavior: "smooth" });
       default: return null;
     }
   })();
@@ -178,6 +228,7 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
       </div>
 
       <NextActionBar next={nextForBar} onAction={onNext} />
+      {refreshing && <Alert tone="info"><span role="status" data-testid="refreshing-note">Saved. Refreshing the totals, readiness and next action…</span></Alert>}
       {note && <Alert tone="info"><span role="status" data-testid="pricing-note">{note}</span></Alert>}
       {loadError && <Alert tone="warning"><span data-testid="workspace-refresh-error">{loadError}</span> <button type="button" className="font-semibold underline" onClick={() => void load()}>Reload</button></Alert>}
       {pendingNav && (
@@ -211,7 +262,7 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
               )}
             </section>
             <RepItems items={ws.repItems} />
-            <CompleteGroup lines={ws.complete} charges={p.budget.charges} onEdit={openLine} canEdit={canEdit} />
+            <CompleteGroup lines={ws.complete} charges={p.budget.charges} onEdit={openLine} canEdit={canEdit} onRecordEvidence={recordEvidence} />
             <p className="text-[13px] text-slate-700">Room measurements, quantities, delivery, installation and the M75 price belong to the Rep.</p>
           </div>
           <div className="flex min-w-0 flex-[1_1_20rem] flex-col gap-4 lg:max-w-sm"><SummaryPanel s={s} /><WhatNext step={step} verified={bundle.view.costs.verified} required={bundle.view.costs.required} /></div>
@@ -256,7 +307,7 @@ function PackageEditor({ line, confirmed, bundle, canEdit, onConfirm, costForm, 
 }
 
 function DoorEditor({ itemKey, label, qty, chosenSaved, canEdit, saveMapping, costForm, onSaved }: {
-  itemKey: string; label: string; qty: number; chosenSaved: string | undefined; canEdit: boolean; saveMapping: (itemKey: string, sku: string | null) => Promise<SaveResult>;
+  itemKey: string; label: string; qty: number; chosenSaved: string | undefined; canEdit: boolean; saveMapping: (itemKey: string, sku: string | null, opts?: { rereadWorkspace?: boolean }) => Promise<SaveResult>;
   costForm: (sku: string, label: string, q: number, before?: () => Promise<SaveResult>, saveLabel?: string) => React.ReactNode; onSaved: () => void;
 }) {
   const [chosen, setChosen] = useState<string | undefined>(chosenSaved);
@@ -276,7 +327,7 @@ function DoorEditor({ itemKey, label, qty, chosenSaved, canEdit, saveMapping, co
         {err && <p className="mt-2 text-sm text-amber-900" data-testid="product-error">{err}</p>}
       </ProductChoice>
       {chosen ? (
-        <div data-testid="door-pricing"><h3 className="mb-2 text-[15px] font-bold">Step 2. Price it: supplier cost for {chosen}</h3>{costForm(chosen, label, qty, changed ? () => saveMapping(itemKey, chosen) : undefined, changed ? "Save product and price" : "Save cost")}</div>
+        <div data-testid="door-pricing"><h3 className="mb-2 text-[15px] font-bold">Step 2. Price it: supplier cost for {chosen}</h3>{costForm(chosen, label, qty, changed ? () => saveMapping(itemKey, chosen, { rereadWorkspace: false }) : undefined, changed ? "Save product and price" : "Save cost")}</div>
       ) : <p className="rounded-lg bg-slate-100 px-4 py-3 text-sm text-slate-800" data-testid="door-pricing-wait">Choose the product first. Its supplier cost is entered here next.</p>}
     </div>
   );
@@ -314,7 +365,7 @@ function VerifyBlock({ quoteId, bundle, onDone }: { quoteId: string; bundle: Wor
     <section id="ws-verify" aria-labelledby="ws-verify-h" className="rounded-xl border border-slate-200 bg-white p-5" data-testid="verify-block">
       <h2 id="ws-verify-h" className="text-lg font-bold">Independent verification <span className="font-normal text-slate-700">· {v.costs.verified} of {v.costs.required} supplier costs verified</span></h2>
       <div className="mt-2 overflow-x-auto"><table className="w-full min-w-[32rem] text-sm"><thead><tr className="text-left text-xs text-slate-700"><th className="py-1 pr-2">SKU</th><th className="px-2">COST</th><th className="px-2">STATE</th><th className="px-2">ENTERED BY</th><th className="px-2">VERIFY</th></tr></thead>
-        <tbody>{v.rows.map((r) => <tr key={r.sku} data-testid="pricing-row" className="border-t border-slate-100"><td className="py-1.5 pr-2">{r.sku}</td><td className="px-2 tabular-nums">{r.nativeUnitCostE7 == null ? "—" : `${r.currency} ${r.nativeUnitCostE7 / 1e7}`}</td><td className="px-2">{r.costStateText}</td><td className="px-2 text-slate-700">{r.enteredBy ?? "—"}</td>
+        <tbody>{v.rows.map((r) => <tr key={r.sku} data-testid="pricing-row" className="border-t border-slate-100"><td className="py-1.5 pr-2">{r.sku}</td><td className="px-2 tabular-nums">{r.nativeUnitCostE7 == null ? "—" : `${r.currency} ${costText(r.nativeUnitCostE7)}`}</td><td className="px-2">{r.costStateText}</td><td className="px-2 text-slate-700">{r.enteredBy ?? "—"}</td>
           <td className="px-2">{verifiable.has(r.sku) ? <label className="inline-flex min-h-11 items-center gap-2"><input type="checkbox" className="size-5" aria-label={`Verify ${r.sku} cost`} checked={picked.includes(r.sku)} onChange={(e) => setPicked((p) => (e.target.checked ? [...p, r.sku] : p.filter((x) => x !== r.sku)))} />Verify</label> : <span className="text-slate-700">{r.costState === "verified" ? "Verified" : r.costState === "missing" ? "—" : "Not by you"}</span>}</td></tr>)}</tbody></table></div>
       {bundle.verification.canReview && verifiable.size > 0 && (
         <div className="mt-3 flex flex-wrap items-end gap-3"><div className="min-w-[16rem] flex-1"><Input label="Evidence checked (for example the supplier quote reference)" value={evidence} onChange={(e) => setEvidence(e.target.value)} /></div><Button className="min-h-11" data-testid="verify-save" loading={busy} disabled={busy || picked.length === 0 || evidence.trim().length < 3} onClick={verify}>Verify {picked.length || ""} selected cost{picked.length === 1 ? "" : "s"}</Button></div>

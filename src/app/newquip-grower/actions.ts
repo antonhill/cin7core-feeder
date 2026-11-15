@@ -137,21 +137,21 @@ export interface QuoteView {
 
 async function view(db: ReturnType<typeof createServiceRoleClient>, quote: QuoteRecord, a: Actor): Promise<QuoteView> {
   const canViewCommercials = a.canSeeCost;
-  let costing: QuoteView["costing"];
-  let baselineException: QuoteView["baselineException"];
-  let manualPriceEvidence: QuoteView["manualPriceEvidence"];
-  if (canViewCommercials) {
-    if (quote.draft.estimator.pricing?.enabled) { try { manualPriceEvidence = manualEvidenceRows(quote.draft.estimator.pricing, evaluateDraft(quote.draft, evaluationContext(false)).budget); } catch { manualPriceEvidence = undefined; } }
-    // Only an open quotation can need one; once approved the exception (if any) is read from the sealed baseline.
-    if (quote.state === "ESTIMATOR_REVIEW") { try { baselineException = await baselineExceptionOf(db, a.orgId, quote.draft, evaluationContext(true)); } catch { baselineException = undefined; } }
-    try { const c = await costingOf(db, a.orgId, quote.draft, evaluationContext(true)); costing = { complete: c.complete, reason: c.reasons[0] ?? null, ...(c.acceptedIncomplete ? { acceptedIncomplete: c.acceptedIncomplete } : {}) }; } catch { costing = undefined; }
-  }
-  const evaluation = redactEvaluationFinancials(evaluateDraft(quote.draft, evaluationContext(!canViewCommercials)), canViewCommercials);
   const open = quote.state !== "MANAGER_APPROVED_FINAL";
+  // The reads below are INDEPENDENT of each other (each needs only the stored quote), so they run together: one round-trip wait instead of four in a row. Each keeps its own fallback exactly as before.
+  const baselineP: Promise<QuoteView["baselineException"]> = canViewCommercials && quote.state === "ESTIMATOR_REVIEW" // Only an open quotation can need one; once approved the exception (if any) is read from the sealed baseline.
+    ? baselineExceptionOf(db, a.orgId, quote.draft, evaluationContext(true)).catch(() => undefined) : Promise.resolve(undefined);
+  const costingP: Promise<QuoteView["costing"]> = canViewCommercials
+    ? costingOf(db, a.orgId, quote.draft, evaluationContext(true)).then((c) => ({ complete: c.complete, reason: c.reasons[0] ?? null, ...(c.acceptedIncomplete ? { acceptedIncomplete: c.acceptedIncomplete } : {}) }), () => undefined) : Promise.resolve(undefined);
+  const snapsP = canViewCommercials && open && (quote.customer_confirmed_cents != null || quote.revision > 1) ? allIndicativeSnapshots(db, a.orgId, quote.id).then((x) => x, () => null) : Promise.resolve(null);
+  const returnP = returnInfoOf(db, quote.org_id, quote);
+  let manualPriceEvidence: QuoteView["manualPriceEvidence"];
+  if (canViewCommercials && quote.draft.estimator.pricing?.enabled) { try { manualPriceEvidence = manualEvidenceRows(quote.draft.estimator.pricing, evaluateDraft(quote.draft, evaluationContext(false)).budget); } catch { manualPriceEvidence = undefined; } }
+  const evaluation = redactEvaluationFinancials(evaluateDraft(quote.draft, evaluationContext(!canViewCommercials)), canViewCommercials);
+  const [baselineException, costing, snaps, returnRaw] = await Promise.all([baselineP, costingP, snapsP, returnP]);
   let indicativeComparison: IndicativeComparison | undefined;
-  if (canViewCommercials && open && (quote.customer_confirmed_cents != null || quote.revision > 1)) {
+  if (snaps) {
     try {
-      const snaps = await allIndicativeSnapshots(db, a.orgId, quote.id);
       const last = snaps[snaps.length - 1] ?? null;
       indicativeComparison = compareToIndicative({
         snapshot: last?.snapshot ?? null, snapshotCapturedAt: last?.created_at ?? null, snapshotCapturedBy: last?.captured_by_email ?? null,
@@ -169,7 +169,7 @@ async function view(db: ReturnType<typeof createServiceRoleClient>, quote: Quote
     ...(isPocQuote(quote.draft, a.orgId) ? { poc: true } : {}),
     ...(costing ? { costing } : {}),
     ...(manualPriceEvidence && manualPriceEvidence.length ? { manualPriceEvidence } : {}),
-    returnInfo: returnInfoForViewer(await returnInfoOf(db, quote.org_id, quote), canViewCommercials),
+    returnInfo: returnInfoForViewer(returnRaw, canViewCommercials),
     ...(baselineException ? { baselineException } : {}),
   };
 }

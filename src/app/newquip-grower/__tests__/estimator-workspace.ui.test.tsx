@@ -76,7 +76,7 @@ describe("the workspace: header, exception-first tasks and compact indicators", 
     await screen.findByTestId("commercial-summary");
     expect(screen.getByTestId("summary-kind").textContent).toBe("PARTIAL AND INDICATIVE. NOT A CONTRACT VALUE.");
     expect(screen.getByTestId("header-total-label").textContent).toBe("PARTIAL TOTAL, EX VAT");
-    expect(screen.getByTestId("header-total").textContent).toBe("R7,607,144");
+    expect(screen.getByTestId("header-total").textContent).toBe("R7,607,144.00");
     expect(screen.getByTestId("summary-confirmed").textContent).toMatch(/R5,132,000/);
     expect(screen.getByTestId("summary-margin").textContent).not.toMatch(/verified$/);
     expect(screen.getByTestId("four-checks").textContent).toMatch(/FOUR SEPARATE CHECKS/);

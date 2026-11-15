@@ -1,7 +1,9 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { MIN_EVIDENCE_NOTE, MAX_EVIDENCE_NOTE } from "@/newquip/pricing/estimator/manual-evidence";
 import { money, type CompleteLine, type IndicatorState, type NextAction, type Summary, type TaskIndicators, type TaskTag, type WorkspaceTask } from "@/newquip/quote/estimator-workspace";
 
 // Presentational pieces of the Estimator workspace (the approved design): compact four-indicator rows, the legend, the next-action bar, the completed group, the commercial summary
@@ -66,7 +68,34 @@ export function NextActionBar({ next, onAction }: { next: NextAction; onAction: 
   );
 }
 
-export function CompleteGroup({ lines, charges, onEdit, canEdit }: { lines: CompleteLine[]; charges: Array<{ label: string; amountExTax: number | null }>; onEdit: (id: string) => void; canEdit: boolean }) {
+/** The existing pricing-evidence record for a SKU-less manual line (M75, penning, a manual price): its state and a small form to record it. It never changes a price; the server binds the note to the current price. */
+function EvidenceRecorder({ line, canEdit, onRecord }: { line: CompleteLine; canEdit: boolean; onRecord: (itemKey: string, note: string, reference: string) => Promise<{ ok: boolean; errors?: string[] }> }) {
+  const ev = line.evidence!;
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState(ev.note ?? "");
+  const [ref, setRef] = useState(ev.reference ?? "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const valid = note.trim().length >= MIN_EVIDENCE_NOTE && note.trim().length <= MAX_EVIDENCE_NOTE;
+  async function save() { setBusy(true); setErr(null); try { const r = await onRecord(line.id, note.trim(), ref.trim()); if (!r.ok) setErr(r.errors?.[0] ?? "Could not record the evidence."); else setOpen(false); } catch { setErr("That did not complete. Nothing was recorded."); } finally { setBusy(false); } }
+  return (
+    <div className="mt-1" data-testid={`evidence-${line.id}`} data-state={ev.state}>
+      <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-bold ${ev.state === "recorded" ? "bg-emerald-100 text-emerald-900" : "bg-amber-100 text-amber-950"}`}>{ev.state === "recorded" ? "Evidence recorded" : ev.state === "outdated" ? "Evidence outdated" : "Evidence needed"}</span>
+      {ev.state !== "recorded" && <span className="ml-2 text-xs text-slate-700">{ev.text}.</span>}
+      {canEdit && <button type="button" className="ml-2 min-h-11 text-xs font-semibold text-blue-800 underline" onClick={() => setOpen((o) => !o)} aria-expanded={open}>{ev.state === "recorded" ? "Change evidence" : "Record evidence"}</button>}
+      {open && (
+        <div className="mt-1 flex flex-wrap items-end gap-3 rounded-lg bg-slate-50 p-3">
+          <div className="min-w-[16rem] flex-[2_1_16rem]"><Input label="What this price is based on" value={note} onChange={(e) => setNote(e.target.value)} helperText={`At least ${MIN_EVIDENCE_NOTE} characters (for example a supplier quote reference and date).`} /></div>
+          <div className="min-w-[8rem] flex-[1_1_8rem]"><Input label="Reference (optional)" value={ref} onChange={(e) => setRef(e.target.value)} /></div>
+          <Button type="button" className="min-h-11" loading={busy} disabled={busy || !valid} onClick={save}>Save evidence</Button>
+          {err && <p className="w-full text-sm text-amber-900" data-testid="evidence-error">{err}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function CompleteGroup({ lines, charges, onEdit, canEdit, onRecordEvidence }: { lines: CompleteLine[]; charges: Array<{ label: string; amountExTax: number | null }>; onEdit: (id: string) => void; canEdit: boolean; onRecordEvidence?: (itemKey: string, note: string, reference: string) => Promise<{ ok: boolean; errors?: string[] }> }) {
   const chargesTotal = charges.reduce((a, c) => a + (c.amountExTax ?? 0), 0);
   return (
     <section aria-labelledby="ws-complete" className="overflow-hidden rounded-xl border border-slate-200 bg-white" data-testid="complete-group">
@@ -77,7 +106,7 @@ export function CompleteGroup({ lines, charges, onEdit, canEdit }: { lines: Comp
           {lines.map((c) => (
             <tr key={c.id} className="border-t border-slate-200" data-testid={`complete-${c.id}`}>
               <td className="px-4 py-2.5 sm:px-6"><span aria-hidden className="text-emerald-700">✓ </span>{c.label}{c.provisional && <span className="ml-2 rounded bg-amber-800 px-1.5 py-0.5 text-xs font-bold text-white">PROVISIONAL</span>}</td>
-              <td className="px-2 py-2.5 text-slate-700">{c.how}{c.manual && <details className="mt-1" data-testid={`manual-detail-${c.id}`}><summary className="cursor-pointer font-semibold text-blue-800">Reason and evidence</summary><dl className="mt-1 text-[13px] text-slate-900"><dt className="font-semibold">Reason</dt><dd className="whitespace-pre-wrap break-words">{c.manual.reason || "—"}</dd><dt className="mt-1 font-semibold">Evidence</dt><dd className="whitespace-pre-wrap break-words">{c.manual.evidence || (c.manual.legacy ? "Not recorded separately (an earlier entry): add it by editing." : "—")}</dd></dl></details>}{!c.estimatorPriced && canEdit && <> · <button type="button" className="font-semibold text-blue-800 underline" onClick={() => onEdit(c.id)}>Edit</button></>}</td>
+              <td className="px-2 py-2.5 text-slate-700">{c.how}{c.manual && <details className="mt-1" data-testid={`manual-detail-${c.id}`}><summary className="cursor-pointer font-semibold text-blue-800">Reason and evidence</summary><dl className="mt-1 text-[13px] text-slate-900"><dt className="font-semibold">Reason</dt><dd className="whitespace-pre-wrap break-words">{c.manual.reason || "—"}</dd><dt className="mt-1 font-semibold">Evidence</dt><dd className="whitespace-pre-wrap break-words">{c.manual.evidence || (c.manual.legacy ? "Not recorded separately (an earlier entry): add it by editing." : "—")}</dd></dl></details>}{!c.estimatorPriced && canEdit && <> · <button type="button" className="font-semibold text-blue-800 underline" onClick={() => onEdit(c.id)}>Edit</button></>}{c.evidence && onRecordEvidence && <EvidenceRecorder line={c} canEdit={canEdit} onRecord={onRecordEvidence} />}</td>
               <td className="px-2 py-2.5 text-right tabular-nums">{c.quantity ?? "—"} × {c.unit == null ? "—" : money(c.unit)}</td>
               <td className="px-4 py-2.5 text-right font-semibold tabular-nums sm:px-6">{c.revenue == null ? "—" : money(c.revenue)}</td>
             </tr>
@@ -102,6 +131,14 @@ export function SummaryPanel({ s }: { s: Summary }) {
       <div className="flex justify-between border-t-2 border-slate-900 pt-2 text-base font-bold"><span>{s.totalKind === "partial" ? "Partial total, ex VAT" : s.totalKind === "calculated" ? "Calculated total, ex VAT" : "Total, ex VAT"}</span><span className="tabular-nums" data-testid="summary-total">{money(s.totalExVat)}</span></div>
       <div className="flex justify-between text-sm text-slate-600"><span>VAT 15%{s.totalKind === "partial" ? " on this partial" : ""}</span><span className="tabular-nums">{money(s.vat)}</span></div>
       <div className="flex justify-between text-sm text-slate-600"><span>Incl VAT{s.totalKind === "partial" ? ", partial" : ""}</span><span className="tabular-nums">{money(s.totalIncVat)}</span></div>
+      {s.excluded.length > 0 && (
+        <div className="rounded-lg border border-amber-600 bg-amber-50 p-3 text-[13px] text-amber-950" data-testid="excluded-lines">
+          <p className="font-bold">Excluded from this total until costed</p>
+          <p className="mt-0.5">These lines were priced on the reference basis when the Rep handed the quotation over. With supplier pricing on they have no price until a supplier cost is entered, so they are not in the total above.</p>
+          <ul className="mt-1.5 flex flex-col gap-1">{s.excluded.map((e) => <li key={e.id} className="flex flex-wrap justify-between gap-x-3" data-testid={`excluded-${e.id}`}><span>{e.label} <span className="text-amber-900">· {e.why}</span></span><span className="tabular-nums">was {money(e.previous)}</span></li>)}</ul>
+          <p className="mt-1.5 flex justify-between border-t border-amber-300 pt-1 font-semibold"><span>Previously priced, now excluded</span><span className="tabular-nums" data-testid="excluded-total">{money(s.excludedPreviousTotal)}</span></p>
+        </div>
+      )}
       {s.confirmedCents !== null && (
         <div className="rounded-lg border border-amber-600 bg-amber-50 p-3 text-[13px] text-amber-950" data-testid="summary-confirmed">
           <div className="flex justify-between"><span>Rep confirmed</span><strong className="tabular-nums">{money(s.confirmedCents / 100)}</strong></div>
