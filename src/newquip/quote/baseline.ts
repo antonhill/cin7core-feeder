@@ -84,6 +84,8 @@ export interface AcceptedBaseline {
    * Sealed with the baseline, so it can never be hidden or edited afterwards.
    */
   exceptions?: BaselineException[];
+  /** Server-set at approval from the server-owned POC flag AND the environment gate. Absent only on baselines sealed before this field existed (see approvedInPocMode). */
+  pocPresentation?: boolean;
   /** Total contract value, ex VAT, integer cents. */
   contractCents: number;
 }
@@ -123,7 +125,7 @@ export interface BaselineInput {
    * already bound it to the version the Manager saw. It waives ONLY the unmapped Estimator-priced items; anything else still stops the freeze.
    */
   baselineException?: { reason: string; draftHash: string };
-  /** POC Presentation Mode (marked quotation only): unresolved mappings are listed in the exception as UNVERIFIED instead of blocking the freeze. */
+  /** POC Presentation Mode (server-flagged quotation only, decided by the caller: flag AND environment gate): unresolved mappings are listed in the exception as UNVERIFIED instead of blocking the freeze. */
   pocPresentation?: boolean;
   /** NQ-008B Phase 2: which SKUs with no captured supplier cost the CURRENT, independently verified supplier pricing covers (supplied by the caller; this module never imports the pricing model). */
   phase2Coverage?: (missingSkus: readonly string[]) => ReadonlySet<string>;
@@ -204,6 +206,8 @@ export function buildAcceptedBaseline(i: BaselineInput): { baseline: AcceptedBas
     internalMargin: buildMarginSheet(marginBudget, draft.estimator.costOverrides ?? {}),
     ...(physicalCostEstimate ? { physicalCostEstimate } : {}),
     ...(exceptions ? { exceptions } : {}),
+    // Always an explicit boolean on a new seal: it is the server's own record of the basis, and what tells a new baseline from one sealed before this field existed (see approvedInPocMode).
+    pocPresentation: i.pocPresentation === true,
     contractCents: subtotalCents,
   };
   return { baseline: deepFreeze(baseline), hash: hashOf(baseline) };

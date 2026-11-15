@@ -354,7 +354,7 @@ describe("Estimator handover (the NQ-Q-0026 scenario)", () => {
 });
 
 import * as costActions from "@/app/newquip-grower/cost-actions";
-import { POC_MARKER, POC_COST_REASON, isPocQuote } from "@/lib/newquip-quotes/poc-presentation";
+import { POC_MARKER, POC_COST_REASON, hasPocFlag } from "@/lib/newquip-quotes/poc-presentation";
 
 describe("POC Presentation Mode (designated demonstration only)", () => {
   const REF = "pnzwjqjovxxdikxtfngq";
@@ -367,7 +367,7 @@ describe("POC Presentation Mode (designated demonstration only)", () => {
     on(); await as("rep");
     const r = await grower.createGrowerQuoteAction(); expect(r.error).toBeUndefined();
     const q = db.rows("newquip_quotes").find((x) => x.id === r.data!.id) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
-    expect(isPocQuote(q.draft)).toBe(true);
+    expect(hasPocFlag(q.draft)).toBe(true);
     expect(q.draft.estimator.assumptions.startsWith(POC_MARKER)).toBe(true);
     expect(q.draft.estimator.confirmedMappings).toMatchObject({ feeder: "PNQ082", bulk_tank: "SYSH-2750-3", concrete_slat: "NQ1161", feed_saver_mat: "ERT053" });
     expect(Object.keys(q.draft.estimator.priceResolutions).sort()).toEqual(["concrete_slat", "cup_drinker", "feed_saver_mat", "led_light", "pvc_door"]);
@@ -384,13 +384,13 @@ describe("POC Presentation Mode (designated demonstration only)", () => {
     off();
     const n = await grower.createGrowerQuoteAction(); expect(n.error).toBeUndefined();
     const nq = db.rows("newquip_quotes").find((x) => x.id === n.data!.id) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
-    expect(isPocQuote(nq.draft)).toBe(false); expect(nq.draft.estimator.priceResolutions).toEqual({});
+    expect(hasPocFlag(nq.draft)).toBe(false); expect(nq.draft.estimator.priceResolutions).toEqual({});
     process.env.NEWQUIP_POC_PRESENTATION = "true"; process.env.SUPABASE_URL = "https://wevhibjvinmdvuuyurql.supabase.co"; process.env.NEXT_PUBLIC_SUPABASE_URL = "https://wevhibjvinmdvuuyurql.supabase.co";
-    const o = await grower.createGrowerQuoteAction(); expect(isPocQuote((db.rows("newquip_quotes").find((x) => x.id === o.data!.id) as Record<string, any>).draft)).toBe(false); // eslint-disable-line @typescript-eslint/no-explicit-any
+    const o = await grower.createGrowerQuoteAction(); expect(hasPocFlag((db.rows("newquip_quotes").find((x) => x.id === o.data!.id) as Record<string, any>).draft)).toBe(false); // eslint-disable-line @typescript-eslint/no-explicit-any
   });
 
   // POC mode must NOT create or imply an incomplete-COSTING waiver: that needs an authorised person's recorded decision (acceptIncompleteCostsAction), also in Preview.
-  const markPoc = () => { (quote().draft as any).estimator.assumptions = `${POC_MARKER}: test`; }; // eslint-disable-line @typescript-eslint/no-explicit-any
+  const markPoc = () => { (quote().draft as any).estimator.pocPresentation = true; }; // eslint-disable-line @typescript-eslint/no-explicit-any
   const COSTING_REFUSAL = /^Costing is incomplete: The cost estimate is incomplete: \d+ SKU\(s\) have no supplier cost selected \(.+\)\. Complete it \(or record an authorised incomplete-cost exception\) before signing off\.$/;
   const REASON = "Supplier costs not yet available; margin indicative only (manager decision)";
 
@@ -438,7 +438,7 @@ describe("POC Presentation Mode (designated demonstration only)", () => {
 
   it("the mode does nothing for a non-Estimator, or when the mode is off, even on a marked quotation", async () => {
     await confirmed();
-    (quote().draft as any).estimator.assumptions = `${POC_MARKER}: test`; // eslint-disable-line @typescript-eslint/no-explicit-any
+    (quote().draft as any).estimator.pocPresentation = true; // eslint-disable-line @typescript-eslint/no-explicit-any
     await as("rep"); await grower.signOffGrowerQuoteAction("q1");
     on(); await as("manager"); await grower.signOffGrowerQuoteAction("q1");
     off(); await as("estimator"); await grower.signOffGrowerQuoteAction("q1");

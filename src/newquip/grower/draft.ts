@@ -39,6 +39,11 @@ export interface EstimatorState {
    * Only the pricing action writes it (see pricing/estimator/ownership.ts); it is never sent to a viewer without cost visibility.
    */
   pricing?: EstimatorPricing;
+  /**
+   * SERVER-OWNED (POC Presentation Mode). Set ONLY by createGrowerQuoteAction while the Preview-only mode is on; never by a client. Every draft write path replaces whatever a client
+   * sends with the stored value (keepServerOwnedPocFlag), so it can be neither set nor cleared by a save. Absent on every ordinary quotation. Inert unless the mode is on at the moment of use.
+   */
+  pocPresentation?: true;
   /** Free-text assumptions that travel with the quote and are frozen in the baseline. */
   assumptions: string;
 }

@@ -36,7 +36,7 @@ import { fieldValue } from "@/lib/newquip-quotes/customer-snapshot";
 import { reconcileConfirmationAmount, resyncApprovalsLogged } from "@/lib/newquip-quotes/confirmation-reconcile";
 import { assertConfirmationCurrent, assertNameMatchesSnapshot } from "@/lib/newquip-quotes/confirmation-guard";
 import { keepServerOwnedCostBasis, keepServerOwnedCosts, redactEvaluationFinancials, redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
-import { isPocQuote, pocPresentationEnabled, seedPocEstimator, POC_BASELINE_REASON } from "@/lib/newquip-quotes/poc-presentation";
+import { isPocQuote, keepServerOwnedPocFlag, pocPresentationEnabled, seedPocEstimator, POC_BASELINE_REASON } from "@/lib/newquip-quotes/poc-presentation";
 import { approvalsAvailable, decideDocument, legacyCtx, resyncQuoteApprovals, stagedAvailable, submitForApproval, withdrawPendingFor } from "@/lib/approvals/approval-store";
 import { BASELINE_EXCEPTION_TITLE, exceptionDecisionText, validateExceptionReason, type BaselineExceptionItem, type BaselineExceptionRequest, type BaselineExceptionView } from "@/newquip/quote/baseline-exception";
 import type { ScheduleChoice } from "@/newquip/quote/billing-schedule";
@@ -166,7 +166,7 @@ async function view(db: ReturnType<typeof createServiceRoleClient>, quote: Quote
     evaluation,
     ...(indicativeComparison ? { indicativeComparison } : {}),
     viewer: { roles: [...a.roles], canViewCommercials, previewTools: process.env.VERCEL_ENV === "preview" },
-    ...(isPocQuote(quote.draft) && pocPresentationEnabled(process.env as Record<string, string | undefined>, a.orgId) ? { poc: true } : {}),
+    ...(isPocQuote(quote.draft, a.orgId) ? { poc: true } : {}),
     ...(costing ? { costing } : {}),
     ...(manualPriceEvidence && manualPriceEvidence.length ? { manualPriceEvidence } : {}),
     returnInfo: returnInfoForViewer(await returnInfoOf(db, quote.org_id, quote), canViewCommercials),
@@ -214,7 +214,7 @@ async function sanitiseSubmittedDraft(a: Actor, db: ReturnType<typeof createServ
   d = { ...d, estimator: { ...d.estimator, priceResolutions: stampPriceResolutions(d.estimator.priceResolutions, prior?.estimator.priceResolutions, a.roles, a.email, nowIso) as QuoteDraft["estimator"]["priceResolutions"] } };
   const stamped = keepServerOwnedCostBasis(keepServerOwnedCosts(stampCostOverrides(d, prior?.estimator.costOverrides, a.canSeeCost, a.email, nowIso), prior?.estimator.physicalCosts), prior?.estimator.costBasis);
   // Last line of defence (field ownership): a caller without Estimator / Manager authority can never change an Estimator-owned field, whatever the checks above did.
-  const owned = keepServerOwnedPricing(keepEstimatorOwnedFields(stamped, prior, a.roles), prior); // NQ-008B Phase 2: supplier pricing is changed only by its own action
+  const owned = keepServerOwnedPocFlag(keepServerOwnedPricing(keepEstimatorOwnedFields(stamped, prior, a.roles), prior), prior); // the POC flag is server-owned: the stored value, never the client's // NQ-008B Phase 2: supplier pricing is changed only by its own action
   // NQ-008A: after the handoff, who changed each price-affecting input and when is decided HERE (never by the client) and stored in the same save.
   return stampChanges(owned, prior, { state: at?.state ?? "REP_DRAFT", revision: at?.revision ?? 1, email: a.email, nowIso });
 }
@@ -225,9 +225,10 @@ export async function createGrowerQuoteAction(draft?: QuoteDraft): Promise<Growe
     if (!a.roles.has("rep")) throw new Error("Only a rep can start a quote.");
     const db = createServiceRoleClient();
     let start = draft ? await sanitiseSubmittedDraft(a, db, draft, undefined) : emptyDraft();
-    // POC Presentation Mode (Preview + switch + NewQuip organisation only): the NEW quotation is marked and seeded with the Estimator inputs the workbook cannot supply.
-    if (pocPresentationEnabled(process.env as Record<string, string | undefined>, a.orgId)) start = seedPocEstimator(start, new Date().toISOString());
-    const r = await createQuote(db, a.orgId, a.email, start);
+    // POC Presentation Mode (Preview + switch + NewQuip organisation only): the NEW quotation gets the SERVER-OWNED POC flag and is seeded with the Estimator inputs the workbook cannot supply.
+    const poc = pocPresentationEnabled(process.env as Record<string, string | undefined>, a.orgId);
+    if (poc) start = seedPocEstimator(start, new Date().toISOString());
+    const r = await createQuote(db, a.orgId, a.email, start, { pocPresentation: poc });
     await audit(db, a, { action: "newquip.quote_created", summary: `Started NewQuip quote ${r.quoteRef} (local only; no Cin7 write)`, detail: { quoteId: r.id } });
     return { ok: true, data: r };
   } catch (e) {
@@ -462,11 +463,12 @@ export async function returnGrowerQuoteToEstimatorAction(quoteId: string, reason
 export async function approveGrowerQuoteAction(quoteId: string, opts?: { baselineException?: BaselineExceptionRequest }) {
   return step(quoteId, "Manager approved a NewQuip quote and froze the accepted baseline", "newquip.quote_manager_approved", async (a, db) => {
     // POC Presentation Mode: where a Manager baseline exception is REQUIRED and sufficient (M75 / penning are Estimator-priced by design), record it with the POC reason instead of asking for the form. Nothing else is waived.
+    let pocAuto = false;
     if (!opts?.baselineException && a.roles.has("manager") && pocPresentationEnabled(process.env as Record<string, string | undefined>, a.orgId)) {
       const pq = await loadQuote(db, a.orgId, quoteId);
-      if (pq && pq.state === "ESTIMATOR_REVIEW" && isPocQuote(pq.draft)) {
+      if (pq && pq.state === "ESTIMATOR_REVIEW" && isPocQuote(pq.draft, a.orgId)) {
         const need = await baselineExceptionOf(db, a.orgId, pq.draft, evaluationContext(true));
-        if (need.baselineExceptionRequired) opts = { baselineException: { reason: POC_BASELINE_REASON, expectedRevision: pq.revision, expectedDraftHash: pq.draft_hash } };
+        if (need.baselineExceptionRequired) { pocAuto = true; opts = { baselineException: { reason: POC_BASELINE_REASON, expectedRevision: pq.revision, expectedDraftHash: pq.draft_hash } }; }
       }
     }
     // A stale confirmation (confirmed contact changed, or total no longer the confirmed amount) can never be approved. Read-only; the role checks below still decide who may approve.
@@ -491,7 +493,7 @@ export async function approveGrowerQuoteAction(quoteId: string, opts?: { baselin
     else await managerApprove(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true), evaluationContext(false), bx ? { baselineException: bx } : undefined);
     if (!recorded) return;
     // The exception is now sealed in the baseline. It also gets its own audit record (who, when, which version, which items, why).
-    const detail = { quoteId, revision: recorded.revision, draftHash: recorded.draftHash, unresolved: recorded.items.map((i) => ({ itemKey: i.itemKey, label: i.label, pricedBy: i.pricedBy })), reason: recorded.reason, approvedBy: a.email };
+    const detail = { quoteId, revision: recorded.revision, draftHash: recorded.draftHash, unresolved: recorded.items.map((i) => ({ itemKey: i.itemKey, label: i.label, pricedBy: i.pricedBy })), reason: recorded.reason, approvedBy: a.email, ...(pocAuto ? { basis: "poc_presentation_server_flag", pocPresentation: true, autoRecorded: true, actorRole: "manager" } : { basis: "manager_recorded_exception", pocPresentation: !!(await loadQuote(db, a.orgId, quoteId))?.accepted_baseline?.pocPresentation }) };
     await audit(db, a, { action: "newquip.baseline_exception_accepted", summary: `Manager accepted a baseline exception (${BASELINE_EXCEPTION_TITLE}) for ${recorded.items.length} item(s) at revision ${recorded.revision} (local only; no Cin7 write)`, detail });
     return { baselineException: { items: recorded.items.map((i) => i.itemKey), reason: recorded.reason, revision: recorded.revision, draftHash: recorded.draftHash } };
   });
