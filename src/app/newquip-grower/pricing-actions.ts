@@ -22,14 +22,20 @@ async function pricingActor(): Promise<Actor> {
   if (a.demo) throw new Error("Supplier pricing is not available in Demo Mode.");
   return a;
 }
-async function run(quoteId: string, submission: PricingSubmission | null, reason: string, base: PricingSubmission | null): Promise<PricingActionResult<ApplyReport>> {
+/** What a successful pricing write returns: the revision report and (when it could be read) the workspace AS IT IS AFTER the write, so the page needs no second round trip to show it. */
+type ApplyResult = ApplyReport & { workspace?: WorkspaceBundle };
+async function run(quoteId: string, submission: PricingSubmission | null, reason: string, base: PricingSubmission | null): Promise<PricingActionResult<ApplyResult>> {
   if (typeof quoteId !== "string" || quoteId.length === 0 || quoteId.length > 64 || typeof reason !== "string") throw new TypeError("bad request");
   const a = await pricingActor();
   const db = createServiceRoleClient();
   const r = await applyPricingChange(db, asPricingActor(a), quoteId, submission, reason, base);
   if (!r.ok) return { ok: false, error: r.errors[0], errors: r.errors, ...(r.conflicts ? { conflicts: r.conflicts } : {}) };
-  await auditActor(db, a, { action: "newquip.pricing_revision", summary: "Recorded an Estimator pricing revision (local only; no Cin7 write)", detail: { quoteId, seq: r.report.seq, kind: r.report.kind, changedValues: r.report.changedValues, customerConfirmationWithdrawn: !!r.report.confirmation } });
-  return { ok: true, data: r.report };
+  // The audit record and the refreshed workspace are independent: one wait, not two. A failed audit fails the call exactly as before; a failed refresh only means the page reads it itself.
+  const [, workspace] = await Promise.all([
+    auditActor(db, a, { action: "newquip.pricing_revision", summary: "Recorded an Estimator pricing revision (local only; no Cin7 write)", detail: { quoteId, seq: r.report.seq, kind: r.report.kind, changedValues: r.report.changedValues, customerConfirmationWithdrawn: !!r.report.confirmation } }),
+    loadPricingWorkspace(db, asPricingActor(a), quoteId).catch(() => undefined),
+  ]);
+  return { ok: true, data: { ...r.report, ...(workspace ? { workspace } : {}) } };
 }
 
 export async function getEstimatorPricingAction(quoteId: string): Promise<PricingActionResult<WorkspaceBundle>> {
@@ -46,7 +52,7 @@ const isBase = (x: unknown): boolean => x === null || (typeof x === "object" && 
  * Records the submitted pricing as one immutable revision (the first one switches the model on for this quotation). `base` is REQUIRED: the stored pricing these edits were made against
  * (null = pricing was off when loaded). The server merges field by field onto the CURRENT stored pricing and refuses on a real conflict; a missing base is refused (never last-write-wins).
  */
-export async function applyEstimatorPricingAction(quoteId: string, submission: PricingSubmission, reason: string, base: PricingSubmission | null): Promise<PricingActionResult<ApplyReport>> {
+export async function applyEstimatorPricingAction(quoteId: string, submission: PricingSubmission, reason: string, base: PricingSubmission | null): Promise<PricingActionResult<ApplyResult>> {
   try {
     if (!isBase(base)) return { ok: false, error: NO_BASE, errors: [NO_BASE] };
     return await run(quoteId, submission, reason, base);
@@ -54,7 +60,7 @@ export async function applyEstimatorPricingAction(quoteId: string, submission: P
 }
 
 /** Switches the model off for this quotation (recorded as a revision): it returns to the POC price source. `base` is REQUIRED and the switch-off is refused if the stored pricing changed since it. */
-export async function disableEstimatorPricingAction(quoteId: string, reason: string, base: PricingSubmission | null): Promise<PricingActionResult<ApplyReport>> {
+export async function disableEstimatorPricingAction(quoteId: string, reason: string, base: PricingSubmission | null): Promise<PricingActionResult<ApplyResult>> {
   try {
     if (!isBase(base)) return { ok: false, error: NO_BASE, errors: [NO_BASE] };
     return await run(quoteId, null, reason, base);

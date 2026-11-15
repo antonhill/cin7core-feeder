@@ -470,7 +470,7 @@ describe("what the Manager sees at approval (cost-entitled viewers only)", () =>
     expect(page.match(/canCommercials && !poc && view\.manualPriceEvidence && <ManualEvidencePanel/g)?.length).toBe(2); // Stage 2 and Stage 3
     const actionsSrc = readFileSync(path.resolve(__dirname, "../actions.ts"), "utf8");
     const at = actionsSrc.indexOf("let manualPriceEvidence");
-    expect(actionsSrc.slice(at, at + 400)).toMatch(/if \(canViewCommercials\) \{\s*if \(quote\.draft\.estimator\.pricing\?\.enabled\)/);
+    expect(actionsSrc.slice(at, at + 400)).toMatch(/if \(canViewCommercials && quote\.draft\.estimator\.pricing\?\.enabled\)/);
   });
 });
 

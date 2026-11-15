@@ -45,6 +45,7 @@ import { BuildStamp } from "@/components/BuildStamp";
 import { ScheduleChooser } from "./ScheduleChooser";
 import { CostPanel } from "./CostPanel";
 import { EstimatorPricingPanel } from "./EstimatorPricingPanel";
+import { ActivationPanel } from "./ActivationPanel";
 import { EstimatorWorkspace } from "./EstimatorWorkspace";
 import { CostVerifyBanner, LegacyCostingDisclosure } from "./CostVerifyBanner";
 import { approvalBlockers, buildPricingWorkspace, nextCostVerifyAction, phase2CostNote, phase2CostStatus, phase2CostingReason, selectRuleVersion } from "@/newquip/pricing/estimator";
@@ -575,6 +576,9 @@ export default function QuoteEditorPage() {
   // The Estimator workspace replaces the stacked Stage 2 forms ONLY for a quotation whose supplier pricing is ON, for an Estimator or Manager who may see costs, and while it is in review or back with the Rep.
   // Everything else (supplier pricing off, POC, the Rep, an approved quotation) renders exactly as before.
   const workspaceMode = !!p2Status && !poc && canCommercials && !final && !!budget && (q.state === "ESTIMATOR_REVIEW" || q.state === "REP_DRAFT") && (isEstimator || roles.has("manager"));
+  // Supplier pricing is OFF but could be switched on from the new experience: a project quotation, an Estimator who may see costs, in review or back with the Rep. (Day-to-day, POC and approved quotations never offer it.)
+  const activationEligible = !workspaceMode && !p2Status && !poc && canCommercials && isEstimator && !final && !!budget && draft.quoteType === "project" && !draft.estimator.pricing?.enabled && (q.state === "ESTIMATOR_REVIEW" || q.state === "REP_DRAFT");
+  const reloadQuote = (): Promise<void> => getGrowerQuoteAction(id).then((r) => { if (r.ok && r.data) adopt(r.data, true); });
   const wsSaveDraft = async (mut: (d: QuoteDraft) => void): Promise<{ ok: boolean; errors?: string[] }> => {
     if (dirty) return { ok: false, errors: ["Save or discard your other unsaved changes first."] };
     const next = structuredClone(draft!); mut(next);
@@ -750,7 +754,7 @@ export default function QuoteEditorPage() {
             {previewFailure ? <Status tone="danger">Recalculation failed - figures are out of date</Status> : dirty && <Status tone="warning">Preview of unsaved edits</Status>}
             {commercial && !commercial.complete && stage !== 2 && <span data-testid="commercial-chip"><Status tone="warning">{commercial.headline}</Status></span>}
           </div>
-          <dl className="flex flex-wrap items-end gap-x-8 gap-y-1 max-sm:gap-x-3">
+          <dl className={`flex flex-wrap items-end gap-x-8 gap-y-1 max-sm:gap-x-3 ${workspaceMode && stage === 2 ? "hidden" : ""}`} data-testid="calc-banner-figures">
             <div><dt className="text-xs uppercase tracking-wide text-slate-700 max-sm:text-[10px] max-sm:leading-tight" data-testid="total-caption">{awaitingLines > 0 ? `Indicative total (${awaitingLines} line${awaitingLines === 1 ? "" : "s"} await the Estimator)` : totalIndicative ? "Indicative total (ex VAT)" : "Quote total (ex VAT)"}</dt><dd className={`whitespace-nowrap text-xl font-bold tabular-nums ${previewFailure ? "text-slate-700 line-through decoration-1" : "text-slate-900"}`}>{totalCents == null ? "—" : fmtCents(totalCents)}{staleCue && <span className="ml-2 text-sm font-semibold no-underline" data-testid="summary-stale">{staleCue}</span>}</dd></div>
             {budget && !budget.incomplete && <div className="max-sm:hidden"><dt className="text-xs uppercase tracking-wide text-slate-700">Total (inc VAT)</dt><dd className="whitespace-nowrap text-lg font-semibold tabular-nums text-slate-900">{fmtZar(budget.totals.totalIncTax)}</dd></div>}
             {budget && view.viewer.canViewCommercials && stage < 4 && <div><dt className="text-xs uppercase tracking-wide text-slate-700">{marginLabel}</dt><dd className="whitespace-nowrap text-lg font-semibold tabular-nums text-slate-900">{fmtPctShown}{marginNote && <span className="block whitespace-normal text-xs font-normal text-amber-800 max-sm:hidden" data-testid="summary-margin-note">{marginNote}</span>}</dd></div>}
@@ -828,11 +832,12 @@ export default function QuoteEditorPage() {
             {commercial && !commercial.complete && <span data-testid="commercial-chip" className="max-w-full max-sm:hidden [&>span]:whitespace-normal"><Status tone="warning">{commercial.headline}</Status></span>}
             {commercial && !commercial.complete && <span className="sm:hidden" data-testid="commercial-chip-short"><Status tone="warning">Not commercially ready ({commercial.items.length} item{commercial.items.length === 1 ? "" : "s"})</Status></span>}
           </div>
-          {amountChange.changed && q.state === "ESTIMATOR_REVIEW" && <div className="mt-2"><Alert tone="warning"><span data-testid="total-changed">{amountChange.text}</span></Alert></div>}
+          {amountChange.changed && q.state === "ESTIMATOR_REVIEW" && !workspaceMode && <div className="mt-2"><Alert tone="warning"><span data-testid="total-changed">{amountChange.text}</span></Alert></div>}
           {repSummary}
           {!workspaceMode && canCommercials && view.indicativeComparison && <IndicativeComparisonPanel c={view.indicativeComparison} />}
           {!workspaceMode && canCommercials && !poc && view.manualPriceEvidence && <ManualEvidencePanel rows={view.manualPriceEvidence} />}
           {req2No !== null && req2No > visible2.length && <p className="mt-3 text-sm text-slate-800" data-testid="step-unavailable">That step is not available to you, so the first step is shown.</p>}
+          {activationEligible && budget && <ActivationPanel quoteId={id} budget={budget} confirmedCents={q.customer_confirmed_cents} canEdit={s2Edit} reload={reloadQuote} onDirtyChange={setWsDirty} />}
           {!workspaceMode && (
           <StepRail dense oneLineNotes id="s2" ariaLabel="Costing and review steps" steps={railSteps2View} currentId={step2Id} onSelect={goStep2}
             moreActions={(
@@ -1051,14 +1056,17 @@ export default function QuoteEditorPage() {
         {workspaceMode && budget && (
           <EstimatorWorkspace quoteId={id} state={q.state} confirmedCents={q.customer_confirmed_cents} signedOff={signedNow} draft={draft} budget={budget} pageDirty={dirty} canEdit={s2Edit}
             title={`${draft.siteName || "Quotation"} · ${draft.customerName || "Customer"}`} subtitle={`${cfg.rooms || 0} rooms · ${draft.quoteType === "project" ? "Project pricing" : "Day-to-day pricing"} · Revision ${q.revision} · Supplier pricing on`}
-            refreshKey={`${q.draft_hash}|${q.revision}|${q.state}`} saveDraft={wsSaveDraft} reload={() => { void getGrowerQuoteAction(id).then((r) => { if (r.ok && r.data) adopt(r.data, true); }); }}
+            refreshKey={`${q.draft_hash}|${q.revision}|${q.state}`} saveDraft={wsSaveDraft} reload={reloadQuote} comparison={view.indicativeComparison ?? null}
             onGoSignoff={() => document.getElementById("ws-signoff")?.scrollIntoView({ behavior: "smooth" })} onGoApproval={() => goStage(3)} reviewNeeded={costNeedsMark} onMarkReviewed={markReviewed} onDirtyChange={setWsDirty} />
         )}
         {workspaceMode && (
-          <div className="mt-6 space-y-4" data-testid="ws-record">
-            {canCommercials && view.indicativeComparison && <IndicativeComparisonPanel c={view.indicativeComparison} />}
-            {canCommercials && view.manualPriceEvidence && <ManualEvidencePanel rows={view.manualPriceEvidence} />}
-          </div>
+          <details className="mt-6 rounded-xl border border-slate-200 bg-white px-4 py-2" data-testid="ws-record">
+            <summary className="min-h-11 cursor-pointer py-2.5 text-sm font-semibold text-slate-900">Record: handoff comparison and pricing evidence</summary>
+            <div className="space-y-4 pb-3">
+              {canCommercials && view.indicativeComparison && <IndicativeComparisonPanel c={view.indicativeComparison} />}
+              {canCommercials && view.manualPriceEvidence && <ManualEvidencePanel rows={view.manualPriceEvidence} />}
+            </div>
+          </details>
         )}
         {!workspaceMode && (
         <>
