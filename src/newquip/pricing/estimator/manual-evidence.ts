@@ -69,7 +69,7 @@ export type EvidenceResult = { ok: true; next: EstimatorPricing; changes: Pricin
  */
 export function applyManualEvidence(prior: EstimatorPricing | undefined, budget: BudgetQuote | null, items: readonly EvidenceItem[], viewer: Viewer, email: string, nowIso: string): EvidenceResult {
   if (!prior) return { ok: false, errors: ["Supplier pricing is not switched on for this quotation."] };
-  if (!canEnterPricingInputs(viewer)) return { ok: false, errors: ["Only an Estimator or Manager who can see costs can record pricing evidence."] };
+  if (!canEnterPricingInputs(viewer)) return { ok: false, errors: ["Only an Estimator who can see costs can record pricing evidence."] };
   if (!Array.isArray(items) || items.length === 0 || items.length > 100) return { ok: false, errors: ["Choose at least one item to record evidence for."] };
   const current = new Map(skuLessManualItems(budget).map((i) => [i.itemKey, i]));
   const errors: string[] = [];

@@ -79,11 +79,19 @@ describe("reasons and audit evidence for overrides (server-owned attribution)", 
   });
   it("refuses a Rep, and an Estimator without cost visibility, entering, changing or REMOVING an input", () => {
     for (const v of [REP, EST_NO_COST]) {
-      expect(() => stampPricingInputs(submitted(), emptyInputRecord(), v, "r@x", NOW)).toThrow(/Estimator or Manager who can see costs/);
+      expect(() => stampPricingInputs(submitted(), emptyInputRecord(), v, "r@x", NOW)).toThrow(/Only an Estimator who can see costs/);
     }
     const first = stampPricingInputs(submitted(), emptyInputRecord(), EST, FIXTURE_ACTOR, NOW);
-    expect(() => stampPricingInputs(emptyInputRecord(), first, REP, "r@x", NOW)).toThrow(/Estimator or Manager/);
+    expect(() => stampPricingInputs(emptyInputRecord(), first, REP, "r@x", NOW)).toThrow(/Only an Estimator/);
     expect(() => stampPricingInputs(first, first, REP, "r@x", NOW)).not.toThrow(); // resubmitting unchanged inputs is not a change
+  });
+  it("a Manager-only account (cost-entitled) may NOT enter, change or remove any pricing input; an Estimator may", () => {
+    const MGR_ONLY: Viewer = { roles: roles("manager"), canSeeCost: true };
+    expect(canEnterPricingInputs(MGR_ONLY)).toBe(false);
+    expect(canEnterPricingInputs(EST)).toBe(true);
+    expect(() => stampPricingInputs(submitted(), emptyInputRecord(), MGR_ONLY, "m@x", NOW)).toThrow(/Only an Estimator/);
+    const first = stampPricingInputs(submitted(), emptyInputRecord(), EST, FIXTURE_ACTOR, NOW);
+    expect(() => stampPricingInputs(emptyInputRecord(), first, MGR_ONLY, "m@x", NOW)).toThrow(/Only an Estimator/);
   });
   it("the stamped inputs calculate, and the recorded reason travels with the line", () => {
     const s = stampPricingInputs(submitted(), emptyInputRecord(), EST, FIXTURE_ACTOR, NOW);

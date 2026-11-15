@@ -135,7 +135,7 @@ export function normaliseSubmission(raw: unknown, nowIso: string): { ok: true; v
 }
 
 export function applyPricingSubmission(prior: EstimatorPricing | undefined, sub: PricingSubmission, viewer: Viewer, email: string, nowIso: string, reason: string, quoteType: string): ApplyResult {
-  if (!canEnterPricingInputs(viewer)) return { ok: false, errors: ["Only an Estimator or Manager who can see costs can enter or change pricing inputs."] };
+  if (!canEnterPricingInputs(viewer)) return { ok: false, errors: ["Only an Estimator who can see costs can enter or change pricing inputs."] };
   if (typeof reason !== "string" || reason.trim().length < 3 || reason.length > 500) return { ok: false, errors: ["Say why the pricing is being changed (3 to 500 characters; it is kept with the revision)."] };
   if (quoteType !== "project") return { ok: false, errors: ["Supplier pricing applies to project quotations only."] };
   const shaped = normaliseSubmission(sub, nowIso);
@@ -197,7 +197,7 @@ export function applyPricingSubmission(prior: EstimatorPricing | undefined, sub:
 
 /** Switching the model OFF is itself a recorded, authorised change (the quotation returns to the POC price source). */
 export function disablePricing(prior: EstimatorPricing | undefined, viewer: Viewer, reason: string): ApplyResult {
-  if (!canEnterPricingInputs(viewer)) return { ok: false, errors: ["Only an Estimator or Manager who can see costs can change pricing inputs."] };
+  if (!canEnterPricingInputs(viewer)) return { ok: false, errors: ["Only an Estimator who can see costs can change pricing inputs."] };
   if (typeof reason !== "string" || reason.trim().length < 3 || reason.length > 500) return { ok: false, errors: ["Say why the pricing is being switched off."] };
   if (!prior) return { ok: false, errors: ["Supplier pricing is not switched on for this quotation."] };
   return { ok: true, kind: "DISABLED", next: null, changes: diffPricing(prior, null) };
