@@ -362,6 +362,7 @@ export default function QuoteEditorPage() {
   })();
   const costingIncomplete = poc ? false : costingSrv ? !costingSrv.complete : p2Status ? !p2Status.complete : (marginInfo?.missing ?? 0) > 0;
   const costingReason = p2Status && costingIncomplete ? phase2CostingReason(p2Status, costingSrv?.reason) : (costingSrv?.reason ?? null);
+  const costPanelRoles = { estimator: roles.has("estimator"), manager: roles.has("manager") }; // the legacy CostPanel offers each control only to the role the server accepts
   const costMissingShown = p2Status ? 0 : (marginInfo?.missing ?? 0); // the legacy margin sheet's per-line "no cost" count describes the Cin7 capture, not Phase 2 supplier pricing
   const marginNote = marginIncomplete ? (marginInfo!.missing > 0 ? `project margin not available: ${marginInfo!.missing} line${marginInfo!.missing === 1 ? " has" : "s have"} no cost` : marginInfo!.exempt.length > 0 ? `margin is indicative: ${marginInfo!.exempt.length} line${marginInfo!.exempt.length === 1 ? " is" : "s are"} Estimator-priced (no supplier cost by design)` : "margin is indicative (price-list basis)") : null;
   // "Approve" is described by whichever of the existing messages currently applies (each is already on the page, so nothing is duplicated). Role/process wording only.
@@ -1155,7 +1156,7 @@ export default function QuoteEditorPage() {
               {/* Everything below the supplier-pricing workspace stays Estimator-only: it keeps the disabled fieldset. The workspace itself sits OUTSIDE it (its editing controls are gated by `editable`) so a Manager can run the independent verification. */}
               <fieldset disabled={!s2Edit} className="min-w-0 space-y-6 border-0 p-0">
               {!poc && !p2Status && (<Disclosure testId="disc-cost-capture" title="Cin7 cost capture and FX rates" summary={costingIncomplete ? (marginInfo && marginInfo.missing > 0 ? `Costs are incomplete for ${marginInfo.missing} line${marginInfo.missing === 1 ? "" : "s"}: capture or enter them here` : `Costing is incomplete: ${costingReason ?? "supplier costs are unresolved"}`) : "Latest supplier prices from Cin7, exchange rates and exceptions"} attention={costingIncomplete}>
-                {final ? <CostPanel quoteId={id} /> : <CostPanel quoteId={id} unsaved={dirty} previewDraft={dirty ? previewedFor : null} />}
+                {final ? <CostPanel quoteId={id} roles={costPanelRoles} /> : <CostPanel quoteId={id} unsaved={dirty} previewDraft={dirty ? previewedFor : null} roles={costPanelRoles} />}
               </Disclosure>)}
               {!p2Status && marginInfo && marginInfo.exempt.length > 0 && <p className="text-sm text-slate-800" data-testid="est-priced-note">Estimator-priced (no supplier cost by design): {marginInfo.exempt.join("; ")}. They keep the margin indicative; they are not missing costs.</p>}
               {totalsPanel}
@@ -1169,7 +1170,7 @@ export default function QuoteEditorPage() {
               {!final && !p2Status && <Alert tone="info">SKU mapping and the Cin7 latest-supplier-price capture work on the frozen physical scope, so they open for the Estimator once the quotation is approved. Until then the estimator review above, the margin sheet and the readiness items are the costing evidence.</Alert>}
               {p2Status && (
                 <LegacyCostingDisclosure defaultOpen={incompleteOverrides}>
-                  <CostPanel quoteId={id} {...(final ? {} : { unsaved: dirty, previewDraft: dirty ? previewedFor : null })} />
+                  <CostPanel quoteId={id} roles={costPanelRoles} {...(final ? {} : { unsaved: dirty, previewDraft: dirty ? previewedFor : null })} />
                   {budget && <MarginPanel budget={budget} draft={draft} final={final} frozen={q.accepted_baseline?.internalMargin} editable={s2Edit} edit={edit} />}
                   {!final && <p className="text-xs text-slate-700">SKU mapping and the Cin7 latest-supplier-price capture work on the frozen physical scope, so they open for the Estimator once the quotation is approved.</p>}
                 </LegacyCostingDisclosure>
