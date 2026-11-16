@@ -1,6 +1,6 @@
 import { GROWER_TEMPLATE } from "./final-feedback";
 import { DERIVED_RULES, GROWER_RULES, type RuleTreatment } from "./rules";
-import { commercialMappingFor, MANUAL_COMMERCIAL_LINES } from "./commercial";
+import { commercialMappingFor, MANUAL_COMMERCIAL_LINES, TEMPLATE_REVISION_CURRENT } from "./commercial";
 import type { GrowerItemKey } from "./types";
 
 // GROWER HOUSE TEMPLATE v1 — the read-only Template Detail model. Derived from the live rule table and mapping definitions so
@@ -33,7 +33,7 @@ export interface TemplateSection {
 
 const rule = (k: GrowerItemKey) => GROWER_RULES.find((r) => r.itemKey === k)!;
 const mapRef = (k: GrowerItemKey): string => {
-  const m = commercialMappingFor(k);
+  const m = commercialMappingFor(k, TEMPLATE_REVISION_CURRENT);
   if (!m) return "No product mapping";
   switch (m.kind) {
     case "single": return k === "feeder" ? "PNQ082 (standard) · PNQ082-WINDOW (window option)" : m.recommendedSku;

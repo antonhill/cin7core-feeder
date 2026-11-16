@@ -1,0 +1,544 @@
+{
+ "NQ-Q-0007": {
+  "total": 10000000,
+  "incomplete": false,
+  "blockers": [],
+  "warnings": [],
+  "lines": [
+   {
+    "k": "bulk_tank",
+    "s": "priced",
+    "sku": "SYSH-2750-3",
+    "rev": 434808,
+    "q": 12,
+    "comps": []
+   },
+   {
+    "k": "flex_auger",
+    "s": "priced",
+    "sku": null,
+    "rev": 540000,
+    "q": 12,
+    "comps": [
+     [
+      "NQ1163",
+      null,
+      "reference_only",
+      null
+     ],
+     [
+      "NQ1223",
+      null,
+      "reference_only",
+      null
+     ],
+     [
+      "NQ1764",
+      null,
+      "reference_only",
+      null
+     ],
+     [
+      "NQ1227",
+      null,
+      "reference_only",
+      null
+     ],
+     [
+      "NQ1942",
+      null,
+      "reference_only",
+      null
+     ],
+     [
+      "NQ.TUBE.75",
+      null,
+      "reference_only",
+      null
+     ],
+     [
+      "T3750001",
+      null,
+      "reference_only",
+      null
+     ],
+     [
+      "TSA3750505",
+      null,
+      "reference_only",
+      null
+     ],
+     [
+      "T3000365",
+      null,
+      "reference_only",
+      null
+     ],
+     [
+      "NQ3132",
+      null,
+      "supplier_quote_required",
+      null
+     ],
+     [
+      null,
+      null,
+      "identity_unresolved",
+      null
+     ],
+     [
+      "KNQ160",
+      null,
+      "reference_only",
+      null
+     ]
+    ]
+   },
+   {
+    "k": "feeder",
+    "s": "priced",
+    "sku": "PNQ082",
+    "rev": 2040336,
+    "q": 216,
+    "comps": []
+   },
+   {
+    "k": "feed_saver_mat",
+    "s": "priced",
+    "sku": "ERT053",
+    "rev": 198504,
+    "q": 216,
+    "comps": []
+   },
+   {
+    "k": "cup_drinker",
+    "s": "priced",
+    "sku": null,
+    "rev": 355104,
+    "q": 648,
+    "comps": [
+     [
+      "QCA00003",
+      648,
+      "priced",
+      117936
+     ],
+     [
+      "NQ1380",
+      648,
+      "priced",
+      157464
+     ],
+     [
+      "NQ2784",
+      648,
+      "not_in_price_source",
+      null
+     ],
+     [
+      "NQ2886",
+      648,
+      "not_in_price_source",
+      null
+     ],
+     [
+      "NQ1386",
+      3240,
+      "supplier_quote_required",
+      null
+     ],
+     [
+      "NYNUT",
+      3240,
+      "priced",
+      6480
+     ],
+     [
+      "NQ1017",
+      3240,
+      "priced",
+      9720
+     ]
+    ]
+   },
+   {
+    "k": "concrete_slat",
+    "s": "priced",
+    "sku": "NQ1161",
+    "rev": 3215520,
+    "q": 15840,
+    "comps": []
+   },
+   {
+    "k": "penning_package",
+    "s": "priced",
+    "sku": null,
+    "rev": 312000,
+    "q": 240,
+    "comps": []
+   },
+   {
+    "k": "led_light",
+    "s": "priced",
+    "sku": null,
+    "rev": 401736,
+    "q": 456,
+    "comps": [
+     [
+      null,
+      456,
+      "identity_unresolved",
+      null
+     ],
+     [
+      null,
+      1368,
+      "identity_unresolved",
+      null
+     ],
+     [
+      null,
+      456,
+      "identity_unresolved",
+      null
+     ]
+    ]
+   },
+   {
+    "k": "pvc_door",
+    "s": "priced",
+    "sku": "NQ2114",
+    "rev": 72000,
+    "q": 24,
+    "comps": []
+   },
+   {
+    "k": "controller",
+    "s": "not_selected",
+    "sku": null,
+    "rev": null,
+    "q": 0,
+    "comps": []
+   },
+   {
+    "k": "silo_weighing",
+    "s": "not_selected",
+    "sku": null,
+    "rev": null,
+    "q": 0,
+    "comps": []
+   },
+   {
+    "k": "control_panel",
+    "s": "not_selected",
+    "sku": null,
+    "rev": null,
+    "q": 0,
+    "comps": []
+   },
+   {
+    "k": "emergency_windows",
+    "s": "not_selected",
+    "sku": null,
+    "rev": null,
+    "q": 0,
+    "comps": []
+   },
+   {
+    "k": "pad_cooling",
+    "s": "not_selected",
+    "sku": null,
+    "rev": null,
+    "q": 0,
+    "comps": []
+   },
+   {
+    "k": "cone_fans",
+    "s": "not_selected",
+    "sku": null,
+    "rev": null,
+    "q": 0,
+    "comps": []
+   },
+   {
+    "k": "manure_plug",
+    "s": "not_selected",
+    "sku": null,
+    "rev": null,
+    "q": 0,
+    "comps": []
+   }
+  ]
+ },
+ "NQ-Q-0018": {
+  "total": 10000000,
+  "incomplete": false,
+  "blockers": [],
+  "warnings": [],
+  "lines": [
+   {
+    "k": "bulk_tank",
+    "s": "priced",
+    "sku": "SYSH-2750-3",
+    "rev": 434808,
+    "q": 12,
+    "comps": []
+   },
+   {
+    "k": "flex_auger",
+    "s": "priced",
+    "sku": null,
+    "rev": 540000,
+    "q": 12,
+    "comps": [
+     [
+      "NQ1163",
+      null,
+      "reference_only",
+      null
+     ],
+     [
+      "NQ1223",
+      null,
+      "reference_only",
+      null
+     ],
+     [
+      "NQ1764",
+      null,
+      "reference_only",
+      null
+     ],
+     [
+      "NQ1227",
+      null,
+      "reference_only",
+      null
+     ],
+     [
+      "NQ1942",
+      null,
+      "reference_only",
+      null
+     ],
+     [
+      "NQ.TUBE.75",
+      null,
+      "reference_only",
+      null
+     ],
+     [
+      "T3750001",
+      null,
+      "reference_only",
+      null
+     ],
+     [
+      "TSA3750505",
+      null,
+      "reference_only",
+      null
+     ],
+     [
+      "T3000365",
+      null,
+      "reference_only",
+      null
+     ],
+     [
+      "NQ3132",
+      null,
+      "supplier_quote_required",
+      null
+     ],
+     [
+      null,
+      null,
+      "identity_unresolved",
+      null
+     ],
+     [
+      "KNQ160",
+      null,
+      "reference_only",
+      null
+     ]
+    ]
+   },
+   {
+    "k": "feeder",
+    "s": "priced",
+    "sku": "PNQ082",
+    "rev": 2040336,
+    "q": 216,
+    "comps": []
+   },
+   {
+    "k": "feed_saver_mat",
+    "s": "priced",
+    "sku": "ERT053",
+    "rev": 198504,
+    "q": 216,
+    "comps": []
+   },
+   {
+    "k": "cup_drinker",
+    "s": "priced",
+    "sku": null,
+    "rev": 355104,
+    "q": 648,
+    "comps": [
+     [
+      "QCA00003",
+      648,
+      "priced",
+      117936
+     ],
+     [
+      "NQ1380",
+      648,
+      "priced",
+      157464
+     ],
+     [
+      "NQ2784",
+      648,
+      "not_in_price_source",
+      null
+     ],
+     [
+      "NQ2886",
+      648,
+      "not_in_price_source",
+      null
+     ],
+     [
+      "NQ1386",
+      3240,
+      "supplier_quote_required",
+      null
+     ],
+     [
+      "NYNUT",
+      3240,
+      "priced",
+      6480
+     ],
+     [
+      "NQ1017",
+      3240,
+      "priced",
+      9720
+     ]
+    ]
+   },
+   {
+    "k": "concrete_slat",
+    "s": "priced",
+    "sku": "NQ1161",
+    "rev": 3215520,
+    "q": 15840,
+    "comps": []
+   },
+   {
+    "k": "penning_package",
+    "s": "priced",
+    "sku": null,
+    "rev": 312000,
+    "q": 240,
+    "comps": []
+   },
+   {
+    "k": "led_light",
+    "s": "priced",
+    "sku": null,
+    "rev": 401736,
+    "q": 456,
+    "comps": [
+     [
+      null,
+      456,
+      "identity_unresolved",
+      null
+     ],
+     [
+      null,
+      1368,
+      "identity_unresolved",
+      null
+     ],
+     [
+      null,
+      456,
+      "identity_unresolved",
+      null
+     ]
+    ]
+   },
+   {
+    "k": "pvc_door",
+    "s": "priced",
+    "sku": "NQ2114",
+    "rev": 72000,
+    "q": 24,
+    "comps": []
+   },
+   {
+    "k": "controller",
+    "s": "not_selected",
+    "sku": null,
+    "rev": null,
+    "q": 0,
+    "comps": []
+   },
+   {
+    "k": "silo_weighing",
+    "s": "not_selected",
+    "sku": null,
+    "rev": null,
+    "q": 0,
+    "comps": []
+   },
+   {
+    "k": "control_panel",
+    "s": "not_selected",
+    "sku": null,
+    "rev": null,
+    "q": 0,
+    "comps": []
+   },
+   {
+    "k": "emergency_windows",
+    "s": "not_selected",
+    "sku": null,
+    "rev": null,
+    "q": 0,
+    "comps": []
+   },
+   {
+    "k": "pad_cooling",
+    "s": "not_selected",
+    "sku": null,
+    "rev": null,
+    "q": 0,
+    "comps": []
+   },
+   {
+    "k": "cone_fans",
+    "s": "not_selected",
+    "sku": null,
+    "rev": null,
+    "q": 0,
+    "comps": []
+   },
+   {
+    "k": "manure_plug",
+    "s": "not_selected",
+    "sku": null,
+    "rev": null,
+    "q": 0,
+    "comps": []
+   }
+  ]
+ }
+}

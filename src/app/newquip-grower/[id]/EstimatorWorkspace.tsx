@@ -9,7 +9,7 @@ import type { WorkspaceBundle } from "@/lib/newquip-quotes/pricing-service";
 import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import type { BudgetQuote } from "@/newquip/grower/quote-bridge";
-import { manualSelectionSkusFor } from "@/newquip/grower/commercial";
+import { manualSelectionSkusFor, templateRevisionOf, type TemplateRevision } from "@/newquip/grower/commercial";
 import type { GrowerItemKey } from "@/newquip/grower/types";
 import { buildWorkspace, costText, decodeManualReason, money, needsEvidence, targetOf, taskStatusWord, type TaskKind, type WorkspaceTask } from "@/newquip/quote/estimator-workspace";
 import { applyEditor, revisionReason, type SkuEditor } from "@/newquip/quote/workspace-submission";
@@ -111,7 +111,7 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
 
   // ── navigation with an unsaved-editor guard ──
   const go = (to: Open | "list") => { if (dirty) { setPendingNav(to); return; } setOpen(to === "list" ? null : to); setNote(null); };
-  const hasChoices = (id: string) => manualSelectionSkusFor(id as GrowerItemKey).length > 0;
+  const hasChoices = (id: string) => manualSelectionSkusFor(id as GrowerItemKey, templateRevisionOf(p.draft)).length > 0;
   const openTask = (t: WorkspaceTask) => go({ id: t.id, kind: t.kind !== "m75" && hasChoices(t.id) ? "product" : t.kind });
   const openLine = (id: string) => { const l = lineOf(id); if (!l) return; const tg = targetOf(l); go({ id, kind: tg.kind === "complete_manual" ? "manual" : tg.kind !== "m75" && hasChoices(id) ? "product" : tg.kind }); };
 
@@ -218,10 +218,10 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
     }
     if (open.kind === "package") {
       const confirmed = p.draft.estimator.confirmedPackages.includes(open.id as GrowerItemKey);
-      return <PackageEditor key={`pkg-${open.id}`} line={line} confirmed={confirmed} bundle={bundle} canEdit={canEdit} onConfirm={(yes) => saveConfirmed(open.id, yes)} costForm={costForm} onManual={() => go({ id: open.id, kind: "manual" })} />;
+      return <PackageEditor templateRevision={templateRevisionOf(p.draft)} key={`pkg-${open.id}`} line={line} confirmed={confirmed} bundle={bundle} canEdit={canEdit} onConfirm={(yes) => saveConfirmed(open.id, yes)} costForm={costForm} onManual={() => go({ id: open.id, kind: "manual" })} />;
     }
     if (open.kind === "product") {
-      return <DoorEditor key={`door-${open.id}`} itemKey={open.id} label={line.label} qty={qty} chosenSaved={chosenSaved} canEdit={canEdit} saveMapping={saveMapping} costForm={costForm} onSaved={() => setNote("Product saved.")} />;
+      return <DoorEditor templateRevision={templateRevisionOf(p.draft)} key={`door-${open.id}`} itemKey={open.id} label={line.label} qty={qty} chosenSaved={chosenSaved} canEdit={canEdit} saveMapping={saveMapping} costForm={costForm} onSaved={() => setNote("Product saved.")} />;
     }
     return costForm(line.sku ?? tg.skus[0] ?? open.id, line.label, qty);
   })();
@@ -278,7 +278,8 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
   );
 }
 
-function PackageEditor({ line, confirmed, bundle, canEdit, onConfirm, costForm, onManual }: {
+function PackageEditor({ templateRevision, line, confirmed, bundle, canEdit, onConfirm, costForm, onManual }: {
+  templateRevision: TemplateRevision;
   line: BudgetQuote["lines"][number]; confirmed: boolean; bundle: WorkspaceBundle; canEdit: boolean; onConfirm: (yes: boolean) => Promise<SaveResult>;
   costForm: (sku: string, label: string, q: number) => React.ReactNode; onManual: () => void;
 }) {
@@ -293,7 +294,7 @@ function PackageEditor({ line, confirmed, bundle, canEdit, onConfirm, costForm, 
   const act = comps.find((c) => c.sku === active);
   return (
     <div className="flex min-w-0 flex-col gap-4" data-testid="package-editor">
-      <PackageConfirm itemKey={line.itemKey} confirmed={local} canEdit={canEdit} busy={busy} onConfirm={(yes) => { setLocal(yes); void saveConfirm(yes); }} />
+      <PackageConfirm templateRevision={templateRevision} itemKey={line.itemKey} confirmed={local} canEdit={canEdit} busy={busy} onConfirm={(yes) => { setLocal(yes); void saveConfirm(yes); }} />
       {err && <Alert tone="warning"><span data-testid="package-error">{err}</span></Alert>}
       <p className="text-sm text-slate-800">Cannot price it this way? <button type="button" className="font-semibold text-blue-800 underline" onClick={onManual}>Quote a manual price for the whole {line.label.toLowerCase()}</button>. It needs a reason and written evidence and is labelled provisional.</p>
       {local && (
@@ -307,7 +308,8 @@ function PackageEditor({ line, confirmed, bundle, canEdit, onConfirm, costForm, 
   );
 }
 
-function DoorEditor({ itemKey, label, qty, chosenSaved, canEdit, saveMapping, costForm, onSaved }: {
+function DoorEditor({ templateRevision, itemKey, label, qty, chosenSaved, canEdit, saveMapping, costForm, onSaved }: {
+  templateRevision: TemplateRevision;
   itemKey: string; label: string; qty: number; chosenSaved: string | undefined; canEdit: boolean; saveMapping: (itemKey: string, sku: string | null, opts?: { rereadWorkspace?: boolean }) => Promise<SaveResult>;
   costForm: (sku: string, label: string, q: number, before?: () => Promise<SaveResult>, saveLabel?: string) => React.ReactNode; onSaved: () => void;
 }) {
@@ -322,7 +324,7 @@ function DoorEditor({ itemKey, label, qty, chosenSaved, canEdit, saveMapping, co
   }
   return (
     <div className="flex min-w-0 flex-col gap-4" data-testid="door-editor">
-      <ProductChoice itemKey={itemKey} label={label} chosen={chosen} canEdit={canEdit} busy={busy} onChoose={(s) => setChosen(s ?? undefined)}>
+      <ProductChoice templateRevision={templateRevision} itemKey={itemKey} label={label} chosen={chosen} canEdit={canEdit} busy={busy} onChoose={(s) => setChosen(s ?? undefined)}>
         <div className="mt-3 flex flex-wrap items-center gap-3"><Button type="button" variant="secondary" className="min-h-11" disabled={!canEdit || !chosen || !changed || busy} loading={busy} onClick={saveProduct}>Save the product choice only</Button>
           <span className="text-sm text-slate-700" role="status">{!chosen ? "Choose a product." : changed ? "Saving the product alone clears the product-choice part of the task and leaves the price part open." : "Product saved."}</span></div>
         {err && <p className="mt-2 text-sm text-amber-900" data-testid="product-error">{err}</p>}

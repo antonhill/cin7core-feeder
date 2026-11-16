@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceBundle } from "@/lib/newquip-quotes/pricing-service";
 import type { BridgeLine, BudgetQuote } from "@/newquip/grower/quote-bridge";
 import { readyDraft } from "@/newquip/grower/__tests__/golden";
+import { onCurrentTemplate } from "@/newquip/grower/__tests__/current-template";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import { decodeManualReason } from "@/newquip/quote/estimator-workspace";
 import * as pricing from "../pricing-actions";
@@ -45,11 +46,12 @@ const test12Budget = (): BudgetQuote => ({
 } as unknown as BudgetQuote);
 
 const bareDraft = (): QuoteDraft => { const d = readyDraft(); d.estimator.confirmedPackages = []; d.estimator.confirmedMappings = {}; return d; };
-function mount(o: { saveDraft?: (m: (d: QuoteDraft) => void) => Promise<{ ok: boolean; errors?: string[] }>; canEdit?: boolean; bundleOver?: Partial<WorkspaceBundle>; state?: string } = {}) {
+// mount({ current: true }) renders a NEW quotation (current template revision); by default the draft is unstamped = the ORIGINAL template.
+function mount(o: { saveDraft?: (m: (d: QuoteDraft) => void) => Promise<{ ok: boolean; errors?: string[] }>; canEdit?: boolean; bundleOver?: Partial<WorkspaceBundle>; state?: string; current?: boolean } = {}) {
   vi.mocked(pricing.getEstimatorPricingAction).mockResolvedValue({ ok: true, data: bundle(o.bundleOver) });
   const saveDraft = o.saveDraft ?? vi.fn(async () => ({ ok: true }));
   render(createElement(EstimatorWorkspace, {
-    quoteId: "q1", state: o.state ?? "ESTIMATOR_REVIEW", confirmedCents: 513_200_000, signedOff: false, draft: bareDraft(), budget: test12Budget(), pageDirty: false, canEdit: o.canEdit ?? true,
+    quoteId: "q1", state: o.state ?? "ESTIMATOR_REVIEW", confirmedCents: 513_200_000, signedOff: false, draft: o.current ? onCurrentTemplate(bareDraft()) : bareDraft(), budget: test12Budget(), pageDirty: false, canEdit: o.canEdit ?? true,
     title: "Test12 · Spark", subtitle: "12 rooms · Project pricing · Revision 1 · Supplier pricing on", refreshKey: "k1", saveDraft, reload: vi.fn(), onGoSignoff: vi.fn(), onGoApproval: vi.fn(), reviewNeeded: false, onMarkReviewed: vi.fn(),
   }));
   return { saveDraft: saveDraft as ReturnType<typeof vi.fn> };
@@ -97,9 +99,30 @@ describe("the workspace: header, exception-first tasks and compact indicators", 
   });
 });
 
+describe("the PVC door on the ORIGINAL template: choose one of five candidates, then price it", () => {
+  it("shows the five Cin7 candidates; saving the product alone saves ONLY the mapping through the draft save; pricing waits until a product is chosen", async () => {
+    const { saveDraft } = mount();
+    fireEvent.click(await screen.findByRole("button", { name: /Choose and price: PVC SST door/ }));
+    const choice = await screen.findByTestId("product-choice");
+    expect(within(choice).getAllByRole("radio").map((r) => (r as HTMLInputElement).closest("label")!.textContent!.match(/NQ\d+/)![0])).toEqual(["NQ2114", "NQ2113", "NQ2112", "NQ2161", "NQ2281"]);
+    expect(screen.getByTestId("door-pricing-wait")).toBeTruthy();
+    const only = screen.getByRole("button", { name: "Save the product choice only" }) as HTMLButtonElement;
+    expect(only.disabled).toBe(true);
+    fireEvent.click(within(choice).getAllByRole("radio")[0]);
+    expect(only.disabled).toBe(false);
+    expect(screen.getByTestId("door-pricing").textContent).toMatch(/supplier cost for NQ2114/);
+    fireEvent.click(only);
+    await waitFor(() => expect(saveDraft).toHaveBeenCalledTimes(1));
+    const d = readyDraft(); delete d.estimator.confirmedMappings.pvc_door;
+    (saveDraft.mock.calls[0][0] as (d: QuoteDraft) => void)(d);
+    expect(d.estimator.confirmedMappings.pvc_door).toBe("NQ2114");
+    expect(pricing.applyEstimatorPricingAction).not.toHaveBeenCalled(); // the price part stays open
+  });
+});
+
 describe("the PVC door: choose one of three candidates, then price it", () => {
   it("shows the three Cin7 candidates (NQ3444 first, Sean 2026-11); saving the product alone saves ONLY the mapping through the draft save; pricing waits until a product is chosen", async () => {
-    const { saveDraft } = mount();
+    const { saveDraft } = mount({ current: true });
     fireEvent.click(await screen.findByRole("button", { name: /Choose and price: PVC SST door/ }));
     const choice = await screen.findByTestId("product-choice");
     expect(within(choice).getAllByRole("radio").map((r) => (r as HTMLInputElement).closest("label")!.textContent!.match(/NQ\d+/)![0])).toEqual(["NQ3444", "NQ2161", "NQ2281"]);

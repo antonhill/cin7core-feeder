@@ -4,6 +4,7 @@ import { installStaged } from "@/lib/approvals/__tests__/staged-emulator";
 import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
+import { onCurrentTemplate } from "@/newquip/grower/__tests__/current-template";
 import { seedGoldenCatalogue } from "@/newquip/grower/__tests__/golden-catalogue";
 import { emptyDraft } from "@/newquip/grower/draft";
 import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
@@ -37,7 +38,8 @@ import { POC_MARKER } from "@/lib/newquip-quotes/poc-presentation";
 
 const ORG = "e1aea782-d095-47ad-90fb-4fa65c9bf855";
 const ctx = { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: false };
-const base = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
+const legacyBase = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft; // unstamped = the ORIGINAL template
+const base = onCurrentTemplate(legacyBase); // a NEW quotation: the LED is SKU-backed (HNQ7046 / HNQ7093 / HNQ7088)
 // Every physical SKU of the quotation has a supplier cost, so COSTING is complete. The LED package is MAPPED in the library (it is a typed price, not a design choice, so no exception could
 // cover it); only the two Estimator-priced-by-design systems (M75, penning) have no Cin7 SKU.
 const costs = (() => {
@@ -140,6 +142,23 @@ describe("POC Presentation Mode also covers a catalogue line with NO library map
     // never represented as mapped: the sealed physical scope still has the LED lines UNMAPPED
     const scope = JSON.stringify(quote().accepted_baseline.physicalScope);
     expect(scope).toMatch(/UNMAPPED/);
+  });
+});
+
+describe("POC Presentation Mode on the ORIGINAL template (a quotation that existed before it): the FORTIS LED has no SKU and no mapping", () => {
+  it("legacy vs current, same fixture: a marked POC quotation is approved and the exception lists the LED as UNVERIFIED (the current template has no such LED item)", async () => {
+    db.tables.newquip_package_mappings = []; on(); as(true); mark();
+    const legacy = structuredClone(legacyBase) as typeof base; legacy.estimator.physicalCosts = costs as never; legacy.estimator.pocPresentation = true;
+    quote().draft = legacy; // an existing (pre-template) quotation: no templateRevision on the draft
+    quote().customer_confirmed_cents = Math.round(evaluateDraft(legacy, { ...ctx, withholdCost: true }).budget!.totals.subtotalExTax * 100);
+    const r = await grower.approveGrowerQuoteAction("q1");
+    expect(r.ok, r.error).toBe(true);
+    const ex = quote().accepted_baseline.exceptions[0];
+    expect(ex.reason).toMatch(/^POC PRESENTATION/);
+    const led = ex.unresolved.find((i: { label: string }) => /LED/i.test(i.label));
+    expect(led).toBeTruthy(); expect(led.pricing).toMatch(/not verified/);
+    expect(ex.unresolved.map((i: { itemKey: string }) => i.itemKey)).toEqual(expect.arrayContaining(ITEMS));
+    expect(JSON.stringify(quote().accepted_baseline.physicalScope)).toMatch(/UNMAPPED/);
   });
 });
 

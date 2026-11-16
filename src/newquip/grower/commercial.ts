@@ -255,6 +255,79 @@ export const COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMappin
   },
 };
 
+
+/**
+ * TEMPLATE REVISIONS. A quotation is evaluated against the template revision it was created under, never the latest one, so changing the template can never silently re-scope or re-price a
+ * quotation that already exists. The revision is SERVER-OWNED on the draft (estimator.templateRevision): ABSENT = the original template (grower-2026-10), which is every quotation that existed
+ * before the 2026-11 reconfiguration. Only a NEW quotation is stamped with the current revision, and an existing quotation moves to it only through the explicit, audited adoption action.
+ */
+export const TEMPLATE_REVISION_LEGACY = "grower-2026-10" as const;
+export const TEMPLATE_REVISION_CURRENT = "grower-2026-11" as const;
+export type TemplateRevision = typeof TEMPLATE_REVISION_LEGACY | typeof TEMPLATE_REVISION_CURRENT;
+/** Anything other than the current revision (absent, unknown, tampered) is the ORIGINAL template: the safe reading, because it can only reproduce what the quotation already showed. */
+export const templateRevisionOf = (draft: { estimator?: { templateRevision?: unknown } } | null | undefined): TemplateRevision =>
+  draft?.estimator?.templateRevision === TEMPLATE_REVISION_CURRENT ? TEMPLATE_REVISION_CURRENT : TEMPLATE_REVISION_LEGACY;
+
+/** The ORIGINAL (grower-2026-10) definitions of the items the 2026-11 answers changed, kept verbatim so a quotation created under them keeps exactly the scope, quantities and pricing it had. */
+const LEGACY_COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMapping>> = {
+  led_light: {
+    kind: "package", itemKey: "led_light", name: "FORTIS 1.2 5000K LED light", layoutDriven: false,
+    provenance: `${WB} sheet 'FX': €25.50 + 3 × €0.74 + €1.37 = €29.09 per light (priced on the FERAX 24W ON/OFF, HNQ7046, as a historic surrogate for the FORTIS 1.2).`,
+    components: [
+      {
+        id: "luminaire", sku: null, identity: "unidentified", quantityStatus: "source_fixed", qtyPerUnit: 1,
+        description: "FORTIS 1.2 5000K luminaire",
+        skuRequired: "FORTIS 1.2 — SKU REQUIRED / UNMAPPED",
+        historicSurrogate: { sku: "HNQ7046", name: "FERAX 24W ON/OFF" },
+        note: "FORTIS 1.2 is the newer/current product and has NO SKU yet (Sean Round 2 #9). The historic quote used HNQ7046 (FERAX 24W ON/OFF) as a surrogate; it is NOT the FORTIS and is never substituted automatically.",
+        evidence: "Sean Round 2 #9; FX!A4 (workbook) — Ferax = HNQ7046, FORTIS has no code",
+      },
+      {
+        id: "clip", sku: null, candidateSkus: ["HNQ7088", "HNQ7093"], identity: "uncertain", quantityStatus: "source_fixed", qtyPerUnit: 3,
+        description: "Mounting clip",
+        note: "Workbook says HNQ7088 is the clip; ERP/Cin7 say HNQ7093 is 'FERAX CLIP 29MM RVS'. Not decided — NewQuip to confirm.",
+        evidence: "FX!A5 (workbook) vs Inventory Master / Cin7 names",
+      },
+      {
+        id: "cable", sku: null, candidateSkus: ["HNQ7093", "HNQ7088"], identity: "uncertain", quantityStatus: "source_fixed", qtyPerUnit: 1,
+        description: "Connection cable",
+        note: "Workbook says HNQ7093 is the cable; ERP/Cin7 say HNQ7088 is 'FERAX CABLE 0.6M'. Not decided — NewQuip to confirm.",
+        evidence: "FX!A6 (workbook) vs Inventory Master / Cin7 names",
+      },
+    ],
+  },
+  flex_auger: {
+    kind: "package", itemKey: "flex_auger", name: "M75 feed distribution system", layoutDriven: true, estimatorPriced: true,
+    provenance: `${WB} sheet 'W1' (Topigs case: 2 × lines of ±49.5m, 18 drop kits). Quantities below are the HISTORIC TOPIGS PACKAGE REFERENCE — formula-driven in the workbook, NOT authorised engineering and NOT priced: M75 is an ESTIMATOR INPUT (Sean final), priced by the estimator as a system.`,
+    components: [
+      layout("auger", "NQ1163", "Auger M-75 (new), per metre", 134, "W1 row 71"),
+      layout("tube", "NQ1223", "TUBE M75 (WHITE) / AUGER PIPE (NEW TYPE) — the M75 MAIN auger tube", 40, "W1 row 52; SKU per the NewQuip Master (workbook listed T2750300)", { note: "The M75 main auger tube. NOT the clear drop tube and NOT NQ.TUBE.63." }),
+      layout("clamps", "NQ1764", "M75 tube clamp", 48, "W1 row 56; SKU per the NewQuip Master (workbook listed T2750015)"),
+      layout("elbow", "NQ1227", "M75 PVC ELBOW (NEW TYPE)", 8, "W1 row 64; SKU per the NewQuip Master (workbook listed T2750301)"),
+      layout("dropkit", "NQ1942", "M75 complete drop kit", 18, "W1 row 13; input B2 = 18 drops; SKU per the NewQuip Master (workbook listed NQ1984)"),
+      layout("droptube", "NQ.TUBE.75", "M75 clear drop tube", 5, "W1 row 14 = ROUNDUP(drops / 4); SKU per the NewQuip Master", {
+        note: "Clear DROP tube — distinct from the M75 main auger tube (NQ1223). The workbook listed NQ.TUBE.63 (63mm clear drop tube, still a valid SKU per Sean Round 2 #10); that is a different item and is NOT the auger pipe.",
+      }),
+      layout("control", "T3750001", "M75 control unit with safety switch", 2, "W1 row 39"),
+      layout("unloader", "TSA3750505", "M75 unloader double right/left (new type)", 1, "W1 row 35"),
+      layout("levelswitch", "T3000365", "Feed level switch dia 75mm", 2, "W1 row 18"),
+      layout("drive", "NQ3132", "1.5HP DRIVE UNIT (1.1KW) 380V", 2, "W1 row 77; replaces TRA1.1KW3PH (Sean Round 2 #10)", {
+        note: "Replaces the legacy TRA1.1KW3PH.",
+        pricingException: "N/A — SUPPLIER QUOTE REQUIRED: the Master shows Retail 0 for NQ3132. It is never quoted as zero. If the job needs it, the estimator resolves the commercial amount or prices the higher-level manual M75 solution.",
+      }),
+      layout("post", null, "Support post (SST)", 52, "W1 row 83 — SKU cell truncated ('KNQ'), price R760", {
+        candidateSkus: ["NQ2601"], identity: "uncertain", note: "NQ2601 'HEAVY DUTY SUPPORT POST SST(1M)' is a likely match but NOT confirmed.",
+      }),
+      layout("wallplate", "KNQ160", "Wall plate (SST) kit for M55 & M75 auger", 4, "W1 row 97"),
+    ],
+  },
+  pvc_door: {
+    kind: "unresolved", itemKey: "pvc_door",
+    reason: "MANUAL SELECTION — the estimator picks the door product; its size is in the Cin7 product description. There is no automatic door-sizing rule (Sean Round 2 #11).",
+    manualSelectionSkus: ["NQ2114", "NQ2113", "NQ2112", "NQ2161", "NQ2281"],
+  },
+};
+
 /** Commercial charges that accompany an item but are not part of its physical SKU. */
 export const MANUAL_COMMERCIAL_LINES: ManualMapping[] = [
   {
@@ -265,12 +338,13 @@ export const MANUAL_COMMERCIAL_LINES: ManualMapping[] = [
   },
 ];
 
-export function commercialMappingFor(itemKey: GrowerItemKey): CommercialMapping | undefined {
-  return COMMERCIAL_MAPPINGS[itemKey];
+/** The mapping for an item under a template revision. The revision is REQUIRED: there is deliberately no default, so no caller can silently read the latest template for an existing quotation. */
+export function commercialMappingFor(itemKey: GrowerItemKey, revision: TemplateRevision): CommercialMapping | undefined {
+  return revision === TEMPLATE_REVISION_LEGACY && LEGACY_COMMERCIAL_MAPPINGS[itemKey] ? LEGACY_COMMERCIAL_MAPPINGS[itemKey] : COMMERCIAL_MAPPINGS[itemKey];
 }
 
-export function packageFor(itemKey: GrowerItemKey): PackageMapping | undefined {
-  const m = COMMERCIAL_MAPPINGS[itemKey];
+export function packageFor(itemKey: GrowerItemKey, revision: TemplateRevision): PackageMapping | undefined {
+  const m = commercialMappingFor(itemKey, revision);
   return m?.kind === "package" ? m : undefined;
 }
 
@@ -300,8 +374,8 @@ export function packageAutoConfirmable(pkg: PackageMapping | undefined): boolean
 }
 
 /** SKUs an estimator may pick BETWEEN by hand for an item (never auto-confirmed). Excluded SKUs are never offered. */
-export function manualSelectionSkusFor(itemKey: GrowerItemKey): string[] {
-  const m = COMMERCIAL_MAPPINGS[itemKey];
+export function manualSelectionSkusFor(itemKey: GrowerItemKey, revision: TemplateRevision): string[] {
+  const m = commercialMappingFor(itemKey, revision);
   return m?.kind === "unresolved" ? (m.manualSelectionSkus ?? []).filter((s) => !isExcludedSku(s)) : [];
 }
 
@@ -342,6 +416,7 @@ export function savedMappingCaution(packageKey: string, skus: readonly string[])
 
 /** Cin7 product names (synced catalogue copy) for the SKUs an Estimator chooses between by hand, so no UI component carries its own product text. */
 export const CHOICE_PRODUCT_NAMES: Readonly<Record<string, string>> = {
+  NQ2112: "WHITE DOOR WITH UV 35MM (1980L × 600W)", NQ2113: "WHITE DOOR WITH UV 35MM (1980L × 1000W) NO WINDOWS", NQ2114: "WHITE DOOR WITH UV 35MM (1970L × 1000W)", // the original template's doors (quotations created under it keep them)
   NQ3444: "PVC SINGLE DOORS: Sean's proposed Grower House door. Cin7 gives no size, so confirm the door and its size",
   NQ2161: "WHITE DOOR WITH UV 35MM (1980 × 1000W) WITH WINDOWS",
   NQ2281: "35MM WHITE DOOR (1990 × 790MM)",

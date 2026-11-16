@@ -8,6 +8,7 @@ import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { emptyDraft } from "@/newquip/grower/draft";
 import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
 import { withAcceptedIncompleteCosting } from "@/newquip/grower/__tests__/golden";
+import { onCurrentTemplate } from "@/newquip/grower/__tests__/current-template";
 import { sealWithUnresolvedScope } from "@/newquip/grower/__tests__/baseline-exception-fixture";
 import { baselineMatchesHash } from "@/newquip/quote/baseline";
 import { buildMarginSheet, redactInternalFinancials } from "@/newquip/quote/margin";
@@ -38,7 +39,7 @@ describe("release-candidate chain", () => {
   const draft = withAcceptedIncompleteCosting(applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft);
   const manager = evaluateDraft(draft, ctx(false));
   const rep = evaluateDraft(draft, ctx(true));
-  const approved = sealWithUnresolvedScope({ quoteRef: "NQ-Q-0001", revision: 1, draft, evaluation: rep, marginEvaluation: manager, approvals: APPROVALS }, undefined, { unmappedController: true }); // the LED is SKU-backed now; the third unresolved item is an Estimator-priced controller with no Cin7 mapping (scope only: no price moves)
+  const approved = sealWithUnresolvedScope({ quoteRef: "NQ-Q-0001", revision: 1, draft, evaluation: rep, marginEvaluation: manager, approvals: APPROVALS });
 
   it("Load Demo Defaults reproduces the R10m quote, READY, with no open items", () => {
     expect(Math.round(manager.budget!.totals.subtotalExTax * 100)).toBe(R(10_000_000));
@@ -53,6 +54,13 @@ describe("release-candidate chain", () => {
     expect(approved.baseline.internalMargin).toBeDefined();
     expect(JSON.stringify(redactInternalFinancials({ draft, accepted_baseline: approved.baseline }, false))).not.toMatch(/internalMargin/);
   });
+  it("legacy vs current template, same demo quotation: the original LED is unresolved scope (3); a quotation on the current template seals the LED as mapped SKUs (2 unresolved)", () => {
+    expect(effectiveScope(approved.baseline.physicalScope!).blockers.length).toBe(3);
+    const d = onCurrentTemplate(draft);
+    const cur = sealWithUnresolvedScope({ quoteRef: "NQ-Q-0001", revision: 1, draft: d, evaluation: evaluateDraft(d, ctx(true)), marginEvaluation: evaluateDraft(d, ctx(false)), approvals: APPROVALS });
+    expect(effectiveScope(cur.baseline.physicalScope!).blockers.length).toBe(2);
+    expect(cur.baseline.contractCents).toBe(R(10_000_000)); // the price is the same: only the product identity changed
+  });
   it("an existing sealed quote is never changed by any of this", () => {
     const sealed = JSON.stringify(approved.baseline);
     quoteToProjectBaseline(approved.baseline, approved.hash, "q1"); applyDemoDefaults(draft); effectiveScope(approved.baseline.physicalScope!);
@@ -65,13 +73,13 @@ describe("release-candidate chain", () => {
     const projectId = await createProjectFromBaseline(db as never, ORG, "m@x", quoteToProjectBaseline(approved.baseline, approved.hash, "q1", POC_SIX_STAGE_SCHEDULE), { reference: "PRJ-NQ-Q-0001", name: "Demo" });
     // the project inherited the approved scope (and only that)
     const scope = effectiveScope(scopeFromSnapshot(db.rows("projects").find((p) => p.id === projectId)!.baseline_snapshot));
-    expect(scope.blockers.length).toBe(3); // M75, penning, controller: unmapped until a manager decides (the SKU-backed LED is already mapped)
-    for (const id of ["flex_auger:UNMAPPED", "penning_package:UNMAPPED", "controller:UNMAPPED"]) {
+    expect(scope.blockers.length).toBe(3); // M75, penning, FORTIS LED: unmapped until a manager decides
+    for (const id of ["flex_auger:UNMAPPED", "penning_package:UNMAPPED", "led_light:UNMAPPED"]) {
       await resolveScopeItem(db as never, { resolveProducts: async () => ({ ids: new Map(), missing: [] }) }, { isManager: true }, "mgr@x", { orgId: ORG, projectId, itemId: id, kind: "EXCLUDE", reason: "Supplied outside Cin7 stock (release-candidate test)" });
     }
     const eff = effectiveScope(scopeFromSnapshot(db.rows("projects").find((p) => p.id === projectId)!.baseline_snapshot));
     expect(eff.blockers).toEqual([]);
-    expect(eff.lines.length).toBe(12 + 3); // + the SKU-backed LED's three Sean-confirmed SKUs (HNQ7046 / HNQ7093 / HNQ7088), which were never unresolved
+    expect(eff.lines.length).toBe(12);
 
     // Cin7 Sale preparation populates the products at R0 without typing
     const sales = new Map<string, import("../cin7-sale-creation").SaleReadBack>();
@@ -89,8 +97,7 @@ describe("release-candidate chain", () => {
     };
     const sale = await createSaleForProject(db as never, salePort, ON, "mgr@x", { orgId: ORG, projectId, instanceId: "i", confirmation: CREATE_CONFIRMATION_TEXT, customerName: "NQ Test Customer", location: "MSTR", revenueAccount: "200", cin7TaxRule: "Standard Rate Sales" });
     expect(sale).toMatchObject({ state: "RECONCILED", linked: true });
-    expect(created!.lines.length).toBe(12 + 3); // + the SKU-backed LED's three SKUs, as above
-    expect(created!.lines.filter((l) => ["HNQ7046", "HNQ7093", "HNQ7088"].includes(l.sku)).map((l) => [l.sku, l.quantity])).toEqual(expect.arrayContaining([["HNQ7046", 456], ["HNQ7093", 1368], ["HNQ7088", 456]]));
+    expect(created!.lines.length).toBe(12);
     expect(created!.lines.find((l) => l.sku === "PNQ082")!.quantity).toBe(216);
     expect(created!.charges.reduce((n, c) => n + c.priceExVat, 0)).toBeCloseTo(10_000_000, 0);
 

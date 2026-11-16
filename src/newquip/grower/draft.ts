@@ -44,6 +44,11 @@ export interface EstimatorState {
    * sends with the stored value (keepServerOwnedPocFlag), so it can be neither set nor cleared by a save. Absent on every ordinary quotation. Inert unless the mode is on at the moment of use.
    */
   pocPresentation?: true;
+  /**
+   * SERVER-OWNED. The template revision this quotation was created under (see commercial.ts TEMPLATE_REVISION_*). ABSENT = the original template, which is every quotation that existed before the
+   * 2026-11 reconfiguration (and it hashes exactly as before). Set only by createQuote for a NEW quotation and by the explicit adoption action; a saved draft can never set, clear or change it.
+   */
+  templateRevision?: "grower-2026-11";
   /** Free-text assumptions that travel with the quote and are frozen in the baseline. */
   assumptions: string;
 }

@@ -11,7 +11,7 @@ import { CHOICE_PRODUCT_NAMES } from "../commercial";
 import { POC_ITEM_REGISTER } from "../open-items";
 
 // Sean / Tereesha's answers of 2026-11 applied to the Grower House template. Every correction is a confirmed IDENTITY; nothing here confirms a quantity, a cost basis or a selling price.
-const pkg = (k: "led_light" | "flex_auger" | "cup_drinker") => packageFor(k) as PackageMapping;
+const pkg = (k: "led_light" | "flex_auger" | "cup_drinker") => packageFor(k, "grower-2026-11") as PackageMapping;
 const skusOf = (p: PackageMapping) => p.components.flatMap((c) => (c.sku ? [c.sku] : []));
 
 describe("LED lighting: the three SKUs Sean confirmed", () => {
@@ -77,15 +77,15 @@ describe("PVC door", () => {
     expect(d.kind).toBe("unresolved");
     if (d.kind !== "unresolved") return;
     expect(d.proposedSku).toBe("NQ3444");
-    expect(manualSelectionSkusFor("pvc_door")[0]).toBe("NQ3444");
-    for (const r of ["NQ2112", "NQ2113", "NQ2114"]) { expect(d.retiredSkus).toContain(r); expect(manualSelectionSkusFor("pvc_door")).not.toContain(r); }
+    expect(manualSelectionSkusFor("pvc_door", "grower-2026-11")[0]).toBe("NQ3444");
+    for (const r of ["NQ2112", "NQ2113", "NQ2114"]) { expect(d.retiredSkus).toContain(r); expect(manualSelectionSkusFor("pvc_door", "grower-2026-11")).not.toContain(r); }
     expect(d.hasSuppliedReference).toBe(true);
     expect(SUPPLIED_COSTS.find((x) => x.sku === "NQ3444")).toMatchObject({ amountZar: 9000, per: "each" });
     expect(SUPPLIED_COSTS.find((x) => x.sku === "NQ3444")!.basis).toMatch(/NOT a selling price, no markup is applied/);
     expect(d.reason).toMatch(/no component is added alongside it/);
   });
   it("is never selected automatically (a manual choice, not a catalogue default)", () => {
-    expect(manualSelectionSkusFor("pvc_door").length).toBeGreaterThan(1);
+    expect(manualSelectionSkusFor("pvc_door", "grower-2026-11").length).toBeGreaterThan(1);
   });
 });
 
@@ -197,7 +197,8 @@ describe("an approved alternative actually prices through the bridge (it must no
   const { createWorkbookPriceSource } = await import("../workbook-price-source");
   const { TEST_SNAPSHOT } = await import("./test-snapshot");
   const ctx = { priceSource: createWorkbookPriceSource({ ...TEST_SNAPSHOT, entries: { ...TEST_SNAPSHOT.entries, PNQ002: { sku: "PNQ002", description: "x", cost: 900, roe: 1, freight: 1.2, mu: 1.4, retailExVat: 1512 }, "SYSH-2750-4": { sku: "SYSH-2750-4", description: "x", cost: 120000, roe: 1, freight: 1.2, mu: 1.4, retailExVat: 201600 } } }), withholdCost: false };
-  const base = applyDemoDefaults({ ...emptyDraft(), customerName: "T" }).draft;
+  const demo = applyDemoDefaults({ ...emptyDraft(), customerName: "T" }).draft;
+  const base = { ...demo, estimator: { ...demo.estimator, templateRevision: "grower-2026-11" as const } };
   const lineOf = (d: typeof base, k: string) => evaluateDraft(d, ctx).budget!.lines.find((l) => l.itemKey === k)!;
   it("the feeder maps to PNQ002 and the tank to SYSH-2750-4: priced from the source, SKU kept, never 'unmapped'", () => {
     const d = { ...base, estimator: { ...base.estimator, confirmedMappings: { ...base.estimator.confirmedMappings, feeder: "PNQ002", bulk_tank: "SYSH-2750-4" } } };

@@ -7,21 +7,16 @@ import { NEWQUIP_MASTER_POC_SNAPSHOT } from "@/newquip/grower/snapshot";
 import { applyMappingLibrary, effectiveScope } from "@/lib/projects/product-scope";
 import { buildAcceptedBaseline, commercialLinesOf, type BaselineCommercialLine } from "../baseline";
 import { buildPhysicalScope } from "../physical-scope";
+import { onCurrentTemplate } from "@/newquip/grower/__tests__/current-template";
 import { baselineExceptionView, baselineMappingGate, estimatorPricedUnmapped, exceptionDecisionText, validateExceptionReason } from "../baseline-exception";
 
 const ctx = { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: false };
 const base = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
 const lines = commercialLinesOf(evaluateDraft(base, ctx).budget!);
-// M75 and penning have no Cin7 SKU by design. The LED package is SKU-backed now (HNQ7046 / HNQ7093 / HNQ7088, Sean 2026-11), so it is mapped through its own components and is no longer the example of a
-// "genuinely unmapped product the Estimator merely typed a price for": that is the optional CONTROLLER here (selected, a typed price, no Cin7 mapping). The library entry below is kept as a harmless extra.
+// The LED package (a typed price) is MAPPED through the library; M75 and penning have no Cin7 SKU by design.
 const LIB = new Map([["led_light", { packageKey: "led_light", version: 1, lines: [{ sku: "TEST-FORTIS-LED", factor: 1, unit: "each", role: "FINISHED_GOOD" as const }] }]]);
 const scopeOf = (ls: readonly BaselineCommercialLine[], lib = true) => (lib ? applyMappingLibrary(buildPhysicalScope(ls), LIB, "2026-11-03T00:00:00.000Z") : buildPhysicalScope(ls));
 const costsFor = (ls: readonly BaselineCommercialLine[], lib = true) => Object.fromEntries(effectiveScope(scopeOf(ls, lib)).lines.map((l) => [l.sku, { unitCostCents: 1000, source: "MANUAL_ESTIMATE" as const, retrievedAt: "t", reason: "r" }]));
-// The same quotation with the controller selected and priced by an Estimator price resolution only (a product with no Cin7 SKU and no mapping).
-const ctrlBase = { ...base, config: { ...base.config, optionalEquipment: { ...base.config.optionalEquipment, controller: true }, estimatorQuantities: { ...base.config.estimatorQuantities, controller: 2 } },
-  estimator: { ...base.estimator, priceResolutions: { ...base.estimator.priceResolutions, controller: { unitPriceExVat: 3000, reason: "Estimator price; no Cin7 product chosen" } } } } as typeof base;
-const ctrlLines = commercialLinesOf(evaluateDraft(ctrlBase, ctx).budget!);
-const ctrlCosted = { ...ctrlBase, estimator: { ...ctrlBase.estimator, physicalCosts: costsFor(ctrlLines) } } as typeof base;
 const costed = { ...base, estimator: { ...base.estimator, physicalCosts: costsFor(lines) } } as typeof base;
 const approvals = { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "r", handoffBy: "rep@a", estimatorSignoffBy: "est@a", estimatorSignoffAt: "t", managerApprovedBy: "mgr@a", managerApprovedAt: "2026-11-03T10:00:00.000Z" };
 const REASON = "Estimator-priced by design; mapping follows the PO";
@@ -34,17 +29,10 @@ describe("estimatorPricedUnmapped", () => {
     expect(got.map((g) => g.item.itemKey).sort()).toEqual(["flex_auger", "penning_package"]);
     expect(got.map((g) => g.item.pricedBy).sort()).toEqual(["estimator_input", "penning_rate"]);
   });
-  it("a product the Estimator merely TYPED a price for (estimator_resolution) is NOT waivable: it must be mapped", () => {
-    const got = estimatorPricedUnmapped(ctrlLines, scopeOf(ctrlLines)); // the controller is unmapped, priced via an Estimator price resolution
+  it("a package the Estimator merely TYPED a price for (estimator_resolution) is NOT waivable: it must be mapped", () => {
+    const got = estimatorPricedUnmapped(lines, scopeOf(lines, false)); // LED unmapped, priced via an Estimator price resolution
     expect(got.map((g) => g.item.itemKey).sort()).toEqual(["flex_auger", "penning_package"]);
-    expect(ctrlLines.find((l) => l.itemKey === "controller")!.pricedBy).toBe("estimator_resolution");
-    expect(effectiveScope(scopeOf(ctrlLines)).blockers.join(" ")).toMatch(/controller/i); // ...and it does block the scope
-  });
-  it("the SKU-backed LED package is NOT unmapped: its three Sean-confirmed components are in the physical scope, even with no library mapping", () => {
-    expect(lines.find((l) => l.itemKey === "led_light")!.pricedBy).toBe("estimator_resolution"); // still an Estimator-typed price...
-    const skus = effectiveScope(scopeOf(lines, false)).lines.map((l) => l.sku);
-    expect(skus).toEqual(expect.arrayContaining(["HNQ7046", "HNQ7093", "HNQ7088"])); // ...but over mapped SKUs, so nothing about it blocks
-    expect(estimatorPricedUnmapped(lines, scopeOf(lines, false)).map((g) => g.item.itemKey)).not.toContain("led_light");
+    expect(lines.find((l) => l.itemKey === "led_light")!.pricedBy).toBe("estimator_resolution");
   });
   it("never lists an unmapped product priced from the source, nor the remaining components of a partly mapped package", () => {
     const plain: BaselineCommercialLine = { itemKey: "feeder", label: "A product", sku: null, quantity: 1, unitPriceExVat: 10, revenueCents: 1000, pricedBy: "price_source", note: "" };
@@ -56,9 +44,9 @@ describe("estimatorPricedUnmapped", () => {
 });
 
 describe("the mapping gate", () => {
-  const gate = (o: { lib?: boolean; costs?: Record<string, unknown>; costEx?: boolean; ctrl?: boolean } = {}) => {
-    const lib = o.lib ?? true; const ls = o.ctrl ? ctrlLines : lines; // ctrl: the controller is selected with a typed price and no mapping
-    return baselineMappingGate({ lines: ls, scope: scopeOf(ls, lib), physicalCosts: (o.costs ?? costsFor(ls, lib)) as never, costExceptionAccepted: o.costEx ?? false });
+  const gate = (o: { lib?: boolean; costs?: Record<string, unknown>; costEx?: boolean } = {}) => {
+    const lib = o.lib ?? true;
+    return baselineMappingGate({ lines, scope: scopeOf(lines, lib), physicalCosts: (o.costs ?? costsFor(lines, lib)) as never, costExceptionAccepted: o.costEx ?? false });
   };
   it("blocked, and a Manager exception is required and sufficient, when only Estimator-priced-by-design systems are unmapped", () => {
     expect(gate()).toMatchObject({ blocked: true, required: true, remainingPackages: [], missingSkus: [] });
@@ -68,10 +56,10 @@ describe("the mapping gate", () => {
     expect(gate({ costEx: true })).toMatchObject({ blocked: true, required: true });
   });
   it("COST EXCEPTION + a genuinely unmapped product (typed price) => still blocked and an exception is not sufficient", () => {
-    const g = gate({ ctrl: true, costEx: true });
+    const g = gate({ lib: false, costEx: true });
     expect(g).toMatchObject({ blocked: true, required: false });
     expect(g.remainingPackages).toHaveLength(1);
-    expect(baselineExceptionView(g).otherBlockers[0]).toMatch(/controller/i);
+    expect(baselineExceptionView(g).otherBlockers[0]).toMatch(/LED light/);
   });
   it("no cost exception + missing supplier cost => not sufficient (the costing gate / supplier cost still block)", () => {
     const missing = { ...costsFor(lines) }; delete missing[Object.keys(missing)[0]];
@@ -88,7 +76,7 @@ describe("the mapping gate", () => {
     expect(gate({ costs: {}, costEx: true }).items.map((i) => i.itemKey).sort()).toEqual(["flex_auger", "penning_package"]);
   });
   it("uncosted: a genuinely unmapped package still blocks and the exception is not sufficient", () => {
-    expect(gate({ ctrl: true, costs: {}, costEx: true })).toMatchObject({ blocked: true, required: false });
+    expect(gate({ lib: false, costs: {}, costEx: true })).toMatchObject({ blocked: true, required: false });
   });
   it("the view carries the Estimator's cost exception read-only for context", () => {
     const ex = { reason: "Supplier choice follows the PO", by: "est@a", at: "t" };
@@ -123,7 +111,7 @@ describe("buildAcceptedBaseline", () => {
   });
   it("waives ONLY the Estimator-priced systems: a package with an Estimator-typed price still refuses, even with both exceptions", () => {
     expect(() => freeze(costed, undefined, { reason: REASON, draftHash: "h" }, undefined, undefined)).not.toThrow();
-    const noLib = { ...ctrlCosted, estimator: { ...ctrlCosted.estimator, physicalCosts: costsFor(ctrlLines, false) } } as typeof costed; // the controller (typed price, no mapping) is the unmapped product
+    const noLib = { ...costed, estimator: { ...costed.estimator, physicalCosts: costsFor(lines, false) } } as typeof costed;
     expect(() => freeze(noLib, undefined, { reason: REASON, draftHash: "h" }, undefined, new Map() as never)).toThrow(/1 package\(s\) are not mapped to Cin7 SKUs/);
     const noLibCost = { ...noLib, estimator: { ...noLib.estimator, costBasis: { incompleteAccepted: { reason: "r", by: "e", at: "t" } } } } as typeof costed;
     expect(() => freeze(noLibCost, undefined, { reason: REASON, draftHash: "h" }, undefined, new Map() as never)).toThrow(/1 package\(s\) are not mapped to Cin7 SKUs/);
@@ -151,8 +139,7 @@ describe("buildAcceptedBaseline", () => {
     expect(f.baseline.exceptions![0]).toMatchObject({ reason: REASON, approvedBy: "mgr@a", version: { quoteRef: "NQ-Q-1", revision: 2, draftHash: "h9" } });
     expect(f.baseline.exceptions![0].unresolved.map((u) => u.itemKey).sort()).toEqual(["flex_auger", "penning_package"]);
     // a genuinely unmapped package is still blocking, even uncosted and with both exceptions
-    const uncostedCtrl = { ...ctrlBase, estimator: { ...ctrlBase.estimator, costBasis: { incompleteAccepted: { reason: "r", by: "e", at: "t" } } } } as typeof base;
-    expect(() => freeze(uncostedCtrl, undefined, { reason: REASON, draftHash: "h9" }, undefined, new Map() as never)).toThrow(/1 package\(s\) are not mapped to Cin7 SKUs/);
+    expect(() => freeze(uncosted, undefined, { reason: REASON, draftHash: "h9" }, undefined, new Map() as never)).toThrow(/1 package\(s\) are not mapped to Cin7 SKUs/);
   });
   it("validateExceptionReason bounds the text", () => {
     expect(validateExceptionReason("x".repeat(9))).toBeTruthy();
@@ -162,10 +149,10 @@ describe("buildAcceptedBaseline", () => {
 });
 
 describe("D-19: unmapped products no exception can cover are exposed by name", () => {
-  const gateNoLib = () => baselineMappingGate({ lines: ctrlLines, scope: scopeOf(ctrlLines, false), physicalCosts: costsFor(ctrlLines, false) as never, costExceptionAccepted: false });
-  it("blocking lists the typed-price (estimator_resolution) controller line with its pricing route, never a value; by-design systems stay in items", () => {
+  const gateNoLib = () => baselineMappingGate({ lines, scope: scopeOf(lines, false), physicalCosts: costsFor(lines, false) as never, costExceptionAccepted: false });
+  it("blocking lists the typed-price (estimator_resolution) LED line with its pricing route, never a value; by-design systems stay in items", () => {
     const g = gateNoLib();
-    expect(g.blocking).toEqual([{ label: expect.stringMatching(/controller/i), pricedBy: "estimator_resolution" }]);
+    expect(g.blocking).toEqual([{ label: expect.stringMatching(/LED light/), pricedBy: "estimator_resolution" }]);
     expect(g.items.map((i) => i.itemKey).sort()).toEqual(["flex_auger", "penning_package"]);
     expect(g.required).toBe(false); // an exception is NOT offered while a blocking item exists
     expect(Object.keys(g.blocking[0]).sort()).toEqual(["label", "pricedBy"]); // labels + route only: no price, cost or quantity
@@ -174,17 +161,17 @@ describe("D-19: unmapped products no exception can cover are exposed by name", (
     expect(baselineMappingGate({ lines, scope: scopeOf(lines), physicalCosts: costsFor(lines) as never, costExceptionAccepted: false }).blocking).toEqual([]);
   });
   it("the view carries blocking (and only while the freeze is blocked)", () => {
-    expect(baselineExceptionView(gateNoLib()).blocking).toEqual([{ label: expect.stringMatching(/controller/i), pricedBy: "estimator_resolution" }]);
+    expect(baselineExceptionView(gateNoLib()).blocking).toEqual([{ label: expect.stringMatching(/LED light/), pricedBy: "estimator_resolution" }]);
   });
   it("the freeze refusal NAMES the blocking items and says an exception cannot cover them", () => {
-    const noLib = { ...ctrlBase, estimator: { ...ctrlBase.estimator, physicalCosts: costsFor(ctrlLines, false) } } as typeof base;
+    const noLib = { ...base, estimator: { ...base.estimator, physicalCosts: costsFor(lines, false) } } as typeof base;
     let msg = "";
     try { freeze(noLib, undefined, undefined, undefined, new Map() as never); } catch (e) { msg = (e as Error).message; }
-    expect(msg).toMatch(/package\(s\) are not mapped to Cin7 SKUs \(.*controller/i);
+    expect(msg).toMatch(/package\(s\) are not mapped to Cin7 SKUs \(.*LED light/);
     expect(msg).toMatch(/need an active library mapping/);
     let msg2 = "";
     try { freeze(noLib, undefined, { reason: REASON, draftHash: "h" }, undefined, new Map() as never); } catch (e) { msg2 = (e as Error).message; }
-    expect(msg2).toMatch(/\(.*controller/i); // even when an exception was offered
+    expect(msg2).toMatch(/\(.*LED light/); // even when an exception was offered
   });
 });
 
@@ -202,5 +189,52 @@ describe("ROUND 4: the recorded exception can be read back from its decision tex
   it("is null for any other reason", async () => {
     const { parseBaselineExceptionDecision } = await import("../baseline-exception");
     for (const t of [null, undefined, "", "Looks right", "Accepted incomplete: something else"]) expect(parseBaselineExceptionDecision(t)).toBeNull();
+  });
+});
+
+// CURRENT TEMPLATE (grower-2026-11, a NEW quotation): the LED package is SKU-backed (HNQ7046 / HNQ7093 / HNQ7088, Sean 2026-11), so it is mapped through its own components and is no longer the example of
+// a "genuinely unmapped product the Estimator merely typed a price for": that is the optional CONTROLLER here (selected, a typed price, no Cin7 mapping). Everything above stays the ORIGINAL-template behaviour.
+describe("current template: the SKU-backed LED needs no mapping; an unmapped typed-price controller still blocks", () => {
+  const cur = onCurrentTemplate(base);
+  const curLines = commercialLinesOf(evaluateDraft(cur, ctx).budget!);
+  const ctrlBase = { ...cur, config: { ...cur.config, optionalEquipment: { ...cur.config.optionalEquipment, controller: true }, estimatorQuantities: { ...cur.config.estimatorQuantities, controller: 2 } },
+    estimator: { ...cur.estimator, priceResolutions: { ...cur.estimator.priceResolutions, controller: { unitPriceExVat: 3000, reason: "Estimator price; no Cin7 product chosen" } } } } as typeof base;
+  const ctrlLines = commercialLinesOf(evaluateDraft(ctrlBase, ctx).budget!);
+  const ctrlCosted = { ...ctrlBase, estimator: { ...ctrlBase.estimator, physicalCosts: costsFor(ctrlLines) } } as typeof base;
+  const gateOf = (ls: readonly BaselineCommercialLine[], costEx = false, costs: Record<string, unknown> = costsFor(ls)) => baselineMappingGate({ lines: ls, scope: scopeOf(ls), physicalCosts: costs as never, costExceptionAccepted: costEx });
+  it("legacy vs current, same fixture: the original LED is a typed-price line with no SKU; the current one is priced over its three mapped SKUs", () => {
+    expect(lines.find((l) => l.itemKey === "led_light")).toMatchObject({ pricedBy: "estimator_resolution", sku: null });
+    expect(lines.find((l) => l.itemKey === "led_light")!.components?.some((c) => c.sku === "HNQ7046")).toBeFalsy();
+    const skus = effectiveScope(scopeOf(curLines, false)).lines.map((l) => l.sku);
+    expect(skus).toEqual(expect.arrayContaining(["HNQ7046", "HNQ7093", "HNQ7088"]));
+    expect(estimatorPricedUnmapped(curLines, scopeOf(curLines, false)).map((g) => g.item.itemKey)).not.toContain("led_light");
+  });
+  it("a product the Estimator merely TYPED a price for (the controller) is NOT waivable and blocks the scope", () => {
+    const got = estimatorPricedUnmapped(ctrlLines, scopeOf(ctrlLines));
+    expect(got.map((g) => g.item.itemKey).sort()).toEqual(["flex_auger", "penning_package"]);
+    expect(ctrlLines.find((l) => l.itemKey === "controller")!.pricedBy).toBe("estimator_resolution");
+    expect(effectiveScope(scopeOf(ctrlLines)).blockers.join(" ")).toMatch(/controller/i);
+  });
+  it("COST EXCEPTION + an unmapped typed-price product => still blocked, an exception is not sufficient; uncosted too", () => {
+    const g = gateOf(ctrlLines, true);
+    expect(g).toMatchObject({ blocked: true, required: false });
+    expect(g.remainingPackages).toHaveLength(1);
+    expect(baselineExceptionView(g).otherBlockers[0]).toMatch(/controller/i);
+    expect(gateOf(ctrlLines, true, {})).toMatchObject({ blocked: true, required: false });
+    expect(gateOf(curLines)).toMatchObject({ blocked: true, required: true, remainingPackages: [] }); // without the controller only M75 / penning need the exception
+  });
+  it("blocking lists the typed-price controller with its pricing route, never a value; the view carries it", () => {
+    const g = baselineMappingGate({ lines: ctrlLines, scope: scopeOf(ctrlLines, false), physicalCosts: costsFor(ctrlLines, false) as never, costExceptionAccepted: false });
+    expect(g.blocking).toEqual([{ label: expect.stringMatching(/controller/i), pricedBy: "estimator_resolution" }]);
+    expect(g.items.map((i) => i.itemKey).sort()).toEqual(["flex_auger", "penning_package"]);
+    expect(g.required).toBe(false);
+    expect(Object.keys(g.blocking[0]).sort()).toEqual(["label", "pricedBy"]);
+    expect(baselineExceptionView(g).blocking).toEqual(g.blocking);
+  });
+  it("freezing: the controller still refuses even with both exceptions, and the refusal names it", () => {
+    const REASON2 = "Estimator-priced by design; mapping follows the PO";
+    const noLib = { ...ctrlCosted, estimator: { ...ctrlCosted.estimator, physicalCosts: costsFor(ctrlLines, false), costBasis: { incompleteAccepted: { reason: "r", by: "e", at: "t" } } } } as typeof base;
+    expect(() => freeze(noLib, undefined, { reason: REASON2, draftHash: "h" }, undefined, new Map() as never)).toThrow(/1 package\(s\) are not mapped to Cin7 SKUs/);
+    expect(() => freeze(noLib, undefined, undefined, undefined, new Map() as never)).toThrow(/3 package\(s\) are not mapped to Cin7 SKUs \(.*controller/i);
   });
 });

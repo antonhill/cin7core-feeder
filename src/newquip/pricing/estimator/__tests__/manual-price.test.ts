@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readyDraft } from "../../../grower/__tests__/golden";
+import { onCurrentTemplate } from "../../../grower/__tests__/current-template";
 import { applyCostVerification, buildPricingWorkspace, LEGACY_RULE_VERSION, manualPricedSkus, pricingFinality, type EstimatorPricing } from "..";
 import { AT, equivalentInputs, evalOf, itemsOf, manualDraft, withPricing } from "./helpers";
 
@@ -15,13 +16,16 @@ describe("a manual price with NO supplier cost recorded", () => {
   it("still gives the line a price (price complete) but is flagged and blocks finality: the cost is missing, the manual price does not hide it", () => {
     expect(ev.budget!.lines.find((l) => l.itemKey === "feed_saver_mat")).toMatchObject({ status: "priced", pricedBy: "estimator_resolution" });
     expect(ev.budget!.incomplete).toBe(false); // PRICE completeness: every line has a price
-    expect(manualPricedSkus(ev.budget)).toEqual(["ERT053", "HNQ7046", "HNQ7088", "HNQ7093", "NQ1161"]); // the LED components are SKU-backed now, so its typed price is a manual price over those SKUs
+    expect(manualPricedSkus(ev.budget)).toEqual(["ERT053", "NQ1161"]); // original template: the LED has no SKU, so its typed price is outside this rule
     const f = pricingFinality(d.estimator.pricing, ev.budget, AT);
     expect(f.final).toBe(false);
     expect(f.reasons).toEqual(expect.arrayContaining([expect.stringMatching(/ERT053: priced by a manual price, but no supplier cost has been entered/), expect.stringMatching(/NQ1161: priced by a manual price, but no supplier cost has been entered/)]));
-    // the LED's cost is covered by the equivalent inputs (the fixture records HNQ7046 / HNQ7088 / HNQ7093), so only the two deleted costs are named
-    expect(f.reasons.join(" ")).not.toMatch(/HNQ70(46|88|93): priced by a manual price, but no supplier cost/);
     expect(f.reasons.join(" ")).toMatch(/cannot be waived by the incomplete-costing exception/);
+  });
+  it("legacy vs current template, same fixture: the original LED (no SKU) is outside the rule; on the current template its typed price is a manual price over HNQ7046 / HNQ7088 / HNQ7093", () => {
+    const cur = onCurrentTemplate(draftWith(p));
+    expect(manualPricedSkus(ev.budget)).toEqual(["ERT053", "NQ1161"]);
+    expect(manualPricedSkus(evalOf(cur).budget)).toEqual(["ERT053", "HNQ7046", "HNQ7088", "HNQ7093", "NQ1161"]);
   });
   it("the workspace shows the two things separately: the line is priced by a MANUAL price, its cost is missing, and the verified count excludes it", () => {
     const v = buildPricingWorkspace({ quoteType: "project", pricing: d.estimator.pricing, budget: ev.budget, originalTotalCents: null, originalCapturedAt: null, nowIso: AT });

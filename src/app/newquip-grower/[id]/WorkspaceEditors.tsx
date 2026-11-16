@@ -5,7 +5,7 @@ import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import type { WorkspaceBundle } from "@/lib/newquip-quotes/pricing-service";
-import { CHOICE_PRODUCT_NAMES, manualSelectionSkusFor, packageFor } from "@/newquip/grower/commercial";
+import { CHOICE_PRODUCT_NAMES, manualSelectionSkusFor, packageFor, type TemplateRevision } from "@/newquip/grower/commercial";
 import type { GrowerItemKey } from "@/newquip/grower/types";
 import { decodeManualReason, encodeManualReason, manualPriceComplete, money } from "@/newquip/quote/estimator-workspace";
 import { applyEditor, editorFrom, editorProblems, fxContext, isForeign, parseCostText, previewLine, type SkuEditor } from "@/newquip/quote/workspace-submission";
@@ -190,8 +190,8 @@ export function ManualPriceForm({ itemKey, label, quantity, existing, canEdit, p
 }
 
 /** PVC door (and any other product with no recommended SKU): choose the product, save it alone or with its price. */
-export function ProductChoice({ itemKey, label, chosen, canEdit, busy, onChoose, children }: { itemKey: string; label: string; chosen: string | undefined; canEdit: boolean; busy: boolean; onChoose: (sku: string | null) => void; children?: ReactNode }) {
-  const candidates = manualSelectionSkusFor(itemKey as GrowerItemKey);
+export function ProductChoice({ templateRevision, itemKey, label, chosen, canEdit, busy, onChoose, children }: { templateRevision: TemplateRevision; itemKey: string; label: string; chosen: string | undefined; canEdit: boolean; busy: boolean; onChoose: (sku: string | null) => void; children?: ReactNode }) {
+  const candidates = manualSelectionSkusFor(itemKey as GrowerItemKey, templateRevision);
   return (
     <Section title={`Step 1. Choose the ${label.toLowerCase()} product`} hint={candidates.length ? "there is no sizing rule, so this is your call" : "search the Cin7 catalogue"} testId="product-choice">
       {candidates.length > 0 ? (
@@ -207,8 +207,8 @@ export function ProductChoice({ itemKey, label, chosen, canEdit, busy, onChoose,
 const PRODUCT_NAMES = CHOICE_PRODUCT_NAMES;
 
 /** Cup drinker: confirm the seven-component package (existing definition), then cost each component. */
-export function PackageConfirm({ itemKey, confirmed, canEdit, busy, onConfirm }: { itemKey: string; confirmed: boolean; canEdit: boolean; busy: boolean; onConfirm: (yes: boolean) => void }) {
-  const pkg = packageFor(itemKey as GrowerItemKey);
+export function PackageConfirm({ templateRevision, itemKey, confirmed, canEdit, busy, onConfirm }: { templateRevision: TemplateRevision; itemKey: string; confirmed: boolean; canEdit: boolean; busy: boolean; onConfirm: (yes: boolean) => void }) {
+  const pkg = packageFor(itemKey as GrowerItemKey, templateRevision);
   return (
     <Section title={`A. Confirm the ${pkg?.components.length ?? 7}-component package`} hint="the existing, supported pricing path" testId="package-confirm">
       <label className={`flex cursor-pointer items-start gap-3 rounded-lg border-[1.5px] p-3 text-sm ${confirmed ? "border-blue-700 bg-sky-50" : "border-slate-400"}`}>

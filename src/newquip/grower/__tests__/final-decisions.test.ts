@@ -9,6 +9,7 @@ import { COMMERCIAL_MAPPINGS, FEEDBACK_2026_11, feederSkuFor, packageAutoConfirm
 import type { GrowerConfigurationInput } from "../types";
 import { TEST_SNAPSHOT, testPriceSource } from "./test-snapshot";
 import { readyDraft } from "./golden";
+import { onCurrentTemplate } from "./current-template";
 
 const base = (o: Partial<GrowerConfigurationInput> = {}): GrowerConfigurationInput => ({ ...structuredClone(TOPIGS_GROWER_INPUT), ...o });
 const line = (r: ReturnType<typeof calculateGrowerHouse>, k: string) => r.lines.find((l) => l.itemKey === k)!;
@@ -281,8 +282,16 @@ describe("ZERO PRICE — supplier quote required, never R0", () => {
     expect(ev.budget!.lines.find((l) => l.itemKey === "led_light")!.status).not.toBe("priced");
     expect(ev.readiness.state).toBe("BLOCKED");
   });
-  it("the LED package carries the Sean-confirmed SKUs (HNQ7046 / HNQ7093 x3 / HNQ7088) yet is never auto-confirmed; the customer-facing name still says FORTIS and a note records that", () => {
+  it("ORIGINAL template (unstamped draft): FORTIS 1.2 has no SKU: the historic FERAX surrogate is never substituted", () => {
     const d = readyDraft();
+    const ev = evaluateDraft({ ...d, estimator: { ...d.estimator, priceResolutions: {} } }, ctx);
+    const light = ev.budget!.lines.find((l) => l.itemKey === "led_light")!;
+    expect(light.status).toBe("package_unconfirmed");
+    expect(JSON.stringify(light)).not.toContain("HNQ7046\",\"description");
+    expect(light.components!.find((c) => c.id === "luminaire")!.status).toBe("identity_unresolved");
+  });
+  it("the LED package carries the Sean-confirmed SKUs (HNQ7046 / HNQ7093 x3 / HNQ7088) yet is never auto-confirmed; the customer-facing name still says FORTIS and a note records that", () => {
+    const d = onCurrentTemplate(readyDraft()); // a NEW quotation (current template revision)
     const ev = evaluateDraft({ ...d, estimator: { ...d.estimator, priceResolutions: {} } }, ctx);
     const light = ev.budget!.lines.find((l) => l.itemKey === "led_light")!;
     expect(light.status).toBe("package_unconfirmed"); // still needs the Estimator to confirm it (estimatorConfirmation), even though every component is source-backed

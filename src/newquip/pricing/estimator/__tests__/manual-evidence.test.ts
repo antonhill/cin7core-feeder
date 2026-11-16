@@ -4,6 +4,7 @@ import { redactEvaluationFinancials, redactInternalFinancials } from "../../../q
 import { type Viewer } from "../../model";
 import { applyManualEvidence, applyPricingSubmission, buildPricingWorkspace, evidenceStateOf, keepServerOwnedPricing, manualEvidenceRows, manualPriceHash, normaliseSubmission, pricingFinality, skuLessManualItems, submissionFrom, type EstimatorPricing } from "..";
 import { AT, equivalentInputs as equivalentInputsOn, evalOf, manualDraft, withPricing as withPricingOn } from "./helpers";
+import { onCurrentTemplate } from "../../../grower/__tests__/current-template";
 import type { QuoteDraft } from "../../../grower/draft";
 
 // The base draft here carries the CONTROLLER with a typed price and no mapping: the LED package is SKU-backed now (Sean 2026-11), so it is governed by cost verification, not by this control.
@@ -29,6 +30,11 @@ describe("which items need evidence", () => {
     expect(items.map((i) => [i.itemKey, i.pricedBy])).toEqual([["controller", "estimator_resolution"], ["flex_auger", "estimator_input"], ["penning_package", "penning_rate"]]);
     expect(items.map((i) => i.itemKey)).not.toContain("led_light"); // the LED package is SKU-backed (HNQ7046 / HNQ7093 / HNQ7088): cost verification governs it, not this control
     expect(items.every((i) => Number.isSafeInteger(i.unitPriceCents) && i.unitPriceCents > 0)).toBe(true);
+  });
+  it("legacy vs current template, same fixture: the ORIGINAL LED (no SKU, typed price) needs evidence; the current SKU-backed LED does not", () => {
+    const legacy = readyDraft(); // unstamped = the original template
+    expect(skuLessManualItems(evalOf(withPricingOn(unverified(), legacy)).budget).map((i) => i.itemKey)).toEqual(["flex_auger", "led_light", "penning_package"]);
+    expect(skuLessManualItems(evalOf(withPricingOn(unverified(), onCurrentTemplate(legacy))).budget).map((i) => i.itemKey)).toEqual(["flex_auger", "penning_package"]);
   });
   it("a manual price on a SKU line is governed by cost verification, not by this control; supplier-priced lines never need it; no budget means none", () => {
     const d = manualDraft(); d.estimator.priceResolutions = { ...d.estimator.priceResolutions, feed_saver_mat: { unitPriceExVat: 919, reason: "Manual price: none in the workbook" } };

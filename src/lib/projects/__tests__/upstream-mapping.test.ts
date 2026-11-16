@@ -1,6 +1,6 @@
 // Phase G workflow correction: product mappings are resolved UPSTREAM (template / Solution Builder / quotation approval), not when the Cin7 Sale is
 // created, and the manual "Link Cin7 Sale" form is gone from the normal workflow. Scenarios use the demo quotation's three known packages (M75
-// feed system = flex_auger x12, PP penning priced per running metre = penning_package x240, an Estimator-priced controller with a typed price and no Cin7 mapping = controller x24 (2 per room, 12 rooms); the LED package is SKU-backed now, so it is not an unresolved package). The SKUs below are
+// feed system = flex_auger x12, PP penning priced per running metre = penning_package x240, FORTIS LED lighting = led_light x456). The SKUs below are
 // TEST FIXTURES labelled TEST-*: no real Cin7 SKU is invented.
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
@@ -11,6 +11,7 @@ import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { emptyDraft } from "@/newquip/grower/draft";
 import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
 import { withAcceptedIncompleteCosting } from "@/newquip/grower/__tests__/golden";
+import { onCurrentTemplate } from "@/newquip/grower/__tests__/current-template";
 import { sealWithUnresolvedScope } from "@/newquip/grower/__tests__/baseline-exception-fixture";
 import { baselineMatchesHash, commercialLinesOf } from "@/newquip/quote/baseline";
 import { buildPhysicalScope } from "@/newquip/quote/physical-scope";
@@ -25,15 +26,10 @@ vi.mock("server-only", () => ({}));
 
 const ctx = (withholdCost: boolean) => ({ priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost });
 const draft = withAcceptedIncompleteCosting(applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft);
-// The demo quotation plus the optional controller with an Estimator-typed price and no Cin7 mapping: the third unresolved package (the LED used to be, before Sean confirmed its SKUs).
-// `ev` (the live scope view) is evaluated from that; the SEALED baselines come from the plain demo quotation with the controller added to the physical scope only (the fixture's unmappedController).
-const ctrlDraft = { ...draft, config: { ...draft.config, optionalEquipment: { ...draft.config.optionalEquipment, controller: true }, estimatorQuantities: { ...draft.config.estimatorQuantities, controller: 2 } },
-  estimator: { ...draft.estimator, priceResolutions: { ...draft.estimator.priceResolutions, controller: { unitPriceExVat: 3000, reason: "Estimator price; no Cin7 product chosen" } } } } as typeof draft;
-const ev = evaluateDraft(ctrlDraft, ctx(true));
-const evDemo = evaluateDraft(draft, ctx(true));
+const ev = evaluateDraft(draft, ctx(true));
 const AT = "2026-10-29T08:00:00Z";
 const APPROVALS = { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "r", handoffBy: "r", estimatorSignoffBy: "e", estimatorSignoffAt: "t", managerApprovedBy: "m", managerApprovedAt: AT };
-const seal = (mappingLibrary?: ReadonlyMap<string, LibraryMapping>) => sealWithUnresolvedScope({ quoteRef: "NQ-Q-0007", revision: 1, draft, evaluation: evDemo, marginEvaluation: evaluateDraft(draft, ctx(false)), approvals: APPROVALS }, mappingLibrary, { unmappedController: true });
+const seal = (mappingLibrary?: ReadonlyMap<string, LibraryMapping>) => sealWithUnresolvedScope({ quoteRef: "NQ-Q-0007", revision: 1, draft, evaluation: ev, marginEvaluation: evaluateDraft(draft, ctx(false)), approvals: APPROVALS }, mappingLibrary);
 
 /** A register as an OLD baseline would hold it: one M75 item resolved by a legacy mapping that marks a BOM component. */
 const describeScopeSource = (m: LibraryMapping): ScopeItem[] => [{ id: "flex_auger:UNMAPPED", sku: null, description: "M75", quantity: 1, unit: "each", productType: "FINISHED_GOOD", origin: { lineRef: "flex_auger:UNMAPPED", label: "M75", packageKey: null, section: null, source: "QUOTE" }, scope: "BASE", sellingUnitCents: null, mapping: { status: "UNMAPPED", reason: "x" },
@@ -41,16 +37,25 @@ const describeScopeSource = (m: LibraryMapping): ScopeItem[] => [{ id: "flex_aug
 const lib = (packageKey: string, version: number, lines: LibraryMapping["lines"]): LibraryMapping => ({ packageKey, version, lines });
 const M75 = lib("flex_auger", 2, [{ sku: "TEST-M75-SYSTEM", factor: 1, unit: "each", role: "FINISHED_GOOD", assembly: true }, { sku: "TEST-M75-AUGER", factor: 3, unit: "each", role: "FINISHED_GOOD", assembly: true }, { sku: "TEST-M75-MOTOR", factor: 2, unit: "each", role: "FINISHED_GOOD", assembly: false }]);
 const PEN = lib("penning_package", 1, [{ sku: "TEST-PEN-ROLL", factor: 0.05, unit: "20 m roll", role: "FINISHED_GOOD" }, { sku: "TEST-PEN-POST", factor: 0.5, unit: "each", role: "FINISHED_GOOD" }]);
-const CTRL = lib("controller", 1, [{ sku: "TEST-CTRL-UNIT", factor: 1, unit: "each", role: "FINISHED_GOOD" }, { sku: "TEST-CTRL-MOUNT", factor: 1, unit: "each", role: "FINISHED_GOOD" }, { sku: "TEST-CTRL-CABLE", factor: 2, unit: "m", role: "FINISHED_GOOD" }]);
-const FULL = new Map([M75, PEN, CTRL].map((m) => [m.packageKey, m]));
+const LED = lib("led_light", 1, [{ sku: "TEST-FORTIS-LED", factor: 1, unit: "each", role: "FINISHED_GOOD" }, { sku: "TEST-FORTIS-MOUNT", factor: 1, unit: "each", role: "FINISHED_GOOD" }, { sku: "TEST-FORTIS-CABLE", factor: 2, unit: "m", role: "FINISHED_GOOD" }]);
+const FULL = new Map([M75, PEN, LED].map((m) => [m.packageKey, m]));
 
 describe("reusable mappings are applied while the solution is configured (Solution Builder scope view)", () => {
-  it("1+2+3: M75, PP penning and the controller each expand into several Cin7 SKUs with exact converted quantities", () => {
+  it("1+2+3: M75, PP penning and FORTIS each expand into several Cin7 SKUs with exact converted quantities", () => {
     const v = quoteScopeView({ finalBaseline: null, evaluation: ev, library: FULL, now: AT });
     expect(v.unresolvedCount).toBe(0);
     const qty = Object.fromEntries(v.saleLines.filter((l) => l.sku.startsWith("TEST-")).map((l) => [l.sku, l.quantity]));
-    expect(qty).toEqual({ "TEST-M75-SYSTEM": 12, "TEST-M75-AUGER": 36, "TEST-M75-MOTOR": 24, "TEST-PEN-ROLL": 12, "TEST-PEN-POST": 120, "TEST-CTRL-UNIT": 24, "TEST-CTRL-MOUNT": 24, "TEST-CTRL-CABLE": 48 });
+    expect(qty).toEqual({ "TEST-M75-SYSTEM": 12, "TEST-M75-AUGER": 36, "TEST-M75-MOTOR": 24, "TEST-PEN-ROLL": 12, "TEST-PEN-POST": 120, "TEST-FORTIS-LED": 456, "TEST-FORTIS-MOUNT": 456, "TEST-FORTIS-CABLE": 912 });
     expect(v.items.find((i) => i.id === "penning_package:UNMAPPED")).toMatchObject({ state: "FROM_LIBRARY", mappingRef: { packageKey: "penning_package", version: 1 } });
+  });
+  it("legacy vs current template, same quotation: the ORIGINAL LED is a third unresolved package (3); the current SKU-backed LED expands to HNQ7046 / HNQ7093 / HNQ7088 and only M75 + penning are unresolved (2)", () => {
+    const legacy = quoteScopeView({ finalBaseline: null, evaluation: ev, library: null, now: AT });
+    expect(legacy.unresolvedCount).toBe(3);
+    expect(legacy.items.filter((i) => i.state === "UNRESOLVED").map((i) => i.id).sort()).toEqual(["flex_auger:UNMAPPED", "led_light:UNMAPPED", "penning_package:UNMAPPED"]);
+    const cur = quoteScopeView({ finalBaseline: null, evaluation: evaluateDraft(onCurrentTemplate(draft), ctx(true)), library: null, now: AT });
+    expect(cur.unresolvedCount).toBe(2);
+    expect(cur.items.filter((i) => i.state === "UNRESOLVED").map((i) => i.id).sort()).toEqual(["flex_auger:UNMAPPED", "penning_package:UNMAPPED"]);
+    expect(Object.fromEntries(cur.saleLines.filter((l) => l.sku.startsWith("HNQ")).map((l) => [l.sku, l.quantity]))).toEqual({ HNQ7046: 456, HNQ7093: 1368, HNQ7088: 456 });
   });
   it("4+5: a Cin7 assembly is ONE Sales Order line (never expanded); a separately supplied accessory is its own valid line; both quantities are exact", () => {
     const v = quoteScopeView({ finalBaseline: null, evaluation: ev, library: FULL, now: AT });
@@ -84,13 +89,13 @@ describe("reusable mappings are applied while the solution is configured (Soluti
     expect(noQty.find((i) => i.id === "penning_package:UNMAPPED")!.resolution).toBeUndefined();
   });
   it("11: the same SKU reached through two packages is consolidated into one Sales Order line (summed, never duplicated)", () => {
-    const shared = new Map([lib("flex_auger", 3, [{ sku: "TEST-SHARED", factor: 1, unit: "each", role: "FINISHED_GOOD" }]), lib("controller", 2, [{ sku: "TEST-SHARED", factor: 2, unit: "each", role: "FINISHED_GOOD" }])].map((m) => [m.packageKey, m]));
+    const shared = new Map([lib("flex_auger", 3, [{ sku: "TEST-SHARED", factor: 1, unit: "each", role: "FINISHED_GOOD" }]), lib("led_light", 2, [{ sku: "TEST-SHARED", factor: 2, unit: "each", role: "FINISHED_GOOD" }])].map((m) => [m.packageKey, m]));
     const lines = quoteScopeView({ finalBaseline: null, evaluation: ev, library: shared, now: AT }).saleLines.filter((l) => l.sku === "TEST-SHARED");
-    expect(lines).toEqual([{ sku: "TEST-SHARED", quantity: 12 + 24 * 2, description: expect.any(String) }]);
+    expect(lines).toEqual([{ sku: "TEST-SHARED", quantity: 12 + 456 * 2, description: expect.any(String) }]);
   });
   it("7: missing mappings are visible warnings, never silent omissions; nothing is invented", () => {
     const v = quoteScopeView({ finalBaseline: null, evaluation: ev, library: new Map([PEN].map((m) => [m.packageKey, m])), now: AT });
-    expect(v.items.filter((i) => i.state === "UNRESOLVED").map((i) => i.id)).toEqual(["flex_auger:UNMAPPED", "controller:UNMAPPED"]);
+    expect(v.items.filter((i) => i.state === "UNRESOLVED").map((i) => i.id)).toEqual(["flex_auger:UNMAPPED", "led_light:UNMAPPED"]);
     expect(v.unresolvedCount).toBe(2);
     expect(v.items.filter((i) => i.state === "UNRESOLVED").every((i) => i.lines.length === 0 && i.reason)).toBe(true);
     expect(quoteScopeView({ finalBaseline: null, evaluation: ev, library: null, now: AT }).unresolvedCount).toBe(3); // no library at all (migration pending) = all unresolved, not hidden

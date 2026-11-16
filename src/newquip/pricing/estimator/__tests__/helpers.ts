@@ -1,5 +1,6 @@
 import { evaluateDraft, type QuoteEvaluation } from "../../../grower/evaluate";
 import { readyDraft } from "../../../grower/__tests__/golden";
+import { onCurrentTemplate } from "../../../grower/__tests__/current-template";
 import { TEST_SNAPSHOT, testPriceSource } from "../../../grower/__tests__/test-snapshot";
 import type { QuoteDraft } from "../../../grower/draft";
 import { micro, cost7 } from "../../model";
@@ -44,7 +45,7 @@ export function equivalentInputs(over: Partial<EstimatorPricing> = {}, verificat
  * longer an example of a SKU-less item the Estimator merely typed a price for; the controller is, and is priced as an Estimator resolution on a line with no SKU of its own.
  */
 export function manualDraft(): QuoteDraft {
-  const d = readyDraft();
+  const d = onCurrentTemplate(readyDraft()); // a NEW quotation: stamped with the current template revision (an unstamped draft keeps the original template, where the LED has no SKUs)
   d.config.optionalEquipment = { ...d.config.optionalEquipment, controller: true };
   d.config.estimatorQuantities = { ...d.config.estimatorQuantities, controller: 2 };
   d.estimator.priceResolutions = { ...d.estimator.priceResolutions, controller: { unitPriceExVat: 3000, reason: "Controller: Estimator price from the supplier's current list; no Cin7 mapping" } };

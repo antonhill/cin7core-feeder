@@ -4,6 +4,8 @@ import { seedGoldenCatalogue } from "@/newquip/grower/__tests__/golden-catalogue
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import { readyDraft } from "@/newquip/grower/__tests__/golden";
+import { onCurrentTemplate } from "@/newquip/grower/__tests__/current-template";
+import { hashOf } from "@/newquip/quote/baseline";
 import { testPriceSource } from "@/newquip/grower/__tests__/test-snapshot";
 import { withCapturedSupplierCosts } from "@/newquip/quote/__tests__/costing-fixture";
 import { rolesFor } from "@/newquip/quote/roles";
@@ -29,6 +31,13 @@ const unmapped = (): QuoteDraft => { const d = readyDraft(); d.estimator.confirm
 async function stored(d: QuoteDraft): Promise<string> {
   const { id } = await createQuote(db as never, ORG, "rep@nq");
   await saveDraft(db as never, ORG, member, id, d);
+  return id;
+}
+/** A quotation that EXISTED before the new template: createQuote stamps new quotations CURRENT, so the stamp is removed from the stored row (absent = the original template). */
+async function storedLegacy(d: QuoteDraft): Promise<string> {
+  const id = await stored(d);
+  const row = db.rows("newquip_quotes").find((r) => r.id === id) as Record<string, unknown> & { draft: QuoteDraft };
+  delete row.draft.estimator.templateRevision; row.draft_hash = hashOf(row.draft);
   return id;
 }
 const send = (id: string, amount: number, by = "Joe") => sendToEstimator(db as never, ORG, repOnly as never, "rep@nq", id, ctx, { confirmedAmountCents: amount, confirmedBy: by });
@@ -117,6 +126,16 @@ describe("no commercial approval while mappings, supplier costs or pricing are u
     await managerApprove(db as never, ORG, admin, "m@nq", id2, ctx, undefined, managerExceptionOpts(db.rows("newquip_quotes")[1] as never));
     expect((await loadQuote(db as never, ORG, id2))!.state).toBe("MANAGER_APPROVED_FINAL");
   });
+  it("ORIGINAL template (a quotation that existed before it): the LED has no SKU, so approval also needs it mapped: 3 packages, then 2 once the LED is mapped", async () => {
+    const accepted = readyDraft();
+    const id2 = await storedLegacy(accepted);
+    await send(id2, cents(accepted));
+    await estimatorSignOff(db as never, ORG, member, "est@nq", id2, ctx);
+    expect(await err(managerApprove(db as never, ORG, admin, "m@nq", id2, ctx))).toMatch(/3 package\(s\) are not mapped to Cin7 SKUs/);
+    db.rows("newquip_package_mappings").push(ledLibraryMapping(ORG));
+    await managerApprove(db as never, ORG, admin, "m@nq", id2, ctx, undefined, managerExceptionOpts(db.rows("newquip_quotes")[0] as never));
+    expect((await loadQuote(db as never, ORG, id2))!.state).toBe("MANAGER_APPROVED_FINAL");
+  });
   it("the cost-withheld caller learns only the reason text, never a cost or margin value", async () => {
     const full = noException(readyDraft());
     const id = await stored(full);
@@ -137,7 +156,7 @@ describe("no commercial approval while mappings, supplier costs or pricing are u
 
 describe("costing gate: Estimator-priced-by-design lines are resolved pricing, not missing supplier costs", () => {
   it("probe: all supplier costs captured, M75 / penning / LED Estimator-priced -> sign-off PASSES with no exception", async () => {
-    const { draft } = withCapturedSupplierCosts(readyDraft(), ctx);
+    const { draft } = withCapturedSupplierCosts(onCurrentTemplate(readyDraft()), ctx); // a NEW quotation: the LED components HNQ7046 / HNQ7093 / HNQ7088 are costed too
     expect(draft.estimator.costBasis).toBeUndefined();
     const id = await stored(draft);
     await send(id, cents(draft));
@@ -160,8 +179,8 @@ describe("costing gate: Estimator-priced-by-design lines are resolved pricing, n
     expect((await loadQuote(db as never, ORG, id))!.state).toBe("MANAGER_APPROVED_FINAL");
   });
   it("one catalogue SKU without a supplier cost -> sign-off FAILS naming it; approval FAILS too", async () => {
-    const full = withCapturedSupplierCosts(readyDraft(), ctx);
-    const { draft } = withCapturedSupplierCosts(readyDraft(), ctx, [full.skus[0]]);
+    const full = withCapturedSupplierCosts(onCurrentTemplate(readyDraft()), ctx);
+    const { draft } = withCapturedSupplierCosts(onCurrentTemplate(readyDraft()), ctx, [full.skus[0]]);
     const id = await stored(draft);
     await send(id, cents(draft));
     expect(await err(estimatorSignOff(db as never, ORG, member, "est@nq", id, ctx))).toMatch(new RegExp(`Costing is incomplete.*1 SKU\\(s\\) have no supplier cost.*${full.skus[0]}`));

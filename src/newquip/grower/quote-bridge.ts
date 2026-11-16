@@ -1,7 +1,7 @@
 import { computeLine, computeQuote, type QuoteLineInput, type QuoteResult } from "@/lib/quote-margin";
 import { isOptionalItemKey } from "./types";
 import type { FeederVariant, GeneratedLine, GrowerItemKey, PenningPigSize } from "./types";
-import { alternativesFor, estimatorPricedFor, feederSkuFor, isCatalogueDefaultItem, manualLinesFor, packageAutoConfirmable, packageFor, recommendedSkuFor, type PackageComponent } from "./commercial";
+import { TEMPLATE_REVISION_LEGACY, type TemplateRevision, alternativesFor, estimatorPricedFor, feederSkuFor, isCatalogueDefaultItem, manualLinesFor, packageAutoConfirmable, packageFor, recommendedSkuFor, type PackageComponent } from "./commercial";
 import { PENNING_RATE_PER_RM } from "./workbook-price-source";
 import { QUOTE_TYPE_BASIS, type PriceSource, type PriceSourceDescriptor, type QuoteType } from "./pricing-source";
 
@@ -126,6 +126,8 @@ export interface BudgetOptions {
   /** Output items whose package definition an estimator has confirmed. */
   confirmedPackages?: ReadonlySet<GrowerItemKey>;
   feederVariant?: FeederVariant;
+  /** The template revision the quotation was created under (default: the ORIGINAL template, so nothing that omits it can be re-scoped). */
+  templateRevision?: TemplateRevision;
   penningPigSize?: PenningPigSize | null;
   /** Estimator-entered ex-VAT delivery / installation / slat-delivery amounts. */
   estimatorCharges?: Partial<Record<ChargeKey, number | null>>;
@@ -251,7 +253,7 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
       continue;
     }
 
-    const pkg = packageFor(g.itemKey);
+    const pkg = packageFor(g.itemKey, opts.templateRevision ?? TEMPLATE_REVISION_LEGACY);
 
     // ---- M75: estimator-priced by design; the historic package is a reference only ----
     if (pkg?.estimatorPriced) {

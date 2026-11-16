@@ -1,3 +1,4 @@
+import { templateRevisionOf } from "./commercial";
 import { calculateGrowerHouse } from "./calculate";
 import { buildBudgetQuote, type BudgetQuote } from "./quote-bridge";
 import { assessReadiness, type Readiness } from "./readiness";
@@ -35,6 +36,7 @@ export function evaluateDraft(draft: QuoteDraft, ctx: EvaluationContext): QuoteE
         confirmedMappings: draft.estimator.confirmedMappings,
         confirmedPackages: new Set(draft.estimator.confirmedPackages),
         feederVariant: draft.config.feederVariant,
+        templateRevision: templateRevisionOf(draft),
         penningPigSize: draft.config.penningPigSize ?? null,
         estimatorCharges: draft.estimator.charges,
         estimatorUnitPrices: draft.estimator.unitPrices,

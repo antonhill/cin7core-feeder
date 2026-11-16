@@ -20,11 +20,13 @@ vi.mock("@/lib/require-org-admin", () => ({ requireOrgAdmin: async () => { if (!
 vi.mock("@/lib/activity-log", () => ({ logActivity: async () => undefined }));
 
 import { approveGrowerQuoteAction, createProjectFromGrowerQuoteAction } from "../actions";
+import { onCurrentTemplate } from "@/newquip/grower/__tests__/current-template";
 import { managerExceptionOpts } from "@/newquip/grower/__tests__/baseline-exception-fixture";
 import { getQuoteScopeAction, saveReusableMappingAction } from "../mapping-actions";
 
 const ORG = "org-nq";
-const draft = withAcceptedIncompleteCosting(applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft);
+const legacyDraft = withAcceptedIncompleteCosting(applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft); // unstamped = the ORIGINAL template (the LED has no SKUs)
+const draft = onCurrentTemplate(legacyDraft); // a NEW quotation (current template revision)
 const ctx = { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: true };
 // The LED package is SKU-backed now (HNQ7046 / HNQ7093 / HNQ7088, Sean 2026-11), so it needs no library mapping. `ctrlDraft` adds the optional controller with an Estimator-typed price and no Cin7 mapping:
 // the "typed-price package that must be mapped" the LED used to be.
@@ -60,6 +62,15 @@ describe("approval -> project -> Sale scope, through the real actions", () => {
     expect((await approveGrowerQuoteAction("q1", managerExceptionOpts(q as never))).ok).toBe(true);
     const v = await getQuoteScopeAction("q1");
     expect(v.data).toMatchObject({ frozen: true, unresolvedCount: 2 });
+  });
+  it("8-legacy: on the ORIGINAL template the LED is a third unmapped package: approval needs it mapped (3), then only M75 / penning remain (2) for the Manager's exception", async () => {
+    const db = h.db as FakeDb; seedQuote(db, "q1", "NQ-Q-0001", legacyDraft);
+    expect((await approveGrowerQuoteAction("q1")).error).toMatch(/3 package\(s\) are not mapped/);
+    db.rows("newquip_package_mappings").push(map(ORG, "led_light", 1, [{ sku: "TEST-FORTIS-LED", factor: 1 }]));
+    expect((await approveGrowerQuoteAction("q1")).error).toMatch(/2 package\(s\) are not mapped/);
+    const q = db.rows("newquip_quotes")[0] as { revision: number; draft_hash: string };
+    expect((await approveGrowerQuoteAction("q1", managerExceptionOpts(q as never))).ok).toBe(true);
+    expect(await getQuoteScopeAction("q1")).toMatchObject({ data: { frozen: true, unresolvedCount: 2 } });
   });
   it("8b: the SKU-backed LED needs no mapping: only M75 / penning are unmapped, so the Manager's exception alone approves it", async () => {
     const db = h.db as FakeDb; seedQuote(db, "q1", "NQ-Q-0001");

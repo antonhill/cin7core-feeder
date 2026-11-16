@@ -67,9 +67,9 @@ describe("only the named established items default; everything ambiguous keeps a
     expect(all.filter((k) => isCatalogueDefaultItem(k as never)).sort()).toEqual(Object.keys(DEFAULTS).sort());
   });
   it("cup drinker is NOT auto-confirmed (a later source disputes which representation prices it); LED, M75 and penning are not either", () => {
-    expect(packageAutoConfirmable(packageFor("cup_drinker"))).toBe(false);
-    expect(packageAutoConfirmable(packageFor("led_light"))).toBe(false);
-    expect(packageAutoConfirmable(packageFor("flex_auger"))).toBe(false);
+    expect(packageAutoConfirmable(packageFor("cup_drinker", "grower-2026-11"))).toBe(false);
+    expect(packageAutoConfirmable(packageFor("led_light", "grower-2026-11"))).toBe(false);
+    expect(packageAutoConfirmable(packageFor("flex_auger", "grower-2026-11"))).toBe(false);
     expect(packageAutoConfirmable(undefined)).toBe(false);
     expect(line(none(), "cup_drinker")).toMatchObject({ status: "package_unconfirmed" });
     const noRes = none(); noRes.estimator.priceResolutions = {};

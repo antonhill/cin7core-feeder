@@ -34,6 +34,7 @@ import { returnInfoForViewer, type ReturnInfo } from "@/newquip/quote/return-inf
 import { appendSnapshot, customerFeaturesAvailable, latestSnapshot } from "@/lib/newquip-quotes/customer-store";
 import { fieldValue } from "@/lib/newquip-quotes/customer-snapshot";
 import { reconcileConfirmationAmount, resyncApprovalsLogged } from "@/lib/newquip-quotes/confirmation-reconcile";
+import { keepServerOwnedTemplateRevision } from "@/lib/newquip-quotes/template-revision";
 import { assertConfirmationCurrent, assertNameMatchesSnapshot } from "@/lib/newquip-quotes/confirmation-guard";
 import { keepServerOwnedCostBasis, keepServerOwnedCosts, redactEvaluationFinancials, redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
 import { isPocQuote, keepServerOwnedPocFlag, pocPresentationEnabled, seedPocEstimator, POC_BASELINE_REASON } from "@/lib/newquip-quotes/poc-presentation";
@@ -214,7 +215,7 @@ async function sanitiseSubmittedDraft(a: Actor, db: ReturnType<typeof createServ
   d = { ...d, estimator: { ...d.estimator, priceResolutions: stampPriceResolutions(d.estimator.priceResolutions, prior?.estimator.priceResolutions, a.roles, a.email, nowIso) as QuoteDraft["estimator"]["priceResolutions"] } };
   const stamped = keepServerOwnedCostBasis(keepServerOwnedCosts(stampCostOverrides(d, prior?.estimator.costOverrides, a.canSeeCost, a.email, nowIso), prior?.estimator.physicalCosts), prior?.estimator.costBasis);
   // Last line of defence (field ownership): a caller without Estimator / Manager authority can never change an Estimator-owned field, whatever the checks above did.
-  const owned = keepServerOwnedPocFlag(keepServerOwnedPricing(keepEstimatorOwnedFields(stamped, prior, a.roles), prior), prior); // the POC flag is server-owned: the stored value, never the client's // NQ-008B Phase 2: supplier pricing is changed only by its own action
+  const owned = keepServerOwnedTemplateRevision(keepServerOwnedPocFlag(keepServerOwnedPricing(keepEstimatorOwnedFields(stamped, prior, a.roles), prior), prior), prior); // the POC flag is server-owned: the stored value, never the client's // NQ-008B Phase 2: supplier pricing is changed only by its own action
   // NQ-008A: after the handoff, who changed each price-affecting input and when is decided HERE (never by the client) and stored in the same save.
   return stampChanges(owned, prior, { state: at?.state ?? "REP_DRAFT", revision: at?.revision ?? 1, email: a.email, nowIso });
 }
