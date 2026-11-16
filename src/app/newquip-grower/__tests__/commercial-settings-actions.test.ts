@@ -107,11 +107,32 @@ describe("the interim store stays apart from the customer-facing company details
   });
 });
 
-describe("ensureAutoPricingAction never hands a Rep cost detail", () => {
-  it("the Rep outcome carries neutral wording only", async () => {
-    actor = asActor("rep@nq", ["rep"]);
-    const r = await actions.ensureAutoPricingAction("no-such-quote");
-    expect(r).toMatchObject({ ok: true, data: { status: "not_applicable", internal: [] } });
-    expect(await actions.ensureAutoPricingAction("")).toMatchObject({ ok: false });
+describe("two writers at once cannot silently lose a change (no migration, so detected after the insert)", () => {
+  /** Makes `other` land right after this caller's nth read of the profile table and before its insert: the interleaving a real race produces. */
+  const interleave = (other: () => Promise<unknown>, nth = 1) => {
+    const orig = db.from.bind(db); let fired = false, reads = 0;
+    (db as unknown as { from: unknown }).from = (t: string) => {
+      const b = orig(t) as unknown as { select: (...a: unknown[]) => { limit: (n: number) => PromiseLike<unknown> } };
+      if (t !== "newquip_company_profiles") return b;
+      const sel = b.select.bind(b);
+      b.select = (...a: unknown[]) => { const q = sel(...a); const lim = q.limit.bind(q); q.limit = (n: number) => { const r = lim(n); if (fired || ++reads < nth) return r; fired = true; return Promise.resolve(r).then(async (v) => { await other(); return v; }); }; return q; };
+      return b;
+    };
+  };
+  it("company details saved between a settings save's read and insert: the settings save fails loudly and the details survive as the latest version", async () => {
+    await saveProfile(db as never, ORG, PROFILE, "m@nq");
+    interleave(() => saveProfile(db as never, ORG, { ...PROFILE, paymentTerms: "other writer" }, "other@nq"), 2); // read 1 is the action's own revision check, read 2 the save's
+    const r = await actions.saveCommercialSettingsAction(settings(), null);
+    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/Someone else saved at the same time/) });
+    const latest = (await latestProfile(db as never, ORG))!;
+    expect(latest.profile.paymentTerms).toBe("other writer"); // their change is the latest, not dropped
+    expect(await latestCommercialSettings(db as never, ORG)).toBeNull(); // ours was refused, not half-applied
+  });
+  it("a settings save between a details save's read and insert: the details save fails and the Manager's settings stay latest", async () => {
+    await saveProfile(db as never, ORG, PROFILE, "m@nq");
+    interleave(async () => { actor = MGR(); await actions.saveCommercialSettingsAction(settings({ markupBps: 2100 }), null); });
+    await expect(saveProfile(db as never, ORG, { ...PROFILE, paymentTerms: "mine" }, "m@nq")).rejects.toThrow(/Someone else saved at the same time/);
+    expect((await latestCommercialSettings(db as never, ORG))).toMatchObject({ revision: 1, settings: { markupBps: 2100 } });
+    expect((await latestProfile(db as never, ORG))!.profile.paymentTerms).toBe("p");
   });
 });

@@ -52,6 +52,27 @@ export async function documentsAvailable(db: Db): Promise<boolean> {
 }
 
 // ── company profile ─────────────────────────────────────────────────────────
+export const SIMULTANEOUS_SAVE_MSG = "Someone else saved at the same time, so your change was not kept. Reload and try again.";
+/**
+ * Appends one profile version built on `built` (the latest row the caller read). There is no database guard for a read-modify-write across two writers (no migration), so after the insert the row
+ * directly beneath ours is checked: if it is not the one we built on, another writer got in between and OUR row would silently drop their change. Then a CORRECTIVE version is appended that restores
+ * the other writer's profile verbatim (so the latest row is exactly what they saved), and this call fails loudly. Append-only: nothing is updated or deleted.
+ */
+async function appendProfileRow(db: Db, orgId: string, built: StoredProfile | null, profile: Record<string, unknown>, email: string, what: string): Promise<StoredProfile> {
+  const ins = await db.from("newquip_company_profiles").insert({ org_id: orgId, profile, entered_by_email: email }).select("*").single();
+  if (ins.error || !ins.data) throw new Error(`Could not save the ${what}: ${ins.error?.message ?? "no row"}`);
+  const mine = ins.data as StoredProfile;
+  const recent = await db.from("newquip_company_profiles").select("*").eq("org_id", orgId).order("version", { ascending: false }).limit(5);
+  if (recent.error) throw new Error(`Could not verify the ${what} save: ${recent.error.message}`);
+  const rows = (recent.data ?? []) as StoredProfile[];
+  const at = rows.findIndex((r) => r.id === mine.id);
+  const beneath = at >= 0 ? rows[at + 1] ?? null : null;
+  if ((beneath?.id ?? null) === (built?.id ?? null)) return mine;
+  // beneath is the intervening writer's row (the one directly under ours); restore it as the latest version unless something newer than ours already supersedes us.
+  if (at === 0 && beneath) await db.from("newquip_company_profiles").insert({ org_id: orgId, profile: beneath.profile, entered_by_email: beneath.entered_by_email });
+  throw new Error(SIMULTANEOUS_SAVE_MSG);
+}
+
 /** The RAW latest row, commercial block included. INTERNAL to this file's commercial functions: customer-facing code must use latestProfile(), which strips the block. */
 async function latestProfileRow(db: Db, orgId: string): Promise<StoredProfile | null> {
   const r = await db.from("newquip_company_profiles").select("*").eq("org_id", orgId).order("version", { ascending: false }).limit(1);
@@ -66,9 +87,7 @@ export async function latestProfile(db: Db, orgId: string): Promise<StoredProfil
 export async function saveProfile(db: Db, orgId: string, input: Partial<CompanyProfile>, email: string): Promise<StoredProfile> {
   const profile = cleanProfile(input);
   const stored = await latestProfileRow(db, orgId); // the Manager's commercial settings are carried forward untouched
-  const ins = await db.from("newquip_company_profiles").insert({ org_id: orgId, profile: nextProfileWithDetails(profile, stored?.profile), entered_by_email: email }).select("*").single();
-  if (ins.error || !ins.data) throw new Error(`Could not save the company details: ${ins.error?.message ?? "no row"}`);
-  const row = ins.data as StoredProfile;
+  const row = await appendProfileRow(db, orgId, stored, nextProfileWithDetails(profile, stored?.profile), email, "company details");
   return { ...row, profile: withoutCommercial(row.profile) };
 }
 
@@ -82,9 +101,8 @@ export async function latestCommercialSettings(db: Db, orgId: string, nowIso: st
 export async function saveCommercialSettings(db: Db, orgId: string, settings: CommercialSettings, email: string, nowIso: string = new Date().toISOString()): Promise<CommercialVersion> {
   const stored = await latestProfileRow(db, orgId);
   const profile = nextProfileWithCommercial(stored?.profile, stored ? commercialOf(stored.profile, nowIso) : null, settings, email, nowIso);
-  const ins = await db.from("newquip_company_profiles").insert({ org_id: orgId, profile, entered_by_email: email }).select("*").single();
-  if (ins.error || !ins.data) throw new Error(`Could not save the commercial settings: ${ins.error?.message ?? "no row"}`);
-  const v = commercialOf((ins.data as StoredProfile).profile, nowIso);
+  const row = await appendProfileRow(db, orgId, stored, profile, email, "commercial settings");
+  const v = commercialOf(row.profile, nowIso);
   if (!v) throw new Error("The saved commercial settings could not be read back.");
   return v;
 }

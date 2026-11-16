@@ -67,8 +67,12 @@ async function persist(db: Db, orgId: string, quoteId: string, email: string, bu
 /** Validate, stamp and persist one authorised pricing change as an immutable revision. `submission` null = switch the model off. */
 export function applyEstimatorPricing(
   db: Db, orgId: string, quoteId: string, viewer: Viewer, email: string, submission: PricingSubmission | null, reason: string, nowIso: string = new Date().toISOString(), base?: PricingSubmission | null,
+  /** Optional precondition judged against the quotation as loaded INSIDE the write (fresh, not what the caller read earlier): a non-null message refuses the whole change and nothing is written. */
+  guard?: (q: QuoteRecord) => string | null,
 ): Promise<ApplyOutcome | ApplyFailure> {
   return persist(db, orgId, quoteId, email, (q) => {
+    const refused = guard?.(q) ?? null;
+    if (refused) return { ok: false, errors: [refused] };
     const prior = q.draft.estimator.pricing;
     // NO SILENT OVERWRITE. When the caller says what its edits were based on (`base`; null = pricing was off), the submission is merged field by field onto what is stored NOW: fields the user did
     // not touch take the current stored values, and a field both sides changed differently refuses the whole save (nothing written). Without a base the submission is applied as it always was.

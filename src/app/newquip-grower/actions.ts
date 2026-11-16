@@ -141,9 +141,9 @@ export interface QuoteView {
 
 /** Automatic initial pricing of a Rep draft (NEWQUIP_AUTO_PRICING=on only). NEVER fails the caller: any problem simply leaves the quotation as it was. */
 async function autoPriceRepDraft(db: ReturnType<typeof createServiceRoleClient>, a: Actor, quoteId: string): Promise<QuoteView["autoPricing"] | undefined> {
-  if (process.env.NEWQUIP_AUTO_PRICING !== "on" || a.demo || !a.roles.has("rep")) return undefined;
   try {
-    const o = await runAutoPricing(db, { orgId: a.orgId, userId: a.userId }, quoteId);
+    // runAutoPricing gates itself (NEWQUIP_AUTO_PRICING + NEWQUIP_AUTO_PRICING_FROM, non-demo, Rep): every entry point is gated identically there.
+    const o = await runAutoPricing(db, { orgId: a.orgId, userId: a.userId, roles: a.roles, demo: !!a.demo }, quoteId);
     if (o.status === "applied") await audit(db, a, { action: "newquip.auto_pricing", summary: "Priced a Rep draft automatically from Cin7 supplier costs (local only; Cin7 read only)", detail: { quoteId, added: o.added, stillPending: o.pendingCount } });
     return o.pendingCount > 0 || o.pending.length > 0 ? { pending: o.pending, pendingCount: o.pendingCount } : undefined;
   } catch { return undefined; }
