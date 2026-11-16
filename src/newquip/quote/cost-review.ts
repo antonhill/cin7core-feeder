@@ -17,7 +17,7 @@ export interface CostReviewRow {
 }
 export interface CostReview { rows: CostReviewRow[]; counts: { products: number; verified: number; missing: number; unverified: number; provisional: number }; upliftNote: string }
 
-const KIND_LABEL: Record<"cin7_historical" | "supplier_quotation" | "manual_estimate", string> = { cin7_historical: "Cin7 historical cost", supplier_quotation: "Supplier quotation", manual_estimate: "Manual estimate" };
+const KIND_LABEL: Record<"cin7_historical" | "supplier_quotation" | "manual_estimate" | "cin7_auto", string> = { cin7_historical: "Cin7 historical cost", supplier_quotation: "Supplier quotation", manual_estimate: "Manual estimate", cin7_auto: "Automatic Cin7 cost (age-escalated, needs verification)" };
 export const STATUS_VERIFIED = "Verified";
 export const STATUS_NEEDS = "Needs verification";
 export const STATUS_MISSING = "Missing cost";

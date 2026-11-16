@@ -28,7 +28,7 @@ export interface SkuRow {
   status: "priced" | "no_input" | "not_priced";
   supplier: string | null; currency: string | null; nativeUnitCostE7: number | null; costSource: string | null;
   /** The Cin7 supplier chosen for this cost (identity is the id, never the name), how the currency was determined, the kind of cost and the date it applies to. Absent on older entries. */
-  supplierId: string | null; currencySource: "cin7_supplier" | "override" | null; currencyOverrideReason: string | null; costKind: "cin7_historical" | "supplier_quotation" | "manual_estimate" | null; costDate: string | null;
+  supplierId: string | null; currencySource: "cin7_supplier" | "override" | null; currencyOverrideReason: string | null; costKind: "cin7_historical" | "supplier_quotation" | "manual_estimate" | "cin7_auto" | null; costDate: string | null;
   /** COST verification (separate from price completeness): derived from an independent review, never from a flag a person set. */
   costState: CostState; costStateText: string;
   /** Who entered / last changed the cost, and the independent review of exactly that cost, if any. */

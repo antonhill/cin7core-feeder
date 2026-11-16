@@ -8,11 +8,12 @@ export interface Reasoned extends Stamp { reason: string }
 
 // ── rule versions ──────────────────────────────────────────────────────────
 
-export type RuleVersionStatus = "legacy" | "draft" | "approved";
+export type RuleVersionStatus = "legacy" | "draft" | "provisional" | "approved";
 /**
  * A VERSIONED SET OF COMMERCIAL PARAMETERS. A rule version is data, never code: changing a markup or a policy means adding a new version, never editing one in place.
  * `legacy` reproduces what the Grower POC does today. `draft` is fixture/development only and can never be selected for a real quotation. `approved` is reserved for a
- * version NewQuip has confirmed (none exists yet: no NewQuip business rule is invented here).
+ * version NewQuip has confirmed (none exists yet: no NewQuip business rule is invented here). `provisional` is a version that may be used for a quotation but whose commercial
+ * inputs (markup, freight, exchange rates, age bands) come from Manager-entered commercial settings, not from an approved policy; nothing about it is a NewQuip-approved rate.
  */
 export interface PricingRuleVersion {
   id: string;
