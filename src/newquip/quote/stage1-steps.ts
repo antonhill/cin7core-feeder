@@ -32,6 +32,8 @@ export interface Stage1CustomerFacts {
 export const NO_CUSTOMER_FACTS: Stage1CustomerFacts = { loaded: false, available: true, hasSnapshot: false, hasContact: false, contactName: null };
 /** The customer facts have settled (read, failed, or the feature does not exist): the point after which the entry step may be resolved ONCE. */
 export const customerFactsSettled = (c: Stage1CustomerFacts): boolean => c.loaded || c.loadError === true || !c.available;
+/** How long the wizard waits for the customer details before it stops showing its loading shell (a hung request must not block the page). A step chosen at that point is PROVISIONAL: see `entryProvisional` in the page. */
+export const CUSTOMER_FACTS_WAIT_MS = 10_000;
 
 /** The slices of the live evaluation the owner split needs (all already loaded by the page). */
 export interface Stage1WorkFacts {

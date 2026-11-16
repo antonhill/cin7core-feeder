@@ -56,7 +56,7 @@ import { Stage1Review } from "./Stage1Review";
 import { StepRail, StepPanel } from "@/components/ui/StepRail";
 import { useShowAllSteps } from "@/components/ui/use-show-all-steps";
 import { nextIncompleteStepId, parseStepParam } from "@/components/ui/step-rail-model";
-import { ESTIMATOR_LINE_STATUSES, customerFactsSettled, deriveStage1Steps, fieldErrors, ownedWork, STEP_FIELD_KEYS, NO_CUSTOMER_FACTS, STAGE1_STEP_IDS, STAGE1_STEP_LABEL, type Stage1CustomerFacts, type Stage1StepId } from "@/newquip/quote/stage1-steps";
+import { CUSTOMER_FACTS_WAIT_MS, ESTIMATOR_LINE_STATUSES, customerFactsSettled, deriveStage1Steps, fieldErrors, ownedWork, STEP_FIELD_KEYS, NO_CUSTOMER_FACTS, STAGE1_STEP_IDS, STAGE1_STEP_LABEL, type Stage1CustomerFacts, type Stage1StepId } from "@/newquip/quote/stage1-steps";
 import { currentStepId, deriveWizard, isPermitted, resolveEntryStep, toRailSteps } from "@/newquip/quote/wizard-contract";
 import { costAckKey, deriveStage2Steps, type Stage2Input } from "@/newquip/quote/stage2-steps";
 import { commercialReadiness, confirmedAmountChange, deriveFinalReviewChecklist, deriveStage2Wizard, deriveStage3Wizard, estimatorWork, finalReviewBlockText, STAGE2_WIZARD_IDS, STAGE2_WIZARD_LABEL, type Stage2WizardId } from "@/newquip/quote/stage23-wizard";
@@ -191,7 +191,10 @@ export default function QuoteEditorPage() {
   const [urlSync, setUrlSync] = useState<Stage1StepId | null>(null);
   // Safety net: if the customer details never report (a hung request), the wizard stops waiting after 10 s instead of showing its loading shell forever.
   const [factsGiveUp, setFactsGiveUp] = useState(false);
-  useEffect(() => { const t = setTimeout(() => setFactsGiveUp(true), 10000); return () => clearTimeout(t); }, []);
+  useEffect(() => { const t = setTimeout(() => setFactsGiveUp(true), CUSTOMER_FACTS_WAIT_MS); return () => clearTimeout(t); }, []);
+  // A step chosen because the wait ran out (the customer details had NOT reported) is provisional: the Customer step then looks incomplete only because nothing is known yet. The first time the details do report,
+  // and only if the viewer has not chosen a step or started an edit, the step is worked out again once, so a slow read never leaves a returned quotation stuck on Customer.
+  const [entryProvisional, setEntryProvisional] = useState(false);
   // Keyboard: when the wizard has opened (entry resolved) and nothing has focus yet (e.g. arriving from "New quote"), move focus to the step heading instead of leaving it on <body>.
   useEffect(() => { if (!entry) return; if (document.activeElement && document.activeElement !== document.body) return; document.querySelector<HTMLElement>("[data-step-panel]:not([hidden]) h2")?.focus(); }, [entry]);
   useEffect(() => { if (!urlSync) return; try { const u = new URL(window.location.href); u.searchParams.set("step", String(STAGE1_STEP_IDS.indexOf(urlSync) + 1)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } }, [urlSync]);
@@ -557,7 +560,11 @@ export default function QuoteEditorPage() {
   const wizard = deriveWizard({ state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", revision: q.revision, stage1Status: stages[0].status, roles: { rep: roles.has("rep"), estimator: roles.has("estimator"), manager: roles.has("manager") }, canViewCommercials: view.viewer.canViewCommercials, stage1, customer: customerFacts, repReady, estimatorOpen: estItems.length, totalAvailable: totalCents != null && totalCents > 0, unpricedHandoffAvailable });
   // Resolve the entry step ONCE, after the customer facts have settled (read, failed or unavailable), and latch it: no later change of the facts can move the viewer (React's render-phase initialisation, as for `landing`).
   const factsSettled = customerFactsSettled(customerFacts) || factsGiveUp;
-  if (stage === 1 && factsSettled && entry === null) setEntry(resolveEntryStep(wizard, reqStep));
+  if (stage === 1 && factsSettled && entry === null) { setEntry(resolveEntryStep(wizard, reqStep)); setEntryProvisional(!customerFactsSettled(customerFacts)); }
+  if (stage === 1 && entry !== null && entryProvisional && customerFactsSettled(customerFacts)) {
+    setEntryProvisional(false);
+    if (reqStep === null && !dirty) { const again = resolveEntryStep(wizard, null); if (again !== entry) setEntry(again); }
+  }
   const stepId = currentStepId(wizard.steps, (reqStep ?? entry ?? wizard.entryStepId));
   const stepNo = STAGE1_STEP_IDS.indexOf(stepId) + 1;
   const stage1Edit = wizard.steps.find((x) => x.id === stepId)?.access === "edit" || (q.state === "REP_DRAFT" && roles.has("rep"));
@@ -566,7 +573,8 @@ export default function QuoteEditorPage() {
   const writeStepParam = (id: Stage1StepId) => { try { const u = new URL(window.location.href); u.searchParams.set("step", String(STAGE1_STEP_IDS.indexOf(id) + 1)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } };
   // A requested step that is not permitted (a locked step in ?step=, or one that locked after an edit upstream) is clamped to the permitted step; the address bar follows (see urlSync). The viewer
   // is never moved to a LATER step by this: the request is replaced by where they actually are.
-  if (stage === 1 && entry !== null && reqStep !== null && reqStep !== stepId) { setReqStep(stepId); setUrlSync(stepId); }
+  // (Not while the customer details are still unknown: every later step looks locked then, and clamping would overwrite a legitimate request with Customer for good. The request is kept and applies once they report.)
+  if (stage === 1 && entry !== null && reqStep !== null && reqStep !== stepId && customerFactsSettled(customerFacts)) { setReqStep(stepId); setUrlSync(stepId); }
   const goStepId = (id: Stage1StepId) => {
     if (!isPermitted(stepAccess(id))) return; // a locked step is not selectable (the rail also refuses it)
     setSampleNote(null);
