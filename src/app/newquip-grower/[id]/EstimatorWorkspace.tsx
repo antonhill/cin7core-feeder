@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -10,12 +10,12 @@ import type { QuoteDraft } from "@/newquip/grower/draft";
 import type { BudgetQuote } from "@/newquip/grower/quote-bridge";
 import { manualSelectionSkusFor } from "@/newquip/grower/commercial";
 import type { GrowerItemKey } from "@/newquip/grower/types";
-import { buildWorkspace, costText, decodeManualReason, money, targetOf, type TaskKind, type WorkspaceTask } from "@/newquip/quote/estimator-workspace";
+import { buildWorkspace, costText, decodeManualReason, money, needsEvidence, targetOf, taskStatusWord, type TaskKind, type WorkspaceTask } from "@/newquip/quote/estimator-workspace";
 import { applyEditor, revisionReason, type SkuEditor } from "@/newquip/quote/workspace-submission";
 import { applyEstimatorPricingAction, attestEstimatorRatesAction, getEstimatorPricingAction, recordManualPriceEvidenceAction, verifyEstimatorCostsAction } from "../pricing-actions";
 import type { IndicativeComparison } from "@/newquip/pricing/comparison";
 import { M75PriceForm, ManualPriceForm, PackageConfirm, ProductChoice, Rail, SkuCostForm, type SaveResult } from "./WorkspaceEditors";
-import { CompleteGroup, Legend, NextActionBar, RepItems, SummaryPanel, TaskRow, WhatNext } from "./WorkspaceParts";
+import { CompleteGroup, EvidenceOpenRow, HowItWorks, NextActionBar, OpenRow, ReadinessList, RepItems, SummaryPanel, WorkspaceHeader } from "./WorkspaceParts";
 
 // NewQuip Phase 2: the ESTIMATOR WORKSPACE. It replaces the stacked Line decisions / Product mappings / Cin7 cost capture / Margin detail / Cost overrides / supplier-pricing forms for a quotation
 // whose supplier pricing is ON. Everything it shows comes from the existing bridge and pricing model; every save goes through the existing server actions (supplier pricing: one revision merged
@@ -35,6 +35,16 @@ export interface EstimatorWorkspaceProps {
   canEdit: boolean;
   title: string;
   subtitle: string;
+  /** Header facts (all optional so older callers still render): the quotation reference, customer, rooms and pricing basis. */
+  siteName?: string;
+  reference?: string;
+  customerName?: string;
+  rooms?: number;
+  basis?: string;
+  /** The legacy strips that used to stack above the workspace (calculation status, submission and confirmation history, readiness sentence, total-changed note, phase descriptions), shown behind ONE Details disclosure. */
+  details?: ReactNode;
+  /** One compact phase stepper line (the phase navigation), shown under the header. */
+  phases?: ReactNode;
   /** Changes whenever the saved quotation changed elsewhere (re-reads the pricing). */
   refreshKey: string;
   /** Saves the page's CURRENT draft with one change applied, through the existing draft save (server rules, sign-off withdrawal and concurrency unchanged). */
@@ -164,6 +174,10 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
   const removeManual = (itemKey: string) => draftSave((d) => { const n = { ...d.estimator.priceResolutions }; delete n[itemKey as GrowerItemKey]; d.estimator.priceResolutions = n; });
 
   const s = ws.summary;
+  /** Lines whose only open item is their pricing-evidence record: they gate sign-off, so they are listed with the open tasks (not hidden in the completed group). */
+  const evidenceRows = ws.complete.filter(needsEvidence);
+  const doneLines = ws.complete.filter((c) => !needsEvidence(c));
+  const openRows = ws.tasks.length + evidenceRows.length;
   const taskById = (id: string) => ws.tasks.find((t) => t.id === id);
   const rail = ws.tasks.map((t) => ({ id: t.id, n: t.n, label: t.label }));
   const onNext = ((): (() => void) | null => {
@@ -172,7 +186,7 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
       case "return_to_rep": case "sign_off": return p.reviewNeeded && ws.next.kind === "sign_off" ? p.onMarkReviewed : p.onGoSignoff;
       case "verify_costs": return () => document.getElementById("ws-verify")?.scrollIntoView({ behavior: "smooth" });
       case "wait_manager_approval": return p.onGoApproval;
-      case "record_evidence": return () => document.getElementById("ws-complete")?.scrollIntoView({ behavior: "smooth" });
+      case "record_evidence": return () => document.getElementById("ws-needs")?.scrollIntoView({ behavior: "smooth" });
       default: return null;
     }
   })();
@@ -211,23 +225,10 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
 
   return (
     <div className="mt-4 flex min-w-0 flex-col gap-4" data-testid="estimator-workspace">
-      {/* 1 · compact header */}
-      <div className="flex flex-wrap items-center gap-x-8 gap-y-3 rounded-xl border border-slate-200 bg-white px-6 py-4">
-        <div className="min-w-0 flex-[1_1_15rem]">
-          <div className="flex flex-wrap items-center gap-2"><h2 className="text-2xl font-bold text-slate-900">{p.title}</h2><span className="rounded border border-amber-600 bg-amber-50 px-2 py-0.5 text-xs font-bold tracking-wide text-amber-900">{p.state === "REP_DRAFT" ? "WITH THE REP" : "ESTIMATOR REVIEW"}</span></div>
-          <p className="mt-1 text-sm text-slate-700">{p.subtitle}</p>
-          <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-[13px]" aria-label="Progress" data-testid="header-checks">
-            <span><span className="mr-1.5 inline-flex size-[22px] items-center justify-center rounded bg-slate-200 text-xs font-bold">M</span>{s.checks.mapping.done} of {s.checks.mapping.of} mapped</span>
-            <span><span className="mr-1.5 inline-flex size-[22px] items-center justify-center rounded bg-slate-200 text-xs font-bold">S</span>{s.checks.price.done} of {s.checks.price.of} priced</span>
-            <span><span className="mr-1.5 inline-flex size-[22px] items-center justify-center rounded bg-slate-200 text-xs font-bold">C</span>{s.checks.cost.done} of {s.checks.cost.of} costed</span>
-            <span><span className="mr-1.5 inline-flex size-[22px] items-center justify-center rounded bg-slate-200 text-xs font-bold">V</span>{s.checks.verified.done} of {s.checks.verified.of} verified</span>
-          </div>
-        </div>
-        <div className="min-w-0 flex-[1_1_15rem]"><p className={`text-xs font-semibold tracking-wider ${s.totalKind === "confirmed" ? "text-emerald-800" : "text-amber-900"}`} data-testid="header-total-label">{s.totalLabel}</p><p className="text-3xl font-bold tabular-nums" data-testid="header-total">{money(s.totalExVat)}</p><p className="text-[13px] text-slate-700">{s.totalNote}</p></div>
-        <div className="min-w-0 flex-[1_1_14rem] max-w-xs border-slate-200 md:border-l md:pl-6"><p className="text-xs font-semibold tracking-wider text-slate-600">REP-CONFIRMED AMOUNT</p><p className="text-xl font-bold tabular-nums">{s.confirmedCents === null ? "none yet" : money(s.confirmedCents / 100)}</p>{s.differenceCents !== null && s.differenceCents !== 0 && <p className="text-[13px] font-medium text-amber-900">Will change. The Rep must reconfirm the new amount before sign-off.</p>}</div>
-      </div>
+      {/* 1 · ONE compact header */}
+      <WorkspaceHeader name={p.siteName ?? p.title} reference={p.reference ?? ""} customer={p.customerName ?? ""} rooms={p.rooms ?? 0} basis={p.basis ?? ""} stageLabel={p.state === "REP_DRAFT" ? "WITH THE REP" : "ESTIMATOR REVIEW"} summary={s} outstanding={openRows} phases={p.phases} details={p.details} />
 
-      <NextActionBar next={nextForBar} onAction={onNext} />
+      <NextActionBar next={nextForBar.kind === "open_task" ? { ...nextForBar, detail: "" } : nextForBar} onAction={onNext} />
       {refreshing && <Alert tone="info"><span role="status" data-testid="refreshing-note">Saved. Refreshing the totals, readiness and next action…</span></Alert>}
       {note && <Alert tone="info"><span role="status" data-testid="pricing-note">{note}</span></Alert>}
       {loadError && <Alert tone="warning"><span data-testid="workspace-refresh-error">{loadError}</span> <button type="button" className="font-semibold underline" onClick={() => void load()}>Reload</button></Alert>}
@@ -239,33 +240,29 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
 
       {open && editor ? (
         <div className="flex min-w-0 flex-col gap-4">
-          <div className="flex flex-wrap items-center justify-between gap-2"><button type="button" onClick={() => go("list")} className="inline-flex min-h-11 items-center text-sm font-semibold text-blue-800 underline">← Back to tasks</button><span className="text-sm text-slate-700">{p.title} · {ws.tasks.length} task{ws.tasks.length === 1 ? "" : "s"} open · partial total {money(s.totalExVat)}</span></div>
+          <div className="flex flex-wrap items-center justify-between gap-2"><button type="button" onClick={() => go("list")} className="inline-flex min-h-11 items-center text-sm font-semibold text-blue-800 underline">← Back to tasks</button><span className="text-sm text-slate-700">{p.title} · {openRows} task{openRows === 1 ? "" : "s"} open · partial total {money(s.totalExVat)}</span></div>
           <div className="flex min-w-0 flex-col gap-5 sm:flex-row">
             <Rail tasks={rail} activeId={open.id} onSelect={(id) => { const t = taskById(id); if (t) openTask(t); }} />
-            <div className="min-w-0 flex-1"><h3 className="mb-3 text-2xl font-bold" data-testid="editor-title">{lineOf(open.id)?.label ?? open.id}</h3>{editor}</div>
+            <div className="min-w-0 flex-1"><h3 className="text-2xl font-bold" data-testid="editor-title">{lineOf(open.id)?.label ?? open.id}</h3>{taskById(open.id) && <div className="mb-3 mt-1"><ReadinessList value={taskById(open.id)!.indicators} /></div>}{editor}</div>
           </div>
         </div>
       ) : (
         <div className="flex min-w-0 flex-wrap items-start gap-5">
           <div className="flex min-w-0 flex-[999_1_32rem] flex-col gap-4">
             <section aria-labelledby="ws-needs" className="overflow-hidden rounded-xl border border-slate-200 bg-white" data-testid="needs-you">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3 sm:px-6"><h2 id="ws-needs" className="text-lg font-bold">Needs you <span className="text-amber-900">· {ws.tasks.length} task{ws.tasks.length === 1 ? "" : "s"}</span></h2><Legend /></div>
-              {ws.tasks.length === 0 ? <p className="px-6 py-4 text-sm text-emerald-900" data-testid="no-tasks">Nothing is left for you to price or choose.</p> : (
+              <div className="border-b border-slate-200 px-4 py-2.5 sm:px-5"><h2 id="ws-needs" className="text-base font-bold">Needs you <span className="text-amber-900">· {openRows} item{openRows === 1 ? "" : "s"}</span></h2></div>
+              {openRows === 0 ? <p className="px-5 py-4 text-sm text-emerald-900" data-testid="no-tasks">Nothing is left for you to price or choose.</p> : (
                 <ol>
-                  {ws.tasks.map((t, i) => (
-                    <div key={t.id}>
-                      {t.group === "cost" && ws.tasks[i - 1]?.group === "decision" && <li className="border-b border-slate-200 bg-slate-100 px-4 py-2 text-xs font-bold tracking-widest text-slate-700 sm:px-6" aria-hidden>SUPPLIER COST ONLY · PRODUCT SETTLED</li>}
-                      <TaskRow task={t} active={i === 0} onOpen={() => openTask(t)} canEdit={canEdit} />
-                    </div>
-                  ))}
+                  {ws.tasks.map((t, i) => <OpenRow key={t.id} n={t.n} id={t.id} label={t.label} meta={t.meta} why={t.why} status={taskStatusWord(t)} action={t.action} active={i === 0} onAct={() => openTask(t)} canEdit={canEdit} />)}
+                  {evidenceRows.map((c, k) => <EvidenceOpenRow key={c.id} n={ws.tasks.length + k + 1} line={c} canEdit={canEdit} onRecord={recordEvidence} />)}
                 </ol>
               )}
             </section>
             <RepItems items={ws.repItems} />
-            <CompleteGroup lines={ws.complete} charges={p.budget.charges} onEdit={openLine} canEdit={canEdit} onRecordEvidence={recordEvidence} />
+            <CompleteGroup lines={doneLines} charges={p.budget.charges} onEdit={openLine} canEdit={canEdit} onRecordEvidence={recordEvidence} />
             <p className="text-[13px] text-slate-700">Room measurements, quantities, delivery, installation and the M75 price belong to the Rep.</p>
           </div>
-          <div className="flex min-w-0 flex-[1_1_20rem] flex-col gap-4 lg:max-w-sm"><SummaryPanel s={s} /><WhatNext step={step} verified={bundle.view.costs.verified} required={bundle.view.costs.required} /></div>
+          <div className="flex min-w-0 flex-[1_1_18rem] flex-col gap-3 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:max-w-sm lg:self-start lg:overflow-y-auto"><SummaryPanel s={s} /><HowItWorks s={s} step={step} verified={bundle.view.costs.verified} required={bundle.view.costs.required} /></div>
         </div>
       )}
 

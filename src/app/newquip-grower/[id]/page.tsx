@@ -75,6 +75,7 @@ import { deriveStage4Steps, STAGE4_STEP_IDS, type Stage4StepId } from "@/newquip
 import { deriveAcceptanceBanner } from "@/newquip/quote/stage5-banner";
 import { deriveHandoverReadiness } from "@/newquip/quote/stage6-handover";
 import { StageNav } from "./StageNav";
+import { PhaseStepper } from "./PhaseStepper";
 import { HandoverResult } from "./HandoverResult";
 import { demoSwitchAvailableAction, selectDemoIdentityAction } from "@/app/demo-mode/actions";
 import { describeAmountChanges, type AmountChange } from "@/newquip/quote/handover";
@@ -140,7 +141,7 @@ export default function QuoteEditorPage() {
     if (!wsDirty) return;
     const onBtn = (e: MouseEvent) => { // a BUTTON outside the workspace (sign-off, return, stage navigation): links are already covered by the guard above
       const el = e.target instanceof Element ? e.target.closest("button") : null;
-      if (!el || e.defaultPrevented || el.closest('[data-testid="estimator-workspace"]')) return;
+      if (!el || e.defaultPrevented || (el.closest('[data-testid="estimator-workspace"]') && !el.closest('[data-testid="phase-stepper"], [data-testid="stage-nav"]'))) return; // the phase navigation now sits in the workspace header but still LEAVES the stage
       if (!window.confirm("You have unsaved changes in the Estimator workspace editor. If you leave now they are lost.")) { e.preventDefault(); e.stopPropagation(); }
     };
     document.addEventListener("click", onBtn, true);
@@ -576,6 +577,8 @@ export default function QuoteEditorPage() {
   // The Estimator workspace replaces the stacked Stage 2 forms ONLY for a quotation whose supplier pricing is ON, for an Estimator or Manager who may see costs, and while it is in review or back with the Rep.
   // Everything else (supplier pricing off, POC, the Rep, an approved quotation) renders exactly as before.
   const workspaceMode = !!p2Status && !poc && canCommercials && !final && !!budget && (q.state === "ESTIMATOR_REVIEW" || q.state === "REP_DRAFT") && (isEstimator || roles.has("manager"));
+  /** Stage 2 in workspace mode: ONE compact workspace header replaces the stack of full-width strips above it (their content is behind its Details disclosure). */
+  const wsStage2 = workspaceMode && stage === 2;
   // Supplier pricing is OFF but could be switched on from the new experience: a project quotation, an Estimator who may see costs, in review or back with the Rep. (Day-to-day, POC and approved quotations never offer it.)
   const activationEligible = !workspaceMode && !p2Status && !poc && canCommercials && isEstimator && !final && !!budget && draft.quoteType === "project" && !draft.estimator.pricing?.enabled && (q.state === "ESTIMATOR_REVIEW" || q.state === "REP_DRAFT");
   const reloadQuote = (): Promise<void> => getGrowerQuoteAction(id).then((r) => { if (r.ok && r.data) adopt(r.data, true); });
@@ -742,11 +745,11 @@ export default function QuoteEditorPage() {
       {/* One compact line instead of the large page header: the title stays (the page's h1), then the way back and the quotation reference. */}
       <div className="-mt-2 flex flex-wrap items-center gap-x-3 border-b border-slate-200" data-testid="quote-header">
         <h1 className="text-base font-semibold tracking-tight text-slate-900 max-sm:sr-only">{SOLUTION_BUILDER_MODULE.label}</h1>
-        <Link href="/newquip-grower" className="inline-flex min-h-11 items-center text-indigo-700 hover:underline">← Solution Builder quotes</Link><span className="text-sm text-slate-700">· {q.quote_ref} <span className="text-slate-600">rev {q.revision}</span></span>
+        <Link href="/newquip-grower" className="inline-flex min-h-11 items-center text-indigo-700 hover:underline">← Solution Builder quotes</Link>{!wsStage2 && <span className="text-sm text-slate-700">· {q.quote_ref} <span className="text-slate-600">rev {q.revision}</span></span>}
       </div>
 
       {/* The price and margin summary stays in view while the form scrolls. It always shows the same figures as the Totals below (the live preview of unsaved edits). */}
-      <div className="top-0 z-10 mt-3 rounded-lg border border-slate-200 bg-white px-4 py-2 shadow-sm md:sticky" data-testid="quote-summary-bar" aria-busy={recalculating}>
+      {(!wsStage2 || previewFailure || dirty) && <div className="top-0 z-10 mt-3 rounded-lg border border-slate-200 bg-white px-4 py-2 shadow-sm md:sticky" data-testid="quote-summary-bar" aria-busy={recalculating}>
         <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 max-sm:flex-nowrap max-sm:gap-x-3">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs uppercase tracking-wide text-slate-700 max-sm:sr-only">Calculation</span>
@@ -760,16 +763,16 @@ export default function QuoteEditorPage() {
             {budget && view.viewer.canViewCommercials && stage < 4 && <div><dt className="text-xs uppercase tracking-wide text-slate-700">{marginLabel}</dt><dd className="whitespace-nowrap text-lg font-semibold tabular-nums text-slate-900">{fmtPctShown}{marginNote && <span className="block whitespace-normal text-xs font-normal text-amber-800 max-sm:hidden" data-testid="summary-margin-note">{marginNote}</span>}</dd></div>}
           </dl>
         </div>
-      </div>
+      </div>}
 
-      {q.state !== "MANAGER_APPROVED_FINAL" && stage <= 2 && !previewFailure && <PricingFeedbackNote feedback={pricingFeedback(budget, { canViewCommercials: !!view.viewer.canViewCommercials })} />}
+      {q.state !== "MANAGER_APPROVED_FINAL" && stage <= 2 && !wsStage2 && !previewFailure && <PricingFeedbackNote feedback={pricingFeedback(budget, { canViewCommercials: !!view.viewer.canViewCommercials })} />}
 
       {error && <div className="mt-4"><Alert tone="danger">{error}</Alert></div>}
       <ActionFeedback state={acts.stateOf("page")} floating />
       <LongRunningStatus label={acts.currentLabel} />
       {final && <div className="mt-4"><Alert tone="info">This quote is the manager-approved final. Its accepted baseline is frozen; any change after acceptance must be a Variation on the Project.</Alert></div>}
 
-      <StageNav compact={stage <= 2} hideNext={stage === 2} stages={stagesView} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state, estimatorOpen: mappingOpen.length, signedOff: s2Base.signoff === "current" }} />
+      {!wsStage2 && <StageNav compact={stage <= 2} hideNext={stage === 2} stages={stagesView} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state, estimatorOpen: mappingOpen.length, signedOff: s2Base.signoff === "current" }} />}
 
       {view.returnInfo?.destination === "ESTIMATOR" && !view.viewer.canViewCommercials && q.state === "ESTIMATOR_REVIEW" && stage === 1 && <p role="status" className="mt-3 text-sm text-slate-800" data-testid="rep-with-estimator">{returnNoticeText(view.returnInfo, fmtCents).headline}</p>}
       {/* D-21: the Estimator/Manager see WHY the Manager sent it back on whichever stage they land on (the notice is not tied to Stage 2); off Stage 2 it points to the review. */}
@@ -825,15 +828,15 @@ export default function QuoteEditorPage() {
 
       {stage === 2 && (
         <>
-          <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm" data-testid="stage2-owner">
+          {!wsStage2 && <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm" data-testid="stage2-owner">
             <span className="font-semibold text-slate-900">Stage 2 is the Estimator&apos;s review.</span>
             <span role="status" aria-live="polite" className="text-slate-800" data-testid="stage2-status-line">{wizard2.statusLine}</span>
             <OwnerTag role={wizard2.nextOwner} />
             {commercial && !commercial.complete && <span data-testid="commercial-chip" className="max-w-full max-sm:hidden [&>span]:whitespace-normal"><Status tone="warning">{commercial.headline}</Status></span>}
             {commercial && !commercial.complete && <span className="sm:hidden" data-testid="commercial-chip-short"><Status tone="warning">Not commercially ready ({commercial.items.length} item{commercial.items.length === 1 ? "" : "s"})</Status></span>}
-          </div>
+          </div>}
           {amountChange.changed && q.state === "ESTIMATOR_REVIEW" && !workspaceMode && <div className="mt-2"><Alert tone="warning"><span data-testid="total-changed">{amountChange.text}</span></Alert></div>}
-          {repSummary}
+          {!wsStage2 && repSummary}
           {!workspaceMode && canCommercials && view.indicativeComparison && <IndicativeComparisonPanel c={view.indicativeComparison} />}
           {!workspaceMode && canCommercials && !poc && view.manualPriceEvidence && <ManualEvidencePanel rows={view.manualPriceEvidence} />}
           {req2No !== null && req2No > visible2.length && <p className="mt-3 text-sm text-slate-800" data-testid="step-unavailable">That step is not available to you, so the first step is shown.</p>}
@@ -1054,10 +1057,25 @@ export default function QuoteEditorPage() {
       {stage === 2 && (
         <>
         {workspaceMode && budget && (
+          <>
+          {/* The announcements stay OUTSIDE the closed Details disclosure so a screen reader still hears them. */}
+          <p className="sr-only" role="status" aria-live="polite" data-testid="stage2-status-line">{wizard2.statusLine}{amountChange.changed && q.state === "ESTIMATOR_REVIEW" ? ` ${amountChange.text}` : ""}</p>
           <EstimatorWorkspace quoteId={id} state={q.state} confirmedCents={q.customer_confirmed_cents} signedOff={signedNow} draft={draft} budget={budget} pageDirty={dirty} canEdit={s2Edit}
             title={`${draft.siteName || "Quotation"} · ${draft.customerName || "Customer"}`} subtitle={`${cfg.rooms || 0} rooms · ${draft.quoteType === "project" ? "Project pricing" : "Day-to-day pricing"} · Revision ${q.revision} · Supplier pricing on`}
+            siteName={draft.siteName || "Quotation"} reference={`${q.quote_ref} rev ${q.revision}`} customerName={draft.customerName || "Customer"} rooms={cfg.rooms || 0} basis={`${draft.quoteType === "project" ? "Project" : "Day-to-day"} pricing`}
+            phases={<PhaseStepper stages={stagesView} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state, estimatorOpen: mappingOpen.length, signedOff: s2Base.signoff === "current" }} />}
+            details={(
+              <>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1" data-testid="stage2-owner"><span className="font-semibold text-slate-900">Stage 2 is the Estimator&apos;s review.</span><span className="text-slate-800" data-testid="stage2-status-detail">{wizard2.statusLine}</span><OwnerTag role={wizard2.nextOwner} /><Status tone={READY_TONE[rd.state]}>Readiness: {rd.state}</Status>{commercial && !commercial.complete && <span data-testid="commercial-chip"><Status tone="warning">{commercial.headline}</Status></span>}</div>
+                {amountChange.changed && q.state === "ESTIMATOR_REVIEW" && <p className="text-amber-950" data-testid="amount-change-detail">{amountChange.text}</p>}
+                {q.state !== "MANAGER_APPROVED_FINAL" && !previewFailure && <PricingFeedbackNote feedback={pricingFeedback(budget, { canViewCommercials: !!view.viewer.canViewCommercials })} />}
+                {repSummary}
+                <StageNav compact={false} hideNext stages={stagesView} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state, estimatorOpen: mappingOpen.length, signedOff: s2Base.signoff === "current" }} />
+              </>
+            )}
             refreshKey={`${q.draft_hash}|${q.revision}|${q.state}`} saveDraft={wsSaveDraft} reload={reloadQuote} comparison={view.indicativeComparison ?? null}
             onGoSignoff={() => document.getElementById("ws-signoff")?.scrollIntoView({ behavior: "smooth" })} onGoApproval={() => goStage(3)} reviewNeeded={costNeedsMark} onMarkReviewed={markReviewed} onDirtyChange={setWsDirty} />
+          </>
         )}
         {workspaceMode && (
           <details className="mt-6 rounded-xl border border-slate-200 bg-white px-4 py-2" data-testid="ws-record">

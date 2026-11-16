@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeDb } from "@/lib/projects/__tests__/fake-db";
@@ -118,7 +118,7 @@ describe("Phase 2 (supplier pricing ON): the Estimator workspace replaces the st
     fireEvent.change(cost, { target: { value: "123" } });
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     const ws = screen.getByTestId("estimator-workspace");
-    const outside = screen.getAllByRole("button").find((b) => !ws.contains(b) && !(b as HTMLButtonElement).disabled)!;
+    const outside = ws.querySelector<HTMLButtonElement>('[data-testid="phase-stepper"] button[data-phase]:not([aria-current])')!; // the phase navigation lives in the workspace header; leaving the stage must ask first
     expect(outside).toBeTruthy();
     fireEvent.click(outside);
     await waitFor(() => expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/unsaved changes in the Estimator workspace editor/)));
@@ -209,11 +209,25 @@ describe("Phase 2 workspace mode: no conflicting legacy commercial summary in th
   it("the banner's price-list margin/total are hidden, the legacy total-changed alert is gone, and the handoff comparison and evidence panels sit in a collapsed Record area", async () => {
     await openWs(verified());
     await screen.findByTestId("commercial-summary");
-    const figures = screen.getByTestId("calc-banner-figures");
-    expect(figures.className).toMatch(/\bhidden\b/);
+    expect(screen.queryByTestId("quote-summary-bar")).toBeNull(); // the legacy calculation strip is gone: ONE compact header replaces it
+    expect(screen.queryByTestId("calc-banner-figures")).toBeNull();
+    // the legacy calculation banner's price-list margin and total are absent from the whole primary view in workspace mode
+    expect(screen.queryByText(/Indicative margin \(price-list basis\)/i)).toBeNull();
+    expect(screen.queryByTestId("total-caption")).toBeNull();
     expect(screen.queryByTestId("total-changed")).toBeNull();
     const rec = screen.queryByTestId("ws-record");
     if (rec) expect(rec.hasAttribute("open")).toBe(false);
-    for (const dt of screen.queryAllByText(/Indicative margin \(price-list basis\)/i, { selector: "dt" })) expect(dt.closest('[data-testid="calc-banner-figures"]')).toBe(figures); // only ever inside the hidden block
+  }, 60000);
+  it("the 'total changed, return to the Rep to reconfirm' explanation sits inside the closed Details AND is announced by a live status outside it", async () => {
+    await openWs(verified());
+    await screen.findByTestId("commercial-summary");
+    const details = screen.getByTestId("header-details");
+    expect(details.hasAttribute("open")).toBe(false);
+    const detail = within(details).getByTestId("amount-change-detail");
+    expect(detail.textContent).toMatch(/reconfirm/i);
+    const live = screen.getByTestId("stage2-status-line");
+    expect(details.contains(live)).toBe(false);
+    expect(live.getAttribute("role")).toBe("status");
+    expect(live.textContent).toContain(detail.textContent!);
   }, 60000);
 });

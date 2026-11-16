@@ -68,7 +68,9 @@ async function open(o: { roles: Role[]; commercials: boolean; enteredBy?: string
 const name = (e: Element) => e.getAttribute("aria-label") || ((e as HTMLInputElement).labels?.[0]?.textContent ?? "") || (e.closest("label")?.textContent ?? "") || e.textContent || e.getAttribute("data-testid") || e.tagName;
 const enabledControls = (root: ParentNode) => [...root.querySelectorAll("input,select,textarea,button")].filter((e) => !(e as HTMLInputElement).disabled && !e.matches(":disabled"));
 // The ONLY controls a verify-only viewer may operate inside the supplier-pricing workspace.
-const ALLOWED = (e: Element) => /^Verify .+ cost$/.test(e.getAttribute("aria-label") ?? "") || /^Evidence checked/.test(name(e)) || ["verify-save", "verify-all", "attest-save"].includes(e.getAttribute("data-testid") ?? "") || /^Attest .* forward-cover rate$/.test(e.getAttribute("aria-label") ?? "");
+const ALLOWED_BEFORE = (e: Element) => ALLOWED(e) && !PHASE_NAV(e);
+const PHASE_NAV = (e: Element) => !!e.closest('nav[aria-label="Quotation phases"]'); // phase navigation moved into the workspace header; it is not an editing control
+const ALLOWED = (e: Element) => PHASE_NAV(e) || /^Verify .+ cost$/.test(e.getAttribute("aria-label") ?? "") || /^Evidence checked/.test(name(e)) || ["verify-save", "verify-all", "attest-save"].includes(e.getAttribute("data-testid") ?? "") || /^Attest .* forward-cover rate$/.test(e.getAttribute("aria-label") ?? "");
 
 describe("a genuine Manager (no Estimator role) on the REAL Stage 2 page", () => {
   it("can tick a verifiable cost, type evidence and submit the verification - and can edit NOTHING else in the supplier-pricing workspace", async () => {
@@ -112,6 +114,8 @@ describe("a genuine Manager (no Estimator role) on the REAL Stage 2 page", () =>
     await screen.findByTestId("verify-block", {}, { timeout: 15000 });
     const costs = screen.getByTestId("estimator-workspace");
     // EVERY enabled control in the costs step - buttons included - must be one of the verify / attest controls (verify ticks, evidence input, Verify, Select-all, attest controls)
+    // the ONLY controls the widened allowance admits are phase-navigation buttons
+    expect(enabledControls(costs).filter((e) => !ALLOWED_BEFORE(e) && ALLOWED(e)).every((e) => e.tagName === "BUTTON" && PHASE_NAV(e))).toBe(true);
     const stray = enabledControls(costs).filter((e) => !ALLOWED(e)).map(name);
     expect(stray).toEqual([]);
     expect(screen.queryByRole("button", { name: /Confirm source-backed mappings/ })).toBeNull();
