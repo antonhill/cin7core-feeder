@@ -206,7 +206,7 @@ describe("switching supplier pricing on is offered inside the new Estimator expe
     expect(screen.getAllByTestId("phase-header")).toHaveLength(1);
     expect(screen.getAllByTestId("next-action")).toHaveLength(1);
     expect(screen.getByTestId("next-action-headline").textContent).toMatch(/Enter the supplier cost for/);
-    for (const gone of ["step-rail", "disc-supplier-pricing", "quote-summary-bar", "stage-nav-toggle", "estimator-workspace", "other-estimator-actions", "use-legacy-costing-link"]) expect(screen.queryByTestId(gone), gone).toBeNull();
+    for (const gone of ["step-rail", "disc-supplier-pricing", "disc-cost-capture", "disc-margin", "quote-summary-bar", "stage-nav-toggle", "estimator-workspace", "other-estimator-actions", "use-legacy-costing-link"]) expect(screen.queryByTestId(gone), gone).toBeNull();
     // ALL the Estimator's essential actions are sections of THIS screen, not the older wizard
     for (const id of ["mapping", "costs", "final", "signoff"]) expect(screen.getByTestId(`est-section-${id}`).tagName, id).toBe("DETAILS");
     expect(screen.getByTestId("est-section-mapping").textContent).toMatch(/Products and packages/);
@@ -241,6 +241,23 @@ describe("switching supplier pricing on is offered inside the new Estimator expe
     fireEvent.click(btn);
     await waitFor(() => expect([...document.querySelectorAll('[data-testid="action-feedback"]')].map((e) => e.textContent).join(" | ")).toMatch(/[Rr]eturned|could not|not allowed|error/i), { timeout: 20000 });
     await waitFor(() => { const r = (db.rows("newquip_quotes") as Array<Record<string, unknown>>).find((x) => x.id === id)!; expect(r.state).toBe("REP_DRAFT"); expect(r.revision).toBe(2); }, { timeout: 20000 });
+  }, 90000);
+
+  it("COMPLETE WORKFLOW: the start screen has its own Save draft, so an edit made in Products and packages can be saved without any older panel", async () => {
+    const id = await open(undefined, ["ESTIMATOR"], { waitFor: "supplier-costing-start" });
+    const row = screen.getByTestId("start-save-row");
+    const save = within(row).getByRole("button", { name: /^Save draft$/ }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true); // nothing to save yet
+    const mapping = screen.getByTestId("est-section-mapping");
+    fireEvent.click(mapping.querySelector("summary")!);
+    // a pricing exception: a manual unit price with its reason, in the same section
+    fireEvent.change(within(mapping).getByLabelText(/Unit price for Feed saver mat/), { target: { value: "1000" } });
+    fireEvent.change(within(mapping).getByLabelText(/Reason for the manual price of Feed saver mat/), { target: { value: "Supplier quote by phone, ref UX-77" } });
+    await waitFor(() => expect(save.disabled).toBe(false)); // the edit is unsaved: Save draft is now live
+    expect(within(row).getByTestId("save-state").textContent).toMatch(/Unsaved changes/);
+    expect(screen.getByTestId("activation-paused").textContent).toMatch(/Save them first/); // starting supplier costing reloads the quotation: unsaved edits are never discarded silently
+    fireEvent.click(save);
+    await waitFor(() => expect(JSON.stringify((db.rows("newquip_quotes") as Array<Record<string, unknown>>).find((r) => r.id === id)!.draft)).toContain("Supplier quote by phone, ref UX-77"), { timeout: 20000 }); // saved
   }, 90000);
 
   it("is not offered to a Manager-only viewer, a viewer without cost visibility, a day-to-day quotation, or once supplier pricing is on", async () => {

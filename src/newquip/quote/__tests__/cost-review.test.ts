@@ -81,4 +81,11 @@ describe("the itemised cost review", () => {
     expect(rv.counts.provisional).toBe(1);
     expect(STATUS_LEGEND.map(([k]) => k)).toEqual(["Verified", "Needs verification", "Missing cost", "Provisional"]);
   });
+
+  it("a verified cost with an audited selling-price override stays Verified (the override is noted, not a cost problem)", () => {
+    const rv = buildCostReview(view([row({ costState: "verified", costStateText: "Verified", priceBasis: "price_override", priceOverride: { unitPriceCents: 70_000, reason: "r", by: "e", at: "2026-11-10" } })]), budget);
+    expect(rv.rows[0].status).toEqual({ text: "Verified", tone: "ok" });
+    expect(rv.rows[0].statusDetail).toMatch(/audited override/);
+    expect(rv.counts).toEqual({ products: 1, verified: 1, missing: 0, unverified: 0, provisional: 0 });
+  });
 });

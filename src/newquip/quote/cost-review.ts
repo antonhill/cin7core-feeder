@@ -63,13 +63,14 @@ function rowOf(r: SkuRow, desc: Map<string, string>): CostReviewRow {
   const freight: ReviewCell = r.freightFactorMicro == null && r.freightAddOnCents == null ? MISSING("Not recorded")
     : { text: [r.freightFactorMicro != null ? `× ${(r.freightFactorMicro / 1e6).toFixed(3)}` : null, r.freightAddOnCents ? `+ ${formatZarCents(r.freightAddOnCents)}` : null].filter(Boolean).join(" ") || "None" };
   // FOUR compact labels (explained once in the legend): Verified, Needs verification, Missing cost, Provisional.
-  const manual = r.priceBasis === "manual_price" || r.priceOverride != null;
+  const manual = r.priceBasis === "manual_price"; // a MANUAL selling price (no model price); an audited selling-price override on a priced line keeps its cost status
   const status: ReviewCell = r.costState === "missing" ? MISSING(STATUS_MISSING)
     : manual ? { text: STATUS_PROVISIONAL, tone: "open" }
     : r.costState === "verified" ? { text: STATUS_VERIFIED, tone: "ok" }
     : { text: STATUS_NEEDS, tone: "open" };
   const statusDetail: string | null = r.costState === "missing" ? null
     : manual ? "Priced with a manual selling price. Its supplier cost still needs independent verification."
+    : r.priceOverride != null ? "The selling price is an audited override of the model's price. The cost status above is unaffected."
     : r.costState === "self_reviewed" ? "Reviewed by the person who entered it, which is not independent."
     : r.costState === "review_outdated" ? "The cost changed after it was verified."
     : null;

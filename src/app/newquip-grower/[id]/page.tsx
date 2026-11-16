@@ -770,7 +770,7 @@ export default function QuoteEditorPage() {
         <dt className="text-slate-600">Subtotal (ex VAT)</dt><dd className="whitespace-nowrap text-right tabular-nums">{fmtZar(budget.totals.subtotalExTax)}</dd>
         <dt className="text-slate-600">VAT 15%</dt><dd className="whitespace-nowrap text-right tabular-nums">{fmtZar(budget.totals.taxTotal)}</dd>
         <dt className="font-semibold text-slate-900">Total</dt><dd className="whitespace-nowrap text-right font-semibold tabular-nums">{fmtZar(budget.totals.totalIncTax)}</dd>
-        {view.viewer.canViewCommercials && <><dt className="text-slate-600">{marginIncomplete ? "Estimated cost · indicative margin (price-list basis)" : "Estimated cost · margin (costed scope)"}</dt><dd className="text-right tabular-nums">{fmtZar(shownMargin?.cost ?? budget.totals.estimatedCost)} · {fmtPctShown}{marginNote && <span className="block text-xs font-normal text-amber-800" data-testid="totals-margin-note">{marginNote}</span>}</dd></>}
+        {view.viewer.canViewCommercials && !startUx && <><dt className="text-slate-600">{marginIncomplete ? "Estimated cost · indicative margin (price-list basis)" : "Estimated cost · margin (costed scope)"}</dt><dd className="text-right tabular-nums">{fmtZar(shownMargin?.cost ?? budget.totals.estimatedCost)} · {fmtPctShown}{marginNote && <span className="block text-xs font-normal text-amber-800" data-testid="totals-margin-note">{marginNote}</span>}</dd></>}
       </dl>
       <p className="mt-2 text-xs text-slate-600">{view.viewer.canViewCommercials ? budget.pricingBasis : QUOTE_TYPE_NEUTRAL[draft.quoteType]}. {budget.state === "complete" ? "Every required line is priced." : "Incomplete: the total is partial until every blocker is resolved."}</p>
     </Panel>
@@ -928,8 +928,9 @@ export default function QuoteEditorPage() {
 
       {startUx && budget && (
         <div className="mt-4 space-y-4" data-testid="supplier-costing-start">
-          <ActivationPanel firstTask quoteId={id} budget={budget} confirmedCents={q.customer_confirmed_cents} canEdit={s2Edit} reload={reloadQuote} onDirtyChange={setWsDirty} onUseLegacy={() => setLegacyOpen(true)} />
+          <ActivationPanel firstTask quoteId={id} budget={budget} confirmedCents={q.customer_confirmed_cents} canEdit={s2Edit} pausedReason={dirty ? "You have unsaved changes below. Save them first: starting supplier costing reloads the quotation and would discard them." : null} reload={reloadQuote} onDirtyChange={setWsDirty} onUseLegacy={() => setLegacyOpen(true)} />
           <p className="text-sm text-slate-700">Room measurements, quantities, delivery, installation and the M75 price belong to the Rep.</p>
+          <div data-testid="start-save-row">{s2Edit && saveRow("")}</div>
           <section className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm text-slate-800" aria-label="Estimator checklist" data-testid="estimator-checklist-intro">
             <h3 className="font-bold text-slate-900">Everything else you do on this quotation</h3>
             <p className="mt-1">Map products, confirm packages, quote pricing exceptions, review readiness and sign off or return to the Rep are below. You do not need to start supplier costing first.</p>
@@ -1348,7 +1349,7 @@ export default function QuoteEditorPage() {
               )}
               {/* Everything below the supplier-pricing workspace stays Estimator-only: it keeps the disabled fieldset. The workspace itself sits OUTSIDE it (its editing controls are gated by `editable`) so a Manager can run the independent verification. */}
               {/* The legacy Cin7 cost capture sits OUTSIDE the Stage-2 disabled fieldset: each of its controls is gated by role (Estimator mutations, Manager waiver), so a Manager can use the waiver the server allows them. */}
-              {!poc && !p2Status && (<Disclosure testId="disc-cost-capture" title="Cin7 cost capture and FX rates" summary={costingIncomplete ? (marginInfo && marginInfo.missing > 0 ? `Costs are incomplete for ${marginInfo.missing} line${marginInfo.missing === 1 ? "" : "s"}: capture or enter them here` : `Costing is incomplete: ${costingReason ?? "supplier costs are unresolved"}`) : "Latest supplier prices from Cin7, exchange rates and exceptions"} attention={costingIncomplete}>
+              {!poc && !p2Status && !startUx && (<Disclosure testId="disc-cost-capture" title="Cin7 cost capture and FX rates" summary={costingIncomplete ? (marginInfo && marginInfo.missing > 0 ? `Costs are incomplete for ${marginInfo.missing} line${marginInfo.missing === 1 ? "" : "s"}: capture or enter them here` : `Costing is incomplete: ${costingReason ?? "supplier costs are unresolved"}`) : "Latest supplier prices from Cin7, exchange rates and exceptions"} attention={costingIncomplete}>
                 {final ? <CostPanel quoteId={id} roles={costPanelRoles} /> : <CostPanel quoteId={id} unsaved={dirty} previewDraft={dirty ? previewedFor : null} roles={costPanelRoles} />}
               </Disclosure>)}
               <fieldset disabled={!s2Edit} className="min-w-0 space-y-6 border-0 p-0">
@@ -1356,7 +1357,7 @@ export default function QuoteEditorPage() {
               {totalsPanel}
               {/* The detail sits in labelled disclosures (closed unless something needs attention); they stay mounted, so nothing is requested differently. */}
               <Disclosure testId="disc-scope" title="Physical scope" summary="What will be supplied and installed, line by line (read-only evidence)">{scopePanel}</Disclosure>
-              {!p2Status && budget && (
+              {!p2Status && budget && !startUx && (
                 <Disclosure testId="disc-margin" title="Margin detail" summary={marginIncomplete ? `${marginLabel}: ${marginNote}` : "Product, package, section and project margins (price-list basis)"} attention={marginIncomplete || incompleteOverrides}>
                   <div aria-busy={recalculating}><MarginPanel budget={budget} draft={draft} final={final} frozen={q.accepted_baseline?.internalMargin} editable={s2Edit} edit={edit} /></div>
                 </Disclosure>
@@ -1411,7 +1412,7 @@ export default function QuoteEditorPage() {
         )}
 
         <div id="ws-signoff">
-        <EstimatorSection wrap={startUx} id="signoff" number={4} title={SECTION_TITLE.signoff} status={sectionStatus("signoff").status} tone={sectionStatus("signoff").tone}><StepPanel railId="s2" stepId="signoff" number={visible2.indexOf("signoff") + 1} title={STAGE2_WIZARD_LABEL.signoff} current={workspaceMode || step2Id === "signoff"} showAll={showAllSteps || workspaceMode || startUx} headingClassName={startUx ? "sr-only" : "col-span-full"} locked={lockedFor2("signoff")} className="mt-6 space-y-6">
+        <EstimatorSection wrap={startUx} id="signoff" number={4} title={SECTION_TITLE.signoff} status={sectionStatus("signoff").status} tone={sectionStatus("signoff").tone} forceOpen={signedNow || acts.stateOf("signoff").kind !== "idle" || acts.stateOf("return-rep").kind !== "idle"}><StepPanel railId="s2" stepId="signoff" number={visible2.indexOf("signoff") + 1} title={STAGE2_WIZARD_LABEL.signoff} current={workspaceMode || step2Id === "signoff"} showAll={showAllSteps || workspaceMode || startUx} headingClassName={startUx ? "sr-only" : "col-span-full"} locked={lockedFor2("signoff")} className="mt-6 space-y-6">
           <Panel>
             <h3 className="sr-only">Sign off or return</h3>
             {editWarning && <div className="mt-1"><Alert tone="warning"><span data-testid="edit-clears-signoff-signoff">{editWarning}</span></Alert></div>}
