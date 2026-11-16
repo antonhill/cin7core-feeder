@@ -69,7 +69,10 @@ async function appendProfileRow(db: Db, orgId: string, built: StoredProfile | nu
   const beneath = at >= 0 ? rows[at + 1] ?? null : null;
   if ((beneath?.id ?? null) === (built?.id ?? null)) return mine;
   // beneath is the intervening writer's row (the one directly under ours); restore it as the latest version unless something newer than ours already supersedes us.
-  if (at === 0 && beneath) await db.from("newquip_company_profiles").insert({ org_id: orgId, profile: beneath.profile, entered_by_email: beneath.entered_by_email });
+  if (at === 0 && beneath) {
+    const fix = await db.from("newquip_company_profiles").insert({ org_id: orgId, profile: beneath.profile, entered_by_email: beneath.entered_by_email });
+    if (fix.error) throw new Error(`${SIMULTANEOUS_SAVE_MSG} The other person's earlier change could not be restored automatically (${fix.error.message}): check Company details and Commercial settings before saving again.`);
+  }
   throw new Error(SIMULTANEOUS_SAVE_MSG);
 }
 

@@ -267,4 +267,10 @@ describe("stored FX is frozen with the pricing (M3)", () => {
     vi.useFakeTimers(); vi.setSystemTime(new Date("2026-12-31T00:00:00Z"));
     try { const sku = Object.keys(p.skus)[0]; expect(createEstimatorPriceSource(p).priceFor(sku, "project").status).toBe("priced"); } finally { vi.useRealTimers(); }
   });
+
+  it("a cutoff without a timezone is rejected (auto stays off): no server-local interpretation", () => {
+    expect(autoPricingCutoff({ NEWQUIP_AUTO_PRICING: "on", NEWQUIP_AUTO_PRICING_FROM: "2026-11-17T00:00:00" })).toBeNull();
+    expect(autoPricingCutoff({ NEWQUIP_AUTO_PRICING: "on", NEWQUIP_AUTO_PRICING_FROM: "2026-11-17T00:00:00Z" })).not.toBeNull();
+    expect(autoPricingCutoff({ NEWQUIP_AUTO_PRICING: "on", NEWQUIP_AUTO_PRICING_FROM: "2026-11-17T00:00:00+02:00" })).not.toBeNull();
+  });
 });

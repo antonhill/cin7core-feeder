@@ -72,7 +72,7 @@ export type AutoEnv = Record<string, string | undefined>;
 export function autoPricingCutoff(env: AutoEnv): number | null {
   if (env.NEWQUIP_AUTO_PRICING !== "on") return null;
   const f = env.NEWQUIP_AUTO_PRICING_FROM;
-  const t = typeof f === "string" && /^\d{4}-\d{2}-\d{2}T/.test(f) ? Date.parse(f) : NaN;
+  const t = typeof f === "string" && /^\d{4}-\d{2}-\d{2}T[\d:.]+(Z|[+-]\d{2}:\d{2})$/.test(f) ? Date.parse(f) : NaN; // a timezone (Z or an offset) is REQUIRED: no server-local interpretation
   return Number.isFinite(t) ? t : null;
 }
 export interface AutoActor { orgId: string; userId: string; roles: ReadonlySet<string>; demo: boolean }
