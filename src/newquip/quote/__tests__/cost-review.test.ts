@@ -20,7 +20,7 @@ describe("the itemised cost review", () => {
     expect(r.description).toBe("Feed saver mat (1m × 1m)");
     expect(r.quantity.text).toBe("216");
     expect(r.source.text).toBe("Mat Supplier · Quote Q-77");
-    expect(r.costDate.text).toBe("2026-11-10");
+    expect(r.costDate.text).toBe("entered 2026-11-10"); // an older entry with no cost date: only when it was entered
     expect(r.originalCost.text).toBe("EUR 26.8440995"); // seven decimals, never rounded
     expect(r.uplift.text).toBe(UPLIFT_NONE);
     expect(r.fx.text).toBe("EUR 18.4195 · spot · 2026-11-10");
@@ -87,5 +87,17 @@ describe("the itemised cost review", () => {
     expect(rv.rows[0].status).toEqual({ text: "Verified", tone: "ok" });
     expect(rv.rows[0].statusDetail).toMatch(/audited override/);
     expect(rv.counts).toEqual({ products: 1, verified: 1, missing: 0, unverified: 0, provisional: 0 });
+  });
+
+  it("shows the Cin7 supplier, the kind of cost and the date the cost applies to; an undated Cin7 price says so; a hand-set currency is flagged with its reason", () => {
+    const q = buildCostReview(view([row({ supplierId: "S2", supplier: "Alpine Imports", costKind: "supplier_quotation", costDate: "2026-11-10", currencySource: "cin7_supplier" })]), budget).rows[0];
+    expect(q.source.text).toBe("Alpine Imports (Cin7) · Supplier quotation · Quote Q-77");
+    expect(q.costDate.text).toBe("2026-11-10");
+    const h = buildCostReview(view([row({ supplierId: "S2", supplier: "Alpine Imports", costKind: "cin7_historical", costDate: null })]), budget).rows[0];
+    expect(h.source.text).toContain("Cin7 historical cost");
+    expect(h.costDate).toEqual({ text: "not recorded in Cin7", tone: "open" });
+    const o = buildCostReview(view([row({ supplierId: "S9", supplier: "No Currency Co", costKind: "manual_estimate", currencySource: "override", currencyOverrideReason: "Cin7 holds none; invoices in EUR" })]), budget).rows[0];
+    expect(o.fx.text).toContain("currency set by hand");
+    expect(o.statusDetail).toMatch(/set by hand because Cin7 holds none.*invoices in EUR/);
   });
 });

@@ -205,7 +205,7 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
     const qty = line.quantity ?? 0;
     const chosenSaved = p.draft.estimator.confirmedMappings[open.id as GrowerItemKey];
     const manualHere = p.draft.estimator.priceResolutions[open.id as GrowerItemKey];
-    const costForm = (sku: string, label: string, q: number, before?: () => Promise<SaveResult>, saveLabel?: string) => <SkuCostForm key={sku} sku={sku} label={label} quantity={q} bundle={bundle} canEdit={canEdit} save={(k, e) => saveSku(k, e, before)} onDirty={setDirty} saveLabel={saveLabel} />;
+    const costForm = (sku: string, label: string, q: number, before?: () => Promise<SaveResult>, saveLabel?: string) => <SkuCostForm key={sku} quoteId={p.quoteId} sku={sku} label={label} quantity={q} bundle={bundle} canEdit={canEdit} save={(k, e) => saveSku(k, e, before)} onDirty={setDirty} saveLabel={saveLabel} />;
     // The editor is chosen by the kind the task was OPENED with (stable): a save that changes the line's status never swaps the editor, so typed values are never rebuilt away.
     if (open.kind === "m75") return <M75PriceForm key={`m75-${open.id}`} itemKey={open.id} label={line.label} quantity={qty} existing={p.draft.estimator.unitPrices[open.id as GrowerItemKey]} canEdit={canEdit} save={saveM75} onDirty={setDirty} onSaved={() => setNote("M75 price saved.")} />;
     if (open.kind === "manual") {

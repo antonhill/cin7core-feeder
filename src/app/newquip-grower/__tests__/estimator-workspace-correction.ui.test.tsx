@@ -10,11 +10,13 @@ import * as pricing from "../pricing-actions";
 import { ActivationPanel } from "../[id]/ActivationPanel";
 import { EstimatorWorkspace } from "../[id]/EstimatorWorkspace";
 import { SkuCostForm } from "../[id]/WorkspaceEditors";
+import { identity, supplierActionsMock } from "./cin7-supplier-ui";
 
 // UX correction pass: one write + one page read per save, the editor updating at once, exact cents, the activation path, the excluded-until-costed explanation and the evidence record.
 vi.mock("../pricing-actions", () => ({
   getEstimatorPricingAction: vi.fn(), applyEstimatorPricingAction: vi.fn(), verifyEstimatorCostsAction: vi.fn(), attestEstimatorRatesAction: vi.fn(), recordManualPriceEvidenceAction: vi.fn(),
 }));
+vi.mock("../supplier-actions", async () => (await import("./cin7-supplier-ui")).supplierActionsMock());
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 const bundle = (over: Record<string, unknown> = {}): WorkspaceBundle => ({
@@ -31,8 +33,9 @@ const bare = (): QuoteDraft => { const d = readyDraft(); d.estimator.confirmedPa
 const type = (label: string | RegExp, v: string) => fireEvent.change(screen.getByLabelText(label), { target: { value: v } });
 
 describe("exact cents in the supplier-cost editor", () => {
-  it("R193.60 stays R193.60: landed cost, selling price and the line total show their cents", () => {
-    render(createElement(SkuCostForm, { sku: "NQ1161", label: "Concrete slats", quantity: 100, bundle: bundle(), canEdit: true, save: vi.fn(async () => ({ ok: true })), onDirty: vi.fn() }));
+  it("R193.60 stays R193.60: landed cost, selling price and the line total show their cents", async () => {
+    render(createElement(SkuCostForm, { quoteId: "q1", sku: "NQ1161", label: "Concrete slats", quantity: 100, bundle: bundle(), canEdit: true, save: vi.fn(async () => ({ ok: true })), onDirty: vi.fn() }));
+    await identity();
     type("Unit cost (up to 7 decimals)", "193.60"); type("Where this cost comes from", "Supplier quote");
     const calc = screen.getByTestId("live-calc").textContent!;
     expect(calc).toMatch(/Landed cost each\s*R\s193,60/);
@@ -40,8 +43,9 @@ describe("exact cents in the supplier-cost editor", () => {
     expect(calc).toMatch(/× 100\s*R\s23\s232,00/);
     expect(screen.getByTestId("calc-price-inline").textContent).toBe("R\u00a0232,32 each, ex VAT.");
   });
-  it("R800 costs R960.00 each and the 7-decimal cost is untouched", () => {
-    render(createElement(SkuCostForm, { sku: "NQ2114", label: "PVC SST door", quantity: 24, bundle: bundle(), canEdit: true, save: vi.fn(async () => ({ ok: true })), onDirty: vi.fn() }));
+  it("R800 costs R960.00 each and the 7-decimal cost is untouched", async () => {
+    render(createElement(SkuCostForm, { quoteId: "q1", sku: "NQ2114", label: "PVC SST door", quantity: 24, bundle: bundle(), canEdit: true, save: vi.fn(async () => ({ ok: true })), onDirty: vi.fn() }));
+    await identity();
     type("Unit cost (up to 7 decimals)", "800"); type("Where this cost comes from", "Supplier quote");
     expect(screen.getByTestId("live-calc").textContent).toMatch(/Selling price each\s*R\s960,00/);
     expect(screen.getByTestId("live-calc").textContent).toMatch(/× 24\s*R\s23\s040,00/);
@@ -63,6 +67,7 @@ describe("a save is ONE write and ONE page read, and the whole editor is current
     vi.mocked(pricing.applyEstimatorPricingAction).mockResolvedValue(applyOk(bundle({ view: { rows: [{ sku: "NQ1161", costState: "unverified", status: "priced", usedBy: [], quantity: 100 }], costs: { required: 1, verified: 0 }, totals: { margin: null }, currencies: [], manualEvidence: [] } })) as never);
     render(createElement(Host, { reloadMs: 20 }));
     fireEvent.click(await screen.findByRole("button", { name: /Enter cost: Concrete slats/ }));
+    await identity();
     type("Unit cost (up to 7 decimals)", "193.60"); type("Where this cost comes from", "Supplier quote");
     expect(pricing.getEstimatorPricingAction).toHaveBeenCalledTimes(1); // only the opening read
     fireEvent.click(screen.getByRole("button", { name: "Save cost" }));
@@ -76,6 +81,7 @@ describe("a save is ONE write and ONE page read, and the whole editor is current
     render(createElement(Host));
     fireEvent.click(await screen.findByRole("button", { name: /Enter cost: Concrete slats/ }));
     expect(screen.getByText(/2 tasks open/)).toBeTruthy();
+    await identity();
     type("Unit cost (up to 7 decimals)", "193.60"); type("Where this cost comes from", "Supplier quote");
     fireEvent.click(screen.getByRole("button", { name: "Save cost" }));
     await waitFor(() => expect(screen.getByText(/1 task open/)).toBeTruthy()); // the heading line
@@ -88,6 +94,7 @@ describe("a save is ONE write and ONE page read, and the whole editor is current
     vi.mocked(pricing.applyEstimatorPricingAction).mockResolvedValue({ ok: false, error: "Someone else changed this cost.", errors: ["Someone else changed this cost."] });
     render(createElement(Host));
     fireEvent.click(await screen.findByRole("button", { name: /Enter cost: Concrete slats/ }));
+    await identity();
     type("Unit cost (up to 7 decimals)", "193.60"); type("Where this cost comes from", "Supplier quote");
     fireEvent.click(screen.getByRole("button", { name: "Save cost" }));
     await waitFor(() => expect(screen.getByTestId("save-errors").textContent).toMatch(/Someone else changed this cost/));
@@ -100,6 +107,7 @@ describe("a save is ONE write and ONE page read, and the whole editor is current
     vi.mocked(pricing.applyEstimatorPricingAction).mockResolvedValue(applyOk(bundle()) as never);
     render(createElement(Host));
     fireEvent.click(await screen.findByRole("button", { name: /Enter cost: Concrete slats/ }));
+    await identity();
     type("Unit cost (up to 7 decimals)", "193.60"); type("Where this cost comes from", "Supplier quote");
     fireEvent.click(screen.getByRole("button", { name: "Save cost" }));
     await waitFor(() => expect(pricing.applyEstimatorPricingAction).toHaveBeenCalled());
@@ -171,11 +179,23 @@ describe("switching supplier pricing on from the new experience", () => {
     expect(pv.textContent).toMatch(/partial, indicative total, never a completed quotation value/);
     expect(pv.textContent).toMatch(/Rep's confirmation is withdrawn/);
   });
+  it("the first-cost form IS the product cost form: the same Cin7 supplier chooser, derived currency and cost kinds (one costing experience, not two)", async () => {
+    mountAct();
+    fireEvent.click(screen.getByTestId("activation-start"));
+    const sec = await screen.findByTestId("supplier-cost-section");
+    expect(within(sec).getByLabelText(/Search all active Cin7 suppliers/)).toBeTruthy();
+    expect(within(sec).getByTestId("cost-kind")).toBeTruthy();
+    expect(screen.queryByLabelText("Supplier")).toBeNull();
+    expect(screen.queryByLabelText("Currency")).toBeNull();
+    fireEvent.click(await within(sec).findByTestId("cin7-record-CUR-USD"));
+    expect(within(sec).getByTestId("derived-currency").textContent).toMatch(/Currency: USD/);
+  });
   it("the first supplier cost is the activation: it uses the existing action with NO stored pricing as its base, then the page is re-read", async () => {
     vi.mocked(pricing.applyEstimatorPricingAction).mockResolvedValue(applyOk(bundle()) as never);
     const { reload } = mountAct();
     fireEvent.click(screen.getByTestId("activation-start"));
     await screen.findByTestId("activation-form");
+    await identity();
     type("Unit cost (up to 7 decimals)", "30195"); type("Where this cost comes from", "Supplier quote");
     fireEvent.click(screen.getByRole("button", { name: "Save cost and switch on supplier pricing" }));
     await waitFor(() => expect(pricing.applyEstimatorPricingAction).toHaveBeenCalledTimes(1));
@@ -189,6 +209,7 @@ describe("switching supplier pricing on from the new experience", () => {
     const { reload } = mountAct();
     fireEvent.click(screen.getByTestId("activation-start"));
     await screen.findByTestId("activation-form");
+    await identity();
     type("Unit cost (up to 7 decimals)", "30195"); type("Where this cost comes from", "Supplier quote");
     fireEvent.click(screen.getByRole("button", { name: "Save cost and switch on supplier pricing" }));
     await waitFor(() => expect(screen.getByTestId("save-errors").textContent).toMatch(/project quotations only/));

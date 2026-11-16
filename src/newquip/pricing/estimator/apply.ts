@@ -1,6 +1,6 @@
 import { stableStringify } from "../../quote/baseline";
 import { canEnterPricingInputs, selectRuleVersion, validateScenario, type ForwardCover, type FxQuote, type PricingScenario, type Viewer } from "../model";
-import type { EstimatorPricing, SkuPricingInput, StoredForwardCover } from "./types";
+import { COST_KINDS, CURRENCY_SOURCES, type CostKind, type CurrencySource, type EstimatorPricing, type SkuPricingInput, type StoredForwardCover } from "./types";
 
 // APPLYING AN ESTIMATOR PRICING CHANGE (NQ-008B Phase 2). Pure. The form submits the inputs WITHOUT attribution; this decides who may change them, validates the whole
 // result with the Phase 1 model, stamps who/when for exactly the entries that changed (never trusting a client's by/at), bumps the revision and lists every changed value
@@ -23,6 +23,27 @@ export type RevisionKind = "ENABLED" | "CHANGED" | "DISABLED";
 export type ApplyResult =
   | { ok: true; kind: RevisionKind; next: EstimatorPricing | null; changes: PricingChange[] }
   | { ok: false; errors: string[] };
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+/** The optional supplier-identity facts of one entry: currency basis (and the reason for an override), the cost kind and the date the cost applies to. Unknown values are refused, never guessed. */
+function supplierFacts(v: Record<string, unknown>, k: string, e: string[]): { currencySource?: CurrencySource; currencyOverrideReason?: string; costKind?: CostKind; costDate?: string | null } {
+  const out: { currencySource?: CurrencySource; currencyOverrideReason?: string; costKind?: CostKind; costDate?: string | null } = {};
+  if (v.currencySource !== undefined && v.currencySource !== null) {
+    if (typeof v.currencySource === "string" && (CURRENCY_SOURCES as readonly string[]).includes(v.currencySource)) out.currencySource = v.currencySource as CurrencySource;
+    else e.push(`${k}: the currency basis is not valid.`);
+  }
+  if (typeof v.currencyOverrideReason === "string" && v.currencyOverrideReason.trim() !== "") out.currencyOverrideReason = v.currencyOverrideReason.trim().slice(0, 300);
+  if (out.currencySource === "override" && (out.currencyOverrideReason ?? "").length < 10) e.push(`${k}: a currency set by hand needs a reason (at least 10 characters).`);
+  if (v.costKind !== undefined && v.costKind !== null) {
+    if (typeof v.costKind === "string" && (COST_KINDS as readonly string[]).includes(v.costKind)) out.costKind = v.costKind as CostKind;
+    else e.push(`${k}: the kind of cost is not valid.`);
+  }
+  if (v.costDate !== undefined && v.costDate !== null && v.costDate !== "") {
+    if (typeof v.costDate === "string" && ISO_DAY.test(v.costDate) && Number.isFinite(Date.parse(v.costDate))) out.costDate = v.costDate;
+    else e.push(`${k}: the cost date must be a date as YYYY-MM-DD.`);
+  } else if (v.costDate === null) out.costDate = null;
+  return out;
+}
 
 export const MAX_PRICED_SKUS = 300;
 const SKU = /^[A-Za-z0-9._\-/ ]{1,64}$/;
@@ -92,6 +113,7 @@ export function normaliseSubmission(raw: unknown, nowIso: string): { ok: true; v
       supplierId: text(v.supplierId, 64, `${k}: the supplier id`, { nullable: true }), supplierName: text(v.supplierName, 120, `${k}: the supplier`, { nullable: true }),
       currency: cur, nativeUnitCostE7: v.nativeUnitCostE7 === 0 ? (e.push(`${k}: a zero supplier cost is not a cost. Clear the cost to remove it, or enter the quoted cost.`), 0) : int(v.nativeUnitCostE7, 1, MAX.costE7, `${k}: the supplier cost`),
       source: text(v.source, MAX.text, `${k}: the cost source`) ?? "",
+      ...supplierFacts(v, k, e),
       freight: isObj(f) ? { factorMicro: int(f.factorMicro, 1, MAX.factorMicro, `${k}: the freight factor`), ...(f.addOnCents === undefined || f.addOnCents === null ? {} : { addOnCents: int(f.addOnCents, 0, MAX.addOnCents, `${k}: the landed-cost add-on`) }), source: text(f.source, MAX.text, `${k}: the freight source`, { nullable: true }) ?? "" } : null,
     } as PricingSubmission["skus"][string];
   }

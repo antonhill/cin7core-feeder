@@ -80,7 +80,7 @@ export function ActivationPanel({ quoteId, budget, confirmedCents, canEdit, relo
                 <p className="mt-1 text-[12.5px] text-slate-700">Supplier pricing switches on when this first cost is saved. Every other product is costed next, from the task list.</p></div>
               {pausedReason && <Alert tone="warning"><span data-testid="activation-paused">{pausedReason}</span></Alert>}
               {error && <Alert tone="warning"><span data-testid="activation-error">{error}</span></Alert>}
-              {bundle && starter ? <SkuCostForm key={starter.sku} sku={starter.sku} label={starter.label} quantity={starter.quantity ?? 0} bundle={bundle} canEdit={canEdit && !pausedReason} save={activate} onDirty={(d) => onDirtyChange?.(d)} saveLabel="Save cost and switch on supplier pricing" testId="activation-form" /> : !error && <p className="text-sm text-slate-700" data-testid="activation-loading">Loading…</p>}
+              {bundle && starter ? <SkuCostForm key={starter.sku} quoteId={quoteId} sku={starter.sku} label={starter.label} quantity={starter.quantity ?? 0} bundle={bundle} canEdit={canEdit && !pausedReason} save={activate} onDirty={(d) => onDirtyChange?.(d)} saveLabel="Save cost and switch on supplier pricing" testId="activation-form" /> : !error && <p className="text-sm text-slate-700" data-testid="activation-loading">Loading…</p>}
             </>
           )}
         </div>

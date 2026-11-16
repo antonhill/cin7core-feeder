@@ -928,9 +928,19 @@ export default function QuoteEditorPage() {
 
       {startUx && budget && (
         <div className="mt-4 space-y-4" data-testid="supplier-costing-start">
+          <nav aria-label="Estimator checklist sections" className="rounded-xl border border-slate-200 bg-white px-4 py-3" data-testid="estimator-section-index">
+            <p className="text-xs font-semibold tracking-wider text-slate-600">ALSO ON THIS SCREEN, BELOW THE FIRST TASK</p>
+            <ul className="mt-1 flex flex-wrap gap-2">
+              {(["mapping", "costs", "final", "signoff"] as const).map((sid, i) => (
+                <li key={sid}><button type="button" className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm hover:bg-slate-50" data-testid={`jump-${sid}`}
+                  onClick={() => { const el = document.querySelector<HTMLDetailsElement>(`[data-testid="est-section-${sid}"]`); if (el) { el.open = true; el.scrollIntoView({ behavior: "smooth", block: "start" }); } }}>
+                  <span className="font-bold">{i + 1}</span><span>{SECTION_TITLE[sid]}</span><span className="text-xs text-slate-700">· {sectionStatus(sid).status}</span></button></li>
+              ))}
+            </ul>
+          </nav>
           <ActivationPanel firstTask quoteId={id} budget={budget} confirmedCents={q.customer_confirmed_cents} canEdit={s2Edit} pausedReason={dirty ? "You have unsaved changes below. Save them first: starting supplier costing reloads the quotation and would discard them." : null} reload={reloadQuote} onDirtyChange={setWsDirty} onUseLegacy={() => setLegacyOpen(true)} />
           <p className="text-sm text-slate-700">Room measurements, quantities, delivery, installation and the M75 price belong to the Rep.</p>
-          <div data-testid="start-save-row">{s2Edit && saveRow("")}</div>
+          <div data-testid="start-save-row">{s2Edit && saveRow("")}{s2Edit && saveWhy && <p className="mt-1 text-sm text-slate-800" data-testid="start-save-why">{saveWhy}</p>}</div>
           <section className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm text-slate-800" aria-label="Estimator checklist" data-testid="estimator-checklist-intro">
             <h3 className="font-bold text-slate-900">Everything else you do on this quotation</h3>
             <p className="mt-1">Map products, confirm packages, quote pricing exceptions, review readiness and sign off or return to the Rep are below. You do not need to start supplier costing first.</p>
@@ -1214,7 +1224,7 @@ export default function QuoteEditorPage() {
         <div className="mt-4 min-w-0 space-y-6">
         <fieldset disabled={!s2Edit} className="min-w-0 space-y-6 border-0 p-0">
           {/* Hidden steps stay mounted (hidden + inert): the requests and timers started on mount are the same whichever step is shown. A LOCKED step stays mounted too; show-all lists it as heading + reason. */}
-          <EstimatorSection wrap={startUx} id="mapping" number={1} title={SECTION_TITLE.mapping} status={sectionStatus("mapping").status} tone={sectionStatus("mapping").tone} openByDefault={mappingOpen.length > 0}><StepPanel railId="s2" stepId="mapping" number={visible2.indexOf("mapping") + 1} title={STAGE2_WIZARD_LABEL.mapping} current={step2Id === "mapping"} showAll={showAllSteps || startUx} headingClassName={startUx ? "sr-only" : "col-span-full"} locked={lockedFor2("mapping")} className="space-y-6">
+          <EstimatorSection wrap={startUx} id="mapping" number={1} title={SECTION_TITLE.mapping} status={sectionStatus("mapping").status} tone={sectionStatus("mapping").tone}><StepPanel railId="s2" stepId="mapping" number={visible2.indexOf("mapping") + 1} title={STAGE2_WIZARD_LABEL.mapping} current={step2Id === "mapping"} showAll={showAllSteps || startUx} headingClassName={startUx ? "sr-only" : "col-span-full"} locked={lockedFor2("mapping")} className="space-y-6">
             {editWarning && <Alert tone="warning"><span data-testid="edit-clears-signoff">{editWarning}</span></Alert>}
             {s2Edit && (
               <div className="flex flex-wrap items-center gap-3" data-testid="step1-first-action">

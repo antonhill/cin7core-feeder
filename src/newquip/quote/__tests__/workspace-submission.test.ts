@@ -3,7 +3,8 @@ import { emptySubmission, LEGACY_RULE_VERSION, type PricingSubmission } from "@/
 import { applyEditor, blankEditor, editorFrom, editorProblems, fxContext, parseCostText, previewLine, revisionReason } from "../workspace-submission";
 
 const NOW = "2026-11-15T10:00:00.000Z";
-const filled = (over: Partial<ReturnType<typeof blankEditor>> = {}) => ({ ...blankEditor("ZAR"), costText: "193.60", source: "Supplier quote 12 Nov", supplierName: "Local Supplier", ...over });
+// A complete editor names a Cin7 supplier by id, takes its currency from that supplier's Cin7 record and says what kind of cost it is.
+const filled = (over: Partial<ReturnType<typeof blankEditor>> = {}) => ({ ...blankEditor("ZAR"), supplierId: "S-LOCAL", currencySource: "cin7_supplier" as const, costKind: "manual_estimate" as const, costText: "193.60", source: "Supplier quote 12 Nov", supplierName: "Local Supplier", ...over });
 
 describe("typed costs are exact and never rounded", () => {
   it("accepts up to 7 decimals and refuses more, zero and junk", () => {
@@ -83,7 +84,7 @@ describe("rates are stored per currency: one product's form never deletes anothe
     s.forwardCover.USD = { rateMicro: 16_900_000, coverDays: 90, reason: "hedged", reference: "FEC-1", validFrom: "2026-11-01", validUntil: "2027-01-30" };
     return s;
   };
-  const spot = (): ReturnType<typeof blankEditor> => ({ ...blankEditor("USD"), costText: "6.5", source: "quote", fxMode: "spot", spotRateText: "16.5", spotSource: "rate table" });
+  const spot = (): ReturnType<typeof blankEditor> => ({ ...blankEditor("USD"), supplierId: "CUR-USD", supplierName: "Cin7 Supplier USD", currencySource: "cin7_supplier", costKind: "manual_estimate", costText: "6.5", source: "quote", fxMode: "spot", spotRateText: "16.5", spotSource: "rate table" });
   it("switching one product to a spot rate while another still uses the contract is refused in words, and nothing is applied", () => {
     const cur = sharedForward();
     expect(fxContext(cur, "NQA", "USD")).toEqual({ others: ["NQB"], hasForward: true });
@@ -101,8 +102,44 @@ describe("rates are stored per currency: one product's form never deletes anothe
     const cur = sharedForward();
     const e = editorFrom(cur, "NQA");
     expect(e.fxMode).toBe("forward");
-    const next = applyEditor(cur, "NQA", { ...e, forward: { ...e.forward, rateText: "17.1" } }, NOW)!;
+    expect(applyEditor(cur, "NQA", { ...e, forward: { ...e.forward, rateText: "17.1" } }, NOW)).toBeNull(); // an older entry has no Cin7 supplier: changing it means choosing one
+    const next = applyEditor(cur, "NQA", { ...e, supplierId: "CUR-USD", supplierName: "Cin7 Supplier USD", currencySource: "cin7_supplier", costKind: "manual_estimate", forward: { ...e.forward, rateText: "17.1" } }, NOW)!;
     expect(next.forwardCover.USD.rateMicro).toBe(17_100_000);
     expect(next.skus.NQB).toEqual(cur.skus.NQB);
+  });
+});
+
+describe("the supplier identity is part of the editor", () => {
+  it("a blank editor has no supplier and NO currency (nothing is defaulted to ZAR)", () => {
+    const b = blankEditor();
+    expect([b.supplierId, b.currency, b.currencySource, b.costKind]).toEqual([null, "", null, null]);
+    expect(editorProblems(b).join(" ")).toMatch(/Choose the supplier from Cin7/);
+  });
+  it("a supplier with a Cin7 currency needs no typed currency; one without needs the override reason and a chosen currency", () => {
+    expect(editorProblems(filled({ currencySource: null }))[0]).toMatch(/currency is set from the supplier's Cin7 record/);
+    const noCur = filled({ currency: "", currencySource: "override" as const });
+    expect(editorProblems(noCur).join(" ")).toMatch(/say why you are setting it by hand/);
+    expect(editorProblems({ ...noCur, currencyOverrideReason: "Cin7 record is empty; invoices in rand" }).join(" ")).toMatch(/Choose the currency the supplier invoices in/);
+    expect(editorProblems({ ...noCur, currency: "ZAR", currencyOverrideReason: "Cin7 record is empty; invoices in rand" })).toEqual([]);
+  });
+  it("a cost needs its kind; a quotation needs a valid, not-future date; a manual estimate and a Cin7 price need none", () => {
+    expect(editorProblems(filled({ costKind: null })).join(" ")).toMatch(/what kind of cost/);
+    expect(editorProblems(filled({ costKind: "supplier_quotation" })).join(" ")).toMatch(/date of the supplier quotation/);
+    expect(editorProblems(filled({ costKind: "supplier_quotation", costDate: "2999-01-01" })).join(" ")).toMatch(/cannot be in the future/);
+    expect(editorProblems(filled({ costKind: "supplier_quotation", costDate: "2026-11-10" }))).toEqual([]);
+    expect(editorProblems(filled({ costKind: "cin7_historical", costDate: "" }))).toEqual([]);
+  });
+  it("applying writes the Cin7 id, the currency basis (and the override reason only when it is one), the kind and the date; an undated Cin7 cost stays undated", () => {
+    const quote = applyEditor(null, "NQ1161", filled({ costKind: "supplier_quotation", costDate: "2026-11-10" }), NOW)!.skus.NQ1161;
+    expect(quote).toMatchObject({ supplierId: "S-LOCAL", supplierName: "Local Supplier", currencySource: "cin7_supplier", costKind: "supplier_quotation", costDate: "2026-11-10" });
+    expect(quote).not.toHaveProperty("currencyOverrideReason");
+    const over = applyEditor(null, "NQ1161", filled({ currencySource: "override", currencyOverrideReason: " Cin7 holds none; invoices in rand " }), NOW)!.skus.NQ1161;
+    expect(over).toMatchObject({ currencySource: "override", currencyOverrideReason: "Cin7 holds none; invoices in rand" });
+    expect(applyEditor(null, "NQ1161", filled({ costKind: "cin7_historical", costDate: "" }), NOW)!.skus.NQ1161.costDate).toBeNull();
+  });
+  it("reopening reads the identity back exactly", () => {
+    const stored = applyEditor(null, "NQ1161", filled({ costKind: "supplier_quotation", costDate: "2026-11-10" }), NOW)!;
+    const e = editorFrom(stored, "NQ1161");
+    expect(e).toMatchObject({ supplierId: "S-LOCAL", supplierName: "Local Supplier", currencySource: "cin7_supplier", costKind: "supplier_quotation", costDate: "2026-11-10", currency: "ZAR" });
   });
 });

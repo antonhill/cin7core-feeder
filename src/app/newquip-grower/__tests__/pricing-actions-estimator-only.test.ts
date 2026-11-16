@@ -16,6 +16,8 @@ import * as actions from "../pricing-actions";
 // The Server Actions themselves (not the UI): authorisation is re-established inside each one, so a hand-crafted call from a Manager-only session is refused and writes nothing,
 // while the Manager's independent cost verification and an Estimator's own pricing operations keep working.
 vi.mock("server-only", () => ({}));
+// The supplier-identity rule (a Cin7 supplier id, currency from Cin7) has its own tests (supplier-identity.test.ts and pricing-actions-supplier-identity.test.ts); these tests are about authorisation and the revision workflow.
+vi.mock("@/newquip/pricing/estimator/supplier-identity", async (orig) => ({ ...(await orig<typeof import("@/newquip/pricing/estimator/supplier-identity")>()), validateSupplierIdentities: vi.fn(async () => []) }));
 let db: FakeDb;
 let actor: Actor;
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: () => db }));

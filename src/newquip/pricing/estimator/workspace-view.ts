@@ -27,6 +27,8 @@ export interface SkuRow {
   /** "priced" | "no_input" (no supplier cost entered: the line is NOT priced) | "not_priced" (an input exists but cannot be priced, e.g. a rate is missing). */
   status: "priced" | "no_input" | "not_priced";
   supplier: string | null; currency: string | null; nativeUnitCostE7: number | null; costSource: string | null;
+  /** The Cin7 supplier chosen for this cost (identity is the id, never the name), how the currency was determined, the kind of cost and the date it applies to. Absent on older entries. */
+  supplierId: string | null; currencySource: "cin7_supplier" | "override" | null; currencyOverrideReason: string | null; costKind: "cin7_historical" | "supplier_quotation" | "manual_estimate" | null; costDate: string | null;
   /** COST verification (separate from price completeness): derived from an independent review, never from a flag a person set. */
   costState: CostState; costStateText: string;
   /** Who entered / last changed the cost, and the independent review of exactly that cost, if any. */
@@ -117,6 +119,7 @@ export function buildPricingWorkspace(i: {
       sku, usedBy: need?.usedBy ?? [], quantity: qty,
       status: !input ? "no_input" : priced ? "priced" : "not_priced",
       supplier: input?.supplierName ?? null, currency: input?.currency ?? null, nativeUnitCostE7: input?.nativeUnitCostE7 ?? null, costSource: input?.source ?? null,
+      supplierId: input?.supplierId ?? null, currencySource: input?.currencySource ?? null, currencyOverrideReason: input?.currencyOverrideReason ?? null, costKind: input?.costKind ?? null, costDate: input?.costDate ?? null,
       costHash: input ? costInputHash(input) : null, costState, costStateText: COST_STATE_TEXT[costState], enteredBy: input?.by ?? null, enteredAt: input?.at ?? null,
       review: input?.review ? { by: input.review.by, at: input.review.at, evidence: input.review.evidence } : null,
       priceBasis: priced ? (ov ? "price_override" : "supplier_pricing") : need?.manual ? "manual_price" : "none",

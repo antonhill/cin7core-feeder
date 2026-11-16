@@ -10,6 +10,7 @@ import { decodeManualReason } from "@/newquip/quote/estimator-workspace";
 import * as pricing from "../pricing-actions";
 import { EstimatorWorkspace } from "../[id]/EstimatorWorkspace";
 import { ManualPriceForm, SkuCostForm } from "../[id]/WorkspaceEditors";
+import { identity, supplierActionsMock } from "./cin7-supplier-ui";
 
 vi.mock("../pricing-actions", () => ({
   getEstimatorPricingAction: vi.fn(),
@@ -17,6 +18,7 @@ vi.mock("../pricing-actions", () => ({
   verifyEstimatorCostsAction: vi.fn(),
   attestEstimatorRatesAction: vi.fn(),
 }));
+vi.mock("../supplier-actions", async () => (await import("./cin7-supplier-ui")).supplierActionsMock());
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 const bundle = (over: Partial<WorkspaceBundle> = {}): WorkspaceBundle => ({
@@ -120,6 +122,7 @@ describe("unsaved edits are never lost silently", () => {
   it("leaving an editor with typed values asks first; Keep editing keeps them; Discard leaves", async () => {
     mount();
     fireEvent.click(await screen.findByRole("button", { name: /Enter cost: Bulk tank/ }));
+    await identity();
     const cost = await screen.findByLabelText("Unit cost (up to 7 decimals)");
     fireEvent.change(cost, { target: { value: "120000" } });
     fireEvent.click(screen.getByRole("button", { name: "← Back to tasks" }));
@@ -134,32 +137,35 @@ describe("unsaved edits are never lost silently", () => {
 
 describe("the supplier-cost editor", () => {
   const form = (save = vi.fn(async () => ({ ok: true })), onDirty = vi.fn(), current: WorkspaceBundle["current"] = null) => {
-    render(createElement(SkuCostForm, { sku: "NQ1161", label: "Concrete slats", quantity: 100, bundle: bundle({ current }), canEdit: true, save, onDirty }));
+    render(createElement(SkuCostForm, { quoteId: "q1", sku: "NQ1161", label: "Concrete slats", quantity: 100, bundle: bundle({ current }), canEdit: true, save, onDirty }));
     return { save, onDirty };
   };
   const type = (label: string | RegExp, v: string) => fireEvent.change(screen.getByLabelText(label), { target: { value: v } });
   const saveBtn = () => screen.getByRole("button", { name: "Save cost" }) as HTMLButtonElement;
 
-  it("Save stays disabled until the cost and its source are given; the reason is named beside the button", () => {
+  it("Save stays disabled until the cost and its source are given; the reason is named beside the button", async () => {
     form();
     expect(saveBtn().disabled).toBe(true);
     expect(screen.getByTestId("save-why").textContent).toMatch(/Needs: Enter the supplier cost/);
+    await identity();
     type("Unit cost (up to 7 decimals)", "193.60");
     expect(screen.getByTestId("save-why").textContent).toMatch(/Needs: Say where this cost comes from/);
     type("Where this cost comes from", "Supplier quote 12 Nov");
     expect(saveBtn().disabled).toBe(false);
   });
-  it("more than 7 decimals is refused, never rounded", () => {
+  it("more than 7 decimals is refused, never rounded", async () => {
     form();
     type("Where this cost comes from", "Supplier quote");
+    await identity();
     type("Unit cost (up to 7 decimals)", "6.54547551");
     expect(saveBtn().disabled).toBe(true);
     expect(screen.getAllByText(/At most 7 decimal places are allowed/).length).toBeGreaterThan(0);
     type("Unit cost (up to 7 decimals)", "6.5454755");
     expect(saveBtn().disabled).toBe(false);
   });
-  it("shows the pricing model's own landed cost and selling price (20% rule) for the typed values, marked unverified", () => {
+  it("shows the pricing model's own landed cost and selling price (20% rule) for the typed values, marked unverified", async () => {
     form();
+    await identity();
     type("Unit cost (up to 7 decimals)", "193.60");
     type("Where this cost comes from", "Supplier quote");
     const calc = screen.getByTestId("live-calc").textContent!;
@@ -167,11 +173,18 @@ describe("the supplier-cost editor", () => {
     expect(calc).toMatch(/Selling price each.*R\s232/);
     expect(calc).toMatch(/UNVERIFIED/);
   });
-  it("a foreign currency asks for a rate and its source before it can be saved", () => {
+  it("a product cost editor uses the same Cin7 supplier chooser as the first-task form", async () => {
     form();
+    const sec = await screen.findByTestId("supplier-cost-section");
+    expect(within(sec).getByTestId("cin7-supplier-records")).toBeTruthy();
+    expect(screen.queryByLabelText("Supplier")).toBeNull();
+  });
+  it("a foreign currency asks for a rate and its source before it can be saved", async () => {
+    form();
+    await identity("USD"); // the currency comes from the supplier's Cin7 record: it is not typed
     type("Unit cost (up to 7 decimals)", "6.5454755");
     type("Where this cost comes from", "Cin7 supplier price");
-    type("Currency", "USD");
+    expect(screen.getByTestId("derived-currency").textContent).toMatch(/Currency: USD, from Cin7 Supplier USD/);
     expect(saveBtn().disabled).toBe(true);
     expect(screen.getByTestId("save-why").textContent).toMatch(/USD spot rate/);
     type("USD spot rate", "16.5555");
@@ -181,6 +194,7 @@ describe("the supplier-cost editor", () => {
   it("a refused save keeps every typed value and shows the server's reason", async () => {
     const save = vi.fn(async () => ({ ok: false, errors: ["Someone else changed this cost. Reload and try again."] }));
     form(save);
+    await identity();
     type("Unit cost (up to 7 decimals)", "193.60");
     type("Where this cost comes from", "Supplier quote");
     fireEvent.click(saveBtn());
@@ -188,8 +202,9 @@ describe("the supplier-cost editor", () => {
     expect((screen.getByLabelText("Unit cost (up to 7 decimals)") as HTMLInputElement).value).toBe("193.60");
     expect(saveBtn().disabled).toBe(false);
   });
-  it("reports unsaved typing to the workspace", () => {
+  it("reports unsaved typing to the workspace", async () => {
     const { onDirty } = form();
+    await identity();
     type("Unit cost (up to 7 decimals)", "1");
     expect(onDirty).toHaveBeenLastCalledWith(true);
   });
@@ -284,6 +299,7 @@ describe("typed values survive the saves that change the line underneath them", 
     render(createElement(Host));
     fireEvent.click(await screen.findByRole("button", { name: /Choose and price: PVC SST door/ }));
     fireEvent.click(within(await screen.findByTestId("product-choice")).getAllByRole("radio")[0]);
+    await identity();
     typeCost();
     fireEvent.click(screen.getByRole("button", { name: "Save product and price" }));
     await waitFor(() => expect(screen.getByTestId("save-errors").textContent).toMatch(/The product was saved, but the cost was not/));
@@ -360,7 +376,7 @@ describe("the FX block says the rate is shared; a completed manual price shows i
   it("a foreign currency shows that the rate applies to every product in that currency", async () => {
     render(createElement(Host));
     fireEvent.click(await screen.findByRole("button", { name: /Enter cost: Bulk tank/ }));
-    fireEvent.change(await screen.findByLabelText("Currency"), { target: { value: "USD" } });
+    await identity("USD");
     expect(screen.getByTestId("fx-shared-note").textContent).toMatch(/This rate applies to every USD product on this quotation/);
   });
   it("the Complete group expands a manual line's reason and evidence", async () => {
@@ -379,6 +395,7 @@ describe("the page is told when an editor holds unsaved typing", () => {
     vi.mocked(pricing.getEstimatorPricingAction).mockResolvedValue({ ok: true, data: bundle() });
     render(createElement(EstimatorWorkspace, { quoteId: "q1", state: "ESTIMATOR_REVIEW", confirmedCents: 1, signedOff: false, draft: bareDraft(), budget: test12Budget(), pageDirty: false, canEdit: true, title: "T", subtitle: "s", refreshKey: "k", saveDraft: vi.fn(async () => ({ ok: true })), reload: vi.fn(), onGoSignoff: vi.fn(), onGoApproval: vi.fn(), reviewNeeded: false, onMarkReviewed: vi.fn(), onDirtyChange }));
     fireEvent.click(await screen.findByRole("button", { name: /Enter cost: Bulk tank/ }));
+    await identity();
     fireEvent.change(await screen.findByLabelText("Unit cost (up to 7 decimals)"), { target: { value: "1" } });
     await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));
   });
