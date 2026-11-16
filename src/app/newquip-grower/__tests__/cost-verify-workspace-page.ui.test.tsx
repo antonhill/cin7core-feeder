@@ -50,7 +50,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 const fresh = () => new Date().toISOString();
 /** Verified, complete supplier pricing with CURRENT exchange rates (so nothing is outstanding). */
 const verified = (): EstimatorPricing => equivalentInputs({ pricingDate: fresh(), fxQuotes: { EUR: { rateMicro: 20_000_000, source: "Fixture spot", asOf: fresh() }, USD: { rateMicro: 20_000_000, source: "Fixture spot", asOf: fresh() } } }, "verified");
-async function open(pricing: EstimatorPricing | undefined, roles: Role[] = ["ESTIMATOR"], o: { state?: string; commercials?: boolean; waitFor?: string; unmapped?: boolean; noWaiver?: boolean; quoteType?: "project" | "day_to_day" } = {}) {
+async function open(pricing: EstimatorPricing | undefined, roles: Role[] = ["ESTIMATOR"], o: { state?: string; commercials?: boolean; waitFor?: string; unmapped?: boolean; noWaiver?: boolean; quoteType?: "project" | "day_to_day"; revision?: number } = {}) {
   vi.mocked(canSeeCosts).mockResolvedValue(o.commercials ?? true);
   vi.mocked(resolveRoles).mockResolvedValue(new Set(roles) as never);
   const { id } = await createQuote(db as never, ORG, "rep@nq");
@@ -59,7 +59,7 @@ async function open(pricing: EstimatorPricing | undefined, roles: Role[] = ["EST
   const dq = o.quoteType ? { ...d1, quoteType: o.quoteType } : d1;
   const d = o.unmapped ? { ...dq, estimator: { ...dq.estimator, priceResolutions: { ...dq.estimator.priceResolutions, feeder: { unitPriceExVat: 1000, reason: "" } } } } : dq;
   await saveDraft(db as never, ORG, member, id, pricing ? { ...d, estimator: { ...d.estimator, pricing } } : d);
-  for (const row of db.rows("newquip_quotes") as Array<Record<string, unknown>>) if (row.id === id) { row.state = o.state ?? SUBMITTED.state; Object.assign(row, SUBMITTED.row); }
+  for (const row of db.rows("newquip_quotes") as Array<Record<string, unknown>>) if (row.id === id) { row.state = o.state ?? SUBMITTED.state; Object.assign(row, SUBMITTED.row); if (o.revision) row.revision = o.revision; }
   g.__QID = id;
   const { default: Page } = await import("../[id]/page");
   render(createElement(Page));
@@ -229,5 +229,22 @@ describe("Phase 2 workspace mode: no conflicting legacy commercial summary in th
     expect(details.contains(live)).toBe(false);
     expect(live.getAttribute("role")).toBe("status");
     expect(live.textContent).toContain(detail.textContent!);
+  }, 60000);
+});
+
+describe("a quotation returned to the Rep: the Estimator lands on the read-only workspace, never the Rep's form", () => {
+  it("REP_DRAFT revision 2, Estimator-only, no ?stage=: Cost & Verify mounts with a prominent 'awaiting the Rep' message and no edit actions", async () => {
+    await openWs(verified(), ["ESTIMATOR"], { state: "REP_DRAFT", revision: 2 });
+    const banner = await screen.findByTestId("awaiting-rep-banner");
+    expect(banner.textContent).toMatch(/Awaiting the Rep/);
+    expect(banner.textContent).toMatch(/read-only/);
+    expect(screen.queryByTestId("step-rail-s1")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Record evidence|Save/ })).toBeNull();
+  }, 60000);
+
+  it("a Rep on the same returned quotation still lands on Stage 1 (no workspace, no banner)", async () => {
+    await open(verified(), ["REP"], { state: "REP_DRAFT", revision: 2, waitFor: "stage-nav" });
+    expect(screen.queryByTestId("awaiting-rep-banner")).toBeNull();
+    expect(screen.queryByTestId(WS)).toBeNull();
   }, 60000);
 });
