@@ -104,6 +104,8 @@ export interface NextAction { kind: NextActionKind; headline: string; detail: st
 export interface WorkspaceFacts {
   /** REP_DRAFT | ESTIMATOR_REVIEW | MANAGER_APPROVED_FINAL */
   state: string;
+  /** The quotation revision. Above 1 with state REP_DRAFT means it was RETURNED to the Rep; optional so older callers still work (then it is treated as a first draft). */
+  revision?: number;
   confirmedCents: number | null;
   /** true when the Estimator's sign-off is stored against the current content. */
   signedOff: boolean;
@@ -285,7 +287,7 @@ export function buildWorkspace(i: { budget: BudgetQuote; view: PricingWorkspaceV
   const g0 = gates[0];
   const taskHeadline = (t: Omit<WorkspaceTask, "n"> & { n: number }): string => (t.kind === "m75" ? `Enter the M75 system price` : t.kind === "cost" ? `Enter the supplier cost for ${t.label.toLowerCase()}` : t.kind === "product" ? `Choose and price ${t.label.toLowerCase()}` : t.kind === "manual" ? `Quote a manual price for ${t.label.toLowerCase()}` : `Confirm and cost ${t.label.toLowerCase()}`);
   if (facts.state === "MANAGER_APPROVED_FINAL") next = { kind: "approved", headline: "Approved", detail: "This quotation is approved and sealed.", button: null };
-  else if (facts.state === "REP_DRAFT" && !facts.canEdit) next = { kind: "wait_rep", headline: "Waiting for the Rep to reconfirm the amount and submit it again", detail: "The quotation is with the Rep. You can read it here; nothing changes until it comes back.", button: null };
+  else if (facts.state === "REP_DRAFT" && (facts.revision ?? 1) > 1 && !facts.canEdit) next = { kind: "wait_rep", headline: "Waiting for the Rep to reconfirm the amount and submit it again", detail: "The quotation is with the Rep. You can read it here; nothing changes until it comes back.", button: null };
   else if (g0?.id === "tasks") {
     next = facts.canEdit
       ? { kind: "open_task", headline: taskHeadline(first), detail: first.why, taskId: first.id, button: `Open task 1 of ${open}` }

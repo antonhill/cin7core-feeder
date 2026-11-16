@@ -136,10 +136,22 @@ describe("evidence needed is an open line, not a hidden completed one", () => {
 });
 
 describe("with the Rep: the one next action is to wait, never an Estimator instruction", () => {
-  it("a read-only workspace on a Rep-draft quotation says it is waiting for the Rep", async () => {
-    mount({ state: "REP_DRAFT", canEdit: false });
+  it("a read-only workspace on a RETURNED (revision 2) Rep-draft quotation says it is waiting for the Rep to reconfirm and resubmit", async () => {
+    mount({ state: "REP_DRAFT", revision: 2, canEdit: false });
     const na = await screen.findByTestId("next-action");
     expect(na.textContent).toMatch(/Waiting for the Rep to reconfirm the amount and submit it again/);
     expect(na.textContent).not.toMatch(/The Estimator records/);
+  });
+
+  it("a read-only workspace on a FIRST draft (revision 1) never claims it was returned or needs reconfirming", async () => {
+    mount({ state: "REP_DRAFT", revision: 1, canEdit: false });
+    const na = await screen.findByTestId("next-action");
+    expect(na.textContent).not.toMatch(/reconfirm|submit it again|returned/i);
+  });
+
+  it("an older caller that passes no revision is treated as a first draft", async () => {
+    mount({ state: "REP_DRAFT", canEdit: false });
+    const na = await screen.findByTestId("next-action");
+    expect(na.textContent).not.toMatch(/reconfirm the amount and submit it again/i);
   });
 });

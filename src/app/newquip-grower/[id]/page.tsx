@@ -1132,7 +1132,7 @@ export default function QuoteEditorPage() {
           {awaitingRepReconfirm && stage === 2 && (
             <div className="mb-4" data-testid="awaiting-rep-banner"><Alert tone="warning"><strong>Awaiting the Rep.</strong> This quotation was returned to the Rep (revision {q.revision}) and the customer&rsquo;s confirmation was withdrawn. It is read-only for you until the Rep reconfirms the amount and submits it again.</Alert></div>
           )}
-          <EstimatorWorkspace quoteId={id} state={q.state} confirmedCents={q.customer_confirmed_cents} signedOff={signedNow} draft={draft} budget={budget} pageDirty={dirty} canEdit={s2Edit && !awaitingRepReconfirm}
+          <EstimatorWorkspace quoteId={id} state={q.state} revision={q.revision} confirmedCents={q.customer_confirmed_cents} signedOff={signedNow} draft={draft} budget={budget} pageDirty={dirty} canEdit={s2Edit && !awaitingRepReconfirm}
             title={`${draft.siteName || "Quotation"} · ${draft.customerName || "Customer"}`} subtitle={`${cfg.rooms || 0} rooms · ${draft.quoteType === "project" ? "Project pricing" : "Day-to-day pricing"} · Revision ${q.revision} · Supplier pricing on`}
             siteName={draft.siteName || "Quotation"} reference={`${q.quote_ref} rev ${q.revision}`} customerName={draft.customerName || "Customer"} rooms={cfg.rooms || 0} basis={`${draft.quoteType === "project" ? "Project" : "Day-to-day"} pricing`}
             phases={<PhaseStepper stages={stagesView} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state, estimatorOpen: mappingOpen.length, signedOff: s2Base.signoff === "current" }} />}
