@@ -155,3 +155,25 @@ describe("with the Rep: the one next action is to wait, never an Estimator instr
     expect(na.textContent).not.toMatch(/reconfirm the amount and submit it again/i);
   });
 });
+
+describe("the itemised cost review is on the workspace", () => {
+  const rows = [
+    { sku: "NQ1161", usedBy: ["concrete_slat"], quantity: 15840, status: "priced", supplier: "Slat Co", currency: "ZAR", nativeUnitCostE7: 1_936_000_000, costSource: "Quote S-1", costState: "unverified", costStateText: "Entered, not yet verified", enteredBy: "e@x", enteredAt: "2026-11-12T08:00:00Z", review: null, priceBasis: "supplier_pricing", costHash: "h", rate: null, freightFactorMicro: 1_000_000, freightAddOnCents: null, unitLandedCostCents: 19_360, calculatedUnitPriceCents: 23_232, unitPriceCents: 23_232, priceOrigin: "rule_markup", priceOverride: null, lineRevenueCents: 367_994_880, lineCostCents: 306_662_400, margin: { sellingCents: 367_994_880, costCents: 306_662_400, gpCents: 61_332_480, marginPct: 16.67, markupPct: 20 }, issues: [] },
+    { sku: "SYSH-2750-3", usedBy: ["bulk_tank"], quantity: 12, status: "no_input", supplier: null, currency: null, nativeUnitCostE7: null, costSource: null, costState: "missing", costStateText: "No supplier cost", enteredBy: null, enteredAt: null, review: null, priceBasis: "none", costHash: null, rate: null, freightFactorMicro: null, freightAddOnCents: null, unitLandedCostCents: null, calculatedUnitPriceCents: null, unitPriceCents: null, priceOrigin: null, priceOverride: null, lineRevenueCents: null, lineCostCents: null, margin: null, issues: [] },
+  ];
+  it("lists every costed product with cost, FX, freight, landed, total, selling, margin and verification; missing values are named, and no uplift is invented", async () => {
+    mount({}, { view: { rows, costs: { required: 2, verified: 0 }, totals: { margin: null }, currencies: [] } as never });
+    const box = await screen.findByTestId("cost-review");
+    expect(within(box).getByTestId("cost-review-counts").textContent).toBe("0 verified · 1 not yet verified · 1 with no supplier cost");
+    const slat = within(box).getByTestId("cost-review-NQ1161");
+    expect(slat.textContent).toContain("ZAR 193.6");
+    expect(slat.textContent).toContain("ZAR: no conversion");
+    expect(slat.textContent).toContain("None applied");
+    expect(slat.textContent).toContain("Entered, not yet verified");
+    const tank = within(box).getByTestId("cost-review-SYSH-2750-3");
+    expect(tank.textContent).toContain("No supplier cost entered");
+    expect(tank.textContent).toContain("Cost missing");
+    expect(within(box).getByTestId("uplift-note").textContent).toMatch(/no age-based escalation/);
+    expect(box.querySelector("table")!.parentElement!.className).toContain("overflow-x-auto"); // a narrow screen scrolls the table inside its box, never the page
+  });
+});

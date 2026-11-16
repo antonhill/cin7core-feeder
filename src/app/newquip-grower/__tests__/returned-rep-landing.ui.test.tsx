@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { createElement, useEffect } from "react";
+import { createElement, useEffect, useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeDb } from "@/lib/projects/__tests__/fake-db";
 import { requireModuleAccess } from "@/lib/authorization";
@@ -35,8 +35,9 @@ const FACTS = { loaded: true, available: true, hasSnapshot: true, hasContact: tr
 let factsDelayMs = 0; // when the customer panel reports its details
 vi.mock("../[id]/CustomerPanel", () => ({
   CustomerPanel: (p: { onFacts?: (f: any) => void }) => {
-    const report = p.onFacts;
-    useEffect(() => { const t = setTimeout(() => report?.(FACTS), factsDelayMs); return () => clearTimeout(t); }, [report]);
+    const latest = useRef(p.onFacts);
+    latest.current = p.onFacts; // the page passes a new callback on each render: one read, reported once, after the configured delay
+    useEffect(() => { const t = setTimeout(() => latest.current?.(FACTS), factsDelayMs); return () => clearTimeout(t); }, []);
     return null;
   },
 }));
@@ -106,6 +107,19 @@ describe("a returned quotation with its earlier steps complete opens on the subm
     expect(shown("customer")).toBe(false);
   }, 60000);
 
+  it("while the customer details are still loading a returned quotation shows a stable loading state: the Customer form is NEVER visible on the way to Step 5", async () => {
+    factsDelayMs = 0; // set by open(); this one needs a read that is slow but inside the returned-quotation wait (3 x 250 ms)
+    const visibleCustomer: boolean[] = [];
+    const sample = setInterval(() => { const p = document.querySelector('[data-step-panel="customer"]'); if (p) visibleCustomer.push(!p.closest("[hidden]") && !p.hasAttribute("hidden")); }, 20);
+    try {
+      await open({ patch: RETURNED, delay: 600 });
+      expect(screen.getByTestId("stage1-shell").textContent).toMatch(/Preparing your quotation steps/);
+      await waitFor(() => expect(active()).toBe("submit"), { timeout: 8000 });
+    } finally { clearInterval(sample); }
+    expect(visibleCustomer.length).toBeGreaterThan(5);
+    expect(visibleCustomer.some(Boolean)).toBe(false);
+  }, 60000);
+
   it("a visit with ?stage=1 (no step) lands the same way", async () => {
     await open({ patch: RETURNED, search: "stage=1", delay: 900 });
     await waitFor(() => expect(active()).toBe("submit"), { timeout: 8000 });
@@ -116,6 +130,13 @@ describe("other states keep their landing", () => {
   it("a NEW quotation with nothing entered opens on Step 1", async () => {
     await open({ patch: NEW, draft: { customerName: "", siteName: "" } });
     await waitFor(() => expect(active()).toBe("customer"));
+  }, 60000);
+
+  it("a NEW quotation with Show all steps remembered as ON opens on its ONE active step; the other forms stay hidden and the checkbox starts unchecked", async () => {
+    await open({ patch: NEW, draft: { siteName: "" }, rememberShowAll: true });
+    await waitFor(() => expect(active()).toBe("site")); // the first incomplete step of a draft with no site yet
+    expect(["customer", "site", "equipment", "review", "submit"].filter((id) => shown(id))).toEqual(["site"]);
+    expect((screen.getByRole("checkbox", { name: /Show all steps/ }) as HTMLInputElement).checked).toBe(false);
   }, 60000);
 
   it("a returned quotation whose Site step is incomplete opens on that step, not on Submit and not on Customer", async () => {

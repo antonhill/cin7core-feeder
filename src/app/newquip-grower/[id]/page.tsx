@@ -77,6 +77,7 @@ import { deriveHandoverReadiness } from "@/newquip/quote/stage6-handover";
 import { StageNav } from "./StageNav";
 import { PhaseStepper } from "./PhaseStepper";
 import { PhaseHeader, NextActionBar } from "./PhaseHeader";
+import { activationPreview } from "@/newquip/quote/estimator-workspace";
 import { nextActionText, phase1State, phase3State, phaseBadge, supportingDetailLabel, totalCaption } from "./phase-ux-model";
 import { navPresentation } from "@/newquip/quote/stage-nav-model";
 import { phaseOfStage, phaseViews } from "@/newquip/quote/phases";
@@ -191,7 +192,9 @@ export default function QuoteEditorPage() {
   const [urlSync, setUrlSync] = useState<Stage1StepId | null>(null);
   // Safety net: if the customer details never report (a hung request), the wizard stops waiting after 10 s instead of showing its loading shell forever.
   const [factsGiveUp, setFactsGiveUp] = useState(false);
-  useEffect(() => { const t = setTimeout(() => setFactsGiveUp(true), CUSTOMER_FACTS_WAIT_MS); return () => clearTimeout(t); }, []);
+  // The waits start when the quotation has LOADED (that is when the customer details are first asked for), not at mount: a slow quotation read must not use up the wait before the customer panel even exists.
+  const quoteLoaded = view !== null;
+  useEffect(() => { if (!quoteLoaded) return; const t = setTimeout(() => setFactsGiveUp(true), CUSTOMER_FACTS_WAIT_MS); return () => clearTimeout(t); }, [quoteLoaded]);
   // A step chosen because the wait ran out (the customer details had NOT reported) is provisional: the Customer step then looks incomplete only because nothing is known yet. The first time the details do report,
   // and only if the viewer has not chosen a step or started an edit, the step is worked out again once, so a slow read never leaves a returned quotation stuck on Customer.
   const [entryProvisional, setEntryProvisional] = useState(false);
@@ -229,6 +232,9 @@ export default function QuoteEditorPage() {
   const [ackFor, setAckFor] = useState<string | null>(null); // which acknowledgement may be announced; cleared after a few seconds and when the step changes
   useEffect(() => { if (!ackFor) return; const t = setTimeout(() => setAckFor(null), 6000); return () => clearTimeout(t); }, [ackFor]);
   const [showAllPref, setShowAllPref] = useShowAllSteps("nq-builder-show-all");
+  const [legacyOpen, setLegacyOpen] = useState(false); // the explicit, explained way to the older Estimator costing panel (never the default)
+  const [factsGiveUpLong, setFactsGiveUpLong] = useState(false);
+  useEffect(() => { if (!quoteLoaded) return; const t = setTimeout(() => setFactsGiveUpLong(true), 3 * CUSTOMER_FACTS_WAIT_MS); return () => clearTimeout(t); }, [quoteLoaded]);
   const [allOverride, setAllOverride] = useState(false); // a returned Rep quotation opens on the active step even if Show all steps is remembered; this per-visit choice can still open them all
   // The sticky Stage 2 step bar must never hide the element a focus move scrolls to.
   useEffect(() => { const el = document.documentElement; const prev = el.style.scrollPaddingBottom; el.style.scrollPaddingBottom = "7rem"; return () => { el.style.scrollPaddingBottom = prev; }; }, []);
@@ -559,7 +565,15 @@ export default function QuoteEditorPage() {
   const unpricedHandoffAvailable = (totalCents == null || totalCents <= 0) && repReady && rd.estimatorReasons.length > 0 && ev.calc.lines.some((l) => l.basis !== "not_selected" && (l.projectQuantity ?? 0) > 0);
   const wizard = deriveWizard({ state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", revision: q.revision, stage1Status: stages[0].status, roles: { rep: roles.has("rep"), estimator: roles.has("estimator"), manager: roles.has("manager") }, canViewCommercials: view.viewer.canViewCommercials, stage1, customer: customerFacts, repReady, estimatorOpen: estItems.length, totalAvailable: totalCents != null && totalCents > 0, unpricedHandoffAvailable });
   // Resolve the entry step ONCE, after the customer facts have settled (read, failed or unavailable), and latch it: no later change of the facts can move the viewer (React's render-phase initialisation, as for `landing`).
-  const factsSettled = customerFactsSettled(customerFacts) || factsGiveUp;
+  const phaseUx = !poc && draft.quoteType === "project";
+  const readOnlyP1 = phaseUx && stage === 1 && !roles.has("rep");
+  // A Rep opens every project quotation on the ONE active step: a remembered "Show all steps" never applies on arrival (the per-visit checkbox can still open them all), and a returned quotation waits behind a stable
+  // loading state, for longer than an ordinary one, until the active step is known instead of showing Customer first.
+  const repFocus = phaseUx && stage === 1 && roles.has("rep");
+  const returnedFocus = repFocus && wizard.returned;
+  const showAllSteps = repFocus ? allOverride : showAllPref;
+  const setShowAllSteps = (v: boolean) => (repFocus ? setAllOverride(v) : setShowAllPref(v));
+  const factsSettled = customerFactsSettled(customerFacts) || (returnedFocus ? factsGiveUpLong : factsGiveUp);
   if (stage === 1 && factsSettled && entry === null) { setEntry(resolveEntryStep(wizard, reqStep)); setEntryProvisional(!customerFactsSettled(customerFacts)); }
   if (stage === 1 && entry !== null && entryProvisional && customerFactsSettled(customerFacts)) {
     setEntryProvisional(false);
@@ -601,13 +615,13 @@ export default function QuoteEditorPage() {
   const wsStage2 = workspaceMode && stage === 2;
   // FOUR-PHASE UX (project quotations): one header and one phase navigation on every phase; a phase owned by another role is a concise read-only summary, never that role's editable form. Day-to-day and POC
   // quotations keep the existing screens.
-  const phaseUx = !poc && draft.quoteType === "project";
-  const readOnlyP1 = phaseUx && stage === 1 && !roles.has("rep");
-  const returnedFocus = phaseUx && stage === 1 && wizard.returned && roles.has("rep");
-  const showAllSteps = returnedFocus ? allOverride : showAllPref;
-  const setShowAllSteps = (v: boolean) => (returnedFocus ? setAllOverride(v) : setShowAllPref(v));
   const repPhase2 = phaseUx && stage === 2 && !workspaceMode && !isEstimator && !canCommercials;
-  const uxChrome = wsStage2 || (phaseUx && stage !== 2) || repPhase2;
+  // SUPPLIER PRICING OFF on a submitted project quotation: the Estimator gets the same professional layout with ONE first task (start supplier costing), not the old four-step wizard. The transition itself is the
+  // existing ActivationPanel: it shows the financial impact first and uses the existing authorised pricing action on the first cost save.
+  const startMode = phaseUx && stage === 2 && !workspaceMode && !p2Status && isEstimator && canCommercials && !final && !!budget && draft.quoteType === "project" && !draft.estimator.pricing?.enabled && (q.state === "ESTIMATOR_REVIEW" || q.state === "REP_DRAFT");
+  const startUx = startMode && !legacyOpen;
+  const startPreview = startMode && budget ? activationPreview(budget) : null;
+  const uxChrome = wsStage2 || (phaseUx && stage !== 2) || repPhase2 || startUx;
   // Supplier pricing is OFF but could be switched on from the new experience: a project quotation, an Estimator who may see costs, in review or back with the Rep. (Day-to-day, POC and approved quotations never offer it.)
   const activationEligible = !workspaceMode && !p2Status && !poc && canCommercials && isEstimator && !final && !!budget && draft.quoteType === "project" && !draft.estimator.pricing?.enabled && (q.state === "ESTIMATOR_REVIEW" || q.state === "REP_DRAFT");
   const reloadQuote = (): Promise<void> => getGrowerQuoteAction(id).then((r) => { if (r.ok && r.data) adopt(r.data, true); });
@@ -805,7 +819,7 @@ export default function QuoteEditorPage() {
 
       {error && <div className="mt-4"><Alert tone="danger">{error}</Alert></div>}
       <ActionFeedback state={acts.stateOf("page")} floating />
-      <LongRunningStatus label={acts.currentLabel} />
+      <LongRunningStatus label={phaseUx && acts.isPending("send") ? null : acts.currentLabel} />
       {final && <div className="mt-4"><Alert tone="info">This quote is the manager-approved final. Its accepted baseline is frozen; any change after acceptance must be a Variation on the Project.</Alert></div>}
 
       {!uxChrome && <StageNav compact={stage <= 2} hideNext={stage === 2} stages={stagesView} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state, estimatorOpen: mappingOpen.length, signedOff: s2Base.signoff === "current" }} />}
@@ -823,7 +837,15 @@ export default function QuoteEditorPage() {
       {uxChrome && !wsStage2 && (() => {
         const cur = stagesView.find((x) => x.id === here);
         const pr = cur ? navPresentation(cur, previewable.includes(here), { roles: view.viewer.roles, state: q.state, estimatorOpen: mappingOpen.length, signedOff: s2Base.signoff === "current" }) : null;
-        const na = nextActionText(pr);
+        const firstOpenStep = wizard.steps.find((x) => x.access === "edit" && x.status !== "complete");
+        const starter = startPreview?.starters[0] ?? null;
+        const na = startUx
+          ? (!s2Edit ? { headline: "Waiting for the Estimator to start supplier costing", detail: "This quotation is still priced from the reference price list. Only an Estimator can switch it to current supplier costs." }
+            : starter ? { headline: `Enter the supplier cost for ${starter.label}`, detail: "Saving it switches supplier costing on and records a revision. The effect on the total is shown first, and nothing changes until you save." }
+            : { headline: "Supplier costing cannot be started from this screen", detail: "No single product can take the first cost. The explanation and the older costing panel are below." })
+          : phaseUx && stage === 1 && roles.has("rep") && q.state === "REP_DRAFT" && !wizard.returned && firstOpenStep
+            ? { headline: `Complete “${STAGE1_STEP_LABEL[firstOpenStep.id as Stage1StepId]}”`, detail: "The problems to fix are shown beside the fields on that step." }
+            : nextActionText(pr);
         return na ? <NextActionBar headline={na.headline} detail={na.detail} /> : null;
       })()}
       {uxChrome && !wsStage2 && stage >= 4 && (
@@ -897,13 +919,28 @@ export default function QuoteEditorPage() {
         </div>
       )}
 
+      {startUx && budget && (
+        <div className="mt-4 space-y-4" data-testid="supplier-costing-start">
+          <ActivationPanel firstTask quoteId={id} budget={budget} confirmedCents={q.customer_confirmed_cents} canEdit={s2Edit} reload={reloadQuote} onDirtyChange={setWsDirty} onUseLegacy={() => setLegacyOpen(true)} />
+          <p className="text-sm text-slate-700">Room measurements, quantities, delivery, installation and the M75 price belong to the Rep.</p>
+          <section className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm text-slate-800" aria-label="Other Estimator actions" data-testid="other-estimator-actions">
+            <h3 className="font-bold text-slate-900">Not ready to start supplier costing?</h3>
+            <p className="mt-1">You can still map products, confirm packages, sign off or return this quotation to the Rep without switching to supplier costing. Those actions are in the older costing panel (it also holds the Manager&apos;s incomplete-costing waiver).</p>
+            <button type="button" className="mt-1 inline-flex min-h-11 items-center font-semibold text-blue-800 underline disabled:text-slate-700 disabled:no-underline" disabled={wsDirty} onClick={() => setLegacyOpen(true)} data-testid="use-legacy-costing-link">Open the older costing panel</button>
+            {wsDirty && <p className="text-xs text-slate-700" data-testid="legacy-blocked-dirty">Save or clear the cost you are typing first, so it is not lost.</p>}
+          </section>
+        </div>
+      )}
+      {startMode && legacyOpen && (
+        <div className="mt-4"><Alert tone="info"><span data-testid="legacy-costing-note">You opened the older costing panel on purpose.</span> <button type="button" className="min-h-11 font-semibold text-blue-800 underline" onClick={() => setLegacyOpen(false)} data-testid="back-to-workspace">Back to the Estimator workspace</button></Alert></div>
+      )}
       {repPhase2 && (
         <section className="mt-4 rounded-xl border border-slate-200 bg-white px-5 py-4" data-testid="phase2-readonly">
           <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">Phase 2 · Cost &amp; Verify · read-only</p>
           <p className="mt-1 text-sm text-slate-700" data-testid="stage2-status-line">This phase belongs to the Estimator. Supplier costs and margins are internal and are not shown to you.</p>
         </section>
       )}
-      {stage === 2 && !repPhase2 && (
+      {stage === 2 && !repPhase2 && !startUx && (
         <>
           {!wsStage2 && <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm" data-testid="stage2-owner">
             <span className="font-semibold text-slate-900">Stage 2 is the Estimator&apos;s review.</span>
@@ -935,7 +972,7 @@ export default function QuoteEditorPage() {
 
       {stage === 2 && canCommercials && <div role="status" aria-live="polite" data-testid="cost-ack-live">{ackMsg && <p className="mt-3 text-sm text-slate-800" data-testid="cost-ack-status">{ackMsg}</p>}</div>}
       {stage === 2 && <div role="status" data-testid="next-role-live">{signedNow && <p className="mt-3 text-sm font-semibold text-slate-900" data-testid="next-manager-cue">Next: Manager approval (Stage 3).</p>}</div>}
-      {((stage === 1 && !readOnlyP1) || (stage === 2 && !repPhase2 && (s2Edit || dirty))) && (
+      {((stage === 1 && !readOnlyP1) || (stage === 2 && !repPhase2 && !startUx && (s2Edit || dirty))) && (
         <>
           <div className="mt-2 space-y-1">{editable && <div className={!dirty ? "sr-only" : ""}><DisabledReason id="save-why">{saveWhy}</DisabledReason></div>}<ActionFeedback state={acts.stateOf("save")} /></div>
           <div className="mt-2 space-y-2">
@@ -1100,12 +1137,12 @@ export default function QuoteEditorPage() {
                 {awaitingLines > 0 && <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950" data-testid="indicative-note">This total is indicative while {awaitingLines} line{awaitingLines === 1 ? "" : "s"} await{awaitingLines === 1 ? "s" : ""} the Estimator. If the Estimator&apos;s pricing changes it, the quotation returns to you to reconfirm the amount with the customer.</p>}
                 {unpricedHandoffAvailable ? (
                   <div className="mt-3">
-                    <UnpricedHandoffPanel canAct={roles.has("rep") && q.state === "REP_DRAFT"} ready={repReady} loading={acts.isPending("send")} otherBusy={isWorking && !acts.isPending("send")}
+                    <UnpricedHandoffPanel canAct={roles.has("rep") && q.state === "REP_DRAFT"} ready={repReady} loading={phaseUx ? false : acts.isPending("send")} otherBusy={phaseUx ? isWorking : isWorking && !acts.isPending("send")}
                       onSubmit={(ackd) => act(() => sendGrowerQuoteUnpricedToEstimatorAction(id, ackd), "Submitted to the Estimator: no customer price is recorded yet. The Estimator will establish the price, then you confirm the calculated amount with the customer.", "send", (v) => v.quote.state === "ESTIMATOR_REVIEW", 1, OP.submitToEstimator)} />
                   </div>
                 ) : (
                 <div className="mt-3">
-                  <ConfirmationPanel quoteId={id} amountLabel={totalCents == null ? null : fmtCents(totalCents)} canAct={roles.has("rep") && q.state === "REP_DRAFT"} ready={repReady} indicativeLines={totalIndicative ? awaiting.lines : 0} loading={acts.isPending("send")} otherBusy={isWorking && !acts.isPending("send")} refreshKey={`${q.revision}:${q.state}:${q.updated_at}`} recorded={false}
+                  <ConfirmationPanel quoteId={id} amountLabel={totalCents == null ? null : fmtCents(totalCents)} canAct={roles.has("rep") && q.state === "REP_DRAFT"} ready={repReady} indicativeLines={totalIndicative ? awaiting.lines : 0} loading={phaseUx ? false : acts.isPending("send")} otherBusy={phaseUx ? isWorking : isWorking && !acts.isPending("send")} refreshKey={`${q.revision}:${q.state}:${q.updated_at}`} recorded={false}
                     onConfirm={(c) => act(() => sendGrowerQuoteToEstimatorAction(id, totalCents!, c), "Submitted to the Estimator: the customer's price confirmation is recorded and the Estimator has been notified.", "send", (v) => v.quote.state === "ESTIMATOR_REVIEW", 1, OP.submitToEstimator)} />
                 </div>
                 )}
@@ -1131,7 +1168,7 @@ export default function QuoteEditorPage() {
       )}
 
       {/* ───────────── 2 · ESTIMATOR REVIEW ───────────── */}
-      {stage === 2 && !repPhase2 && (
+      {stage === 2 && !repPhase2 && !startUx && (
         <>
         {workspaceMode && budget && (
           <>
@@ -1444,7 +1481,7 @@ export default function QuoteEditorPage() {
         <div className="mt-6 space-y-6" data-testid="stage3-workspace">
           {phaseUx ? (
             <ManagerDecision decider="a Manager" statusLine={phase3State(phaseFactsNow)} totals={p1Totals} verification={p2Status ? { required: p2Status.required, verified: p2Status.verified } : null}
-              margin={canCommercials && !poc && budget ? { value: fmtPctShown, note: marginLabel } : null}
+              margin={canCommercials && !poc && budget ? (p2Status ? { value: fmtPctShown, note: p2Status.verified >= p2Status.required && p2Status.complete ? "Supplier costs independently verified" : "Indicative: supplier costs not yet independently verified" } : { value: "Not verified", note: "Supplier costing is not on for this quotation, so there is no verified margin. The price-list margin is indicative only and is not shown as a result." }) : null}
               signoff={{ by: q.estimator_signoff_by_email ?? null, at: q.estimator_signoff_at ? formatSast(q.estimator_signoff_at) : null, state: s2Base.signoff === "current" ? "current" : s2Base.signoff === "stale" ? "stale" : "none" }}
               evidence={(canCommercials && view.manualPriceEvidence ? view.manualPriceEvidence : []).map((e) => ({ label: e.label, recorded: e.state === "recorded" }))}
               exceptions={[...new Set([...approveBlockers.map((b) => b.text), ...(commercial && !commercial.complete && commercial.headline ? [commercial.headline] : [])])]} />

@@ -21,14 +21,18 @@ export interface ActivationPanelProps {
   /** Re-reads the quotation; settles when the page shows the new figures. */
   reload: () => Promise<void> | void;
   onDirtyChange?: (dirty: boolean) => void;
+  /** Presented as THE first task of the Estimator workspace (opens at once, first-task wording) instead of an optional panel. */
+  firstTask?: boolean;
+  /** When no single product can take the first cost: the explicit, explained way to the older costing panel (never the silent default). */
+  onUseLegacy?: () => void;
 }
 
-export function ActivationPanel({ quoteId, budget, confirmedCents, canEdit, reload, onDirtyChange }: ActivationPanelProps) {
+export function ActivationPanel({ quoteId, budget, confirmedCents, canEdit, reload, onDirtyChange, firstTask = false, onUseLegacy }: ActivationPanelProps) {
   const pv = activationPreview(budget);
   const [bundle, setBundle] = useState<WorkspaceBundle | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sku, setSku] = useState<string | null>(pv.starters[0]?.sku ?? null);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(firstTask && canEdit);
   const load = useCallback(() => { void getEstimatorPricingAction(quoteId).then((r) => { if (r.ok && r.data) { setBundle(r.data); setError(null); } else setError(r.error ?? "Supplier pricing could not be loaded."); }, () => setError("Supplier pricing could not be read.")); }, [quoteId]);
   useEffect(() => { if (open && !bundle) load(); }, [open, bundle, load]);
   const starter = pv.starters.find((s) => s.sku === sku) ?? pv.starters[0];
@@ -46,8 +50,8 @@ export function ActivationPanel({ quoteId, budget, confirmedCents, canEdit, relo
     <section aria-labelledby="act-h" className="mt-4 rounded-xl border-2 border-blue-700 bg-white p-5" data-testid="activation-panel">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 flex-[1_1_20rem]">
-          <h2 id="act-h" className="text-lg font-bold text-slate-900">Estimator workspace <span className="font-normal text-slate-700">· supplier pricing is off</span></h2>
-          <p className="mt-1 text-sm text-slate-800">Price this quotation from supplier costs, one product at a time, with the exception-first task list. Switching it on uses the existing pricing action and is recorded as a revision.</p>
+          <h2 id="act-h" className="text-lg font-bold text-slate-900">{firstTask ? "First task: start supplier costing" : <>Estimator workspace <span className="font-normal text-slate-700">· supplier pricing is off</span></>}</h2>
+          <p className="mt-1 text-sm text-slate-800">{firstTask ? "This quotation is still priced from the reference price list. To price it from current supplier costs, save the first supplier cost below. That switches supplier costing on, using the existing pricing action, and is recorded as a revision. Every other product is then costed from the task list." : "Price this quotation from supplier costs, one product at a time, with the exception-first task list. Switching it on uses the existing pricing action and is recorded as a revision."}</p>
         </div>
         {canEdit && !open && <button type="button" className="inline-flex min-h-11 items-center rounded-lg bg-blue-700 px-5 text-sm font-semibold text-white hover:bg-blue-800" onClick={() => setOpen(true)} data-testid="activation-start">Switch on supplier pricing</button>}
       </div>
@@ -67,7 +71,7 @@ export function ActivationPanel({ quoteId, budget, confirmedCents, canEdit, relo
             <p className="flex justify-between font-semibold"><span>Estimated partial total once it is on, before any cost</span><span className="tabular-nums" data-testid="activation-total-after">{money(pv.totalAfter)}</span></p>
             <p className="mt-2">The estimated figure is the total today less the lines above. It is an estimate, not a pricing-model result; the model shows the real total once supplier pricing is on. It is a partial, indicative total, never a completed quotation value.{confirmedCents !== null ? <> The Rep confirmed {money(confirmedCents / 100)}. If the total moves, the Rep&apos;s confirmation is withdrawn and the quotation returns to the Rep to reconfirm.</> : null}</p>
           </div>
-          {pv.starters.length === 0 ? <Alert tone="warning"><span data-testid="activation-no-starter">No single-product line can take the first cost here. Use the older costing panel below to switch supplier pricing on.</span></Alert> : (
+          {pv.starters.length === 0 ? <Alert tone="warning"><span data-testid="activation-no-starter">No single-product line can take the first supplier cost here, so supplier costing cannot be started from this screen. {onUseLegacy ? "The older costing panel can still switch it on." : "Use the older costing panel below to switch supplier pricing on."}</span>{onUseLegacy && <span className="ml-2"><button type="button" className="min-h-11 font-semibold text-blue-800 underline" onClick={onUseLegacy} data-testid="use-legacy-costing">Open the older costing panel</button></span>}</Alert> : (
             <>
               <div><label htmlFor="act-start" className="mb-1.5 block text-[13px] font-semibold">Start with the supplier cost of</label>
                 <select id="act-start" className="min-h-11 w-full max-w-md rounded-lg border-[1.5px] border-slate-500 bg-white px-3 text-[15px]" value={starter?.sku ?? ""} onChange={(e) => setSku(e.target.value)}>{pv.starters.map((s) => <option key={s.sku} value={s.sku}>{s.label} · {s.sku}</option>)}</select>

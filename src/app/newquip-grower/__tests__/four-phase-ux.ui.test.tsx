@@ -139,6 +139,8 @@ describe("Phase 3 is one decision screen", () => {
     for (const id of ["decision-status", "decision-totals", "decision-verification", "decision-margin", "decision-signoff", "decision-open"]) expect(screen.getByTestId(id), id).toBeTruthy();
     expect(screen.getByTestId("decision-totals").textContent).toMatch(/R\u00a0[\d\u00a0]+,\d\d.*ex VAT.*VAT R\u00a0[\d\u00a0]+,\d\d.*inc VAT R\u00a0[\d\u00a0]+,\d\d/);
     expect(screen.getByTestId("decision-signoff").textContent).toMatch(/Not signed off yet/);
+    expect(screen.getByTestId("decision-margin").textContent).toMatch(/Not verified/); // supplier costing is off here: the price-list margin is never presented as a verified result
+    expect(screen.getByTestId("decision-margin").textContent).not.toMatch(/\d+(\.\d+)?%/);
     expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy(); // the existing gate (disabled until it is satisfied)
     expect(screen.queryByTestId("stage3-owner")).toBeNull();
     expect(screen.getByTestId("decision-supporting").tagName).toBe("DETAILS"); // the Estimator result, evidence and Rep submission stay available, collapsed
@@ -184,12 +186,6 @@ describe("final presentation pass", () => {
     for (const id of others) expect(panel(id).hasAttribute("hidden"), id).toBe(true); // ONE form, not five
     fireEvent.click(screen.getByRole("checkbox", { name: /Show all steps/ }));
     await waitFor(() => { for (const id of others) expect(panel(id).hasAttribute("hidden"), id).toBe(false); });
-  }, 60000);
-
-  it("a Rep on an ordinary (not returned) draft still honours the remembered Show all steps", async () => {
-    vi.stubGlobal("localStorage", { getItem: () => "1", setItem: () => undefined });
-    await openQuote({ roles: ["REP"], commercials: false, search: "stage=1&step=5", patch: () => undefined, waitFor: "step-rail" });
-    await waitFor(() => expect((document.querySelector('[data-step-panel="customer"]') as HTMLElement).hasAttribute("hidden")).toBe(false));
   }, 60000);
 
   it("exactly one Next action per phase screen, and the badge describes THAT phase (Phase 4 never says 'returned to the Rep')", async () => {

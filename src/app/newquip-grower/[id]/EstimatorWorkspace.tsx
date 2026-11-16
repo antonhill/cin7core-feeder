@@ -1,5 +1,6 @@
 "use client";
 
+import { CostReview } from "./CostReview";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
@@ -262,6 +263,7 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
             </section>
             <RepItems items={ws.repItems} />
             <CompleteGroup lines={doneLines} charges={p.budget.charges} onEdit={openLine} canEdit={canEdit} onRecordEvidence={recordEvidence} />
+            <CostReview bundle={bundle} budget={p.budget} />
             <p className="text-[13px] text-slate-700">Room measurements, quantities, delivery, installation and the M75 price belong to the Rep.</p>
           </div>
           <div className="flex min-w-0 flex-[1_1_18rem] flex-col gap-3 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:max-w-sm lg:self-start lg:overflow-y-auto"><SummaryPanel s={s} /><HowItWorks s={s} step={step} verified={bundle.view.costs.verified} required={bundle.view.costs.required} /></div>
