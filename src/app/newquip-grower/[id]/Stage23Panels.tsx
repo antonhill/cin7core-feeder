@@ -15,7 +15,7 @@ import { fmtCents, fmtZar } from "../fields";
 // here is derived from facts the page already holds; nothing edits, saves or authorises anything, and nothing imports a server action or a store. Cost and margin appear only where the page
 // passes them, which it does only for a viewer with cost visibility.
 
-const OPTIONAL_NAMES: Record<string, string> = {
+export const OPTIONAL_NAMES: Record<string, string> = {
   controller: "Thomas-CL1 controller", silo_weighing: "Silo weighing", control_panel: "Control panel", emergency_windows: "Emergency windows", pad_cooling: "Pad cooling", cone_fans: "Cone fans", manure_plug: "Manure plugs",
 };
 const MARK = (met: boolean) => <span aria-hidden className={`inline-flex size-6 shrink-0 items-center justify-center rounded-full border text-xs font-bold ${met ? "border-emerald-700 bg-emerald-700 text-white" : "border-amber-600 bg-amber-50 text-amber-900"}`}>{met ? "✓" : "!"}</span>;
