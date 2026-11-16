@@ -13,14 +13,14 @@ import { GOLDEN_LIBRARY } from "@/newquip/grower/__tests__/golden-catalogue";
 import { NEWQUIP_STANDARD_SCHEDULE } from "@/newquip/quote/billing-schedule";
 import { buildCustomerSnapshot, withChosenContact } from "../customer-snapshot";
 import { assertNoInternalLeak, buildCustomerDocumentModel, internalTokens, internalTokenSet, messageLeaksInternal, tokenAppears, type CustomerDocumentModel } from "../customer-document";
-import { cleanProfile, missingProfileFields, type CompanyProfile } from "../company-profile";
-import { formatRand, pdfSafe, renderCustomerPdf } from "../customer-pdf";
+import { cleanProfile, looksLikePlaceholder, missingProfileFields, type CompanyProfile } from "../company-profile";
+import { fmtPercent, formatRand, pdfSafe, renderCustomerPdf, roundingNote } from "../customer-pdf";
 import { issueQuotationDocument, readDocumentBytes, saveProfile, sha256, type DocumentDeps } from "../document-store";
 
 // Test-only company details: placeholders for TESTS, never shipped as defaults.
 const PROFILE: CompanyProfile = {
-  brandName: "TestBrand", legalName: "Test Company (Pty) Ltd", registrationNumber: "0000/000000/00", vatNumber: "0000000000", addressLines: ["1 Test Street", "Testville 0001"], phone: "000 000 0000",
-  email: "sales@testbrand.example", website: "", validityDays: 30, paymentTerms: "TERMS-PAYMENT-MARKER", deliveryInstallationConditions: "TERMS-DELIVERY-MARKER", termsAndConditions: "TERMS-GENERAL-MARKER", acceptanceInstructions: "TERMS-ACCEPT-MARKER",
+  brandName: "TestBrand", legalName: "Test Company (Pty) Ltd", registrationNumber: "2012/123456/07", vatNumber: "4123456789", addressLines: ["1 Test Street", "Testville 0001"], phone: "021 555 0100",
+  email: "sales@testbrand.example", website: "", validityDays: 30, paymentTerms: "TERMS-PAYMENT-MARKER (fictitious fixture text)", deliveryInstallationConditions: "TERMS-DELIVERY-MARKER (fictitious fixture text)", termsAndConditions: "TERMS-GENERAL-MARKER (fictitious fixture text)", acceptanceInstructions: "TERMS-ACCEPT-MARKER (fictitious fixture text)",
 };
 const approvals = { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "rep.person@nq.example", handoffBy: "rep.person@nq.example", estimatorSignoffBy: "est.person@nq.example", estimatorSignoffAt: "t", managerApprovedBy: "mgr.person@nq.example", managerApprovedAt: "t" };
 const freeze = () => {
@@ -71,7 +71,7 @@ describe("customer document model", () => {
     expect(model.customer).toMatchObject({ name: "Boerdery (Pty) Ltd", contactName: "Piet", contactEmail: "piet@boerdery.example", vatNumber: "4123456789" });
     expect(model.customer.billingAddress).toEqual(["PO Box 1", "Paarl WC 7646", "South Africa"]);
     expect(model.quote).toMatchObject({ reference: "NQ-Q-0009", revision: 1, issuedOn: "2026-10-29", validUntil: "2026-11-28", validityDays: 30, siteName: "Paarl farm" });
-    expect(model.termsAndConditions).toBe("TERMS-GENERAL-MARKER");
+    expect(model.termsAndConditions).toBe("TERMS-GENERAL-MARKER (fictitious fixture text)");
   });
   it("CONFIDENTIALITY: no SKU, supplier, margin value, assumption text or internal person appears anywhere in the model", () => {
     const text = JSON.stringify(model).toLowerCase();
@@ -112,7 +112,7 @@ describe("PDF rendering", () => {
     const bytes = await renderCustomerPdf(model);
     expect(Buffer.from(bytes.subarray(0, 5)).toString()).toBe("%PDF-");
     const t = pdfText(bytes);
-    for (const must of ["Boerdery (Pty) Ltd", "NQ-Q-0009", "Piet", "29/10/2026", "28/11/2026", formatRand(model.totals.subtotalExVat), formatRand(model.totals.vat), formatRand(model.totals.totalIncVat), "TERMS-PAYMENT-MARKER", "TERMS-DELIVERY-MARKER", "TERMS-GENERAL-MARKER", "TERMS-ACCEPT-MARKER", "Test Company (Pty) Ltd", model.paymentSchedule[0].name])
+    for (const must of ["Boerdery (Pty) Ltd", "NQ-Q-0009", "Piet", "29/10/2026", "28/11/2026", formatRand(model.totals.subtotalExVat), formatRand(model.totals.vat), formatRand(model.totals.totalIncVat), "TERMS-PAYMENT-MARKER (fictitious fixture text)", "TERMS-DELIVERY-MARKER (fictitious fixture text)", "TERMS-GENERAL-MARKER (fictitious fixture text)", "TERMS-ACCEPT-MARKER (fictitious fixture text)", "Test Company (Pty) Ltd", model.paymentSchedule[0].name])
       expect(t, must).toContain(must);
     for (const t2 of internalTokens(baseline)) expect(t.toLowerCase().includes(t2.toLowerCase()), `PDF leaked: ${t2}`).toBe(false);
     expect(t).not.toMatch(/margin|supplier|exchange rate|landed/i);
@@ -150,7 +150,7 @@ describe("issuing an immutable customer document", () => {
     w.addSnapshot(snapshot({ Currency: "USD" }));
     await expect(issue(w)).rejects.toThrow(/ZAR only/);
     w.db.rows("newquip_quote_customers").length = 0; w.addSnapshot();
-    await expect(issue(w)).rejects.toThrow(/company details are incomplete/);
+    await expect(issue(w)).rejects.toThrow(/Complete NewQuip company details \(Manager > Company details\) before issuing a customer PDF/);
     await saveProfile(w.db as never, "org-a", { ...PROFILE, termsAndConditions: "" }, "m@x").catch(() => undefined);
     expect(w.db.rows("newquip_company_profiles")).toHaveLength(0);
     expect(w.deps.renders).toBe(0); expect(w.files.size).toBe(0); expect(w.db.rows("newquip_quote_documents")).toHaveLength(0);
@@ -175,7 +175,7 @@ describe("issuing an immutable customer document", () => {
   it("a changed input (new company terms) issues VERSION 2; version 1 and its file remain untouched", async () => {
     const w = world(); w.addSnapshot(); await saveProfile(w.db as never, "org-a", PROFILE, "m@x");
     const v1 = await issue(w); const bytes1 = new Uint8Array(w.files.get("org-a/q1/r1-v1.pdf")!);
-    await saveProfile(w.db as never, "org-a", { ...PROFILE, termsAndConditions: "REVISED-TERMS" }, "m@x");
+    await saveProfile(w.db as never, "org-a", { ...PROFILE, termsAndConditions: "REVISED-TERMS (fictitious fixture text)" }, "m@x");
     const v2 = await issue(w);
     expect(v2.created).toBe(true); expect(v2.document.version).toBe(2); expect(v2.document.storage_path).toBe("org-a/q1/r1-v2.pdf");
     expect(w.files.get("org-a/q1/r1-v1.pdf")).toEqual(bytes1);
@@ -318,5 +318,72 @@ describe("the guard still blocks genuine confidential data (and names only the K
     expect(messageLeaksInternal("Please find the latest quote and the testing schedule", baseline)).toBe(false);
     expect(messageLeaksInternal(`Includes ${sku} at a good margin`, baseline)).toBe(true);
     expect(messageLeaksInternal("Our gross profit is fine", baseline)).toBe(true);
+  });
+});
+
+describe("placeholder guard on company details", () => {
+  const GENUINE = "Payment is due within 7 days of each invoice. Late payments attract interest at the prime rate plus two percent. Ownership passes on full payment.";
+  it.each(["Test", "Terms", "Please do this", "TBD", "lorem ipsum", "todo", "n/a", "xxx", "asdf", "placeholder", "sample", "dummy", "  test.  ", "dummy text"])("rejects %j as a terms field", (v) => {
+    for (const k of ["paymentTerms", "deliveryInstallationConditions", "termsAndConditions", "acceptanceInstructions"] as const) expect(missingProfileFields({ ...PROFILE, [k]: v })).toEqual([expect.any(String)]);
+  });
+  it("rejects short strings and accepts a genuine multi-sentence paragraph", () => {
+    expect(missingProfileFields({ ...PROFILE, termsAndConditions: "Net 30 days." })).toEqual(["Terms and conditions"]);
+    expect(missingProfileFields({ ...PROFILE, termsAndConditions: GENUINE, paymentTerms: GENUINE })).toEqual([]);
+  });
+  it("rejects word placeholders for identity fields but not real-looking numbers or names", () => {
+    expect(missingProfileFields({ ...PROFILE, brandName: "test", legalName: "TBD", registrationNumber: "n/a", vatNumber: "xxx", phone: "sample" })).toHaveLength(5);
+    expect(missingProfileFields({ ...PROFILE, vatNumber: "4123456789", registrationNumber: "2012/123456/07", phone: "+27 21 555 0100", legalName: "Test Valley Farms (Pty) Ltd" })).toEqual([]);
+    expect(looksLikePlaceholder("Terms of Trade apply to all work")).toBe(false);
+  });
+  it("names are matched whole-value only: real names that start with a placeholder word are accepted", () => {
+    expect(missingProfileFields({ ...PROFILE, brandName: "Test Valley", legalName: "Sample Farms" })).toEqual([]);
+    expect(missingProfileFields({ ...PROFILE, brandName: "Terms Co", legalName: "Dummy Holdings" })).toEqual([]);
+    expect(looksLikePlaceholder("Test Valley")).toBe(false); expect(looksLikePlaceholder("test 123", { terms: true })).toBe(true);
+  });
+  it("rejects repeated-digit identity values and a repeated-word terms value, but not real numbers", () => {
+    for (const k of ["vatNumber", "registrationNumber", "phone"] as const) { expect(missingProfileFields({ ...PROFILE, [k]: "0000000000" })).toHaveLength(1); expect(missingProfileFields({ ...PROFILE, [k]: "1111111111" })).toHaveLength(1); }
+    expect(missingProfileFields({ ...PROFILE, termsAndConditions: "test test test test test" })).toEqual(["Terms and conditions"]);
+    expect(missingProfileFields({ ...PROFILE, vatNumber: "4123456789", registrationNumber: "2012/123456/07" })).toEqual([]);
+  });
+  it("cleanProfile (profile save) refuses the live placeholder terms", () => {
+    expect(() => cleanProfile({ ...PROFILE, paymentTerms: "Test", termsAndConditions: "Terms", acceptanceInstructions: "Please do this", deliveryInstallationConditions: "Test" })).toThrow(/Payment terms, Delivery and installation conditions, Terms and conditions, Customer acceptance instructions/);
+  });
+  const PLACEHOLDER_PROFILE = { ...PROFILE, paymentTerms: "Test", termsAndConditions: "Terms", acceptanceInstructions: "Please do this", deliveryInstallationConditions: "Test" };
+  const seedBadProfile = (w: ReturnType<typeof world>, org: string) => w.db.rows("newquip_company_profiles").push({ id: "p1", org_id: org, version: 1, profile: PLACEHOLDER_PROFILE, created_by_email: "m@x" });
+  it("issuing with a stored placeholder profile fails with the plain message and renders nothing", async () => {
+    const w = world(); w.addSnapshot(); seedBadProfile(w, "org-a");
+    await expect(issue(w)).rejects.toThrow("Complete NewQuip company details (Manager > Company details) before issuing a customer PDF: Payment terms, Delivery and installation conditions, Terms and conditions, Customer acceptance instructions");
+    expect(w.deps.renders).toBe(0); expect(w.files.size).toBe(0);
+  });
+  it("the demo override cannot mask a bad stored profile for a non-demo quote in the demo organisation, but demo quotes keep working", async () => {
+    const DEMO_ORG = "e1aea782-d095-47ad-90fb-4fa65c9bf855";
+    const mk = (ref: string) => { const w = world(); w.addSnapshot(); seedBadProfile(w, DEMO_ORG); Object.assign(w.db.rows("newquip_quotes")[0], { org_id: DEMO_ORG, quote_ref: ref }); w.db.rows("newquip_quote_customers").forEach((r) => { r.org_id = DEMO_ORG; }); return w; };
+    const other = mk("NQ-Q-0031");
+    await expect(issueQuotationDocument(other.db as never, DEMO_ORG, "q1", who, NEWQUIP_STANDARD_SCHEDULE, other.deps)).rejects.toThrow(/Complete NewQuip company details/);
+    const demo = mk("NQ-Q-0025");
+    const r = await issueQuotationDocument(demo.db as never, DEMO_ORG, "q1", who, NEWQUIP_STANDARD_SCHEDULE, demo.deps);
+    expect(r.created).toBe(true); expect(pdfText(demo.files.get(r.document.storage_path)!)).toContain("DEMONSTRATION ONLY");
+    // the demo exception relaxes ONLY the four terms: a placeholder identity field still blocks a demo quote
+    const badId = mk("NQ-Q-0025"); badId.db.rows("newquip_company_profiles")[0].profile = { ...PLACEHOLDER_PROFILE, brandName: "TBD", vatNumber: "1111111111" };
+    await expect(issueQuotationDocument(badId.db as never, DEMO_ORG, "q1", who, NEWQUIP_STANDARD_SCHEDULE, badId.deps)).rejects.toThrow(/before issuing a customer PDF: Brand \/ trading name, VAT registration number$/);
+  });
+});
+
+describe("PDF payment schedule presentation", () => {
+  const sched = (amts: number[], pcts: number[]) => amts.map((a, i) => ({ name: `S${i}`, description: "", trigger: "", percent: pcts[i], amountExVat: a }));
+  it("normalises percentages", () => { expect([40, 27.5, 12.25, 5, 33.33].map(fmtPercent)).toEqual(["40", "27.5", "12.25", "5", "33.33"]); });
+  it("prints a rounding note only when the final stage differs from its exact percentage", () => {
+    // R1 234 567,06 split 40/55/5: 493 826,82 + 679 011,88 + 61 728,36 (exact 5% = 61 728,35)
+    expect(roundingNote({ totals: { subtotalExVat: 1234567.06 } as never, paymentSchedule: sched([493826.82, 679011.88, 61728.36], [40, 55, 5]) })).toBe("Final stage includes a rounding balance of R 0,01.");
+    expect(roundingNote({ totals: { subtotalExVat: 100000 } as never, paymentSchedule: sched([40000, 55000, 5000], [40, 55, 5]) })).toBeNull();
+    expect(roundingNote({ totals: { subtotalExVat: 100 } as never, paymentSchedule: sched([100], [100]) })).toBeNull();
+  });
+  it("renders a long unbroken site name, 8 sections and a rounding stage without throwing", async () => {
+    const { baseline } = freeze();
+    const m = buildCustomerDocumentModel({ baseline, quoteRef: "NQ-Q-0009", revision: 1, snapshot: snapshot(), profile: PROFILE, schedule: NEWQUIP_STANDARD_SCHEDULE, issuedOn: "2026-10-29" });
+    const big: CustomerDocumentModel = { ...m, quote: { ...m.quote, siteName: "Fictitious-".repeat(12) + "Block7" }, sections: Array.from({ length: 8 }, (_, i) => ({ title: `Section ${i + 1}`, scope: "Fictitious scope text. ".repeat(12), amountExVat: 1000 + i })) };
+    const bytes = await renderCustomerPdf(big);
+    const t = pdfText(bytes);
+    expect(t).toContain(PROFILE.brandName); expect(t).toContain("Block7");
   });
 });
