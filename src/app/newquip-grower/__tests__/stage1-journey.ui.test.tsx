@@ -427,7 +427,7 @@ describe("show all steps, persistence and roles", () => {
   it("Show all steps is remembered; a LOCKED step shows its heading and reason (never its fields); permitted steps show", async () => {
     const data: Record<string, string> = {};
     vi.stubGlobal("localStorage", { getItem: (k: string) => data[k] ?? null, setItem: (k: string, v: string) => { data[k] = v; } });
-    await open({ view: snapshotView(true), draftOver: { siteName: "" } });
+    await open({ view: snapshotView(true), draftOver: { siteName: "", quoteType: "day_to_day" } }); // the remembered preference applies on arrival to the existing (non-project) screens
     fireEvent.click(screen.getByLabelText("Show all steps"));
     expect(data["nq-builder-show-all"]).toBe("1");
     for (const id of ["customer", "site"]) expect(shown(id), id).toBe(true);
@@ -438,7 +438,7 @@ describe("show all steps, persistence and roles", () => {
     const eq = panel("equipment") as HTMLElement;
     expect(eq.querySelector("[hidden][inert]")).not.toBeNull(); // the fields sit in a hidden, inert wrapper
     cleanup();
-    await open({ view: snapshotView(true), draftOver: { siteName: "" } });
+    await open({ view: snapshotView(true), draftOver: { siteName: "", quoteType: "day_to_day" } });
     await waitFor(() => expect((screen.getByLabelText("Show all steps") as HTMLInputElement).checked).toBe(true));
   }, 30000);
 
@@ -531,12 +531,12 @@ describe("P1-1: the landing stage and entry step are role-aware (no ?stage=)", (
   it("a Rep whose own steps are done but who waits on Estimator mappings lands on Stage 1 and is told nothing is left for them", async () => {
     await open({ view: snapshotView(true), draftOver: noMapDraft(), stage: "" });
     expect(viewing()).toBe("1");
-        expect(screen.getByTestId("next-action").textContent).toMatch(/will be resolved by the Estimator after you submit/);
+    expect(screen.getByTestId("next-action").textContent).toMatch(/Complete “Submit to Estimator”/); // ONE next task, not a list
     expect(screen.getByTestId("phase-header-status").textContent).toMatch(/ready to submit/i);
   }, 30000);
 
   it("an Estimator-only viewer on a Rep draft with Estimator-owned mapping lands on Stage 2; without such work as before (Stage 1)", async () => {
-    await open({ view: snapshotView(true), draftOver: noMapDraft(), roles: ["ESTIMATOR"], commercials: true, stage: "" });
+    await open({ view: snapshotView(true), draftOver: noMapDraft(), roles: ["ESTIMATOR"], commercials: true, stage: "", waitFor: "supplier-costing-start" });
     await waitFor(() => expect(viewing()).toBe("2"));
     expect(document.querySelector('[data-stage="1"]')!.textContent).not.toContain("Ready to submit"); // never for others
   }, 30000);
@@ -833,9 +833,8 @@ describe("second review: chrome, saving rules, up-front note, step 3 disclosure"
   it("the stage line lists the top open items in plain words (max 3 + N more)", async () => {
     await open({ view: snapshotView(true), step: "3" });
     const t = screen.getByTestId("next-action").textContent ?? "";
-    expect(t).toMatch(/Still to do: .*enter the (quantity|amount)/);
-    expect(t).not.toMatch(/readiness/i);
-    expect(t).toMatch(/\(\+\d+ more - see Review, step 4\)/);
+    expect(t).toMatch(/Complete “Equipment & options”/); // ONE next task; the individual problems are beside their fields, not joined into this banner
+    expect(t).not.toMatch(/readiness|Still to do|\(\+\d+ more/i);
   }, 30000);
 
   it("step 3 sections: Quantities / Charges / Exclusions are collapsible with a status chip, open only when they need attention; the content stays mounted", async () => {

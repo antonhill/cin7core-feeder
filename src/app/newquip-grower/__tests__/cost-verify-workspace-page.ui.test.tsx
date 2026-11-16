@@ -71,7 +71,7 @@ const LEGACY_PHRASES = [/Costing is incomplete/, /no supplier cost selected/i, /
 describe("legacy quotations (no Phase 2 pricing) render EXACTLY as before", () => {
   for (const [label, pricing] of [["no supplier pricing at all", undefined], ["supplier pricing present but switched OFF", { ...equivalentInputs({}, "verified"), enabled: false } as unknown as EstimatorPricing]] as const) {
     it(`${label}: the legacy Cin7 cost capture and margin detail render; no banner, no legacy disclosure; supplier pricing is the optional disclosure`, async () => {
-      await open(pricing);
+      await open(pricing, ["ESTIMATOR"], { quoteType: "day_to_day" }); // the existing screens: day-to-day quotations never use the supplier-pricing workspace
       const cap = screen.getByTestId("disc-cost-capture");
       expect(cap.textContent).toMatch(/Cin7 cost capture and FX rates/);
       expect(screen.getByTestId("disc-margin").textContent).toMatch(/Margin detail/);
@@ -176,7 +176,7 @@ describe("the incomplete-costing waiver mirrors the server: Manager only, enable
     expect(input.closest("fieldset[disabled]")).toBeNull();
     expect(screen.queryByRole("button", { name: /Capture latest costs from Cin7/ })).toBeNull(); // Estimator-only controls are not offered to a Manager
     cleanup();
-    await open(undefined, ["ESTIMATOR"], { waitFor: "disc-cost-capture", noWaiver: true });
+    await open(undefined, ["ESTIMATOR"], { waitFor: "disc-cost-capture", noWaiver: true, quoteType: "day_to_day" });
     await screen.findByTestId("waiver-manager-only", {}, { timeout: 15000 });
     expect(screen.queryByLabelText(/Exception reason/)).toBeNull();
   }, 90000);
@@ -184,13 +184,27 @@ describe("the incomplete-costing waiver mirrors the server: Manager only, enable
 
 // ── UX correction pass: the new experience owns activation, and the legacy commercial summaries leave the primary Estimator view ─────────────────────────────────────────────────────────────────
 describe("switching supplier pricing on is offered inside the new Estimator experience", () => {
-  it("a project quotation with supplier pricing OFF, for the Estimator, offers the entry at the top of Stage 2 (and still renders the legacy forms for older use)", async () => {
-    await open(undefined, ["ESTIMATOR"], { waitFor: "activation-panel" });
-    expect(screen.getByTestId("activation-panel").textContent).toMatch(/Estimator workspace.*supplier pricing is off/);
-    expect(screen.getByTestId("activation-start").textContent).toMatch(/Switch on supplier pricing/);
-    expect(screen.getByTestId("disc-cost-capture")).toBeTruthy(); // legacy untouched
-    expect(screen.queryByTestId(WS)).toBeNull();
+  it("a submitted project quotation with supplier pricing OFF opens the Estimator on ONE first task (start supplier costing) in the workspace layout: no four-step wizard, no stacked technical panels", async () => {
+    await open(undefined, ["ESTIMATOR"], { waitFor: "supplier-costing-start" });
+    const panel = screen.getByTestId("activation-panel");
+    expect(panel.textContent).toMatch(/First task: start supplier costing/);
+    expect(panel.textContent).toMatch(/recorded as a revision/);
+    expect(screen.getByTestId("activation-preview").textContent).toMatch(/What changes when supplier pricing is on/); // the financial impact is shown BEFORE any cost is saved
+    expect(screen.getAllByTestId("phase-header")).toHaveLength(1);
+    expect(screen.getAllByTestId("next-action")).toHaveLength(1);
+    expect(screen.getByTestId("next-action-headline").textContent).toMatch(/Enter the supplier cost for/);
+    for (const gone of ["step-rail", "disc-cost-capture", "disc-margin", "disc-supplier-pricing", "quote-summary-bar", "stage-nav-toggle", "estimator-workspace"]) expect(screen.queryByTestId(gone), gone).toBeNull();
+    expect(document.querySelectorAll('[data-testid="phase-stepper"]')).toHaveLength(1); // one phase line, not a second set of phase cards
   }, 60000);
+  it("the older costing panel is never the default, and a Manager who is also an Estimator can still reach the waiver through the explained link", async () => {
+    await open(undefined, ["ESTIMATOR", "MANAGER"], { waitFor: "supplier-costing-start" });
+    fireEvent.click(screen.getByTestId("use-legacy-costing-manager"));
+    await screen.findByTestId("disc-cost-capture", {}, { timeout: 15000 });
+    expect(screen.getByTestId("legacy-costing-note").textContent).toMatch(/on purpose/);
+    fireEvent.click(screen.getByTestId("back-to-workspace"));
+    await screen.findByTestId("supplier-costing-start");
+    expect(screen.queryByTestId("disc-cost-capture")).toBeNull();
+  }, 90000);
   it("is not offered to a Manager-only viewer, a viewer without cost visibility, a day-to-day quotation, or once supplier pricing is on", async () => {
     await open(undefined, ["MANAGER"], { waitFor: "stage2-status-line" });
     expect(screen.queryByTestId("activation-panel")).toBeNull();
