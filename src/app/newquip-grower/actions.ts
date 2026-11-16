@@ -1,5 +1,6 @@
 "use server";
 
+import { runAutoPricing } from "@/lib/newquip-quotes/auto-pricing-service";
 import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { logActivity } from "@/lib/activity-log";
@@ -134,6 +135,18 @@ export interface QuoteView {
   indicativeComparison?: IndicativeComparison;
   /** SERVER-derived: true only for a quotation created in POC Presentation Mode on the NewQuip POC deployment. The page then leaves out cost / mapping diagnostics and exception forms (the server records them with the POC reason). */
   poc?: boolean;
+  /** Set only on a save that ran the automatic pricing and left products without a price. Neutral wording only (never a cost, rate, freight or margin). */
+  autoPricing?: { pending: string[]; pendingCount: number };
+}
+
+/** Automatic initial pricing of a Rep draft (NEWQUIP_AUTO_PRICING=on only). NEVER fails the caller: any problem simply leaves the quotation as it was. */
+async function autoPriceRepDraft(db: ReturnType<typeof createServiceRoleClient>, a: Actor, quoteId: string): Promise<QuoteView["autoPricing"] | undefined> {
+  try {
+    // runAutoPricing gates itself (NEWQUIP_AUTO_PRICING + NEWQUIP_AUTO_PRICING_FROM, non-demo, Rep): every entry point is gated identically there.
+    const o = await runAutoPricing(db, { orgId: a.orgId, userId: a.userId, roles: a.roles, demo: !!a.demo }, quoteId);
+    if (o.status === "applied") await audit(db, a, { action: "newquip.auto_pricing", summary: "Priced a Rep draft automatically from Cin7 supplier costs (local only; Cin7 read only)", detail: { quoteId, added: o.added, stillPending: o.pendingCount } });
+    return o.pendingCount > 0 || o.pending.length > 0 ? { pending: o.pending, pendingCount: o.pendingCount } : undefined;
+  } catch { return undefined; }
 }
 
 async function view(db: ReturnType<typeof createServiceRoleClient>, quote: QuoteRecord, a: Actor): Promise<QuoteView> {
@@ -356,8 +369,9 @@ export async function saveGrowerDraftAction(quoteId: string, draft: QuoteDraft):
         if (err) confirmationEffect = { confirmationCleared: false, signoffCleared: saved.signoffCleared, returnedToRep: false, approvalSyncError: err };
       })().catch(() => undefined);
     }
+    const autoPricing = saved.draftHash !== priorHash ? await autoPriceRepDraft(db, a, quoteId) : undefined; // only when the content changed: an unchanged save never re-reads Cin7
     const q = await loadQuote(db, a.orgId, quoteId);
-    return q ? { ok: true, data: { ...(await view(db, q, a)), ...(confirmationEffect ? { confirmationEffect } : {}) } } : { ok: false, error: "Quote not found." };
+    return q ? { ok: true, data: { ...(await view(db, q, a)), ...(confirmationEffect ? { confirmationEffect } : {}), ...(autoPricing ? { autoPricing } : {}) } } : { ok: false, error: "Quote not found." };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }

@@ -36,6 +36,7 @@
     "src/app/newquip-grower/actions.ts",
     "src/app/newquip-grower/actor.ts",
     "src/app/newquip-grower/cin7-diagnostic-actions.ts",
+    "src/app/newquip-grower/auto-pricing-actions.ts",
     "src/app/newquip-grower/cost-actions.ts",
     "src/app/newquip-grower/customer-actions.ts",
     "src/app/newquip-grower/delivery-actions.ts",

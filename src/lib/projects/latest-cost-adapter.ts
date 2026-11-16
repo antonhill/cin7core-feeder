@@ -116,13 +116,13 @@ export function cin7IdentityLookups(db: Db, orgId: string, instanceId: string): 
  * SURVEY READ (read-only): the raw /Product records for a short list of SKUs, GET only through the diagnostic's read-only gate (allowed paths and query keys are enforced there;
  * there is no method parameter, so a write cannot be expressed). Paced, with bounded backoff on rate limiting. A SKU Cin7 does not return exactly is `null`; a failed read is a short code.
  */
-export async function readRawProductsForSurvey(db: Db, orgId: string, instanceId: string, skus: readonly string[]): Promise<Record<string, { raw: Record<string, unknown> | null } | { error: string }>> {
+export async function readRawProductsForSurvey(db: Db, orgId: string, instanceId: string, skus: readonly string[], overallDeadline?: number): Promise<Record<string, { raw: Record<string, unknown> | null } | { error: string }>> {
   const creds = await loadCin7Credentials(db, orgId, instanceId);
   const gate = new Cin7ReadOnlyGate(cin7Transport(creds));
   const nap = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
   const out: Record<string, { raw: Record<string, unknown> | null } | { error: string }> = {};
   let first = true;
-  const deadline = Date.now() + 45_000; // stay inside the route budget: SKUs not reached are reported as "deadline", never silently dropped
+  const deadline = Math.min(overallDeadline ?? Infinity, Date.now() + 45_000); // a caller with its own overall budget passes it so several reads can never add up past it; // stay inside the route budget: SKUs not reached are reported as "deadline", never silently dropped
   for (const sku of skus) {
     if (Date.now() >= deadline) { out[sku] = { error: "deadline" }; continue; }
     if (!first) await nap(700);

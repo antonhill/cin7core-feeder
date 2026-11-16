@@ -7,7 +7,7 @@ import { buildPricingWorkspace, canEnterPricingInputs, mayAttestRate, mayAttestR
 import { returnByOf } from "./return-store";
 import { reconcileConfirmationAmount, resyncApprovalsLogged, type AmountInvalidation } from "./confirmation-reconcile";
 import { latestIndicativeSnapshot } from "./indicative-store";
-import { loadQuote } from "./quote-store";
+import { loadQuote, type QuoteRecord } from "./quote-store";
 import { applyEstimatorPricing, attestEstimatorRates, listPricingRevisions, recordManualPriceEvidence, verifyEstimatorCosts, type PricingRevisionRow } from "./pricing-store";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
@@ -67,8 +67,8 @@ export async function verifyCosts(db: Db, a: PricingActor, quoteId: string, item
  * customer-facing total moved, the Rep's confirmation is withdrawn and the quotation returns to the Rep as a new revision; otherwise only the Estimator's sign-off is
  * withdrawn (the function already did that) and the approval request is re-synced. The Rep-confirmed NQ-008A snapshot is never touched.
  */
-export async function applyPricingChange(db: Db, a: PricingActor, quoteId: string, submission: PricingSubmission | null, reason: string, base?: PricingSubmission | null): Promise<{ ok: true; report: ApplyReport } | { ok: false; errors: string[]; conflicts?: PricingConflict[] }> {
-  const out = await applyEstimatorPricing(db, a.orgId, quoteId, viewerOf(a), a.email, submission, reason, new Date().toISOString(), base);
+export async function applyPricingChange(db: Db, a: PricingActor, quoteId: string, submission: PricingSubmission | null, reason: string, base?: PricingSubmission | null, guard?: (q: QuoteRecord) => string | null): Promise<{ ok: true; report: ApplyReport } | { ok: false; errors: string[]; conflicts?: PricingConflict[] }> {
+  const out = await applyEstimatorPricing(db, a.orgId, quoteId, viewerOf(a), a.email, submission, reason, new Date().toISOString(), base, guard);
   if (!out.ok) return out;
   const who = { orgId: a.orgId, userId: a.userId, email: a.email };
   const confirmation = await reconcileConfirmationAmount(db, who, quoteId, evaluationContext(true), returnByOf({ email: a.email, roles: a.roles }, "estimator"));
