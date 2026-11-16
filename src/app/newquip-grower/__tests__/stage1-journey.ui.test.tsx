@@ -66,7 +66,7 @@ const customerView = (over: Record<string, unknown> = {}): any => ({ available: 
 const contactRow = (name: string, email: string) => ({ name: { state: "present", value: name }, email: { state: "present", value: email } });
 const snapshotView = (contact: boolean, over: Record<string, unknown> = {}): any => customerView({ snapshot: { cin7CustomerId: "c-123", name: { state: "present", value: "Acme Pigs (Pty) Ltd" }, tradingName: { state: "present", value: "Acme Pigs" }, billingAddress: null, vatNumber: { state: "missing" }, currency: { state: "missing" }, paymentTerm: { state: "missing" }, contacts: [contactRow("Sean", "s@x.co"), contactRow("Thandi", "t@x.co")], chosenContact: contact ? { name: "Sean", email: "s@x.co", source: "CIN7_CONTACT", phone: null } : null }, snapshotId: "s1", seq: 7, issues: [], selectedContactIndex: contact ? 0 : null, ...over });
 
-interface Opts { draftOver?: Record<string, unknown>; view?: any; roles?: Role[]; commercials?: boolean; step?: string; stage?: string; row?: Record<string, unknown>; customerDelay?: Promise<void>; waitSettled?: boolean; deliveryOk?: boolean }
+interface Opts { draftOver?: Record<string, unknown>; view?: any; roles?: Role[]; commercials?: boolean; step?: string; stage?: string; row?: Record<string, unknown>; customerDelay?: Promise<void>; waitSettled?: boolean; deliveryOk?: boolean; waitFor?: string }
 async function open(o: Opts = {}) {
   asRoles(...(o.roles ?? ["REP", "ESTIMATOR"]));
   vi.mocked(canSeeCosts).mockResolvedValue(o.commercials ?? false);
@@ -80,7 +80,7 @@ async function open(o: Opts = {}) {
   g.__QID = id; g.__STEP = o.step; g.__STAGE = o.stage;
   const { default: Page } = await import("../[id]/page");
   render(createElement(Page));
-  await waitFor(() => expect(screen.getByTestId(o.stage === "6" ? "stage-nav" : "step-rail")).toBeTruthy(), { timeout: 5000 });
+  await waitFor(() => expect(screen.getByTestId(o.waitFor ?? (o.stage === "6" ? "stage-nav" : "step-rail"))).toBeTruthy(), { timeout: 5000 });
   if (o.waitSettled !== false && !o.customerDelay) await waitFor(() => expect(screen.queryByTestId("stage1-shell")).toBeNull(), { timeout: 5000 });
   return id;
 }
@@ -473,13 +473,15 @@ describe("show all steps, persistence and roles", () => {
 
   it("Estimator, Manager and an Administrator observer inspect Stage 1 READ-ONLY: every step opens (no locks), fields are disabled, and no cost leaks to a Rep", async () => {
     for (const [roles, commercials] of [[["ESTIMATOR"], true], [["MANAGER"], true], [[], true]] as Array<[Role[], boolean]>) {
-      await open({ view: snapshotView(true), roles, commercials, draftOver: { siteName: "" } });
-      expect(current()).toBe("review"); // a reader opens at the summary
-      expect((screen.getByTestId("stage1-layout") as HTMLFieldSetElement).disabled, JSON.stringify(roles)).toBe(true);
-      for (const id of ["customer", "site", "equipment", "review", "submit"]) expect(status(id), id).not.toBe("Locked");
+      await open({ view: snapshotView(true), roles, commercials, draftOver: { siteName: "" }, stage: "1", waitFor: "phase1-readonly" });
+      // FOUR-PHASE UX: a reader gets a concise read-only summary, never the Rep's editable form.
+      expect(screen.getByTestId("phase1-readonly"), JSON.stringify(roles)).toBeTruthy();
+      for (const gone of ["step-rail", "stage1-layout"]) expect(screen.queryByTestId(gone), gone).toBeNull();
       expect(screen.queryByRole("button", { name: "Load sample measurements", hidden: true })).toBeNull();
-      expect(screen.queryByRole("button", { name: /^Edit /, hidden: true })).toBeNull(); // no Edit links for a reader
-      expect((await screen.findByRole("button", { name: "Submit to Estimator", hidden: true })).hasAttribute("disabled")).toBe(true);
+      expect(screen.queryByRole("button", { name: /^Edit /, hidden: true })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Submit to Estimator", hidden: true })).toBeNull();
+      expect(document.querySelectorAll("#main input, main input, main textarea").length, "no editable fields").toBe(0);
+      expect(document.body.textContent).not.toMatch(/Estimated cost|Internal margins|GP \(managers\)|Cin7 latest cost|Landed|Freight/);
       cleanup();
     }
     await open({ view: snapshotView(true), roles: ["REP"], commercials: false });
@@ -521,7 +523,7 @@ describe("P1-1: the landing stage and entry step are role-aware (no ?stage=)", (
     await open({ view: snapshotView(true), draftOver: noMapDraft(), stage: "" });
     expect(viewing()).toBe("1");
         expect(screen.getByTestId("next-action").textContent).toMatch(/will be resolved by the Estimator after you submit/);
-    expect(document.querySelector('[data-stage="1"]')!.textContent).toContain("Ready to submit");
+    expect(screen.getByTestId("phase-header-status").textContent).toMatch(/ready to submit/i);
   }, 30000);
 
   it("an Estimator-only viewer on a Rep draft with Estimator-owned mapping lands on Stage 2; without such work as before (Stage 1)", async () => {
@@ -733,20 +735,18 @@ describe("review findings P2", () => {
 
   it("the calculation badge reads 'In progress' (neutral), not 'BLOCKED', on an unfinished Stage 1 draft", async () => {
     await open({ view: snapshotView(true), step: "2" });
-    const bar = screen.getByTestId("quote-summary-bar");
-    expect(within(bar).getByText("In progress")).toBeTruthy();
-    expect(bar.textContent).not.toMatch(/BLOCKED|DRAFT/);
+    const head = screen.getByTestId("phase-header");
+    expect(screen.getByTestId("phase-header-status").textContent).toMatch(/with the rep/i); // the shared header's one status, neutral wording
+    expect(head.textContent).not.toMatch(/BLOCKED|DRAFT/);
   }, 30000);
 
   it("inside a step the four phase cards collapse to one line, expandable; the cards stay in the DOM", async () => {
     await open({ view: snapshotView(true), step: "2" });
-    const toggle = screen.getByTestId("stage-nav-toggle");
-    expect(toggle.textContent).toContain("Phase 1 of 4 · Configure & Submit");
-    expect(toggle.textContent).toContain("Show all phases");
-    expect(document.getElementById("stage-nav-list")!.className).toContain("hidden");
-    fireEvent.click(toggle);
-    expect(document.getElementById("stage-nav-list")!.className).not.toMatch(/(^|\s)hidden/);
-    expect(document.querySelectorAll("[data-phase]").length).toBe(4);
+    // FOUR-PHASE UX: the four phases are ONE compact line in the shared header (always visible, no disclosure), the current one marked.
+    const nav = screen.getByTestId("phase-stepper");
+    expect(nav.querySelectorAll("[data-phase]").length).toBe(4);
+    expect(nav.querySelector('[data-phase="1"]')!.textContent).toContain("Configure & Submit");
+    expect(nav.querySelector('[data-phase="1"]')!.getAttribute("aria-current")).toBe("step");
   }, 30000);
 
   it("'Load recommended configuration' states precisely what it replaces and keeps", async () => {
@@ -925,7 +925,7 @@ describe("D-4: a Rep never reads the cost basis or markup", () => {
     expect(opts).toContain("Project pricing");
     expect(opts).toContain("Standard price list basis");
     cleanup();
-    await open({ view: snapshotView(true), draftOver: { ...readyDraft, quoteType: "project" }, roles: ["REP"], stage: "2" });
+    await open({ view: snapshotView(true), draftOver: { ...readyDraft, quoteType: "project" }, roles: ["REP"], stage: "2", waitFor: "phase2-readonly" });
     expect(document.body.textContent).not.toMatch(LEAK);
   }, 60000);
 
@@ -966,8 +966,7 @@ describe("touch targets on the primary journey are class-contracted at 44px", ()
     const card = document.querySelector('[data-step="site"]')!;
     expect(card.className).toContain("p-2");
     const nav = screen.getByTestId("stage-nav");
-    expect(nav.className).toContain("rounded-lg border");
-    expect(nav.querySelector('[data-testid="next-action"]')!.className).toContain("max-sm:hidden");
+    for (const b of nav.querySelectorAll("button")) expect(b.className, "phase button").toContain("min-h-11"); // 44px targets on the phase line
   }, 30000);
 });
 
@@ -981,8 +980,8 @@ describe("S1a: the Rep submits with Estimator-owned items open (indicative total
     expect(current()).toBe("submit");
     const caption = screen.getByTestId("total-caption").textContent ?? "";
     expect(caption).toMatch(/^Indicative total \(\d+ lines? await the Estimator\)$/);
-    const bar = screen.getByTestId("quote-summary-bar");
-    expect(bar.textContent).toMatch(/R\s?[\d\s]+,\d\d/); // an amount IS shown although the budget is incomplete
+    const bar = screen.getByTestId("phase-header");
+    expect(bar.textContent).toMatch(/R\s?[\d,]+\.\d\d/); // an amount IS shown although the budget is incomplete
     const sub = panel("submit") as HTMLElement;
     const n = Number(caption.match(/\((\d+)/)![1]);
     expect(within(sub).getByTestId("indicative-note").textContent).toBe(`This total is indicative while ${n} lines await the Estimator. If the Estimator's pricing changes it, the quotation returns to you to reconfirm the amount with the customer.`);

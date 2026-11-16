@@ -146,8 +146,9 @@ describe("Phase 2 (supplier pricing ON): the Estimator workspace replaces the st
 describe("Phase 2: viewers without cost visibility see nothing of it", () => {
   for (const [label, roles] of [["a Rep", ["REP"]], ["an Estimator who cannot see costs", ["ESTIMATOR"]]] as const) {
     it(`${label}: no banner, no legacy disclosure, no supplier-pricing workspace, no supplier data`, async () => {
-      await open(verified(), [...roles], { commercials: false, waitFor: "step-rail" });
-      await waitFor(() => expect(screen.getByTestId("step-rail")).toBeTruthy());
+      const rep = roles[0] === "REP"; // the Rep sees the read-only Phase 2 note; an Estimator without cost visibility keeps the steps
+      await open(verified(), [...roles], { commercials: false, waitFor: rep ? "phase2-readonly" : "step-rail" });
+      if (!rep) await waitFor(() => expect(screen.getByTestId("step-rail")).toBeTruthy());
       for (const id of ["cost-next-action", "disc-legacy-costing", "disc-cost-capture", "disc-supplier-pricing", "estimator-pricing-panel", "verify-block", "estimator-workspace", "commercial-summary"]) expect(screen.queryByTestId(id), id).toBeNull();
       expect(document.body.textContent ?? "").not.toMatch(/Fixture supplier|Supplier pricing and verification|Legacy costing/);
     }, 60000);

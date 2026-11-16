@@ -174,7 +174,7 @@ describe("separation of duties", () => {
 
   it("a Rep sees no supplier-pricing workspace, no verification and no cost; the server refuses", async () => {
     const id = await open({ roles: ["REP"], commercials: false, enteredBy: "estimator@example.test" });
-    await screen.findByTestId("step-rail", {}, { timeout: 15000 });
+    await screen.findByTestId("phase2-readonly", {}, { timeout: 15000 });
     expect(screen.queryByTestId("estimator-workspace")).toBeNull();
     expect(screen.queryByTestId("verify-block")).toBeNull();
     expect(screen.queryByTestId("disc-supplier-pricing")).toBeNull();
