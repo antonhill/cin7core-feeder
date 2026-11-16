@@ -136,7 +136,8 @@ describe("Phase 3 is one decision screen", () => {
     expect(screen.getByTestId("decision-totals").textContent).toMatch(/R[\d,]+\.\d\d.*ex VAT.*VAT R[\d,]+\.\d\d.*inc VAT R[\d,]+\.\d\d/);
     expect(screen.getByTestId("decision-signoff").textContent).toMatch(/Not signed off yet/);
     expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy(); // the existing gate (disabled until it is satisfied)
-    for (const old of ["stage3-owner", "estimator-result"]) expect(screen.queryByTestId(old), old).toBeNull();
+    expect(screen.queryByTestId("stage3-owner")).toBeNull();
+    expect(screen.getByTestId("decision-supporting").tagName).toBe("DETAILS"); // the Estimator result, evidence and Rep submission stay available, collapsed
   }, 60000);
 
   it("a Rep previewing it sees no margin and no verification detail", async () => {
@@ -152,7 +153,7 @@ describe("Phase 4 shows its status at a glance and keeps its three steps reachab
     await openQuote({ roles: ["MANAGER"], commercials: true, search: "stage=4", patch: FINAL, waitFor: "handover-overview" });
     for (const id of ["approved", "document", "acceptance", "handover", "cin7"]) expect(screen.getByTestId(`overview-${id}`), id).toBeTruthy();
     expect(screen.getByTestId("overview-approved").textContent).toContain("Approved");
-    expect(screen.getByTestId("overview-cin7").textContent).toMatch(/Not sent/);
+    expect(screen.getByTestId("overview-cin7").textContent).toMatch(/Not sent from here/);
     const steps = screen.getByTestId("phase4-substeps");
     expect(within(steps).getAllByRole("button").map((b) => b.textContent)).toEqual(["Customer quotation", "Customer acceptance", "Project handover"]);
     fireEvent.click(within(steps).getByRole("button", { name: "Project handover" }));

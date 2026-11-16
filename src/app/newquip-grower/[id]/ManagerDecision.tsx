@@ -57,3 +57,9 @@ export function ManagerDecision({ decider, statusLine, totals, verification, mar
     </div>
   );
 }
+
+// The Manager's supporting detail (the Rep's submission, per-line pricing evidence, the Estimator's result with exceptions and overrides) stays available, collapsed, under the decision facts.
+export function SupportingDetail({ wrap, children }: { wrap: boolean; children: ReactNode }) {
+  if (!wrap) return <>{children}</>;
+  return <details className="rounded-xl border border-slate-200 bg-white px-5 py-2" data-testid="decision-supporting"><summary className="min-h-11 cursor-pointer py-2.5 text-sm font-semibold text-slate-900">Supporting detail: Rep submission, pricing evidence, exceptions and overrides</summary><div className="space-y-3 pb-3">{children}</div></details>;
+}

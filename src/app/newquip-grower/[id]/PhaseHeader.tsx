@@ -22,7 +22,7 @@ export function PhaseHeader({ name, reference, customer, rooms, basis, status, t
       <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-3">
         <div className="min-w-0 flex-[1_1_16rem]">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <h2 className="text-xl font-bold text-slate-900" data-testid="phase-header-name">{name}</h2>
+            <h2 className="break-words text-xl font-bold text-slate-900" data-testid="phase-header-name">{name}</h2>
             <span className={`rounded border px-2 py-0.5 text-xs font-bold tracking-wide ${CHIP[tone]}`} data-testid="phase-header-status">{status}</span>
           </div>
           <p className="mt-0.5 text-sm text-slate-700" data-testid="phase-header-sub">{reference} · {customer} · {rooms} room{rooms === 1 ? "" : "s"} · {basis}</p>

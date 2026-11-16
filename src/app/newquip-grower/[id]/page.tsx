@@ -80,7 +80,7 @@ import { PhaseHeader } from "./PhaseHeader";
 import { navPresentation } from "@/newquip/quote/stage-nav-model";
 import { phaseOfStage, phaseViews } from "@/newquip/quote/phases";
 import { ReadOnlyPhase1 } from "./ReadOnlyPhase1";
-import { ManagerDecision } from "./ManagerDecision";
+import { ManagerDecision, SupportingDetail } from "./ManagerDecision";
 import { HandoverOverview } from "./HandoverOverview";
 import { rand, randCents } from "./phase-ux-format";
 import { OPTIONAL_NAMES } from "./Stage23Panels";
@@ -805,7 +805,7 @@ export default function QuoteEditorPage() {
         })()} name={draft.siteName || "Quotation"} reference={`${q.quote_ref} rev ${q.revision}`} customer={draft.customerName || "Customer"} rooms={cfg.rooms || 0} basis="Project pricing"
           status={final ? "APPROVED" : q.state === "REP_DRAFT" ? (q.revision > 1 ? "RETURNED TO THE REP" : stage === 1 && roles.has("rep") && repReady ? "READY TO SUBMIT" : "WITH THE REP") : signedNow ? "SIGNED OFF · WITH THE MANAGER" : "ESTIMATOR REVIEW"} tone={final ? "ok" : "warn"}
           figures={[
-            { labelTestId: "total-caption", label: final ? "Contract value (ex VAT)" : awaitingLines > 0 ? `Indicative total (${awaitingLines} line${awaitingLines === 1 ? "" : "s"} await the Estimator)` : budget?.incomplete ? "Partial total (ex VAT)" : "Calculated total (ex VAT)", value: budget ? rand(budget.totals.subtotalExTax) : "—", note: final ? undefined : "Not a contract value.", tone: final ? "ok" : "warn", testId: "phase-header-total" },
+            { labelTestId: dirty || previewFailure ? undefined : "total-caption", label: final ? "Contract value (ex VAT)" : awaitingLines > 0 ? `Indicative total (${awaitingLines} line${awaitingLines === 1 ? "" : "s"} await the Estimator)` : budget?.incomplete ? "Partial total (ex VAT)" : "Calculated total (ex VAT)", value: budget ? rand(budget.totals.subtotalExTax) : "—", note: final ? undefined : "Not a contract value.", tone: final ? "ok" : "warn", testId: "phase-header-total" },
             ...(budget && !budget.incomplete ? [{ label: "Total (inc VAT)", value: rand(budget.totals.totalIncTax) }] : []),
             { label: "Customer-confirmed amount", value: q.customer_confirmed_cents == null ? "none yet" : randCents(q.customer_confirmed_cents), testId: "phase-header-confirmed" },
           ]}
@@ -1444,13 +1444,15 @@ export default function QuoteEditorPage() {
             <OwnerTag role={wizard3.nextOwner} />
           </div>
           {!poc && commercial && !commercial.complete && <Alert tone="warning"><span data-testid="s3-commercial">{commercial.headline}</span></Alert>}
+            </>
+          )}
+          <SupportingDetail wrap={phaseUx}>
           {repSummary}
           {canCommercials && !poc && view.manualPriceEvidence && <ManualEvidencePanel rows={view.manualPriceEvidence} />}
           <EstimatorResult signedOffBy={q.estimator_signoff_by_email} signedOffAt={q.estimator_signoff_at} signoffCurrent={s2Base.signoff === "current"} totalCents={totalCents} confirmedCents={q.customer_confirmed_cents}
             costing={canCommercials && !poc && budget ? { estimatedCost: shownMargin?.cost ?? budget.totals.estimatedCost, marginPct: shownMargin?.pct ?? budget.totals.overallMarginPct } : null} priceExceptions={poc ? [] : priceExceptions} costOverrides={poc ? [] : costOverrideRows} showPriceDetail={canCommercials && !poc}
             marginUnknown={canCommercials && !!budget && (marginIncomplete || budget.incomplete || budget.totals.overallMarginPct == null)} missingCostLines={marginIncomplete && marginInfo!.missing > 0 ? marginInfo!.missing : null} estimatorPricedLines={marginInfo?.exempt.length ?? 0} largestLines={canCommercials ? largestLines : null} />
-            </>
-          )}
+          </SupportingDetail>
           <Panel>
             <PanelTitle>Manager approval</PanelTitle>
             <p className="mt-1 text-xs text-slate-600">Final internal commercial approval. The Rep sees the outcome here and by notification; only a Manager can decide.</p>
@@ -1501,13 +1503,13 @@ export default function QuoteEditorPage() {
         </div>
       )}
 
-      {phaseUx && stage >= 4 && (
+      {phaseUx && stage >= 4 && !hold(stage) && !gateError && (
         <HandoverOverview tiles={[
           { id: "approved", title: "Approved quotation", status: final ? "Approved" : "Not approved yet", detail: final && q.accepted_baseline ? `${q.quote_ref} rev ${q.revision} · ${randCents(q.accepted_baseline.contractCents)} ex VAT` : "Approval is the Manager's decision (Phase 3).", tone: final ? "ok" : "wait" },
           { id: "document", title: "Customer document", status: !final ? "Not available yet" : stage4.find((x) => x.id === "send")?.status === "complete" ? "Sent to the customer" : gate.hasDocument ? "PDF issued, not sent" : "Not issued", detail: !final ? "Issued after approval." : gate.hasDocument ? "Issued from the approved quotation." : "A Rep issues and sends it.", tone: !final ? "wait" : stage4.find((x) => x.id === "send")?.status === "complete" ? "ok" : "open" },
           { id: "acceptance", title: "Customer acceptance", status: !final ? "Not available yet" : !gate.requires ? "Not required" : gate.accepted ? "Accepted" : "Awaiting the customer", detail: !final ? "Recorded against the issued quotation." : !gate.requires ? "Approved before acceptance was introduced." : gate.accepted ? "Verified acceptance recorded." : "Verify the customer's response when it arrives.", tone: !final ? "wait" : !gate.requires || gate.accepted ? "ok" : "open" },
-          { id: "handover", title: "Project handover", status: q.project_id ? "Project created" : final && (!gate.requires || gate.accepted) ? "Ready to hand over" : "Not ready", detail: q.project_id ? "Billing and fulfilment continue in the Project." : final && (!gate.requires || gate.accepted) ? "A Manager creates the Project." : "Needs approval and, where required, acceptance.", tone: q.project_id ? "ok" : final && (!gate.requires || gate.accepted) ? "open" : "wait" },
-          { id: "cin7", title: "Cin7", status: "Not sent", detail: "Nothing is pushed to Cin7 from this screen.", tone: "wait" },
+          { id: "handover", title: "Project handover", status: q.project_id ? "Project created" : final && (!gate.requires || gate.accepted) && handoverReadiness.filter((x) => x.id !== "manager").every((x) => x.met) ? "Ready to hand over" : "Not ready", detail: q.project_id ? "Billing and fulfilment continue in the Project." : final && (!gate.requires || gate.accepted) ? "A Manager creates the Project." : "Needs approval and, where required, acceptance.", tone: q.project_id ? "ok" : final && (!gate.requires || gate.accepted) ? "open" : "wait" },
+          { id: "cin7", title: "Cin7", status: "Not sent from here", detail: "Not part of this trial; nothing on this screen writes to Cin7.", tone: "wait" },
         ]} />
       )}
       {/* ───────────── 4 · CUSTOMER QUOTATION ───────────── */}
