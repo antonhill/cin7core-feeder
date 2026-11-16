@@ -15,6 +15,10 @@ describe("bulk confirmation never covers a package that needs the Estimator's ow
       expect(keys).not.toContain("cup_drinker");
     }
   });
+  it("today no package passes bulk confirmation (every package needs the Estimator or is estimator-priced), so the bulk action confirms none", () => {
+    expect(bulkConfirmablePackageKeys(GROWER_ITEM_KEYS, TEMPLATE_REVISION_CURRENT)).toEqual([]);
+    expect(bulkConfirmablePackageKeys(GROWER_ITEM_KEYS, TEMPLATE_REVISION_LEGACY)).toEqual([]);
+  });
   it("never includes an estimator-priced, layout-driven or note-bearing package", () => {
     for (const k of bulkConfirmablePackageKeys(GROWER_ITEM_KEYS, TEMPLATE_REVISION_CURRENT)) {
       const p = packageFor(k, TEMPLATE_REVISION_CURRENT)!;

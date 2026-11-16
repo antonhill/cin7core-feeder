@@ -23,7 +23,7 @@ export function PackageOwnConfirmation({ pkg, confirmed, canEdit, onChange }: { 
       <p className="mt-2 text-xs text-amber-900" data-testid="package-own-reason">{reason}</p>
       <label className="mt-3 flex cursor-pointer items-start gap-3">
         <input type="checkbox" className="mt-0.5 size-5" checked={confirmed} disabled={!canEdit} onChange={(e) => onChange(e.target.checked)} />
-        <span>I have reviewed this composition and confirm the {pkg.name.toLowerCase()} package. <span className="text-slate-700">Saved with the draft, with your name and the time.</span></span>
+        <span>I have reviewed this composition and confirm the {pkg.name.toLowerCase()} package. <span className="text-slate-700">Saved with the draft.</span></span>
       </label>
     </div>
   );
