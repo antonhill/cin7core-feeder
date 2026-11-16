@@ -6,6 +6,7 @@ import { writeAllowedFor } from "@/lib/billing-status";
 import type { SubscriptionStatus } from "@/lib/billing";
 import { ACTIVE_ORG_COOKIE, resolveActiveOrgId } from "@/lib/active-org-resolution";
 import { presenterGate } from "@/lib/demo-mode/presenter";
+import { newquipGuardRedirects } from "@/newquip/route-guard";
 
 // Must match src/lib/org-switch.ts's IMPERSONATED_ORG_COOKIE — duplicated
 // rather than imported, since that module calls next/headers' cookies() and
@@ -169,6 +170,8 @@ export async function middleware(request: NextRequest) {
     const { data: superAdminRow, error: superAdminError } = await db.from("super_admins").select("user_id").eq("user_id", userId).maybeSingle();
     if (superAdminError) console.error("middleware: super_admins read failed", superAdminError);
     const isSuperAdmin = Boolean(superAdminRow);
+    // NewQuip-only guard input: true when who-this-user-is could not be read, so the guard (and only the guard) fails closed.
+    let guardUncertain = Boolean(superAdminError);
     if (isSuperAdmin) {
       const impersonatedOrgId = request.cookies.get(IMPERSONATED_ORG_COOKIE)?.value;
       if (impersonatedOrgId) {
@@ -193,7 +196,7 @@ export async function middleware(request: NextRequest) {
       // Server Actions use makes middleware structurally incapable of
       // disagreeing with them.
       const { data: memberships, error: membershipsError } = await supabase.from("org_members").select("org_id, allowed_modules, role").eq("user_id", userId);
-      if (membershipsError) console.error("middleware: org_members read failed", membershipsError);
+      if (membershipsError) { console.error("middleware: org_members read failed", membershipsError); guardUncertain = true; }
       const membershipRows = memberships ?? [];
       const cookieOrgId = request.cookies.get(ACTIVE_ORG_COOKIE)?.value ?? null;
       orgId = resolveActiveOrgId(
@@ -234,6 +237,15 @@ export async function middleware(request: NextRequest) {
       enrolUrl.search = "";
       enrolUrl.searchParams.set("mfa", "required");
       return NextResponse.redirect(enrolUrl);
+    }
+
+    // NewQuip-only interface: a NewQuip-organisation member who is not a super-admin may reach only the NewQuip allowlist (src/newquip/route-guard.ts); every other
+    // path goes to "/", the NewQuip dashboard. Super-admins bypass it. Placed after the MFA-enrolment redirect above so that flow is unaffected, and it adds no database read.
+    if (newquipGuardRedirects({ pathname: request.nextUrl.pathname, orgId, isSuperAdmin, uncertain: guardUncertain })) {
+      const homeUrl = request.nextUrl.clone();
+      homeUrl.pathname = "/";
+      homeUrl.search = "";
+      return NextResponse.redirect(homeUrl);
     }
 
     if (orgRow) {

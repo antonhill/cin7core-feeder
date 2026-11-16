@@ -57,7 +57,7 @@ describe("AppShell on NewQuip routes", () => {
     expect(screen.getByTestId("page")).toBeTruthy();
   });
   it("shows a persistent Back to Toolbox link to the Toolbox home", () => {
-    renderAt("/approvals");
+    renderAt("/approvals", { isSuperAdmin: true }); // a Spark super-admin keeps the way back; the NewQuip-only interface has none (newquip-only-nav test)
     expect(screen.getByRole("link", { name: /Back to Toolbox/ }).getAttribute("href")).toBe("/");
   });
   it("keeps organisation and user context visible and offers sign out", () => {
@@ -67,7 +67,7 @@ describe("AppShell on NewQuip routes", () => {
     expect(screen.getByRole("button", { name: "Sign out" })).toBeTruthy();
   });
   it("links the three NewQuip areas at their existing URLs and marks only the current one", () => {
-    renderAt("/projects/42");
+    renderAt("/projects/42", { isSuperAdmin: true });
     const nq = within(screen.getByRole("navigation", { name: "NewQuip" }));
     expect(nq.getByRole("link", { name: "Solution Builder" }).getAttribute("href")).toBe("/newquip-grower");
     expect(nq.getByRole("link", { name: "Projects" }).getAttribute("href")).toBe("/projects");
@@ -107,7 +107,7 @@ describe("AppShell workspace edge cases", () => {
     expect(within(screen.getByRole("navigation", { name: "NewQuip" })).getAllByRole("link").map((a) => a.textContent)).toEqual(["Solution Builder", "Projects", "Approvals"]);
   });
   it("keeps the Toolbox shell when every NewQuip module is hidden, and when there is no organisation", () => {
-    renderAt("/projects", { disabledModules: ["/quotes", "/projects"] });
+    renderAt("/projects", { disabledModules: ["/quotes", "/projects"], isSuperAdmin: true });
     expect(screen.queryByTestId("newquip-workspace")).toBeNull();
     cleanup();
     renderAt("/projects", { orgId: null });
@@ -115,7 +115,7 @@ describe("AppShell workspace edge cases", () => {
   });
   it("does not remount the shell or the page when moving between NewQuip areas", () => {
     h.pathname = "/projects";
-    const ui = () => <AppShell nav={nav()}><div data-testid="page">page</div></AppShell>;
+    const ui = () => <AppShell nav={nav({ isSuperAdmin: true })}><div data-testid="page">page</div></AppShell>;
     const { rerender } = render(ui());
     const shell = screen.getByTestId("newquip-workspace");
     const page = screen.getByTestId("page");

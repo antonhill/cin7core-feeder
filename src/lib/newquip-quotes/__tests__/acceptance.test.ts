@@ -17,7 +17,7 @@ import { listDocuments } from "../document-store";
 import { listSends } from "../send-store";
 
 const ORG = "org-newquip"; const rep = rolesFor("member"); const mgr = rolesFor("admin"); const ctx = { priceSource: testPriceSource(), withholdCost: true };
-const PROFILE = { brandName: "TestBrand", legalName: "Test Company (Pty) Ltd", registrationNumber: "0000/000000/00", vatNumber: "0000000000", addressLines: ["1 Test Street", "Testville 0001"], phone: "000", email: "sales@testbrand.example", website: "", validityDays: 30, paymentTerms: "p", deliveryInstallationConditions: "d", termsAndConditions: "t", acceptanceInstructions: "a" };
+const PROFILE = { brandName: "TestBrand", legalName: "Test Company (Pty) Ltd", registrationNumber: "2012/123456/07", vatNumber: "4123456789", addressLines: ["1 Test Street", "Testville 0001"], phone: "000", email: "sales@testbrand.example", website: "", validityDays: 30, paymentTerms: "Fictitious fixture: 40% deposit, 55% on delivery, 5% on completion.", deliveryInstallationConditions: "Fictitious fixture: delivery to the site gate; installation on a cleared site.", termsAndConditions: "Fictitious fixture: terms and conditions for automated tests only.", acceptanceInstructions: "Fictitious fixture: reply to the sender to accept this quotation." };
 const TODAY = "2026-10-29";
 const PREVIEW = { VERCEL_ENV: "preview" };
 
@@ -128,7 +128,7 @@ describe("ACCEPTANCE GATE for new quotations", () => {
     const a = await respond(w, doc.id); const dup = await respond(w, doc.id);
     expect(a.created).toBe(true); expect(dup).toMatchObject({ created: false }); expect(dup.response.id).toBe(a.response.id);
     expect(await err(respond(w, doc.id, { response: "DECLINED", evidenceRef: "later email" }))).toMatch(/already accepted/);
-    await saveProfile(w.db as never, ORG, { ...PROFILE, termsAndConditions: "changed terms" }, "m@nq");
+    await saveProfile(w.db as never, ORG, { ...PROFILE, termsAndConditions: "Fictitious revised terms for the changed-profile test." }, "m@nq");
     expect(await err(issue(w))).toMatch(/accepted this quotation; the accepted document is final/);
     expect((await listDocuments(w.db as never, ORG, w.id)).map((d) => d.version)).toEqual([1]);
     expect((await listResponses(w.db as never, ORG, w.id))).toHaveLength(1);

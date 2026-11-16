@@ -93,6 +93,8 @@
     "src/lib/require-privileged.ts",
     "src/lib/require-super-admin.ts",
     "src/middleware.ts",
-    "src/app/newquip-grower/pricing-actions.ts"
+    "src/app/newquip-grower/pricing-actions.ts",
+    "src/app/claims/page.tsx",
+    "src/app/newquip-dashboard-data.ts"
   ]
 }

@@ -139,14 +139,18 @@ export async function issueQuotationDocument(
   if (issues.length) throw new Error(`The customer details are incomplete: ${issues.join(" ")}`);
   if (norm(fieldValue(snap.snapshot.name) ?? "") !== norm(q.accepted_baseline.quote.customerName)) throw new Error("The selected Cin7 customer does not match the customer on the approved quotation.");
   const prof = await latestProfile(db, orgId);
-  const lacking = missingProfileFields(prof?.profile);
-  if (!prof || lacking.length) throw new Error(`NewQuip's company details are incomplete, so the quotation cannot be issued. Missing: ${lacking.join(", ") || "all company details"}.`);
+  // The placeholder guard runs on the STORED profile, before any demo override, so a demo override can never mask a bad profile for a non-demo quote.
+  // Only the designated demonstration quotes (whose terms are replaced in the PDF) keep the pre-guard behaviour.
+  const marked = pocDocumentMarked(q, orgId);
+  const isDemo = !!prof && applyDemoTerms(prof.profile, orgId, q.quote_ref, marked) !== prof.profile;
+  const lacking = missingProfileFields(prof?.profile, { allowPlaceholderTerms: isDemo });
+  if (!prof || lacking.length) throw new Error(`Complete NewQuip company details (Manager > Company details) before issuing a customer PDF: ${lacking.join(", ") || "all company details"}`);
 
   const accepted = await db.from("newquip_quote_responses").select("id").eq("org_id", orgId).eq("quote_id", quoteId).eq("response", "ACCEPTED").limit(1);
   if (accepted.error && !missing(accepted.error.message)) throw new Error(accepted.error.message);
   if ((accepted.data ?? []).length > 0) throw new Error("The customer has accepted this quotation; the accepted document is final and cannot be replaced.");
   const existing = await listDocuments(db, orgId, quoteId);
-  const model = buildCustomerDocumentModel({ baseline: q.accepted_baseline, quoteRef: q.quote_ref, revision: q.revision, snapshot: snap.snapshot, profile: applyDemoTerms(prof.profile, orgId, q.quote_ref, pocDocumentMarked(q, orgId)), schedule, scheduleSource, issuedOn: deps.today() });
+  const model = buildCustomerDocumentModel({ baseline: q.accepted_baseline, quoteRef: q.quote_ref, revision: q.revision, snapshot: snap.snapshot, profile: applyDemoTerms(prof.profile, orgId, q.quote_ref, marked), schedule, scheduleSource, issuedOn: deps.today() });
   assertNoInternalLeak(model, q.accepted_baseline);
   const last = existing[0];
   if (last && last.baseline_hash === q.baseline_hash && stableOf(last.content) === stableOf(model) && last.customer_snapshot_id === snap.id && last.company_profile_id === prof.id) return { document: last, created: false };
