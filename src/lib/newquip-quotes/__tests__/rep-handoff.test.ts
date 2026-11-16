@@ -110,9 +110,10 @@ describe("no commercial approval while mappings, supplier costs or pricing are u
     const id2 = await stored(accepted);
     await send(id2, cents(accepted));
     await estimatorSignOff(db as never, ORG, member, "est@nq", id2, ctx);
-    // ... but the cost exception waives COST reasons only (UX-006 S3): M75 / penning / LED have no Cin7 SKU, so approval needs the LED mapped and the Manager's recorded exception
-    expect(await err(managerApprove(db as never, ORG, admin, "m@nq", id2, ctx))).toMatch(/3 package\(s\) are not mapped to Cin7 SKUs/);
-    db.rows("newquip_package_mappings").push(ledLibraryMapping(ORG));
+    // ... but the cost exception waives COST reasons only (UX-006 S3): M75 / penning have no Cin7 SKU, so approval needs the Manager's recorded exception (the LED is SKU-backed now and needs no mapping)
+    const refused = await err(managerApprove(db as never, ORG, admin, "m@nq", id2, ctx));
+    expect(refused).toMatch(/2 package\(s\) are not mapped to Cin7 SKUs/);
+    expect(refused).not.toMatch(/LED/);
     await managerApprove(db as never, ORG, admin, "m@nq", id2, ctx, undefined, managerExceptionOpts(db.rows("newquip_quotes")[1] as never));
     expect((await loadQuote(db as never, ORG, id2))!.state).toBe("MANAGER_APPROVED_FINAL");
   });

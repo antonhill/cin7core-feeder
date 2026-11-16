@@ -3,7 +3,7 @@
 // They cover EVERY item key (the optional additional elements, pvc_door and the source-backed items alike). The server applies them when a draft is stored and again
 // at estimator sign-off.
 
-import { isCatalogueDefaultItem } from "./commercial";
+import { EXCLUDED_SKUS, alternativesFor, isCatalogueDefaultItem, isExcludedSku } from "./commercial";
 import { expectedSkuFor } from "./quote-bridge";
 import { GROWER_ITEM_KEYS, isOptionalItemKey, type FeederVariant, type GrowerItemKey } from "./types";
 
@@ -32,9 +32,11 @@ export function mappingError(mapped: ReadonlyArray<{ itemKey: string; sku: strin
   for (const m of mapped) {
     const what = m.itemKey.replace(/_/g, " ");
     if (!isItemKey(m.itemKey)) return `${m.itemKey} is not a product slot on this quotation.`;
+    if (isExcludedSku(m.sku)) return `${m.sku} cannot be used: ${EXCLUDED_SKUS[m.sku]}`;
     if (m.itemKey !== "pvc_door" && !isOptionalItemKey(m.itemKey)) {
       const expected = expectedSkuFor(m.itemKey, feederVariant);
-      if (expected && m.sku !== expected) return `${m.sku} is not the source-backed product (${expected}) for ${what}.`;
+      // An item's source-backed product, or one of the alternatives NewQuip said are included for that same item (an Estimator CHOICE: it replaces the item's product, never adds a line).
+      if (expected && m.sku !== expected && !alternativesFor(m.itemKey).some((a) => a.sku === m.sku)) return `${m.sku} is not the source-backed product (${expected}) for ${what}.`;
     }
     const row = bySku.get(m.sku);
     if (!row) return `${m.sku} is not in the synced Cin7 catalogue, so it cannot be used as the product for ${what}.`;

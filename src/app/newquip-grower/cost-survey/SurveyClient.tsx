@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { coverage, type SurveyInput, type SurveyResult } from "@/newquip/pricing/cost-survey";
+import { SUPPLIED_COSTS } from "@/newquip/grower/commercial";
+import { compareSuppliedCost } from "@/newquip/grower/supplied-cost-compare";
 import { getCostSurveyUniverseAction, surveyCin7SkusAction } from "../survey-actions";
 
 // Read-only survey runner: asks the server for the mapped SKUs, then reads Cin7 in chunks of 10 (GET only). Nothing is saved anywhere.
@@ -31,7 +33,13 @@ export function SurveyClient() {
   }
 
   const cov = coverage(results);
-  const payload = JSON.stringify({ truncated, generatedAt: new Date().toISOString(), coverage: cov, productKeys: keys.product, supplierKeys: keys.supplier, errors: errs, sources, skus: results.map((x) => ({ ...x, unitFields: inputs.find((y) => y.sku === x.sku)?.unitFields, uom: inputs.find((y) => y.sku === x.sku)?.uom })) });
+  // What Sean / Tereesha supplied (2026-11) against what Cin7 holds, per SKU. Read-only: nothing is overridden.
+  const supplied = SUPPLIED_COSTS.map((c) => {
+    const r = results.find((x) => x.sku === c.sku);
+    const i = inputs.find((x) => x.sku === c.sku);
+    return { ...compareSuppliedCost(c.sku, r ? { found: !r.reasons.includes("not_in_cin7"), cost: r.selected?.cost ?? null, currency: r.currency, lastSupplied: r.selected?.lastSupplied ?? null } : undefined), cin7Name: i?.productName ?? null };
+  });
+  const payload = JSON.stringify({ supplied, truncated, generatedAt: new Date().toISOString(), coverage: cov, productKeys: keys.product, supplierKeys: keys.supplier, errors: errs, sources, skus: results.map((x) => ({ ...x, unitFields: inputs.find((y) => y.sku === x.sku)?.unitFields, name: inputs.find((y) => y.sku === x.sku)?.productName, status: inputs.find((y) => y.sku === x.sku)?.productStatus, uom: inputs.find((y) => y.sku === x.sku)?.uom })) });
   return (
     <main className="mx-auto max-w-6xl p-4 text-slate-900">
       <h1 className="text-xl font-semibold">NewQuip cost-source survey (read-only)</h1>

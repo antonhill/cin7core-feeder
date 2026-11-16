@@ -12,6 +12,7 @@ import { Panel, PanelTitle } from "@/components/ui/Panel";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import type { QuoteScopeView } from "@/lib/newquip-quotes/scope-preview";
 import type { PackageMapping } from "@/lib/projects/package-mapping-store";
+import { savedMappingCaution } from "@/newquip/grower/commercial";
 import { VariationProductPicker, type PickedProduct } from "@/app/projects/[id]/VariationProductPicker";
 import { getMappingHistoryAction, getQuoteScopeAction, saveReusableMappingAction } from "../mapping-actions";
 
@@ -77,6 +78,7 @@ export function ScopePanel({ quoteId, draft }: { quoteId: string; draft: QuoteDr
               <Status tone={TONE[i.state]}>{LABEL[i.state]}{i.mappingRef ? ` v${i.mappingRef.version}` : ""}</Status>
             </div>
             {i.lines.length > 0 && <ul className="mt-1 text-xs text-slate-600">{i.lines.map((l) => <li key={l.sku}><span className="font-mono">{l.sku}</span> × {l.quantity} {l.legacyReference ? <span className="text-slate-600">(legacy reference component, not on the Sales Order)</span> : l.assembly ? <span className="text-slate-600">(Cin7 assembly: its components are managed in Cin7)</span> : null}</li>)}</ul>}
+            {i.state === "FROM_LIBRARY" && (() => { const c = savedMappingCaution(i.packageKey, i.lines.map((l) => l.sku)); return c ? <p className="mt-1 text-xs text-amber-800" data-testid={`saved-mapping-caution-${i.packageKey}`}>{c}</p> : null; })()}
             {i.state === "UNRESOLVED" && <p className="mt-1 text-xs text-amber-700">{i.reason}</p>}
             {i.state === "EXCLUDED" && <p className="mt-1 text-xs text-slate-600">Excluded: {i.reason}</p>}
             {i.state === "UNRESOLVED" && !view.frozen && (view.canManageMappings ? (

@@ -9,6 +9,11 @@ import type { GrowerItemKey } from "./types";
 // intended SKU — it does NOT mean NewQuip has approved it; only an explicit session confirmation does.
 
 const WB = "AS.23.4015.07 - Topigs Warden (Update 2026).xlsm";
+/** Sean / Tereesha's answers of 2026-11 (the questions workbook, both sheets). A confirmed SKU IDENTITY only: it does not confirm a quantity, a cost basis or a selling price. */
+export const FEEDBACK_2026_11 = "NewQuip_Simple_Questions_Sean_Tereesha - Updated.xlsx (Questions and Penning sheets)";
+
+/** A figure Sean / Tereesha supplied. A labelled REFERENCE: never a selling price, never a verified landed cost, and never silently replacing a Cin7 supplier cost. */
+export interface SuppliedReference { amountZar: number; per: "each" | "metre"; basis: string }
 
 /** How a component's quantity per commercial unit is known. */
 export type ComponentQuantityStatus =
@@ -37,6 +42,12 @@ export interface PackageComponent {
   /** Known gaps, e.g. "present in the legacy ERP but not in Cin7". */
   note?: string;
   evidence: string;
+  /** Set when Sean / Tereesha confirmed THIS identity (2026-11); the source is named. Identity only. */
+  confirmedBy?: string;
+  /** The unit the quantity is expressed in (default "each"). The auger is quoted and costed per METRE although Cin7 reports Item. */
+  quantityUnit?: "each" | "metre";
+  /** A figure supplied for this component; see SuppliedReference. */
+  suppliedReference?: SuppliedReference;
   /** Shown instead of a SKU while none is confirmed (e.g. FORTIS 1.2). */
   skuRequired?: string;
   /** A HISTORIC SURROGATE used in an old quote. Shown for context only — NEVER substituted or priced. */
@@ -77,6 +88,8 @@ export interface PackageMapping {
    * authoritative engineering.
    */
   estimatorPriced?: boolean;
+  /** Set when the package must NOT be treated as confirmed without an Estimator, whatever its components say. The value is the reason shown. */
+  estimatorConfirmation?: string;
   /**
    * A DIFFERENT representation of the same output seen in a later source (e.g. a single sellable SKU in the Master).
    * Recorded, never priced automatically — which representation prices the output is for NewQuip to confirm.
@@ -112,6 +125,12 @@ export interface UnresolvedMapping {
   reason: string;
   /** Candidates the estimator chooses between BY HAND (e.g. PVC doors — the size is in the Cin7 description). Never auto-confirmed. */
   manualSelectionSkus?: string[];
+  /** The SKU NewQuip proposed as the replacement. Offered first, never selected automatically. */
+  proposedSku?: string;
+  /** Earlier candidates NewQuip replaced: no longer offered for this item. */
+  retiredSkus?: string[];
+  /** The figure supplied for the proposed SKU. Its commercial basis is NOT established. */
+  suppliedReference?: SuppliedReference;
 }
 
 export type CommercialMapping = SingleSkuMapping | PackageMapping | ManualMapping | UnresolvedMapping | EstimatorPricedMapping;
@@ -161,27 +180,25 @@ export const COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMappin
   },
   led_light: {
     kind: "package", itemKey: "led_light", name: "FORTIS 1.2 5000K LED light", layoutDriven: false,
-    provenance: `${WB} sheet 'FX': €25.50 + 3 × €0.74 + €1.37 = €29.09 per light (priced on the FERAX 24W ON/OFF, HNQ7046, as a historic surrogate for the FORTIS 1.2).`,
+    provenance: `${FEEDBACK_2026_11}: Sean confirmed HNQ7046, HNQ7088 and HNQ7093 as the Grower House LED light and accessories, replacing the revolving-light / light-trap SKUs (HO12011000, HO17050750, HO21013750). Function of each, from the Cin7 product names: HNQ7046 = FERAX 24W ON/OFF (the luminaire), HNQ7088 = FERAX CABLE 0.6M (the cable), HNQ7093 = FERAX CLIP 29MM RVS (the mounting clip). The per-light composition (1 luminaire + 3 clips + 1 cable) is the historic ${WB} sheet 'FX' composition: Sean confirmed the SKUs, not the quantities.`,
+    estimatorConfirmation: "Sean confirmed the three SKUs, not their quantities per light (the 1 + 3 + 1 composition is the historic FERAX build-up), and the customer-facing name still says FORTIS 1.2 while the confirmed luminaire is the FERAX 24W: the Estimator confirms the package and its description.",
     components: [
       {
-        id: "luminaire", sku: null, identity: "unidentified", quantityStatus: "source_fixed", qtyPerUnit: 1,
-        description: "FORTIS 1.2 5000K luminaire",
-        skuRequired: "FORTIS 1.2 — SKU REQUIRED / UNMAPPED",
-        historicSurrogate: { sku: "HNQ7046", name: "FERAX 24W ON/OFF" },
-        note: "FORTIS 1.2 is the newer/current product and has NO SKU yet (Sean Round 2 #9). The historic quote used HNQ7046 (FERAX 24W ON/OFF) as a surrogate; it is NOT the FORTIS and is never substituted automatically.",
-        evidence: "Sean Round 2 #9; FX!A4 (workbook) — Ferax = HNQ7046, FORTIS has no code",
+        id: "luminaire", sku: "HNQ7046", identity: "source_backed", quantityStatus: "source_fixed", qtyPerUnit: 1,
+        description: "Luminaire (Cin7: FERAX 24W ON/OFF)", confirmedBy: FEEDBACK_2026_11,
+        note: "Confirmed by Sean (2026-11) as the Grower House light. The template still names it FORTIS 1.2 5000K: whether the customer document should say FERAX 24W or FORTIS 1.2 is for NewQuip to confirm.",
+        evidence: `${FEEDBACK_2026_11}; FX!A4 (workbook) — Ferax = HNQ7046`,
       },
       {
-        id: "clip", sku: null, candidateSkus: ["HNQ7088", "HNQ7093"], identity: "uncertain", quantityStatus: "source_fixed", qtyPerUnit: 3,
-        description: "Mounting clip",
-        note: "Workbook says HNQ7088 is the clip; ERP/Cin7 say HNQ7093 is 'FERAX CLIP 29MM RVS'. Not decided — NewQuip to confirm.",
-        evidence: "FX!A5 (workbook) vs Inventory Master / Cin7 names",
+        id: "clip", sku: "HNQ7093", identity: "source_backed", quantityStatus: "source_fixed", qtyPerUnit: 3,
+        description: "Mounting clip (Cin7: FERAX CLIP 29MM RVS)", confirmedBy: FEEDBACK_2026_11,
+        note: "Identity settled by the Cin7 product name: HNQ7093 is the clip and HNQ7088 the cable (the older workbook had them the other way round).",
+        evidence: `${FEEDBACK_2026_11}; Cin7 product names (synced catalogue)`,
       },
       {
-        id: "cable", sku: null, candidateSkus: ["HNQ7093", "HNQ7088"], identity: "uncertain", quantityStatus: "source_fixed", qtyPerUnit: 1,
-        description: "Connection cable",
-        note: "Workbook says HNQ7093 is the cable; ERP/Cin7 say HNQ7088 is 'FERAX CABLE 0.6M'. Not decided — NewQuip to confirm.",
-        evidence: "FX!A6 (workbook) vs Inventory Master / Cin7 names",
+        id: "cable", sku: "HNQ7088", identity: "source_backed", quantityStatus: "source_fixed", qtyPerUnit: 1,
+        description: "Connection cable (Cin7: FERAX CABLE 06M, i.e. 0.6 m)", confirmedBy: FEEDBACK_2026_11,
+        evidence: `${FEEDBACK_2026_11}; Cin7 product names (synced catalogue)`,
       },
     ],
   },
@@ -189,23 +206,34 @@ export const COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMappin
     kind: "package", itemKey: "flex_auger", name: "M75 feed distribution system", layoutDriven: true, estimatorPriced: true,
     provenance: `${WB} sheet 'W1' (Topigs case: 2 × lines of ±49.5m, 18 drop kits). Quantities below are the HISTORIC TOPIGS PACKAGE REFERENCE — formula-driven in the workbook, NOT authorised engineering and NOT priced: M75 is an ESTIMATOR INPUT (Sean final), priced by the estimator as a system.`,
     components: [
-      layout("auger", "NQ1163", "Auger M-75 (new), per metre", 134, "W1 row 71"),
+      layout("auger", "NQ1163", "Auger M-75 (new), per metre", 134, "W1 row 71", {
+        quantityUnit: "metre", confirmedBy: FEEDBACK_2026_11,
+        suppliedReference: { amountZar: 57.37, per: "metre", basis: "Tereesha 2026-11: 'quoted per meter, use a per meter cost (R57,37 per meter)'. Cin7 reports the unit as Item and holds its own supplier cost for NQ1163; the two have NOT been reconciled and no conversion between them is established." },
+        note: "Quoted and costed per METRE although Cin7 says Item. The quantity is the auger LENGTH in metres (never the number of systems, never an item count). The physical-length rule is not established (the historic 134 m is a hidden workbook formula for the 2 × 49.5 m Topigs lines), so the Estimator enters the metres; the supplied R57.37/m is a reference, not a verified cost.",
+      }),
       layout("tube", "NQ1223", "TUBE M75 (WHITE) / AUGER PIPE (NEW TYPE) — the M75 MAIN auger tube", 40, "W1 row 52; SKU per the NewQuip Master (workbook listed T2750300)", { note: "The M75 main auger tube. NOT the clear drop tube and NOT NQ.TUBE.63." }),
       layout("clamps", "NQ1764", "M75 tube clamp", 48, "W1 row 56; SKU per the NewQuip Master (workbook listed T2750015)"),
       layout("elbow", "NQ1227", "M75 PVC ELBOW (NEW TYPE)", 8, "W1 row 64; SKU per the NewQuip Master (workbook listed T2750301)"),
-      layout("dropkit", "NQ1942", "M75 complete drop kit", 18, "W1 row 13; input B2 = 18 drops; SKU per the NewQuip Master (workbook listed NQ1984)"),
-      layout("droptube", "NQ.TUBE.75", "M75 clear drop tube", 5, "W1 row 14 = ROUNDUP(drops / 4); SKU per the NewQuip Master", {
-        note: "Clear DROP tube — distinct from the M75 main auger tube (NQ1223). The workbook listed NQ.TUBE.63 (63mm clear drop tube, still a valid SKU per Sean Round 2 #10); that is a different item and is NOT the auger pipe.",
+      layout("dropkit", "NQ1942", "M75 complete drop kit", 18, "W1 row 13; input B2 = 18 drops; SKU per the NewQuip Master (workbook listed NQ1984)", {
+        confirmedBy: FEEDBACK_2026_11,
+        suppliedReference: { amountZar: 30, per: "each", basis: "Sean/Tereesha 2026-11 answer for NQ1942. It is a component figure only: not the drop-kit package cost, not the M75 system price, and its basis (cost, landed cost or price) is not stated. Cin7 holds no supplier record for NQ1942." },
+        note: "NQ1942 = 'M75 COMPLETE DROP KIT (SHEEP/PIG INCL KNOBS & ROPE)'. NQ1984 (the drop kit WITHOUT knobs and rope) is excluded by Sean (2026-11) and is never offered.",
+      }),
+      layout("droptube", null, "M75 clear drop tube", 5, "W1 row 14 = ROUNDUP(drops / 4)", {
+        identity: "uncertain", candidateSkus: ["NQ.TUBE.63", "NQ.TUBE.75"],
+        suppliedReference: { amountZar: 52.72, per: "each", basis: "Sean/Tereesha 2026-11 answer for NQ.TUBE.63. Component figure only; its basis is not stated." },
+        note: "Clear DROP tube (distinct from the M75 main auger tube NQ1223). Sean (2026-11) supplied NQ.TUBE.63 (R52.72); the NewQuip Master has NQ.TUBE.75. Which size the drop kit uses is not settled, and NQ.TUBE.63 is not in the synced catalogue copy, so it must be verified live in Cin7. Not chosen automatically.",
       }),
       layout("control", "T3750001", "M75 control unit with safety switch", 2, "W1 row 39"),
       layout("unloader", "TSA3750505", "M75 unloader double right/left (new type)", 1, "W1 row 35"),
       layout("levelswitch", "T3000365", "Feed level switch dia 75mm", 2, "W1 row 18"),
       layout("drive", "NQ3132", "1.5HP DRIVE UNIT (1.1KW) 380V", 2, "W1 row 77; replaces TRA1.1KW3PH (Sean Round 2 #10)", {
-        note: "Replaces the legacy TRA1.1KW3PH.",
+        note: "Replaces the legacy TRA1.1KW3PH. Function: the M75 DRIVE UNIT (motor), not a drop-kit part. Cin7's product name reads '15HP DRIVE UNIT (11KW) 380V' (the decimal points appear lost: the template says 1.5HP / 1.1KW). Sean's 2026-11 M75 answer did not mention NQ3132, so it is neither confirmed nor excluded: it stays a supplier-quote exception.",
         pricingException: "N/A — SUPPLIER QUOTE REQUIRED: the Master shows Retail 0 for NQ3132. It is never quoted as zero. If the job needs it, the estimator resolves the commercial amount or prices the higher-level manual M75 solution.",
       }),
-      layout("post", null, "Support post (SST)", 52, "W1 row 83 — SKU cell truncated ('KNQ'), price R760", {
-        candidateSkus: ["NQ2601"], identity: "uncertain", note: "NQ2601 'HEAVY DUTY SUPPORT POST SST(1M)' is a likely match but NOT confirmed.",
+      layout("post", "KNQ050-900", "Support post (SST heavy duty, 50mm panel, H=900mm)", 52, "W1 row 83 — SKU cell truncated ('KNQ'), price R760", {
+        confirmedBy: FEEDBACK_2026_11,
+        note: "Sean (2026-11) corrected the support post from NQ2601 ('HEAVY DUTY SUPPORT POST SST (1M)') to KNQ050-900 ('SST HEAVY DUTY SUPPORT POST (50MM PANEL) H=900MM'), the same heavy-duty family at 900 mm for 50 mm panels. The quantity is still layout-driven and unvalidated. NQ2601 is no longer offered for this application.",
       }),
       layout("wallplate", "KNQ160", "Wall plate (SST) kit for M55 & M75 auger", 4, "W1 row 97"),
     ],
@@ -222,8 +250,11 @@ export const COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMappin
   // ---- unresolved ----
   pvc_door: {
     kind: "unresolved", itemKey: "pvc_door",
-    reason: "MANUAL SELECTION — the estimator picks the door product; its size is in the Cin7 product description. There is no automatic door-sizing rule (Sean Round 2 #11).",
-    manualSelectionSkus: ["NQ2114", "NQ2113", "NQ2112", "NQ2161", "NQ2281"],
+    reason: "MANUAL SELECTION — the estimator picks the door product. There is no automatic door-sizing rule (Sean Round 2 #11). Sean (2026-11) proposes NQ3444 (Cin7: 'PVC SINGLE DOORS'; 'a mixture of Kunlong and local parts') as the Grower House door and replaced NQ2112, NQ2113 and NQ2114. Cin7's description gives no door size, so the specification cannot be validated from the catalogue: the Estimator confirms the door and its size. Whether NQ3444 is one complete assembly or needs components is not stated, so no component is added alongside it.",
+    manualSelectionSkus: ["NQ3444", "NQ2161", "NQ2281"],
+    proposedSku: "NQ3444",
+    retiredSkus: ["NQ2112", "NQ2113", "NQ2114"],
+    suppliedReference: { amountZar: 9000, per: "each", basis: "Sean 2026-11: 'NQ3444 - R9000,00 (Mixture of Kunlong & Local Parts)'. Not stated whether this is a supplier cost, a landed cost or a price: it is NOT a selling price, no markup is applied to it, and it is not an approved cost." },
   },
 };
 
@@ -267,15 +298,68 @@ export const isCatalogueDefaultItem = (itemKey: GrowerItemKey): boolean => CATAL
  * (the Master lists a single sellable SKU, NB3542-03, and which one prices the drinker is for NewQuip to settle), so it keeps an explicit Estimator decision.
  */
 export function packageAutoConfirmable(pkg: PackageMapping | undefined): boolean {
-  if (!pkg || pkg.estimatorPriced || pkg.layoutDriven || pkg.alternativeIdentity) return false;
+  if (!pkg || pkg.estimatorPriced || pkg.layoutDriven || pkg.alternativeIdentity || pkg.estimatorConfirmation) return false;
   return pkg.components.length > 0 && pkg.components.every((c) => c.identity === "source_backed" && !!c.sku && c.quantityStatus === "source_fixed" && c.qtyPerUnit != null && !c.pricingException);
 }
 
-/** SKUs an estimator may pick BETWEEN by hand for an item (never auto-confirmed). */
+/** SKUs an estimator may pick BETWEEN by hand for an item (never auto-confirmed). Excluded SKUs are never offered. */
 export function manualSelectionSkusFor(itemKey: GrowerItemKey): string[] {
   const m = COMMERCIAL_MAPPINGS[itemKey];
-  return m?.kind === "unresolved" ? (m.manualSelectionSkus ?? []) : [];
+  return m?.kind === "unresolved" ? (m.manualSelectionSkus ?? []).filter((s) => !isExcludedSku(s)) : [];
 }
+
+/**
+ * SKUs the Grower House must never offer or accept (Sean / Tereesha 2026-11). The reason is shown to the Estimator. A mapping to one is refused when it is stored and at sign-off, and it is
+ * never offered as a candidate. Nothing here rewrites any stored quotation scope or saved package mapping.
+ */
+export const EXCLUDED_SKUS: Readonly<Record<string, string>> = {
+  NQ1984: "Excluded from the Grower House (Sean, 2026-11). It is the M75 drop kit WITHOUT knobs and rope; the complete drop kit is NQ1942.",
+};
+export const isExcludedSku = (sku: string): boolean => Object.prototype.hasOwnProperty.call(EXCLUDED_SKUS, sku);
+
+/**
+ * Products Sean / Tereesha said are INCLUDED, as a deliberate Estimator CHOICE within one item. They are never default, never added to every quotation, and never added in addition to the item's own line
+ * (selecting one replaces that item's product). Without a supported engineering rule that is all that can be said of them.
+ */
+export interface SelectableAlternative { itemKey: GrowerItemKey; sku: string; label: string; caution: string }
+export const SELECTABLE_ALTERNATIVES: readonly SelectableAlternative[] = [
+  { itemKey: "feeder", sku: "PNQ002", label: "CCM FEEDER FOR GROWERS (PNQ002)", caution: "Included by Sean (2026-11). How it relates to the standard PNQ082 (with monoflo nipples) was not stated, so it is an Estimator choice for the feeder line: never automatic, and never an extra line beside the feeder." },
+  { itemKey: "bulk_tank", sku: "SYSH-2750-4", label: "16.58 t silo (SYSH-2750-4)", caution: "Included by Sean (2026-11). Cin7's product name still reads 'DONT QUOTE' and the template default is the 13.39 t SYSH-2750-3, so choosing it is the Estimator's decision for the tank line (tank size is an Estimator input) and NewQuip should correct the Cin7 name." },
+];
+export const alternativesFor = (itemKey: GrowerItemKey): SelectableAlternative[] => SELECTABLE_ALTERNATIVES.filter((a) => a.itemKey === itemKey);
+
+/**
+ * Products in a SAVED reusable package mapping that Sean / Tereesha's 2026-11 answers contradict or do not confirm. A saved mapping is a Manager's decision and is never rewritten or deleted here
+ * (it is versioned history); this only lets the scope view say, beside that mapping, that it should be replaced by a new version. Returns the notice, or null when nothing in it is flagged.
+ */
+const SAVED_MAPPING_CAUTIONS: Readonly<Record<string, { skus: readonly string[]; text: string }>> = {
+  led_light: { skus: ["HO12011000", "HO17050750", "HO21013750"], text: "These are a revolving light and light-trap parts, not the Grower House LED. Sean (2026-11) confirmed HNQ7046, HNQ7093 and HNQ7088: save a new mapping version." },
+  penning_package: { skus: ["DPL-PVC20X600", "KNQ074", "KNQ196", "KNQBP1010", "KNQCP005"], text: "These are not on Sean's 2026-11 Grower Penning Posts list (custom polypropylene panels have no stock SKU). Replace this mapping with a new version built from that list." },
+};
+export function savedMappingCaution(packageKey: string, skus: readonly string[]): string | null {
+  const c = SAVED_MAPPING_CAUTIONS[packageKey];
+  if (!c) return null;
+  const hit = skus.filter((s) => c.skus.includes(s));
+  return hit.length > 0 ? `Saved mapping holds ${hit.join(", ")}. ${c.text}` : null;
+}
+
+/** Cin7 product names (synced catalogue copy) for the SKUs an Estimator chooses between by hand, so no UI component carries its own product text. */
+export const CHOICE_PRODUCT_NAMES: Readonly<Record<string, string>> = {
+  NQ3444: "PVC SINGLE DOORS: Sean's proposed Grower House door. Cin7 gives no size, so confirm the door and its size",
+  NQ2161: "WHITE DOOR WITH UV 35MM (1980 × 1000W) WITH WINDOWS",
+  NQ2281: "35MM WHITE DOOR (1990 × 790MM)",
+};
+
+/** Figures Sean / Tereesha supplied (2026-11), by SKU. REFERENCES only: Cin7 stays the primary automatic cost authority, a different figure is a PROPOSED sourced override until its basis and date are established, and none is a selling price. */
+export const SUPPLIED_COSTS: ReadonlyArray<{ sku: string; amountZar: number; per: "each" | "metre"; note: string }> = [
+  { sku: "NQ1942", amountZar: 30, per: "each", note: "M75 complete drop kit" },
+  { sku: "NQ.TUBE.63", amountZar: 52.72, per: "each", note: "63mm clear drop tube (not in the synced catalogue copy)" },
+  { sku: "NQ3444", amountZar: 9000, per: "each", note: "PVC door: mixture of Kunlong and local parts; what the figure represents is not stated" },
+  { sku: "NQ1163", amountZar: 57.37, per: "metre", note: "Auger quoted per metre; Cin7 unit is Item" },
+  { sku: "NQ1764", amountZar: 119.79, per: "each", note: "M75 tube clamp" },
+  { sku: "NQ1017", amountZar: 3.14, per: "each", note: "Washer M8x25x2" },
+  { sku: "NYNUT", amountZar: 0.82, per: "each", note: "Nylock nut M8" },
+];
 
 export function manualLinesFor(itemKey: GrowerItemKey): ManualMapping[] {
   return MANUAL_COMMERCIAL_LINES.filter((m) => m.linkedItemKey === itemKey);
@@ -299,5 +383,7 @@ export function referencedSkus(): string[] {
     if (m.kind === "package") for (const c of m.components) { if (c.sku) out.add(c.sku); c.candidateSkus?.forEach((s) => out.add(s)); }
     if (m.kind === "unresolved") m.manualSelectionSkus?.forEach((s) => out.add(s));
   }
-  return [...out];
+  SELECTABLE_ALTERNATIVES.forEach((a) => out.add(a.sku));
+  SUPPLIED_COSTS.forEach((c) => out.add(c.sku));
+  return [...out].filter((s) => !isExcludedSku(s));
 }

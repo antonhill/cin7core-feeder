@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readyDraft } from "@/newquip/grower/__tests__/golden";
-import { equivalentInputs, evalOf, withPricing } from "@/newquip/pricing/estimator/__tests__/helpers";
+import { equivalentInputs, evalOf, manualDraft, withPricing } from "@/newquip/pricing/estimator/__tests__/helpers";
 import { buildPricingWorkspace, manualEvidenceRows, submissionFrom, type EstimatorPricing } from "@/newquip/pricing/estimator";
 import type { WorkspaceBundle } from "@/lib/newquip-quotes/pricing-service";
 import * as actions from "../pricing-actions";
@@ -16,10 +16,10 @@ import { ManualEvidencePanel } from "../[id]/ManualEvidencePanel";
 vi.mock("../pricing-actions", () => ({ getEstimatorPricingAction: vi.fn(), applyEstimatorPricingAction: vi.fn(), disableEstimatorPricingAction: vi.fn(), verifyEstimatorCostsAction: vi.fn(), attestEstimatorRatesAction: vi.fn(), recordManualPriceEvidenceAction: vi.fn() }));
 import { EstimatorPricingPanel } from "../[id]/EstimatorPricingPanel";
 
-function bundle(p: EstimatorPricing | undefined, over: Partial<WorkspaceBundle> = {}, skipSku?: string): WorkspaceBundle {
+function bundle(p: EstimatorPricing | undefined, over: Partial<WorkspaceBundle> = {}, skipSku?: string, base = readyDraft()): WorkspaceBundle {
   const pricing = p ? { ...p, skus: { ...p.skus } } : undefined;
   if (pricing && skipSku) delete pricing.skus[skipSku];
-  const d = pricing ? withPricing(pricing) : readyDraft();
+  const d = pricing ? withPricing(pricing, base) : base;
   const view = buildPricingWorkspace({ quoteType: "project", pricing, budget: evalOf(d).budget, originalTotalCents: 860_954_240, originalCapturedAt: "2026-11-12T08:00:00.000Z", nowIso: "2026-11-12T09:00:00.000Z" });
   return { view, verification: { canReview: false, reviewerRoles: ["manager"], verifiableSkus: [] }, rateAttestation: { canReview: false, reviewerRoles: ["manager"], attestableCurrencies: [] }, current: pricing ? submissionFrom(pricing) : null, revisions: [], state: "ESTIMATOR_REVIEW", revision: 1, canEdit: true, ...over };
 }
@@ -411,39 +411,41 @@ describe("forward-cover rate attestation", () => {
 });
 
 describe("pricing evidence for manual items", () => {
+  // The base draft carries the CONTROLLER with a typed price and no mapping: the LED package is SKU-backed now (Sean 2026-11), so it is not a SKU-less manual item any more.
   it("lists each SKU-less manual item with its state; a note is needed; the action gets only the key, note and reference (never a hash, by or at)", async () => {
-    const reload = mount(bundle(equivalentInputs({}, "unverified")));
+    const reload = mount(bundle(equivalentInputs({}, "unverified", manualDraft()), {}, undefined, manualDraft()));
     await waitFor(() => expect(screen.getByTestId("evidence-block")).toBeTruthy());
     const items = screen.getAllByTestId("evidence-item");
-    expect(items.map((i) => i.getAttribute("data-item"))).toEqual(["flex_auger", "led_light", "penning_package"]);
+    expect(items.map((i) => i.getAttribute("data-item"))).toEqual(["controller", "flex_auger", "penning_package"]);
+    expect(items.map((i) => i.getAttribute("data-item"))).not.toContain("led_light"); // SKU-backed: governed by cost verification
     expect(items.every((i) => i.getAttribute("data-evidence-state") === "missing")).toBe(true);
     expect(screen.getByTestId("evidence-block").textContent).toMatch(/M75 feed distribution system.*No evidence/);
     const save = screen.getByTestId("evidence-save") as HTMLButtonElement;
     expect(save.disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText(/FORTIS.* evidence note/), { target: { value: "short" } });
+    fireEvent.change(screen.getByLabelText(/controller.* evidence note/), { target: { value: "short" } });
     expect(save.disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText(/FORTIS.* evidence note/), { target: { value: "Basis: installer quote Q-7" } });
-    fireEvent.change(screen.getByLabelText(/FORTIS.* evidence reference/), { target: { value: "Q-7" } });
+    fireEvent.change(screen.getByLabelText(/controller.* evidence note/), { target: { value: "Basis: installer quote Q-7" } });
+    fireEvent.change(screen.getByLabelText(/controller.* evidence reference/), { target: { value: "Q-7" } });
     expect(save.disabled).toBe(false);
     vi.mocked(actions.recordManualPriceEvidenceAction).mockResolvedValue({ ok: true, data: { seq: 2, recorded: 1 } });
     fireEvent.click(save);
     await waitFor(() => expect(actions.recordManualPriceEvidenceAction).toHaveBeenCalledTimes(1));
-    expect(vi.mocked(actions.recordManualPriceEvidenceAction).mock.calls[0]).toEqual(["q1", [{ itemKey: "led_light", note: "Basis: installer quote Q-7", reference: "Q-7" }]]);
+    expect(vi.mocked(actions.recordManualPriceEvidenceAction).mock.calls[0]).toEqual(["q1", [{ itemKey: "controller", note: "Basis: installer quote Q-7", reference: "Q-7" }]]);
     await waitFor(() => expect(screen.getByTestId("pricing-note").textContent).toMatch(/pricing evidence for 1 item.*No price changed/));
     expect(reload).toHaveBeenCalled();
   });
   it("shows recorded evidence with who and when, and an outdated one as such; it is read-only when the quotation is approved", async () => {
-    const p = equivalentInputs({}, "verified");
-    p.manualEvidence!.led_light = { ...p.manualEvidence!.led_light!, note: "Basis: installer quote Q-7", by: "est@x" };
+    const p = equivalentInputs({}, "verified", manualDraft());
+    p.manualEvidence!.controller = { ...p.manualEvidence!.controller!, note: "Basis: installer quote Q-7", by: "est@x" };
     p.manualEvidence!.penning_package = { ...p.manualEvidence!.penning_package!, priceHash: "0".repeat(64) }; // the price it covered is not the current one
-    mount(bundle(p));
+    mount(bundle(p, {}, undefined, manualDraft()));
     await waitFor(() => expect(screen.getByTestId("evidence-block")).toBeTruthy());
-    const led = screen.getAllByTestId("evidence-item").find((i) => i.getAttribute("data-item") === "led_light")!;
+    const led = screen.getAllByTestId("evidence-item").find((i) => i.getAttribute("data-item") === "controller")!;
     expect(led.getAttribute("data-evidence-state")).toBe("recorded");
     expect(within(led).getByTestId("evidence-text").textContent).toMatch(/Basis: installer quote Q-7.*est@x/);
     expect(screen.getAllByTestId("evidence-item").find((i) => i.getAttribute("data-item") === "penning_package")!.textContent).toMatch(/Price changed since.*price changed after its evidence was recorded/);
     cleanup();
-    mount(bundle(p, { canEdit: false, state: "MANAGER_APPROVED_FINAL" }));
+    mount(bundle(p, { canEdit: false, state: "MANAGER_APPROVED_FINAL" }, undefined, manualDraft()));
     await waitFor(() => expect(screen.getByTestId("evidence-block")).toBeTruthy());
     expect(screen.queryByTestId("evidence-save")).toBeNull();
   });
@@ -455,7 +457,8 @@ describe("pricing evidence for manual items", () => {
 });
 
 describe("what the Manager sees at approval (cost-entitled viewers only)", () => {
-  const rows = manualEvidenceRows(equivalentInputs({}, "verified"), evalOf(withPricing(equivalentInputs({}, "verified"))).budget);
+  const evidenced = equivalentInputs({}, "verified", manualDraft());
+  const rows = manualEvidenceRows(evidenced, evalOf(withPricing(evidenced, manualDraft())).budget); // M75, penning and the typed-price controller (the SKU-backed LED needs no evidence)
   it("shows the evidence note, who recorded it and when, and whether it still covers the price; nothing when there is nothing to show", () => {
     render(createElement(ManualEvidencePanel, { rows }));
     const r = screen.getAllByTestId("manual-evidence-row");

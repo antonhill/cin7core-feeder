@@ -1,3 +1,4 @@
+import { EXCLUDED_SKUS, isExcludedSku } from "./commercial";
 import type { GrowerItemKey } from "./types";
 
 // Engineering output → Cin7 product mapping, kept OUT of the formulas (rules.ts never names a SKU).
@@ -77,8 +78,9 @@ export interface MappingCandidate {
  *   4. nothing → UNMAPPED
  */
 export function mergeCandidates(recommended: MappingCandidate | null, plausible: MappingCandidate[]): MappingCandidate[] {
-  if (!recommended) return plausible;
-  return [{ ...recommended, recommended: true }, ...plausible.filter((c) => c.sku !== recommended.sku)];
+  const allowed = plausible.filter((c) => !isExcludedSku(c.sku)); // an excluded SKU (Sean 2026-11) is never offered as a candidate
+  if (!recommended || isExcludedSku(recommended.sku)) return allowed;
+  return [{ ...recommended, recommended: true }, ...allowed.filter((c) => c.sku !== recommended.sku)];
 }
 
 export interface MappingResolution {
@@ -103,6 +105,7 @@ export function resolveMapping(
   catalogue: ReadonlySet<string> = new Set(),
 ): MappingResolution {
   const sku = confirmedSku?.trim() || null;
+  if (sku && isExcludedSku(sku)) return { itemKey, status: "UNMAPPED", sku: null, candidates: candidates.filter((c) => !isExcludedSku(c.sku)), awaitingConfirmationOfRecommendation: false, note: EXCLUDED_SKUS[sku] };
   if (sku) {
     const exists = candidates.some((c) => c.sku === sku) || catalogue.has(sku);
     if (!exists) return { itemKey, status: "UNMAPPED", sku: null, candidates, awaitingConfirmationOfRecommendation: false, note: `Confirmed SKU ${sku} not found in the synced catalogue.` };

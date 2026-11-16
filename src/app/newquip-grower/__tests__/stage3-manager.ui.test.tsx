@@ -342,14 +342,15 @@ describe("UX-006 corrections: Approve mirrors the server rule and shows what is 
   }, 90000);
 });
 
-describe("D-19: an unmapped product the Estimator only typed a price for (LED) blocks the Manager, by name", () => {
+describe("D-19: an unmapped product the Estimator only typed a price for (the controller; the LED is SKU-backed now) blocks the Manager, by name", () => {
   it("plain Approve is DISABLED with the reason, the checklist has an UNMET 'Mapping unresolved' row naming it (and the waivable systems), and no exception button is offered", async () => {
-    db.rows("newquip_package_mappings").length = 0; // nothing mapped: LED (typed price) is a blocking item, M75 / penning are waivable
-    await open({ stage: "3", roles: ["MANAGER"], commercials: true, ...SIGNED, draftOver: COSTED });
+    db.rows("newquip_package_mappings").length = 0; // nothing mapped: the controller (typed price, no Cin7 product chosen) is a blocking item, M75 / penning are waivable
+    const { controller: _unmapped, ...mappedWithoutController } = draft.estimator.confirmedMappings; void _unmapped;
+    await open({ stage: "3", roles: ["MANAGER"], commercials: true, ...SIGNED, draftOver: { estimator: { ...COSTED.estimator, confirmedMappings: mappedWithoutController } } });
     await waitFor(() => expect(approve().disabled).toBe(true), { timeout: 8000 });
     const why = (approve().getAttribute("aria-describedby") ?? "").split(" ").map((id) => document.getElementById(id)?.textContent ?? "").join(" ");
-    expect(why).toMatch(/LED light.*needs an active library mapping.*covers only M75 \/ penning systems, and is offered only once these are mapped/);
-    expect(ws().textContent).toMatch(/Mapping unresolved: .*LED light.* these need an active library mapping; the Manager exception covers only M75 \/ penning systems\./);
+    expect(why).toMatch(/controller.*needs an active library mapping.*covers only M75 \/ penning systems, and is offered only once these are mapped/i);
+    expect(ws().textContent).toMatch(/Mapping unresolved: .*controller.* these need an active library mapping; the Manager exception covers only M75 \/ penning systems\./i);
     expect(ws().textContent).toMatch(/could be covered by an exception, but only once the unmapped products above are mapped/);
     expect(screen.queryByRole("button", { name: "Approve with recorded exception" })).toBeNull();
   }, 60000);

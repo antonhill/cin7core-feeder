@@ -16,7 +16,7 @@ export const evalOf = (d: QuoteDraft, withholdCost = false): QuoteEvaluation => 
  * Supplier inputs that are EQUIVALENT to the synthetic POC snapshot: the same landed cost, but expressed as a native supplier cost in EUR, USD or ZAR at a rate.
  * (cost x roe x freight in the snapshot == native x rate x freight here), so a draft priced by the model must equal the legacy draft to the cent.
  */
-export function equivalentInputs(over: Partial<EstimatorPricing> = {}, verification: "verified" | "unverified" = "verified"): EstimatorPricing {
+export function equivalentInputs(over: Partial<EstimatorPricing> = {}, verification: "verified" | "unverified" = "verified", base: QuoteDraft = readyDraft()): EstimatorPricing {
   const skus: Record<string, SkuPricingInput> = {};
   const order = ["ZAR", "EUR", "USD"] as const;
   Object.values(TEST_SNAPSHOT.entries).filter((e) => e.cost > 0).forEach((e, i) => {
@@ -31,13 +31,24 @@ export function equivalentInputs(over: Partial<EstimatorPricing> = {}, verificat
   });
   // SKU-less manual items (LED lighting, penning) are priced by the Estimator with no SKU: "verified" inputs also carry their recorded pricing evidence.
   const manualEvidence: Record<string, ManualPriceEvidence> = {};
-  if (verification === "verified") for (const it of skuLessManualItems(evalOf(readyDraft()).budget)) manualEvidence[it.itemKey] = { note: "Fixture pricing basis", by: EST, at: AT, priceHash: manualPriceHash(it) };
+  if (verification === "verified") for (const it of skuLessManualItems(evalOf(base).budget)) manualEvidence[it.itemKey] = { note: "Fixture pricing basis", by: EST, at: AT, priceHash: manualPriceHash(it) };
   return {
     enabled: true, ruleVersionId: "legacy-poc-v1", pricingDate: AT, revision: 1, skus, ...(Object.keys(manualEvidence).length ? { manualEvidence } : {}),
     fxQuotes: { EUR: { rateMicro: micro("20"), source: "Fixture spot", asOf: AT }, USD: { rateMicro: micro("20"), source: "Fixture spot", asOf: AT } },
     forwardCover: {}, skuPriceOverrides: {}, projectMarkup: null, targetAdjustment: null,
     ...over,
   };
+}
+/**
+ * The ready draft PLUS an optional element with a typed price and NO Cin7 mapping (the controller). The LED package is SKU-backed now (HNQ7046 / HNQ7093 / HNQ7088, Sean 2026-11), so it is no
+ * longer an example of a SKU-less item the Estimator merely typed a price for; the controller is, and is priced as an Estimator resolution on a line with no SKU of its own.
+ */
+export function manualDraft(): QuoteDraft {
+  const d = readyDraft();
+  d.config.optionalEquipment = { ...d.config.optionalEquipment, controller: true };
+  d.config.estimatorQuantities = { ...d.config.estimatorQuantities, controller: 2 };
+  d.estimator.priceResolutions = { ...d.estimator.priceResolutions, controller: { unitPriceExVat: 3000, reason: "Controller: Estimator price from the supplier's current list; no Cin7 mapping" } };
+  return d;
 }
 export const withPricing = (p: EstimatorPricing, base: QuoteDraft = readyDraft()): QuoteDraft => ({ ...base, estimator: { ...base.estimator, pricing: p } });
 export const lineOf = (ev: QuoteEvaluation, key: string) => ev.budget!.lines.find((l) => l.itemKey === key)!;

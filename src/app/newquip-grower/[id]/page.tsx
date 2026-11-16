@@ -99,6 +99,8 @@ import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
 import { ApprovalHistory } from "@/components/ApprovalHistory";
 import { getDocumentApprovalAction } from "@/app/approvals/actions";
 import { DisabledReason } from "@/components/ApprovalDisabledReason";
+import { PenningScopePanel } from "./PenningScopePanel";
+import { penningScope } from "@/newquip/grower/penning";
 import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/billing-schedule";
 
 // NewQuip Grower quote editor, in six stages: 1 Configuration → 2 Costing & Estimator Review → 3 Manager Approval → 4 Customer Quotation → 5 Customer Acceptance → 6 Project Handover.
@@ -1319,6 +1321,8 @@ export default function QuoteEditorPage() {
                 })}
               </ul>
             </Panel>
+
+            {ev.calc.lines.some((l) => l.itemKey === "penning_package" && l.basis !== "not_selected") && <PenningScopePanel scope={penningScope(cfg)} />}
 
             {(budget?.lines ?? []).some((b) => ["unmapped", "not_in_price_source", "supplier_quote_required", "package_unconfirmed", "package_incomplete"].includes(b.status) || b.pricedBy === "estimator_resolution") && (
               <Panel>

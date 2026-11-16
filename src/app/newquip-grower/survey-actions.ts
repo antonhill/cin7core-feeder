@@ -8,6 +8,7 @@ import { NEWQUIP_POC_CIN7_INSTANCE_ID } from "@/newquip/access";
 import { isQueryableString } from "@/cin7/readonly-diagnostic";
 import { listCin7Suppliers, readRawProductsForSurvey } from "@/lib/projects/latest-cost-adapter";
 import { referencedSkus } from "@/newquip/grower/commercial";
+import { PENNING_COMPONENTS } from "@/newquip/grower/penning";
 import { DEMO_DEFAULTS } from "@/newquip/grower/demo-defaults";
 import { classifySku, pickUnitFields, type MasterSupplier, type RawSupplierRecord, type SurveyInput, type SurveyResult } from "@/newquip/pricing/cost-survey";
 import { authoriseActor } from "./actor";
@@ -38,6 +39,7 @@ export async function getCostSurveyUniverseAction(): Promise<SurveyActionResult<
     const sources: Record<string, string[]> = {};
     const add = (sku: unknown, src: string) => { if (typeof sku === "string" && sku.trim()) (sources[sku.trim()] ??= []).includes(src) || sources[sku.trim()].push(src); };
     referencedSkus().forEach((s) => add(s, "commercial mapping"));
+    PENNING_COMPONENTS.forEach((c) => add(c.sku, "penning component"));
     Object.values(DEMO_DEFAULTS.estimator?.confirmedMappings ?? {}).forEach((s) => add(s, "grower default"));
     const { data: maps, error: mapErr } = await db.from("newquip_package_mappings").select("lines").eq("org_id", a.orgId).eq("status", "ACTIVE");
     for (const m of maps ?? []) for (const l of (m.lines as Array<{ sku?: string }>) ?? []) add(l.sku, "saved package mapping");

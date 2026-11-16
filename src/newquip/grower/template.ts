@@ -38,7 +38,7 @@ const mapRef = (k: GrowerItemKey): string => {
   switch (m.kind) {
     case "single": return k === "feeder" ? "PNQ082 (standard) · PNQ082-WINDOW (window option)" : m.recommendedSku;
     case "package": return m.estimatorPriced ? `${m.name} — reference package, priced by the estimator` : `${m.name} package (${m.components.length} components)`;
-    case "estimator_priced": return `Priced per ${m.unit} by pig size — SKU mapping is a future production concern`;
+    case "estimator_priced": return `Priced per ${m.unit} by pig size. The 50 mm-panel components (posts, caps, gate kit) are listed for estimating with no calculated quantity; panels are custom sizes, not SKUs`;
     case "unresolved": return `Estimator selects: ${(m.manualSelectionSkus ?? []).join(" / ")}`;
     default: return "—";
   }

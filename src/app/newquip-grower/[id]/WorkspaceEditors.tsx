@@ -5,7 +5,7 @@ import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import type { WorkspaceBundle } from "@/lib/newquip-quotes/pricing-service";
-import { manualSelectionSkusFor, packageFor } from "@/newquip/grower/commercial";
+import { CHOICE_PRODUCT_NAMES, manualSelectionSkusFor, packageFor } from "@/newquip/grower/commercial";
 import type { GrowerItemKey } from "@/newquip/grower/types";
 import { decodeManualReason, encodeManualReason, manualPriceComplete, money } from "@/newquip/quote/estimator-workspace";
 import { applyEditor, editorFrom, editorProblems, fxContext, isForeign, parseCostText, previewLine, type SkuEditor } from "@/newquip/quote/workspace-submission";
@@ -204,7 +204,7 @@ export function ProductChoice({ itemKey, label, chosen, canEdit, busy, onChoose,
     </Section>
   );
 }
-const PRODUCT_NAMES: Record<string, string> = { NQ2112: "WHITE DOOR WITH UV 35MM (1980L × 600W)", NQ2113: "WHITE DOOR WITH UV 35MM (1980L × 1000W) NO WINDOWS", NQ2114: "WHITE DOOR WITH UV 35MM (1970L × 1000W)", NQ2161: "WHITE DOOR WITH UV 35MM (1980 × 1000W) WITH WINDOWS", NQ2281: "35MM WHITE DOOR (1990 × 790MM)" };
+const PRODUCT_NAMES = CHOICE_PRODUCT_NAMES;
 
 /** Cup drinker: confirm the seven-component package (existing definition), then cost each component. */
 export function PackageConfirm({ itemKey, confirmed, canEdit, busy, onConfirm }: { itemKey: string; confirmed: boolean; canEdit: boolean; busy: boolean; onConfirm: (yes: boolean) => void }) {

@@ -6,7 +6,7 @@ import { testPriceSource } from "@/newquip/grower/__tests__/test-snapshot";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import { rolesFor } from "@/newquip/quote/roles";
-import { equivalentInputs, evidenceItemsFor } from "@/newquip/pricing/estimator/__tests__/helpers";
+import { equivalentInputs, evidenceItemsFor, manualDraft } from "@/newquip/pricing/estimator/__tests__/helpers";
 import { costInputHash, micro, rateInputHash, submissionFrom, type PricingSubmission } from "@/newquip/pricing/estimator";
 import { createQuote, estimatorSignOff, loadQuote, managerApprove, saveDraft, sendToEstimator } from "../quote-store";
 import { applyPricingChange, attestRates, loadPricingWorkspace, recordManualEvidence, verifyCosts, type PricingActor } from "../pricing-service";
@@ -123,42 +123,43 @@ describe("forward-cover rate attestation, end to end", () => {
   });
 });
 
+// The base draft carries the CONTROLLER with a typed price and no mapping: the LED package is SKU-backed now (Sean 2026-11), so it is not a SKU-less manual item any more.
 describe("pricing evidence for SKU-less manual items, end to end", () => {
   it("one attributed immutable revision; no price moves; stored with who/when and a SERVER-computed hash; sign-off is withdrawn", async () => {
-    const { id } = await inReview();
+    const { id } = await inReview(manualDraft());
     await applyPricingChange(db as never, estimator, id, sub(), "Indicative pricing");
     const total = cents((await loaded(id)).draft);
-    const r = await recordManualEvidence(db as never, estimator, id, [{ itemKey: "led_light", note: "Basis: installer quote Q-7", reference: "Q-7" }]);
+    const r = await recordManualEvidence(db as never, estimator, id, [{ itemKey: "controller", note: "Basis: installer quote Q-7", reference: "Q-7" }]);
     expect(r).toMatchObject({ ok: true, report: { seq: 2, recorded: 1 } });
     const q = await loaded(id);
     expect(cents(q.draft)).toBe(total);
-    expect(q.draft.estimator.pricing!.manualEvidence!.led_light).toMatchObject({ note: "Basis: installer quote Q-7", reference: "Q-7", by: "est@nq" });
-    expect(q.draft.estimator.pricing!.manualEvidence!.led_light!.priceHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(q.draft.estimator.pricing!.manualEvidence!.controller).toMatchObject({ note: "Basis: installer quote Q-7", reference: "Q-7", by: "est@nq" });
+    expect(q.draft.estimator.pricing!.manualEvidence!.controller!.priceHash).toMatch(/^[0-9a-f]{64}$/);
     const revs = await listPricingRevisions(db as never, ORG, id);
     expect(revs[1]).toMatchObject({ seq: 2, kind: "CHANGED", changedBy: "est@nq" });
-    expect(revs[1].changes.some((c) => c.path === "manualEvidence.led_light.note")).toBe(true);
+    expect(revs[1].changes.some((c) => c.path === "manualEvidence.controller.note")).toBe(true);
   });
   it("a Rep, a role without cost visibility, an unknown or reserved key, a short note: all refused, nothing written", async () => {
-    const { id } = await inReview();
+    const { id } = await inReview(manualDraft());
     await applyPricingChange(db as never, estimator, id, sub(), "Indicative pricing");
     const note = "Basis: installer quote Q-7";
-    expect(await recordManualEvidence(db as never, actor("rep@nq", ["rep"], { canSeeCost: false }), id, [{ itemKey: "led_light", note }])).toMatchObject({ ok: false });
-    expect(await recordManualEvidence(db as never, actor("est@nq", ["rep", "estimator"], { canSeeCost: false }), id, [{ itemKey: "led_light", note }])).toMatchObject({ ok: false });
+    expect(await recordManualEvidence(db as never, actor("rep@nq", ["rep"], { canSeeCost: false }), id, [{ itemKey: "controller", note }])).toMatchObject({ ok: false });
+    expect(await recordManualEvidence(db as never, actor("est@nq", ["rep", "estimator"], { canSeeCost: false }), id, [{ itemKey: "controller", note }])).toMatchObject({ ok: false });
     expect(await recordManualEvidence(db as never, estimator, id, [{ itemKey: "__proto__", note }])).toMatchObject({ ok: false });
-    expect(await recordManualEvidence(db as never, estimator, id, [{ itemKey: "led_light", note: "short" }])).toMatchObject({ ok: false });
+    expect(await recordManualEvidence(db as never, estimator, id, [{ itemKey: "controller", note: "short" }])).toMatchObject({ ok: false });
     expect((await listPricingRevisions(db as never, ORG, id)).length).toBe(1);
   });
   it("two concurrent recordings: exactly one revision wins; model off: refused (legacy behaviour untouched)", async () => {
-    const { id } = await inReview();
-    expect(await recordManualEvidence(db as never, estimator, id, [{ itemKey: "led_light", note: "Basis: installer quote Q-7" }])).toMatchObject({ ok: false, errors: [expect.stringMatching(/not switched on/)] });
+    const { id } = await inReview(manualDraft());
+    expect(await recordManualEvidence(db as never, estimator, id, [{ itemKey: "controller", note: "Basis: installer quote Q-7" }])).toMatchObject({ ok: false, errors: [expect.stringMatching(/not switched on/)] });
     await applyPricingChange(db as never, estimator, id, sub(), "Indicative pricing");
-    const items = [{ itemKey: "led_light", note: "Basis: installer quote Q-7" }];
+    const items = [{ itemKey: "controller", note: "Basis: installer quote Q-7" }];
     const [a, b] = await Promise.all([recordManualEvidence(db as never, estimator, id, items), recordManualEvidence(db as never, estimator, id, items)]);
     expect([a.ok, b.ok].filter(Boolean).length).toBe(1);
     expect((await listPricingRevisions(db as never, ORG, id)).length).toBe(2);
   });
   it("a price change AFTER the evidence makes it outdated in the workspace; a pricing save carries the stored evidence over", async () => {
-    const { id } = await inReview();
+    const { id } = await inReview(manualDraft());
     await applyPricingChange(db as never, estimator, id, sub(), "Indicative pricing");
     await recordManualEvidence(db as never, estimator, id, evidenceItemsFor((await loaded(id)).draft));
     const ws1 = await loadPricingWorkspace(db as never, manager1, id);
@@ -166,10 +167,10 @@ describe("pricing evidence for SKU-less manual items, end to end", () => {
     const keep = submissionFrom((await loaded(id)).draft.estimator.pricing!); keep.projectMarkup = { markupBps: 2500, reason: "markup" };
     await applyPricingChange(db as never, estimator, id, keep, "Markup only");
     expect(Object.keys((await loaded(id)).draft.estimator.pricing!.manualEvidence!).sort()).toEqual(ws1.view.manualEvidence.map((m) => m.itemKey).sort());
-    // the Estimator moves the LED price through the draft: the evidence no longer covers it
-    const d = (await loaded(id)).draft; d.estimator.priceResolutions = { ...d.estimator.priceResolutions, led_light: { unitPriceExVat: 1000, reason: "price moved" } };
+    // the Estimator moves the controller price through the draft: the evidence no longer covers it
+    const d = (await loaded(id)).draft; d.estimator.priceResolutions = { ...d.estimator.priceResolutions, controller: { unitPriceExVat: 1000, reason: "price moved" } };
     await db.from("newquip_quotes").update({ draft: d }).eq("id", id);
-    expect((await loadPricingWorkspace(db as never, manager1, id)).view.manualEvidence.find((m) => m.itemKey === "led_light")).toMatchObject({ state: "outdated" });
+    expect((await loadPricingWorkspace(db as never, manager1, id)).view.manualEvidence.find((m) => m.itemKey === "controller")).toMatchObject({ state: "outdated" });
   });
 });
 

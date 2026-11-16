@@ -97,23 +97,24 @@ describe("the workspace: header, exception-first tasks and compact indicators", 
   });
 });
 
-describe("the PVC door: choose one of five candidates, then price it", () => {
-  it("shows the five Cin7 candidates; saving the product alone saves ONLY the mapping through the draft save; pricing waits until a product is chosen", async () => {
+describe("the PVC door: choose one of three candidates, then price it", () => {
+  it("shows the three Cin7 candidates (NQ3444 first, Sean 2026-11); saving the product alone saves ONLY the mapping through the draft save; pricing waits until a product is chosen", async () => {
     const { saveDraft } = mount();
     fireEvent.click(await screen.findByRole("button", { name: /Choose and price: PVC SST door/ }));
     const choice = await screen.findByTestId("product-choice");
-    expect(within(choice).getAllByRole("radio").map((r) => (r as HTMLInputElement).closest("label")!.textContent!.match(/NQ\d+/)![0])).toEqual(["NQ2114", "NQ2113", "NQ2112", "NQ2161", "NQ2281"]);
+    expect(within(choice).getAllByRole("radio").map((r) => (r as HTMLInputElement).closest("label")!.textContent!.match(/NQ\d+/)![0])).toEqual(["NQ3444", "NQ2161", "NQ2281"]);
+    for (const retired of ["NQ2112", "NQ2113", "NQ2114"]) expect(choice.textContent).not.toContain(retired); // replaced by NQ3444: no longer offered
     expect(screen.getByTestId("door-pricing-wait")).toBeTruthy();
     const only = screen.getByRole("button", { name: "Save the product choice only" }) as HTMLButtonElement;
     expect(only.disabled).toBe(true);
     fireEvent.click(within(choice).getAllByRole("radio")[0]);
     expect(only.disabled).toBe(false);
-    expect(screen.getByTestId("door-pricing").textContent).toMatch(/supplier cost for NQ2114/);
+    expect(screen.getByTestId("door-pricing").textContent).toMatch(/supplier cost for NQ3444/);
     fireEvent.click(only);
     await waitFor(() => expect(saveDraft).toHaveBeenCalledTimes(1));
     const d = readyDraft(); delete d.estimator.confirmedMappings.pvc_door;
     (saveDraft.mock.calls[0][0] as (d: QuoteDraft) => void)(d);
-    expect(d.estimator.confirmedMappings.pvc_door).toBe("NQ2114");
+    expect(d.estimator.confirmedMappings.pvc_door).toBe("NQ3444");
     expect(pricing.applyEstimatorPricingAction).not.toHaveBeenCalled(); // the price part stays open
   });
 });

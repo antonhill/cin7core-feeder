@@ -34,10 +34,16 @@ import * as grower from "../actions";
 
 const ORG = "org-nq";
 const ctx = (withholdCost: boolean) => ({ priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost });
-// The Estimator typed a price for the LED catalogue line (estimator_resolution) and recorded the accepted-incomplete-cost exception, so SIGN-OFF is allowed (its gating is unchanged);
-// M75 and penning are Estimator-priced by design. Nothing is mapped in the library.
+// `draft`: the demo quotation. The LED package is SKU-backed now (HNQ7046 / HNQ7093 / HNQ7088, Sean 2026-11), so it needs no library mapping; M75 and penning are Estimator-priced by design.
+// `ctrlDraft`: the same quotation with the optional CONTROLLER selected and a price the Estimator typed (estimator_resolution) for a product with no Cin7 mapping: the "unmapped catalogue product"
+// the original LED played. Both record the accepted-incomplete-cost exception, so SIGN-OFF is allowed (its gating is unchanged). Nothing is mapped in the library unless a test says so.
 const draft = withAcceptedIncompleteCosting(applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft);
-const total = Math.round(evaluateDraft(draft, ctx(true)).budget!.totals.subtotalExTax * 100);
+const ctrlDraft = { ...draft, config: { ...draft.config, optionalEquipment: { ...draft.config.optionalEquipment, controller: true }, estimatorQuantities: { ...draft.config.estimatorQuantities, controller: 2 } },
+  estimator: { ...draft.estimator, priceResolutions: { ...draft.estimator.priceResolutions, controller: { unitPriceExVat: 3000, reason: "Estimator price; no Cin7 product chosen" } } } } as typeof draft;
+const CTRL_MAPPED_SKU = "TEST-CTRL";
+const ctrlLibraryMapping = (orgId: string) => ({ ...ledLibraryMapping(orgId), id: "map-ctrl", package_key: "controller", lines: [{ sku: CTRL_MAPPED_SKU, factor: 1, unit: "each", role: "FINISHED_GOOD" as const }] });
+const totalOf = (d: typeof draft) => Math.round(evaluateDraft(d, ctx(true)).budget!.totals.subtotalExTax * 100);
+const total = totalOf(draft);
 const REASON = "M75 and penning are Estimator-priced by design; the library follows the customer PO";
 type Row = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 const quote = () => db.rows("newquip_quotes")[0] as Row;
@@ -50,27 +56,28 @@ const as = (admin: boolean) => {
 const req = () => ({ reason: REASON, expectedRevision: quote().revision, expectedDraftHash: quote().draft_hash });
 
 /** The whole journey from an EMPTY library: Rep creates and submits, the Estimator signs off (REAL stores). */
-async function journey(library: "empty" | "led" | "all") {
+async function journey(library: "empty" | "led" | "all" | "ctrl", d: typeof draft = draft) {
   db = new FakeDb(); db.fxApplied = true;
   seedGoldenCatalogue(db as never, ORG);
-  db.tables.newquip_package_mappings = []; // seedGoldenCatalogue's mapped library is removed: the catalogue/LED line is UNMAPPED
+  db.tables.newquip_package_mappings = []; // seedGoldenCatalogue's mapped library is removed: nothing is mapped in the library
   if (library === "led") db.tables.newquip_package_mappings = [ledLibraryMapping(ORG)];
+  if (library === "ctrl") db.tables.newquip_package_mappings = [ctrlLibraryMapping(ORG)];
   if (library === "all") seedGoldenLibrary(db as never, ORG);
   const rep = rolesFor("member");
   const { id } = await createQuote(db as never, ORG, "rep@nq");
-  await saveDraft(db as never, ORG, rep, id, draft);
-  await sendToEstimator(db as never, ORG, rep, "rep@nq", id, ctx(true), { confirmedAmountCents: total, confirmedBy: "Farmer Joe" });
+  await saveDraft(db as never, ORG, rep, id, d);
+  await sendToEstimator(db as never, ORG, rep, "rep@nq", id, ctx(true), { confirmedAmountCents: totalOf(d), confirmedBy: "Farmer Joe" });
   await estimatorSignOff(db as never, ORG, rep, "est@nq", id, ctx(true));
   expect(quote()).toMatchObject({ state: "ESTIMATOR_REVIEW", estimator_signoff_by_email: "est@nq" });
   return id;
 }
 
 describe("(a) the unmapped CATALOGUE path, whole flow from an EMPTY library", () => {
-  it("Rep submit and Estimator sign-off are ALLOWED with the LED line unmapped; the cost-entitled view names it (this is what the visible Estimator notice renders)", async () => {
-    const id = await journey("empty");
+  it("Rep submit and Estimator sign-off are ALLOWED with the controller line unmapped; the cost-entitled view names it (this is what the visible Estimator notice renders)", async () => {
+    const id = await journey("empty", ctrlDraft);
     as(true);
     const v = (await grower.getGrowerQuoteAction(id)).data!;
-    expect(v.baselineException?.blocking).toEqual([{ label: expect.stringMatching(/LED/), pricedBy: "estimator_resolution" }]);
+    expect(v.baselineException?.blocking).toEqual([{ label: expect.stringMatching(/controller/i), pricedBy: "estimator_resolution" }]);
     expect(v.baselineException?.baselineExceptionRequired).toBe(false);
     expect(v.baselineException?.items.map((i) => i.itemKey).sort()).toEqual(["flex_auger", "penning_package"]);
     // a Rep-level caller never receives it
@@ -78,24 +85,30 @@ describe("(a) the unmapped CATALOGUE path, whole flow from an EMPTY library", ()
     expect((await grower.getGrowerQuoteAction(id)).data!.baselineException).toBeUndefined();
   });
   it("REFUSED: plain approval names the unmapped product and says an exception cannot cover it; nothing is written", async () => {
-    const id = await journey("empty"); as(true);
+    const id = await journey("empty", ctrlDraft); as(true);
     const before = snapshot();
     const r = await grower.approveGrowerQuoteAction(id);
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/3 package\(s\) are not mapped to Cin7 SKUs \(.*LED.*\).*need an active library mapping/);
+    expect(r.error).toMatch(/3 package\(s\) are not mapped to Cin7 SKUs \(.*controller.*\).*need an active library mapping/i);
     expect(snapshot()).toBe(before);
   });
   it("REFUSED: even with a Manager exception, the unmapped catalogue product keeps blocking (and it is named); nothing is written", async () => {
-    const id = await journey("empty"); as(true);
+    const id = await journey("empty", ctrlDraft); as(true);
     const before = snapshot();
     const r = await grower.approveGrowerQuoteAction(id, { baselineException: req() });
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/cannot cover everything still unresolved: .*LED/);
+    expect(r.error).toMatch(/cannot cover everything still unresolved: .*controller/i);
     expect(snapshot()).toBe(before);
     expect(quote().state).toBe("ESTIMATOR_REVIEW");
   });
+  it("the SKU-backed LED needs no mapping: with nothing in the library only M75 / penning are excepted (no blocking item)", async () => {
+    const id = await journey("empty"); as(true);
+    expect((await grower.getGrowerQuoteAction(id)).data!.baselineException).toMatchObject({ baselineExceptionRequired: true, blocking: [] });
+    expect((await grower.approveGrowerQuoteAction(id, { baselineException: req() })).error).toBeUndefined();
+    expect(quote().accepted_baseline.exceptions[0].unresolved.map((i: Row) => i.itemKey).sort()).toEqual(["flex_auger", "penning_package"]);
+  });
   it("EXCEPTION-APPROVED once the catalogue product is mapped: only M75 / penning are excepted", async () => {
-    const id = await journey("led"); as(true);
+    const id = await journey("ctrl", ctrlDraft); as(true);
     const v = (await grower.getGrowerQuoteAction(id)).data!;
     expect(v.baselineException).toMatchObject({ baselineExceptionRequired: true, blocking: [] });
     expect((await grower.approveGrowerQuoteAction(id, { baselineException: req() })).error).toBeUndefined();
@@ -112,7 +125,7 @@ describe("(a) the unmapped CATALOGUE path, whole flow from an EMPTY library", ()
 
 describe("(b) PROJECT creation from a REAL excepted baseline", () => {
   it("the baseline sealed through approveGrowerQuoteAction(..., {baselineException}) becomes a Project; the exception travels with it and the unresolved scope is preserved, never silently mapped", async () => {
-    const id = await journey("led"); as(true);
+    const id = await journey("ctrl", ctrlDraft); as(true);
     expect((await grower.approveGrowerQuoteAction(id, { baselineException: req() })).error).toBeUndefined();
     const sealed = quote().accepted_baseline;
     expect(sealed.exceptions).toHaveLength(1);
@@ -132,16 +145,18 @@ describe("(b) PROJECT creation from a REAL excepted baseline", () => {
     expect(prov.baselineExceptions[0]).toMatchObject({ kind: "ESTIMATOR_PRICED_WITHOUT_CIN7_SKU", reason: REASON, approvedBy: "u1@nq", version: { quoteRef: quote().quote_ref, revision: quote().revision } });
     expect(prov.baselineExceptions[0].unresolved.map((i: Row) => i.itemKey).sort()).toEqual(["flex_auger", "penning_package"]);
 
-    // the unresolved physical scope is inherited VERBATIM: M75 and penning stay UNMAPPED, the library-mapped LED line is mapped
+    // the unresolved physical scope is inherited VERBATIM: M75 and penning stay UNMAPPED, the library-mapped controller line is mapped (the SKU-backed LED is mapped through its own SKUs)
     const scope = scopeFromSnapshot(project.baseline_snapshot);
     expect(scope).toEqual(sealed.physicalScope);
     // a library mapping is recorded as a RESOLUTION on the scope item; an item with none is genuinely unresolved
     const open = scope.filter((i) => i.mapping.status === "UNMAPPED" && !i.resolution);
     const unmapped = open.map((i) => i.id.replace(/:UNMAPPED$/, "")).sort();
     expect(unmapped).toEqual(["flex_auger", "penning_package"]);
-    const led = scope.find((i) => i.id.startsWith("led_light"))!;
-    expect(led.resolution).toMatchObject({ kind: "MAP_LINES" });
-    expect(JSON.stringify(led.resolution)).toContain(LED_MAPPED_SKU);
+    const ctrl = scope.find((i) => i.id.startsWith("controller"))!;
+    expect(ctrl.resolution).toMatchObject({ kind: "MAP_LINES" });
+    expect(JSON.stringify(ctrl.resolution)).toContain(CTRL_MAPPED_SKU);
+    expect(scope.filter((i) => i.id.startsWith("led_light") && i.mapping.status === "UNMAPPED")).toEqual([]); // the LED is not an unresolved item
+    expect(JSON.stringify(scope.filter((i) => i.id.startsWith("led_light")))).toContain("HNQ7046");
     expect(open.every((i) => !i.sku || !i.sku.trim() || !i.resolution)).toBe(true); // M75 / penning: no SKU, no resolution invented
   });
   it("a baseline WITHOUT an exception carries no baselineExceptions on the project", async () => {

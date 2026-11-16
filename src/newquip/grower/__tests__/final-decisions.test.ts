@@ -5,7 +5,7 @@ import { createWorkbookPriceSource, landedCostCents, projectPriceCents, PENNING_
 import { FINAL_GROWER_DECISIONS } from "../final-feedback";
 import { CCM_FEEDER_CAPACITY_PIGS, GROWER_RULES, PIGS_PER_DRINKER } from "../rules";
 import { TOPIGS_GROWER_INPUT } from "../fixture";
-import { feederSkuFor } from "../commercial";
+import { COMMERCIAL_MAPPINGS, FEEDBACK_2026_11, feederSkuFor, packageAutoConfirmable, type PackageMapping } from "../commercial";
 import type { GrowerConfigurationInput } from "../types";
 import { TEST_SNAPSHOT, testPriceSource } from "./test-snapshot";
 import { readyDraft } from "./golden";
@@ -281,13 +281,18 @@ describe("ZERO PRICE — supplier quote required, never R0", () => {
     expect(ev.budget!.lines.find((l) => l.itemKey === "led_light")!.status).not.toBe("priced");
     expect(ev.readiness.state).toBe("BLOCKED");
   });
-  it("FORTIS 1.2 has no SKU: the historic FERAX surrogate is never substituted", () => {
+  it("the LED package carries the Sean-confirmed SKUs (HNQ7046 / HNQ7093 x3 / HNQ7088) yet is never auto-confirmed; the customer-facing name still says FORTIS and a note records that", () => {
     const d = readyDraft();
     const ev = evaluateDraft({ ...d, estimator: { ...d.estimator, priceResolutions: {} } }, ctx);
     const light = ev.budget!.lines.find((l) => l.itemKey === "led_light")!;
-    expect(light.status).toBe("package_unconfirmed");
-    expect(JSON.stringify(light)).not.toContain("HNQ7046\",\"description");
-    expect(light.components!.find((c) => c.id === "luminaire")!.status).toBe("identity_unresolved");
+    expect(light.status).toBe("package_unconfirmed"); // still needs the Estimator to confirm it (estimatorConfirmation), even though every component is source-backed
+    expect(light.label).toMatch(/FORTIS 1\.2/);
+    expect(light.components!.map((c) => [c.id, c.sku, c.qtyPerUnit])).toEqual([["luminaire", "HNQ7046", 1], ["clip", "HNQ7093", 3], ["cable", "HNQ7088", 1]]);
+    expect(light.components!.some((c) => c.status === "identity_unresolved")).toBe(false); // no component is unidentified any more
+    const mapping = COMMERCIAL_MAPPINGS.led_light as PackageMapping;
+    expect(mapping.components.every((c) => c.identity === "source_backed" && c.confirmedBy === FEEDBACK_2026_11)).toBe(true);
+    expect(mapping.estimatorConfirmation).toMatch(/FORTIS 1\.2/); // the note recording the FORTIS / FERAX naming question
+    expect(packageAutoConfirmable(mapping)).toBe(false);
   });
 });
 

@@ -350,7 +350,10 @@ describe("D3-C Solution Builder: visible selected / excluded states and a stable
     const approve = () => screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement;
     it("no sign-off: says it is waiting for the Estimator exactly once", async () => {
       await openAsManager("none");
-      expect(screen.getAllByText(/Waiting for the Estimator/)).toHaveLength(1);
+      // ONE status banner says it. The Manager's recorded-exception control (shown now that the SKU-backed LED no longer blocks on a mapping) carries its own disabled reason for ITS button: at most one more.
+      const waiting = screen.getAllByText(/Waiting for the Estimator/);
+      expect(waiting.filter((n) => n.closest('[role="status"]'))).toHaveLength(1);
+      expect(waiting.length).toBeLessThanOrEqual(2);
       expect(approve().disabled).toBe(true);
     }, 30000);
     it("stale sign-off: says the sign-off no longer matches", async () => {
@@ -368,7 +371,9 @@ describe("D3-C Solution Builder: visible selected / excluded states and a stable
       nav(1);
       fireEvent.click(await screen.findByLabelText(/Silo weighing/)); // an unsaved edit
       nav(3);
-      expect(await screen.findByText(/Save or discard your edits first/)).toBeTruthy();
+      const dirtyMsgs = await screen.findAllByText(/Save or discard your edits first/);
+      expect(dirtyMsgs.filter((n) => n.closest('[role="alert"], [role="status"]'))).toHaveLength(1); // the unsaved-edits banner, once (the exception button repeats it as its own disabled reason)
+      expect(dirtyMsgs.length).toBeLessThanOrEqual(2);
       expect(approve().disabled).toBe(true);
       cleanup();
     }, 30000);

@@ -37,7 +37,7 @@ const APPROVALS = { customerConfirmedAt: "t", customerConfirmedCents: 1, custome
 
 function approvedDemo(): { baseline: AcceptedBaseline; hash: string } {
   const ctx = (withholdCost: boolean) => ({ priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost });
-  return sealWithUnresolvedScope({ quoteRef: "NQ-Q-0001", revision: 1, draft: NQ_Q_0001_DRAFT, evaluation: evaluateDraft(NQ_Q_0001_DRAFT, ctx(true)), marginEvaluation: evaluateDraft(NQ_Q_0001_DRAFT, ctx(false)), approvals: APPROVALS });
+  return sealWithUnresolvedScope({ quoteRef: "NQ-Q-0001", revision: 1, draft: NQ_Q_0001_DRAFT, evaluation: evaluateDraft(NQ_Q_0001_DRAFT, ctx(true)), marginEvaluation: evaluateDraft(NQ_Q_0001_DRAFT, ctx(false)), approvals: APPROVALS }, undefined, { unmappedController: true }); // the LED is SKU-backed now: the third unresolved item is an Estimator-priced controller with no Cin7 mapping (scope only: no price moves)
 }
 
 describe("1-3. the approved quotation's products carry into the project unchanged, packages expand once, BOM/reference components are not products", () => {
@@ -72,12 +72,15 @@ describe("1-3. the approved quotation's products carry into the project unchange
     const eff = effectiveScope([mk("a", 3), mk("b", 4)]);
     expect(eff.lines).toEqual([{ sku: "NQ2886", quantity: 7, description: "Bracket", sources: ["a", "b"] }]);
   });
-  it("historic-reference components (the M75 system) and unresolved identities (FORTIS LED) are NEVER invented as products: each is one explicit UNMAPPED item", () => {
+  it("historic-reference components (the M75 system) and unresolved identities (a typed-price controller with no mapping; the LED is SKU-backed now) are NEVER invented as products: each is one explicit UNMAPPED item", () => {
     const un = baseline.physicalScope!.filter((i) => i.mapping.status === "UNMAPPED");
-    expect(un.map((i) => i.id).sort()).toEqual(["flex_auger:UNMAPPED", "led_light:UNMAPPED", "penning_package:UNMAPPED"]);
+    expect(un.map((i) => i.id).sort()).toEqual(["controller:UNMAPPED", "flex_auger:UNMAPPED", "penning_package:UNMAPPED"]);
     expect(un.every((i) => i.sku === null && i.mapping.status === "UNMAPPED" && i.mapping.reason.length > 10)).toBe(true);
     const all = JSON.stringify(baseline.physicalScope);
-    for (const histo of ["NQ1163", "NQ1223", "NQ1764", "NQ1942", "T3750001", "HNQ7046", "HNQ7088", "HNQ7093"]) expect(all).not.toContain(histo);
+    for (const histo of ["NQ1163", "NQ1223", "NQ1764", "NQ1942", "T3750001"]) expect(all).not.toContain(histo);
+    // the LED's three Sean-confirmed SKUs are legitimate MAPPED products now (never unresolved), each from the LED package
+    const led = baseline.physicalScope!.filter((i) => i.origin.packageKey === "led_light");
+    expect(led.map((i) => [i.sku, i.quantity, i.mapping.status])).toEqual([["HNQ7046", 456, "MAPPED"], ["HNQ7093", 1368, "MAPPED"], ["HNQ7088", 456, "MAPPED"]]);
   });
   it("a Cin7 BOM sub-component is not scope: only what the quotation sells appears (an assembled finished good is one SKU line)", () => {
     const items = buildPhysicalScope([{ itemKey: "bulk_tank", label: "Silo", sku: "ASM-1", quantity: 2, unitPriceExVat: 100, revenueCents: 20000, pricedBy: "price_source", note: "" }]);
@@ -90,7 +93,7 @@ describe("1-3. the approved quotation's products carry into the project unchange
     const oldHash = hashOf(old);
     expect(baselineMatchesHash(old, oldHash)).toBe(true);
     const rebuilt = quoteToProjectBaseline(old as unknown as AcceptedBaseline, oldHash, "q1").physicalScope;
-    expect(rebuilt).toEqual(baseline.physicalScope);
+    expect(rebuilt).toEqual(baseline.physicalScope!.filter((i) => i.id !== "controller:UNMAPPED")); // (the fixture adds the controller to the scope only, not to the commercial lines the scope is rebuilt from)
     expect(baselineMatchesHash(old, oldHash)).toBe(true);
     expect(Object.isFrozen(baseline)).toBe(true);
   });
@@ -138,31 +141,31 @@ describe("4, 12. the Cin7 Advanced Sale is populated from the inherited scope, f
   it("refuses while any scope item is unmapped, names every one, stores no intent and sends nothing", async () => {
     const m = await err(createSaleForProject(db as never, port, ON, "mgr@x", saleInput(projectId)));
     expect(m).toMatch(/product scope is not ready/);
-    for (const frag of ["M75", "penning", "LED"]) expect(m!.toLowerCase()).toContain(frag.toLowerCase());
+    for (const frag of ["M75", "penning", "controller"]) expect(m!.toLowerCase()).toContain(frag.toLowerCase());
     expect(port.creates).toHaveLength(0);
     expect(db.rows("project_cin7_sale_creations")).toHaveLength(0);
   });
   it("once a manager resolves each unmapped item (with a reason), the Sale carries exactly the approved SKUs and quantities, at R0", async () => {
     for (const id of ["flex_auger:UNMAPPED", "penning_package:UNMAPPED"]) await resolveScopeItem(db as never, port, { isManager: true }, "mgr@x", { orgId: ORG, projectId, itemId: id, kind: "EXCLUDE", reason: "Estimator-priced system supplied outside Cin7 stock" });
-    await resolveScopeItem(db as never, port, { isManager: true }, "mgr@x", { orgId: ORG, projectId, itemId: "led_light:UNMAPPED", kind: "MAP", sku: "NQ2784", quantity: 456, reason: "FORTIS not stocked; mapped by the manager" });
+    await resolveScopeItem(db as never, port, { isManager: true }, "mgr@x", { orgId: ORG, projectId, itemId: "controller:UNMAPPED", kind: "MAP", sku: "NQ2784", quantity: 456, reason: "Controller not stocked; mapped by the manager" });
     const r = await createSaleForProject(db as never, port, ON, "mgr@x", saleInput(projectId));
     expect(r.state).toBe("RECONCILED");
     const lines = Object.fromEntries(port.creates[0].lines.map((l) => [l.sku, l.quantity]));
-    expect(lines).toMatchObject({ PNQ082: 216, ERT053: 216, NQ1161: 15840, NQ2114: 24, "SYSH-2750-3": 12, QCA00003: 648, NQ1386: 3240, NQ2784: 648 + 456 }); // NQ2784 = package component + the mapped LED, summed once
+    expect(lines).toMatchObject({ PNQ082: 216, ERT053: 216, NQ1161: 15840, NQ2114: 24, "SYSH-2750-3": 12, QCA00003: 648, NQ1386: 3240, NQ2784: 648 + 456 }); // NQ2784 = package component + the mapped controller, summed once
     expect(Object.keys(lines).length).toBe(port.creates[0].lines.length); // one line per SKU
     const body = buildAdvancedSaleOrderBody("s", port.creates[0].lines, port.creates[0].charges) as { Lines: Array<{ Price: number; Total: number; Tax: number }> };
     expect(body.Lines.every((l) => l.Price === 0 && l.Total === 0 && l.Tax === 0)).toBe(true);
     expect(port.creates[0].charges.reduce((n, c) => n + c.priceExVat, 0)).toBeCloseTo(10_000_000, 0);
   });
   it("a SKU that does not exist in Cin7 fails explicitly - nothing is created, substituted or altered", async () => {
-    for (const id of ["flex_auger:UNMAPPED", "penning_package:UNMAPPED", "led_light:UNMAPPED"]) await resolveScopeItem(db as never, port, { isManager: true }, "mgr@x", { orgId: ORG, projectId, itemId: id, kind: "EXCLUDE", reason: "outside Cin7" });
+    for (const id of ["flex_auger:UNMAPPED", "penning_package:UNMAPPED", "controller:UNMAPPED"]) await resolveScopeItem(db as never, port, { isManager: true }, "mgr@x", { orgId: ORG, projectId, itemId: id, kind: "EXCLUDE", reason: "outside Cin7" });
     port.skus.delete("PNQ082");
     expect(await err(createSaleForProject(db as never, port, ON, "mgr@x", saleInput(projectId)))).toMatch(/do not exist in Cin7: PNQ082/);
     expect(port.creates).toHaveLength(0);
     expect(db.rows("project_cin7_sale_creations")).toHaveLength(0);
   });
   it("resolutions are controlled: manager only, reason required, only unmapped items, a MAP target must exist in Cin7, frozen after a Sale/claim", async () => {
-    const r = (o: Record<string, unknown>, gates = { isManager: true }) => resolveScopeItem(db as never, port, gates, "mgr@x", { orgId: ORG, projectId, itemId: "led_light:UNMAPPED", kind: "EXCLUDE", reason: "x", ...o } as never);
+    const r = (o: Record<string, unknown>, gates = { isManager: true }) => resolveScopeItem(db as never, port, gates, "mgr@x", { orgId: ORG, projectId, itemId: "controller:UNMAPPED", kind: "EXCLUDE", reason: "x", ...o } as never);
     expect(await err(r({}, { isManager: false }))).toMatch(/manager/);
     expect(await err(r({ reason: " " }))).toMatch(/reason/);
     expect(await err(r({ itemId: "feeder" }))).toMatch(/only an unmapped item/i);
@@ -170,7 +173,7 @@ describe("4, 12. the Cin7 Advanced Sale is populated from the inherited scope, f
     expect(await err(r({ kind: "MAP", sku: "DOES-NOT-EXIST", quantity: 1 }))).toMatch(/does not exist in Cin7/);
     expect(await err(r({ kind: "MAP", sku: "NQ2784", quantity: 0 }))).toMatch(/positive quantity/);
     const items = await r({ kind: "MAP", sku: "NQ2784", quantity: 5, reason: "mapped" });
-    expect(items.find((i) => i.id === "led_light:UNMAPPED")!.resolution).toMatchObject({ kind: "MAP", sku: "NQ2784", quantity: 5, reason: "mapped", by: "mgr@x" });
+    expect(items.find((i) => i.id === "controller:UNMAPPED")!.resolution).toMatchObject({ kind: "MAP", sku: "NQ2784", quantity: 5, reason: "mapped", by: "mgr@x" });
     expect(await err(r({ kind: "EXCLUDE" }))).toMatch(/already has a recorded resolution/);
     db.rows("project_cin7_sale_links").push({ id: "l", org_id: ORG, project_id: projectId, cin7_sale_id: "S" });
     expect(await err(r({ itemId: "penning_package:UNMAPPED" }))).toMatch(/Sale already exists/);
@@ -179,8 +182,8 @@ describe("4, 12. the Cin7 Advanced Sale is populated from the inherited scope, f
     const before = await loadProjectScope(db as never, ORG, projectId);
     const again = await loadProjectScope(db as never, ORG, projectId);
     expect(again.items).toEqual(before.items);
-    const x = applyResolution(before.items, { itemId: "led_light:UNMAPPED", kind: "EXCLUDE", reason: "r", by: "m", at: "t" });
-    expect(x.ok && before.items.find((i) => i.id === "led_light:UNMAPPED")!.resolution).toBeFalsy(); // input not mutated
+    const x = applyResolution(before.items, { itemId: "controller:UNMAPPED", kind: "EXCLUDE", reason: "r", by: "m", at: "t" });
+    expect(x.ok && before.items.find((i) => i.id === "controller:UNMAPPED")!.resolution).toBeFalsy(); // input not mutated
   });
 });
 

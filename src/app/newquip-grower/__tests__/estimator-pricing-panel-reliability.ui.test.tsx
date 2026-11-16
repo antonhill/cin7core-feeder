@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readyDraft } from "@/newquip/grower/__tests__/golden";
-import { equivalentInputs, evalOf, withPricing } from "@/newquip/pricing/estimator/__tests__/helpers";
+import { equivalentInputs, evalOf, manualDraft, withPricing } from "@/newquip/pricing/estimator/__tests__/helpers";
 import { buildPricingWorkspace, submissionFrom, type EstimatorPricing } from "@/newquip/pricing/estimator";
 import type { WorkspaceBundle } from "@/lib/newquip-quotes/pricing-service";
 import * as actions from "../pricing-actions";
@@ -131,9 +131,12 @@ describe("verify / attest / evidence NEVER discard unsaved typed input", { timeo
     await typedStillThere();
   });
   it("record evidence: the draft is kept", async () => {
-    await mount(bundle(equivalentInputs({}, "unverified")));
+    // (the typed-price controller is the SKU-less item here: the LED package is SKU-backed now)
+    const p = equivalentInputs({}, "unverified", manualDraft());
+    const view = buildPricingWorkspace({ quoteType: "project", pricing: p, budget: evalOf(withPricing(p, manualDraft())).budget, originalTotalCents: 860_954_240, originalCapturedAt: "2026-11-12T08:00:00.000Z", nowIso: "2026-11-12T09:00:00.000Z" });
+    await mount({ ...bundle(p), view });
     typeIn("PNQ082 supplier cost", "61.5");
-    fireEvent.change(screen.getByLabelText(/FORTIS.* evidence note/), { target: { value: "Basis: installer quote Q-7" } });
+    fireEvent.change(screen.getByLabelText(/controller.* evidence note/), { target: { value: "Basis: installer quote Q-7" } });
     vi.mocked(actions.recordManualPriceEvidenceAction).mockResolvedValue({ ok: true, data: { seq: 2, recorded: 1 } });
     fireEvent.click(screen.getByTestId("evidence-save"));
     await typedStillThere();

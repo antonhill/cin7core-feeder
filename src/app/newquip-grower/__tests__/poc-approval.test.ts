@@ -81,6 +81,13 @@ beforeEach(() => {
 
 const REF = "pnzwjqjovxxdikxtfngq";
 const on = () => { process.env.VERCEL_ENV = "preview"; process.env.NEWQUIP_POC_PRESENTATION = "true"; process.env.SUPABASE_URL = `https://${REF}.supabase.co`; process.env.NEXT_PUBLIC_SUPABASE_URL = `https://${REF}.supabase.co`; };
+const addController = () => { // the Rep's confirmed amount follows the added controller line
+  const q = quote();
+  q.draft.config.optionalEquipment = { ...q.draft.config.optionalEquipment, controller: true };
+  q.draft.config.estimatorQuantities = { ...q.draft.config.estimatorQuantities, controller: 2 };
+  q.draft.estimator.priceResolutions = { ...q.draft.estimator.priceResolutions, controller: { unitPriceExVat: 3000, reason: "Estimator price; no Cin7 product chosen" } };
+  q.customer_confirmed_cents = Math.round(evaluateDraft(q.draft, { ...ctx, withholdCost: true }).budget!.totals.subtotalExTax * 100);
+};
 const mark = () => { const q = quote(); q.draft.estimator.pocPresentation = true; };
 import { afterEach } from "vitest";
 afterEach(() => { delete process.env.NEWQUIP_POC_PRESENTATION; delete process.env.SUPABASE_URL; delete process.env.NEXT_PUBLIC_SUPABASE_URL; delete process.env.VERCEL_ENV; });
@@ -108,16 +115,17 @@ describe("POC Presentation Mode records the Manager baseline exception automatic
   });
 });
 
-describe("POC Presentation Mode also covers a catalogue line with NO library mapping (the FORTIS LED), listed as UNVERIFIED", () => {
-  const noLibrary = () => { db.tables.newquip_package_mappings = []; };
-  it("a normal quotation with the LED unmapped is still refused (nothing written)", async () => {
+describe("POC Presentation Mode also covers a catalogue line with NO library mapping (an Estimator-priced controller; the LED is SKU-backed now), listed as UNVERIFIED", () => {
+  // The LED package carries Sean's confirmed SKUs (HNQ7046 / HNQ7093 / HNQ7088), so the "catalogue line with no mapping" is the optional controller: selected, an Estimator-typed price, no Cin7 product.
+  const noLibrary = () => { db.tables.newquip_package_mappings = []; addController(); };
+  it("a normal quotation with the controller unmapped is still refused (nothing written)", async () => {
     noLibrary(); as(true); const before = snapshot();
     const r = await grower.approveGrowerQuoteAction("q1");
     expect(r.ok).toBe(false); expect(snapshot()).toBe(before);
     on(); const r2 = await grower.approveGrowerQuoteAction("q1"); // mode on but NOT marked: still the normal rule
     expect(r2.ok).toBe(false); expect(snapshot()).toBe(before);
   });
-  it("a marked POC quotation is approved: the exception lists the LED as unverified, the baseline keeps it UNMAPPED, the confirmed amount and sign-off are untouched", async () => {
+  it("a marked POC quotation is approved: the exception lists the controller as unverified, the baseline keeps it UNMAPPED, the confirmed amount and sign-off are untouched", async () => {
     noLibrary(); on(); as(true); mark();
     const confirmed = quote().customer_confirmed_cents, signoff = quote().estimator_signoff_by_email;
     const r = await grower.approveGrowerQuoteAction("q1");
@@ -125,8 +133,9 @@ describe("POC Presentation Mode also covers a catalogue line with NO library map
     expect(quote()).toMatchObject({ state: "MANAGER_APPROVED_FINAL", customer_confirmed_cents: confirmed, estimator_signoff_by_email: signoff });
     const ex = quote().accepted_baseline.exceptions[0];
     expect(ex.reason).toMatch(/^POC PRESENTATION/);
-    const led = ex.unresolved.find((i: { label: string }) => /LED/i.test(i.label));
-    expect(led).toBeTruthy(); expect(led.pricing).toMatch(/not verified/);
+    const ctrl = ex.unresolved.find((i: { label: string }) => /controller/i.test(i.label));
+    expect(ctrl).toBeTruthy(); expect(ctrl.pricing).toMatch(/not verified/);
+    expect(ex.unresolved.some((i: { itemKey: string }) => i.itemKey === "led_light")).toBe(false); // the SKU-backed LED is not an unresolved item
     expect(ex.unresolved.map((i: { itemKey: string }) => i.itemKey)).toEqual(expect.arrayContaining(ITEMS));
     // never represented as mapped: the sealed physical scope still has the LED lines UNMAPPED
     const scope = JSON.stringify(quote().accepted_baseline.physicalScope);
@@ -138,7 +147,7 @@ import { scopeFromSnapshot, effectiveScope as effScope } from "@/lib/projects/pr
 describe("POC Presentation Mode: project creation and the Cin7 Sale scope", () => {
   const projectScope = () => scopeFromSnapshot((db.rows("projects")[0] as Record<string, any>).baseline_snapshot); // eslint-disable-line @typescript-eslint/no-explicit-any
   it("the unverified lines are EXCLUDED from the Sale's physical lines with the POC reason; nothing blocks the Sale; mapped lines stay", async () => {
-    db.tables.newquip_package_mappings = []; on(); as(true); mark();
+    db.tables.newquip_package_mappings = []; addController(); on(); as(true); mark();
     expect((await grower.approveGrowerQuoteAction("q1")).ok).toBe(true);
     const p = await grower.createProjectFromGrowerQuoteAction("q1");
     expect(p.ok, p.error).toBe(true);
@@ -146,7 +155,8 @@ describe("POC Presentation Mode: project creation and the Cin7 Sale scope", () =
     expect(eff.blockers).toEqual([]); // the Sale scope is resolvable: nothing unmapped is left to block it
     expect(eff.excluded.length).toBeGreaterThan(0);
     expect(eff.excluded.every((x) => /^POC PRESENTATION/.test(x.reason))).toBe(true);
-    expect(eff.excluded.some((x) => /LED/i.test(x.description))).toBe(true);
+    expect(eff.excluded.some((x) => /controller/i.test(x.description))).toBe(true);
+    expect(eff.lines.map((l) => l.sku)).toEqual(expect.arrayContaining(["HNQ7046", "HNQ7093", "HNQ7088"])); // the SKU-backed LED stays on the Sale as verified products
     expect(eff.lines.length).toBeGreaterThan(0); // the verified products still go on the Sale
     expect(eff.lines.map((l) => l.sku)).not.toEqual(expect.arrayContaining(["TEST-FORTIS-LED"]));
     expect(items.every((i) => i.mapping.status !== "UNMAPPED" || i.resolution?.kind === "EXCLUDE")).toBe(true);
