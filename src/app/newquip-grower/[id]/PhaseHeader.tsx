@@ -45,3 +45,14 @@ export function PhaseHeader({ name, reference, customer, rooms, basis, status, t
     </header>
   );
 }
+
+// THE ONE NEXT ACTION for the phase screens, in the same dark bar the Estimator workspace uses. It says what happens next in this quotation's current state; nothing else on the screen repeats it.
+export function NextActionBar({ headline, detail }: { headline: string; detail: string | null }) {
+  return (
+    <section className="mt-3 rounded-xl bg-[#0B3F73] px-5 py-3 text-white" aria-label="Next action" data-testid="next-action">
+      <p className="text-xs font-semibold tracking-wider opacity-85">NEXT ACTION</p>
+      <p className="text-lg font-bold" data-testid="next-action-headline">{headline}</p>
+      {detail && <p className="text-sm opacity-90">{detail}</p>}
+    </section>
+  );
+}

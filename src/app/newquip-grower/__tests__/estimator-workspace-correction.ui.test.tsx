@@ -35,16 +35,16 @@ describe("exact cents in the supplier-cost editor", () => {
     render(createElement(SkuCostForm, { sku: "NQ1161", label: "Concrete slats", quantity: 100, bundle: bundle(), canEdit: true, save: vi.fn(async () => ({ ok: true })), onDirty: vi.fn() }));
     type("Unit cost (up to 7 decimals)", "193.60"); type("Where this cost comes from", "Supplier quote");
     const calc = screen.getByTestId("live-calc").textContent!;
-    expect(calc).toMatch(/Landed cost each\s*R193\.60/);
-    expect(calc).toMatch(/Selling price each\s*R232\.32/);
-    expect(calc).toMatch(/× 100\s*R23,232\.00/);
-    expect(screen.getByTestId("calc-price-inline").textContent).toBe("R232.32 each, ex VAT.");
+    expect(calc).toMatch(/Landed cost each\s*R\s193,60/);
+    expect(calc).toMatch(/Selling price each\s*R\s232,32/);
+    expect(calc).toMatch(/× 100\s*R\s23\s232,00/);
+    expect(screen.getByTestId("calc-price-inline").textContent).toBe("R\u00a0232,32 each, ex VAT.");
   });
   it("R800 costs R960.00 each and the 7-decimal cost is untouched", () => {
     render(createElement(SkuCostForm, { sku: "NQ2114", label: "PVC SST door", quantity: 24, bundle: bundle(), canEdit: true, save: vi.fn(async () => ({ ok: true })), onDirty: vi.fn() }));
     type("Unit cost (up to 7 decimals)", "800"); type("Where this cost comes from", "Supplier quote");
-    expect(screen.getByTestId("live-calc").textContent).toMatch(/Selling price each\s*R960\.00/);
-    expect(screen.getByTestId("live-calc").textContent).toMatch(/× 24\s*R23,040\.00/);
+    expect(screen.getByTestId("live-calc").textContent).toMatch(/Selling price each\s*R\s960,00/);
+    expect(screen.getByTestId("live-calc").textContent).toMatch(/× 24\s*R\s23\s040,00/);
   });
 });
 
@@ -79,8 +79,8 @@ describe("a save is ONE write and ONE page read, and the whole editor is current
     type("Unit cost (up to 7 decimals)", "193.60"); type("Where this cost comes from", "Supplier quote");
     fireEvent.click(screen.getByRole("button", { name: "Save cost" }));
     await waitFor(() => expect(screen.getByText(/1 task open/)).toBeTruthy()); // the heading line
-    expect(screen.getByText(/partial total R24,232\.00/)).toBeTruthy();
-    expect(screen.getByTestId("header-total").textContent).toBe("R24,232.00");
+    expect(screen.getByText(/partial total R\s24\s232,00/)).toBeTruthy();
+    expect(screen.getByTestId("header-total").textContent).toBe("R\u00a024\u00a0232,00");
     expect(screen.getByTestId("next-action").textContent).toMatch(/Open task 1 of 1|bulk tank/i);
     expect((screen.getByLabelText("Unit cost (up to 7 decimals)") as HTMLInputElement).value).toBe("193.60"); // the typed value stays
   });
@@ -147,8 +147,8 @@ describe("excluded until costed: the summary names the lines that dropped out of
     render(createElement(EstimatorWorkspace, { quoteId: "q1", state: "ESTIMATOR_REVIEW", confirmedCents: 100_000, signedOff: false, draft: bare(), budget: budgetOf([slatOpen(), tank()], 1_000), pageDirty: false, canEdit: true, title: "T", subtitle: "s", refreshKey: "k", saveDraft: async () => ({ ok: true }), reload: async () => {}, onGoSignoff: () => {}, onGoApproval: () => {}, reviewNeeded: false, onMarkReviewed: () => {}, comparison }));
     const box = await screen.findByTestId("excluded-lines");
     expect(box.textContent).toMatch(/Excluded from this total until costed/);
-    expect(within(box).getByTestId("excluded-bulk_tank").textContent).toMatch(/Bulk tank.*needs a supplier cost.*was R434,808\.00/);
-    expect(within(box).getByTestId("excluded-total").textContent).toBe("R434,808.00");
+    expect(within(box).getByTestId("excluded-bulk_tank").textContent).toMatch(/Bulk tank.*needs a supplier cost.*was R\s434\s808,00/);
+    expect(within(box).getByTestId("excluded-total").textContent).toBe("R\u00a0434\u00a0808,00");
     expect(screen.getByTestId("header-total-label").textContent).toMatch(/PARTIAL TOTAL/);
     expect(screen.getByTestId("header-total-note").textContent).toMatch(/Not a contract value/);
   });
@@ -164,10 +164,10 @@ describe("switching supplier pricing on from the new experience", () => {
     expect(screen.queryByTestId("activation-preview")).toBeNull();
     fireEvent.click(screen.getByTestId("activation-start"));
     const pv = await screen.findByTestId("activation-preview");
-    expect(within(pv).getByTestId("activation-excluded-bulk_tank").textContent).toMatch(/now R434,808\.00/);
-    expect(within(pv).getByTestId("activation-excluded-feeder").textContent).toMatch(/now R2,040,336\.00/);
-    expect(within(pv).getByTestId("activation-excluded-total").textContent).toBe("R2,475,144.00");
-    expect(within(pv).getByTestId("activation-total-after").textContent).toBe("R2,400,000.00");
+    expect(within(pv).getByTestId("activation-excluded-bulk_tank").textContent).toMatch(/now R\s434\s808,00/);
+    expect(within(pv).getByTestId("activation-excluded-feeder").textContent).toMatch(/now R\s2\s040\s336,00/);
+    expect(within(pv).getByTestId("activation-excluded-total").textContent).toBe("R\u00a02\u00a0475\u00a0144,00");
+    expect(within(pv).getByTestId("activation-total-after").textContent).toBe("R\u00a02\u00a0400\u00a0000,00");
     expect(pv.textContent).toMatch(/partial, indicative total, never a completed quotation value/);
     expect(pv.textContent).toMatch(/Rep's confirmation is withdrawn/);
   });

@@ -76,7 +76,8 @@ import { deriveAcceptanceBanner } from "@/newquip/quote/stage5-banner";
 import { deriveHandoverReadiness } from "@/newquip/quote/stage6-handover";
 import { StageNav } from "./StageNav";
 import { PhaseStepper } from "./PhaseStepper";
-import { PhaseHeader } from "./PhaseHeader";
+import { PhaseHeader, NextActionBar } from "./PhaseHeader";
+import { nextActionText, phase1State, phase3State, phaseBadge, supportingDetailLabel, totalCaption } from "./phase-ux-model";
 import { navPresentation } from "@/newquip/quote/stage-nav-model";
 import { phaseOfStage, phaseViews } from "@/newquip/quote/phases";
 import { ReadOnlyPhase1 } from "./ReadOnlyPhase1";
@@ -224,7 +225,8 @@ export default function QuoteEditorPage() {
   const [costAck, setCostAck] = useState<string | null>(null);
   const [ackFor, setAckFor] = useState<string | null>(null); // which acknowledgement may be announced; cleared after a few seconds and when the step changes
   useEffect(() => { if (!ackFor) return; const t = setTimeout(() => setAckFor(null), 6000); return () => clearTimeout(t); }, [ackFor]);
-  const [showAllSteps, setShowAllSteps] = useShowAllSteps("nq-builder-show-all");
+  const [showAllPref, setShowAllPref] = useShowAllSteps("nq-builder-show-all");
+  const [allOverride, setAllOverride] = useState(false); // a returned Rep quotation opens on the active step even if Show all steps is remembered; this per-visit choice can still open them all
   // The sticky Stage 2 step bar must never hide the element a focus move scrolls to.
   useEffect(() => { const el = document.documentElement; const prev = el.style.scrollPaddingBottom; el.style.scrollPaddingBottom = "7rem"; return () => { el.style.scrollPaddingBottom = prev; }; }, []);
   const [customerFacts, setCustomerFacts] = useState<Stage1CustomerFacts>(NO_CUSTOMER_FACTS);
@@ -593,6 +595,9 @@ export default function QuoteEditorPage() {
   // quotations keep the existing screens.
   const phaseUx = !poc && draft.quoteType === "project";
   const readOnlyP1 = phaseUx && stage === 1 && !roles.has("rep");
+  const returnedFocus = phaseUx && stage === 1 && wizard.returned && roles.has("rep");
+  const showAllSteps = returnedFocus ? allOverride : showAllPref;
+  const setShowAllSteps = (v: boolean) => (returnedFocus ? setAllOverride(v) : setShowAllPref(v));
   const repPhase2 = phaseUx && stage === 2 && !workspaceMode && !isEstimator && !canCommercials;
   const uxChrome = wsStage2 || (phaseUx && stage !== 2) || repPhase2;
   // Supplier pricing is OFF but could be switched on from the new experience: a project quotation, an Estimator who may see costs, in review or back with the Rep. (Day-to-day, POC and approved quotations never offer it.)
@@ -705,9 +710,8 @@ export default function QuoteEditorPage() {
   const p1Charges = (budget?.charges ?? []).filter((c) => c.amountExTax != null && c.amountExTax > 0).map((c) => ({ label: c.label, amountExVat: c.amountExTax as number }));
   const p1Extras = Object.entries(cfg.optionalEquipment).filter(([, on]) => on).map(([k]) => OPTIONAL_NAMES[k] ?? k);
   const p1Totals = { exVat: budget ? budget.totals.subtotalExTax : null, vat: budget ? budget.totals.taxTotal : null, incVat: budget ? budget.totals.totalIncTax : null };
-  const p1StatusLine = final ? "Approved by the Manager. The configuration is frozen."
-    : q.state === "REP_DRAFT" ? (q.revision > 1 ? "Returned to the Rep. They must reconfirm the new amount with the customer and submit again." : "Being prepared by the Rep. Not yet submitted.")
-    : s2Base.signoff === "current" ? "Submitted by the Rep and signed off by the Estimator. Waiting for the Manager." : "Submitted by the Rep. With the Estimator for costing and review.";
+  const phaseFactsNow = { state: q.state, revision: q.revision, final, signedOffCurrent: s2Base.signoff === "current", repReady, viewerIsRep: roles.has("rep") };
+  const p1StatusLine = phase1State(phaseFactsNow);
   const wizard3 = deriveStage3Wizard({ state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", revision: q.revision, roles: { rep: roles.has("rep"), estimator: isEstimator, manager: roles.has("manager") }, signoff: s2Base.signoff, dirty, ...(final && (q.project_id || gateReady) ? { after: { hasDocument: gate.hasDocument, commercial: gate.status, projectLinked: !!q.project_id, requiresAcceptance: q.requires_customer_acceptance === true } } : {}) });
 
   // Stage 4 steps: guidance only. Statuses come from the issued-document and sent records the page already reads (never from a visit); the Issue and Send actions keep their own gates.
@@ -798,20 +802,22 @@ export default function QuoteEditorPage() {
 
       {!uxChrome && <StageNav compact={stage <= 2} hideNext={stage === 2} stages={stagesView} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state, estimatorOpen: mappingOpen.length, signedOff: s2Base.signoff === "current" }} />}
       {uxChrome && !wsStage2 && (
-        <PhaseHeader nextAction={(() => {
-          const cur = stagesView.find((x) => x.id === here); const ph = phaseViews(stagesView).find((p) => p.id === phaseOfStage(here));
-          const pr = cur ? navPresentation(cur, previewable.includes(here), { roles: view.viewer.roles, state: q.state, estimatorOpen: mappingOpen.length, signedOff: s2Base.signoff === "current" }) : null;
-          return pr && ph ? <><span className="font-semibold text-slate-900">{ph.label}:</span> {pr.summary}{pr.next ? <> <span className="font-semibold text-indigo-700">Next: {pr.next}</span></> : null}</> : null;
-        })()} name={draft.siteName || "Quotation"} reference={`${q.quote_ref} rev ${q.revision}`} customer={draft.customerName || "Customer"} rooms={cfg.rooms || 0} basis="Project pricing"
-          status={final ? "APPROVED" : q.state === "REP_DRAFT" ? (q.revision > 1 ? "RETURNED TO THE REP" : stage === 1 && roles.has("rep") && repReady ? "READY TO SUBMIT" : "WITH THE REP") : signedNow ? "SIGNED OFF · WITH THE MANAGER" : "ESTIMATOR REVIEW"} tone={final ? "ok" : "warn"}
-          figures={[
-            { labelTestId: dirty || previewFailure ? undefined : "total-caption", label: final ? "Contract value (ex VAT)" : awaitingLines > 0 ? `Indicative total (${awaitingLines} line${awaitingLines === 1 ? "" : "s"} await the Estimator)` : budget?.incomplete ? "Partial total (ex VAT)" : "Calculated total (ex VAT)", value: budget ? rand(budget.totals.subtotalExTax) : "—", note: final ? undefined : "Not a contract value.", tone: final ? "ok" : "warn", testId: "phase-header-total" },
+        <PhaseHeader name={draft.siteName || "Quotation"} reference={`${q.quote_ref} rev ${q.revision}`} customer={draft.customerName || "Customer"} rooms={cfg.rooms || 0} basis="Project pricing"
+          status={phaseBadge(stage as 1 | 2 | 3 | 4 | 5 | 6, { state: q.state, revision: q.revision, final, signedOffCurrent: s2Base.signoff === "current", repReady, viewerIsRep: roles.has("rep") }).text} tone={phaseBadge(stage as 1 | 2 | 3 | 4 | 5 | 6, { state: q.state, revision: q.revision, final, signedOffCurrent: s2Base.signoff === "current", repReady, viewerIsRep: roles.has("rep") }).tone}
+          figures={(() => { const cap = totalCaption({ final, awaitingLines, incomplete: !!budget?.incomplete, confirmed: q.customer_confirmed_cents != null && totalCents === q.customer_confirmed_cents }); return [
+            { labelTestId: dirty || previewFailure ? undefined : "total-caption", label: cap.label, value: budget ? rand(budget.totals.subtotalExTax) : "—", note: cap.note ?? undefined, tone: final ? "ok" as const : "warn" as const, testId: "phase-header-total" },
+            { label: "Rep-confirmed amount", value: q.customer_confirmed_cents == null ? "none yet" : randCents(q.customer_confirmed_cents), testId: "phase-header-confirmed" },
             ...(budget && !budget.incomplete ? [{ label: "Total (inc VAT)", value: rand(budget.totals.totalIncTax) }] : []),
-            { label: "Customer-confirmed amount", value: q.customer_confirmed_cents == null ? "none yet" : randCents(q.customer_confirmed_cents), testId: "phase-header-confirmed" },
-          ]}
+          ]; })()}
           phases={<div data-testid="stage-nav"><PhaseStepper stages={stagesView} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state, estimatorOpen: mappingOpen.length, signedOff: s2Base.signoff === "current" }} /></div>}
           details={<ApprovalHistory docType="QUOTE" docId={id} label="Show the approval history" />} />
       )}
+      {uxChrome && !wsStage2 && (() => {
+        const cur = stagesView.find((x) => x.id === here);
+        const pr = cur ? navPresentation(cur, previewable.includes(here), { roles: view.viewer.roles, state: q.state, estimatorOpen: mappingOpen.length, signedOff: s2Base.signoff === "current" }) : null;
+        const na = nextActionText(pr);
+        return na ? <NextActionBar headline={na.headline} detail={na.detail} /> : null;
+      })()}
       {uxChrome && !wsStage2 && stage >= 4 && (
         <nav aria-label="Customer and handover steps" className="mt-2" data-testid="phase4-substeps">
           <ol className="flex flex-wrap gap-1.5 text-sm">
@@ -858,7 +864,6 @@ export default function QuoteEditorPage() {
               )}
               {phaseUx && (
                 <div className="mt-3 border-t border-amber-300 pt-3" data-testid="reconfirm-steps">
-                  <p className="font-semibold">To finish: confirm the new amount with the customer, then submit it to the Estimator again (step 5).</p>
                   {(() => { const submitOpen = stepAccess("submit").access !== "locked"; const target = submitOpen ? "submit" : nextOpen; return target && target !== stepId ? <div className="mt-2"><Button type="button" className="min-h-11" onClick={() => goStep(target)} data-testid="go-submit">{submitOpen ? "Go to the submit step" : "Go to the next step to finish"}</Button></div> : null; })()}
                 </div>
               )}
@@ -887,8 +892,7 @@ export default function QuoteEditorPage() {
       {repPhase2 && (
         <section className="mt-4 rounded-xl border border-slate-200 bg-white px-5 py-4" data-testid="phase2-readonly">
           <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">Phase 2 · Cost &amp; Verify · read-only</p>
-          <p className="mt-1 text-base font-semibold text-slate-900" role="status" aria-live="polite" data-testid="stage2-status-line">{wizard2.statusLine}</p>
-          <p className="mt-1 text-sm text-slate-700">This phase belongs to the Estimator. Supplier costs and margins are internal and are not shown to you.</p>
+          <p className="mt-1 text-sm text-slate-700" data-testid="stage2-status-line">This phase belongs to the Estimator. Supplier costs and margins are internal and are not shown to you.</p>
         </section>
       )}
       {stage === 2 && !repPhase2 && (
@@ -1431,7 +1435,7 @@ export default function QuoteEditorPage() {
       {stage === 3 && (
         <div className="mt-6 space-y-6" data-testid="stage3-workspace">
           {phaseUx ? (
-            <ManagerDecision decider="a Manager" statusLine={wizard3.statusLine} totals={p1Totals} verification={p2Status ? { required: p2Status.required, verified: p2Status.verified } : null}
+            <ManagerDecision decider="a Manager" statusLine={phase3State(phaseFactsNow)} totals={p1Totals} verification={p2Status ? { required: p2Status.required, verified: p2Status.verified } : null}
               margin={canCommercials && !poc && budget ? { value: fmtPctShown, note: marginLabel } : null}
               signoff={{ by: q.estimator_signoff_by_email ?? null, at: q.estimator_signoff_at ? formatSast(q.estimator_signoff_at) : null, state: s2Base.signoff === "current" ? "current" : s2Base.signoff === "stale" ? "stale" : "none" }}
               evidence={(canCommercials && view.manualPriceEvidence ? view.manualPriceEvidence : []).map((e) => ({ label: e.label, recorded: e.state === "recorded" }))}
@@ -1446,7 +1450,7 @@ export default function QuoteEditorPage() {
           {!poc && commercial && !commercial.complete && <Alert tone="warning"><span data-testid="s3-commercial">{commercial.headline}</span></Alert>}
             </>
           )}
-          <SupportingDetail wrap={phaseUx}>
+          <SupportingDetail wrap={phaseUx} label={supportingDetailLabel(canCommercials)}>
           {repSummary}
           {canCommercials && !poc && view.manualPriceEvidence && <ManualEvidencePanel rows={view.manualPriceEvidence} />}
           <EstimatorResult signedOffBy={q.estimator_signoff_by_email} signedOffAt={q.estimator_signoff_at} signoffCurrent={s2Base.signoff === "current"} totalCents={totalCents} confirmedCents={q.customer_confirmed_cents}
@@ -1508,8 +1512,7 @@ export default function QuoteEditorPage() {
           { id: "approved", title: "Approved quotation", status: final ? "Approved" : "Not approved yet", detail: final && q.accepted_baseline ? `${q.quote_ref} rev ${q.revision} · ${randCents(q.accepted_baseline.contractCents)} ex VAT` : "Approval is the Manager's decision (Phase 3).", tone: final ? "ok" : "wait" },
           { id: "document", title: "Customer document", status: !final ? "Not available yet" : stage4.find((x) => x.id === "send")?.status === "complete" ? "Sent to the customer" : gate.hasDocument ? "PDF issued, not sent" : "Not issued", detail: !final ? "Issued after approval." : gate.hasDocument ? "Issued from the approved quotation." : "A Rep issues and sends it.", tone: !final ? "wait" : stage4.find((x) => x.id === "send")?.status === "complete" ? "ok" : "open" },
           { id: "acceptance", title: "Customer acceptance", status: !final ? "Not available yet" : !gate.requires ? "Not required" : gate.accepted ? "Accepted" : "Awaiting the customer", detail: !final ? "Recorded against the issued quotation." : !gate.requires ? "Approved before acceptance was introduced." : gate.accepted ? "Verified acceptance recorded." : "Verify the customer's response when it arrives.", tone: !final ? "wait" : !gate.requires || gate.accepted ? "ok" : "open" },
-          { id: "handover", title: "Project handover", status: q.project_id ? "Project created" : final && (!gate.requires || gate.accepted) && handoverReadiness.filter((x) => x.id !== "manager").every((x) => x.met) ? "Ready to hand over" : "Not ready", detail: q.project_id ? "Billing and fulfilment continue in the Project." : final && (!gate.requires || gate.accepted) ? "A Manager creates the Project." : "Needs approval and, where required, acceptance.", tone: q.project_id ? "ok" : final && (!gate.requires || gate.accepted) ? "open" : "wait" },
-          { id: "cin7", title: "Cin7", status: "Not sent from here", detail: "Not part of this trial; nothing on this screen writes to Cin7.", tone: "wait" },
+          { id: "handover", title: "Project handover", status: q.project_id ? "Project created" : final && (!gate.requires || gate.accepted) && handoverReadiness.filter((x) => x.id !== "manager").every((x) => x.met) ? "Ready to hand over" : "Not ready", detail: (q.project_id ? "Billing and fulfilment continue in the Project." : final && (!gate.requires || gate.accepted) ? "A Manager creates the Project." : "Needs approval and, where required, acceptance.") + " Nothing is sent to Cin7 from here.", tone: q.project_id ? "ok" : final && (!gate.requires || gate.accepted) ? "open" : "wait" },
         ]} />
       )}
       {/* ───────────── 4 · CUSTOMER QUOTATION ───────────── */}
@@ -1655,7 +1658,7 @@ export default function QuoteEditorPage() {
           </div>
         )}
       </AuditDetails>
-      {view.viewer.previewTools && editable && stage <= 2 && (
+      {view.viewer.previewTools && editable && stage <= 2 && search.get("tools") === "1" && (
           <details className="mt-8 max-w-4xl rounded-lg border border-dashed border-slate-400 px-3 py-1 text-sm" data-testid="preview-tools">
             <summary className="inline-flex min-h-11 cursor-pointer items-center font-semibold text-slate-800">Testing utility (Preview only)</summary>
             <p className="mt-2 text-slate-700">Replaces the inputs of this draft (the selected customer is kept) with the demonstration quotation. It is not saved, and it never submits, approves, signs off, creates a Project or writes to Cin7. It exists on Preview deployments only.</p>

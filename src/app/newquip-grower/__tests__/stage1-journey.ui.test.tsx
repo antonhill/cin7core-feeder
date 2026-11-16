@@ -29,12 +29,12 @@ const ORG = "org-nq";
 const SESSION = { orgId: ORG, userId: "u1", email: "u@nq" };
 const member = rolesFor("member");
 type Role = "REP" | "ESTIMATOR" | "MANAGER";
-const g = globalThis as { __QID?: string; __STAGE?: string; __STEP?: string };
+const g = globalThis as { __NOTOOLS?: boolean; __QID?: string; __STAGE?: string; __STEP?: string };
 const asRoles = (...r: Role[]) => vi.mocked(resolveRoles).mockResolvedValue(new Set(r) as never);
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ id: g.__QID }),
-  useSearchParams: () => new URLSearchParams("stage=" + (g.__STAGE ?? "1") + (g.__STEP ? `&step=${g.__STEP}` : "")),
+  useSearchParams: () => new URLSearchParams("stage=" + (g.__STAGE ?? "1") + (g.__STEP ? `&step=${g.__STEP}` : "") + (g.__NOTOOLS ? "" : "&tools=1")), // the Preview utility is opt-in (?tools=1)
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
   usePathname: () => "/newquip-grower/x",
 }));
@@ -326,6 +326,15 @@ describe("nothing resets or jumps", () => {
     expect(screen.getByTestId("sample-note").textContent).toContain("Recommended configuration loaded");
     for (const f of forbidden) expect(f).not.toHaveBeenCalled();
   }, 60000);
+
+  it("the Preview testing utility is opt-in: a normal user screen (no ?tools=1) never shows it, even on a Preview", async () => {
+    vi.stubEnv("VERCEL_ENV", "preview");
+    g.__NOTOOLS = true;
+    try {
+      await open({ view: snapshotView(true), step: "2" });
+      expect(screen.queryByTestId("preview-tools")).toBeNull();
+    } finally { g.__NOTOOLS = false; }
+  }, 30000);
 
   it("the whole-quote loader exists ONLY in the collapsed Preview utility, loads without moving the step, and is absent in Production", async () => {
     vi.stubEnv("VERCEL_ENV", "preview");
@@ -981,7 +990,7 @@ describe("S1a: the Rep submits with Estimator-owned items open (indicative total
     const caption = screen.getByTestId("total-caption").textContent ?? "";
     expect(caption).toMatch(/^Indicative total \(\d+ lines? await the Estimator\)$/);
     const bar = screen.getByTestId("phase-header");
-    expect(bar.textContent).toMatch(/R\s?[\d,]+\.\d\d/); // an amount IS shown although the budget is incomplete
+    expect(bar.textContent).toMatch(/R\s?[\d\s\u00a0]+,\d\d/); // an amount IS shown although the budget is incomplete
     const sub = panel("submit") as HTMLElement;
     const n = Number(caption.match(/\((\d+)/)![1]);
     expect(within(sub).getByTestId("indicative-note").textContent).toBe(`This total is indicative while ${n} lines await the Estimator. If the Estimator's pricing changes it, the quotation returns to you to reconfirm the amount with the customer.`);

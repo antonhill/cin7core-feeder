@@ -101,7 +101,7 @@ describe("Phase 1 for the Estimator and Manager is a read-only summary", () => {
     expect(screen.queryByTestId("stage1-layout")).toBeNull();
     expect(within(screen.getByTestId("phase1-lines")).getAllByRole("row").length).toBeGreaterThan(1);
     expect(screen.getByTestId("phase1-customer").textContent).toContain("Acme Pigs");
-    expect(screen.getByTestId("phase1-total-ex").textContent).toMatch(/^R[\d,]+\.\d\d$/);
+    expect(screen.getByTestId("phase1-total-ex").textContent).toMatch(/^R\u00a0[\d\u00a0]+,\d\d$/); // the application's one South African money presentation
     expect(screen.getByTestId("phase1-status").textContent).toMatch(/Submitted by the Rep/);
     expect(document.querySelectorAll("main input, main textarea").length).toBe(0);
     for (const name of [/Save draft/, /Submit to Estimator/, /Load sample/, /Load whole demonstration/]) expect(screen.queryByRole("button", { name })).toBeNull();
@@ -117,14 +117,18 @@ describe("Phase 1 for the Estimator and Manager is a read-only summary", () => {
 
   it("a returned quotation says it is waiting for the Rep, not for the reader", async () => {
     await openQuote({ roles: ["ESTIMATOR"], commercials: true, search: "stage=1", patch: RETURNED, waitFor: "phase1-readonly" });
-    expect(screen.getByTestId("phase1-status").textContent).toMatch(/Returned to the Rep.*reconfirm/);
+    expect(screen.getByTestId("phase1-status").textContent).toMatch(/Returned to the Rep \(revision 2\)/);
+    expect(screen.getAllByTestId("next-action")).toHaveLength(1); // the action is in the ONE Next action bar, not repeated in the card
+    expect(screen.getByTestId("next-action-headline").textContent!.length).toBeGreaterThan(5);
   }, 60000);
 });
 
 describe("Phase 1 for a Rep on a returned quotation leads with reconfirming the selling price", () => {
   it("shows the prominent reconfirm steps (one banner, with the amount sentence the Rep already had)", async () => {
     await openQuote({ roles: ["REP"], commercials: false, search: "stage=1&step=1", patch: RETURNED, waitFor: "returned-banner" });
-    expect(screen.getByTestId("reconfirm-steps").textContent).toMatch(/confirm the new amount with the customer.*submit it to the Estimator again/i);
+    expect(screen.getByTestId("returned-banner").textContent).toMatch(/Returned to the Rep \(revision 2\)/);
+    expect(screen.getAllByTestId("next-action")).toHaveLength(1);
+    expect(screen.getByTestId("next-action-headline").textContent).toMatch(/Rep/);
     expect(document.body.textContent).not.toMatch(LEAK);
   }, 60000);
 });
@@ -133,7 +137,7 @@ describe("Phase 3 is one decision screen", () => {
   it("a Manager sees totals, supplier-cost verification, margin, the sign-off state and what is outstanding, then the existing approve and return controls", async () => {
     await openQuote({ roles: ["MANAGER"], commercials: true, search: "stage=3", patch: SUBMITTED, waitFor: "manager-decision" });
     for (const id of ["decision-status", "decision-totals", "decision-verification", "decision-margin", "decision-signoff", "decision-open"]) expect(screen.getByTestId(id), id).toBeTruthy();
-    expect(screen.getByTestId("decision-totals").textContent).toMatch(/R[\d,]+\.\d\d.*ex VAT.*VAT R[\d,]+\.\d\d.*inc VAT R[\d,]+\.\d\d/);
+    expect(screen.getByTestId("decision-totals").textContent).toMatch(/R\u00a0[\d\u00a0]+,\d\d.*ex VAT.*VAT R\u00a0[\d\u00a0]+,\d\d.*inc VAT R\u00a0[\d\u00a0]+,\d\d/);
     expect(screen.getByTestId("decision-signoff").textContent).toMatch(/Not signed off yet/);
     expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy(); // the existing gate (disabled until it is satisfied)
     expect(screen.queryByTestId("stage3-owner")).toBeNull();
@@ -151,9 +155,10 @@ describe("Phase 3 is one decision screen", () => {
 describe("Phase 4 shows its status at a glance and keeps its three steps reachable", () => {
   it("an approved quotation: approved, document, acceptance, handover and Cin7 tiles; Cin7 is reported as not sent", async () => {
     await openQuote({ roles: ["MANAGER"], commercials: true, search: "stage=4", patch: FINAL, waitFor: "handover-overview" });
-    for (const id of ["approved", "document", "acceptance", "handover", "cin7"]) expect(screen.getByTestId(`overview-${id}`), id).toBeTruthy();
+    for (const id of ["approved", "document", "acceptance", "handover"]) expect(screen.getByTestId(`overview-${id}`), id).toBeTruthy();
+    expect(screen.getAllByTestId(/^overview-/)).toHaveLength(4); // four tiles: one row on a desktop, never an orphan
     expect(screen.getByTestId("overview-approved").textContent).toContain("Approved");
-    expect(screen.getByTestId("overview-cin7").textContent).toMatch(/Not sent from here/);
+    expect(screen.getByTestId("overview-handover").textContent).toMatch(/Nothing is sent to Cin7 from here/);
     const steps = screen.getByTestId("phase4-substeps");
     expect(within(steps).getAllByRole("button").map((b) => b.textContent)).toEqual(["Customer quotation", "Customer acceptance", "Project handover"]);
     fireEvent.click(within(steps).getByRole("button", { name: "Project handover" }));
@@ -165,5 +170,50 @@ describe("Phase 4 shows its status at a glance and keeps its three steps reachab
     expect(screen.getByTestId("overview-approved").textContent).toContain("Not approved yet");
     expect(screen.getByTestId("overview-document").textContent).toContain("Not available yet");
     expect(screen.getByTestId("overview-handover").textContent).toContain("Not ready");
+  }, 60000);
+});
+
+describe("final presentation pass", () => {
+  it("a returned Rep quotation opens ONLY on the active step even when Show all steps is remembered; the Rep can still open them all for this visit", async () => {
+    vi.stubGlobal("localStorage", { getItem: () => "1", setItem: () => undefined }); // Show all steps is remembered as ON
+    await openQuote({ roles: ["REP"], commercials: false, search: "stage=1", patch: RETURNED, waitFor: "returned-banner" });
+    const panel = (id: string) => document.querySelector(`[data-step-panel="${id}"]`) as HTMLElement;
+    const active = document.querySelector('[data-testid="step-rail"] [aria-current="step"]')!.getAttribute("data-step")!;
+    await waitFor(() => expect(panel(active).hasAttribute("hidden")).toBe(false));
+    const others = ["customer", "site", "equipment", "review", "submit"].filter((x) => x !== active);
+    for (const id of others) expect(panel(id).hasAttribute("hidden"), id).toBe(true); // ONE form, not five
+    fireEvent.click(screen.getByRole("checkbox", { name: /Show all steps/ }));
+    await waitFor(() => { for (const id of others) expect(panel(id).hasAttribute("hidden"), id).toBe(false); });
+  }, 60000);
+
+  it("a Rep on an ordinary (not returned) draft still honours the remembered Show all steps", async () => {
+    vi.stubGlobal("localStorage", { getItem: () => "1", setItem: () => undefined });
+    await openQuote({ roles: ["REP"], commercials: false, search: "stage=1&step=5", patch: () => undefined, waitFor: "step-rail" });
+    await waitFor(() => expect((document.querySelector('[data-step-panel="customer"]') as HTMLElement).hasAttribute("hidden")).toBe(false));
+  }, 60000);
+
+  it("exactly one Next action per phase screen, and the badge describes THAT phase (Phase 4 never says 'returned to the Rep')", async () => {
+    await openQuote({ roles: ["ESTIMATOR"], commercials: true, search: "stage=4", patch: RETURNED, waitFor: "handover-overview" });
+    expect(screen.getAllByTestId("next-action")).toHaveLength(1);
+    expect(screen.getByTestId("phase-header-status").textContent).toBe("NOT APPROVED YET");
+  }, 60000);
+
+  it("the Manager's decision badge says what the decision waits for", async () => {
+    await openQuote({ roles: ["MANAGER"], commercials: true, search: "stage=3", patch: SUBMITTED, waitFor: "manager-decision" });
+    expect(screen.getByTestId("phase-header-status").textContent).toBe("AWAITING ESTIMATOR SIGN-OFF");
+    expect(screen.getAllByTestId("next-action")).toHaveLength(1);
+    expect(screen.getByTestId("decision-status").textContent).not.toMatch(/Next/); // a state, not a second instruction
+  }, 60000);
+
+  it("the supporting-detail heading is neutral for a role that cannot see costs", async () => {
+    await openQuote({ roles: ["REP"], commercials: false, search: "stage=3", patch: SUBMITTED, waitFor: "manager-decision" });
+    expect(screen.getByTestId("decision-supporting").textContent).toContain("Supporting detail: Rep submission and sign-off");
+    expect(screen.getByTestId("decision-supporting").querySelector("summary")!.textContent).not.toMatch(/evidence|cost|margin/i);
+  }, 60000);
+
+  it("the Rep's Phase 2 note carries no second next action", async () => {
+    await openQuote({ roles: ["REP"], commercials: false, search: "stage=2", patch: SUBMITTED, waitFor: "phase2-readonly" });
+    expect(screen.getAllByTestId("next-action")).toHaveLength(1);
+    expect(screen.getByTestId("phase2-readonly").textContent).not.toMatch(/Next responsible role/);
   }, 60000);
 });
