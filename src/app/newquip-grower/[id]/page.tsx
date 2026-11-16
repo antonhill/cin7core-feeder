@@ -497,7 +497,9 @@ export default function QuoteEditorPage() {
   const workFacts = { lines: ev.calc.lines, budgetLines: budget?.lines ?? null, charges: budget?.charges ?? null, blankExclusionCount: blankExclusionKeys.length, blankPriceReasonCount: Object.values(draft.estimator.priceResolutions).filter((r) => r && !r.reason.trim()).length };
   const owned = ownedWork(workFacts);
   const stageNow = currentStage(stages);
-  const here: StageId = q.state === "REP_DRAFT" && roles.has("rep") ? 1 : q.state === "REP_DRAFT" && roles.has("estimator") && !roles.has("rep") && owned.estimator.length > 0 ? 2 : stageNow;
+  // A returned (revision > 1) Phase 2 quotation waits on the Rep's reconfirmation: an Estimator-only viewer lands on the read-only Cost & Verify workspace, never in the Rep's configuration form.
+  const awaitingRepReconfirm = q.state === "REP_DRAFT" && q.revision > 1 && roles.has("estimator") && !roles.has("rep") && !!p2Status && !final;
+  const here: StageId = q.state === "REP_DRAFT" && roles.has("rep") ? 1 : awaitingRepReconfirm || (q.state === "REP_DRAFT" && roles.has("estimator") && !roles.has("rep") && owned.estimator.length > 0) ? 2 : stageNow;
   if (landing === null && !loadingStages) setLanding(here); // once, when the current stage is first known (React's render-phase initialisation)
   const stage: StageId = picked ?? landing ?? here;
   const goStage = (n: StageId) => { setPicked(n); try { const u = new URL(window.location.href); const at = n === 1 ? stepNo : n === 2 ? step2Cur : n === 4 ? step4No : 1; const sp = new URLSearchParams([...u.searchParams].filter(([k]) => k !== "step" && k !== "stage")); sp.set("stage", String(n)); if (at > 1) sp.set("step", String(at)); u.search = sp.toString(); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } };
@@ -1060,7 +1062,10 @@ export default function QuoteEditorPage() {
           <>
           {/* The announcements stay OUTSIDE the closed Details disclosure so a screen reader still hears them. */}
           <p className="sr-only" role="status" aria-live="polite" data-testid="stage2-status-line">{wizard2.statusLine}{amountChange.changed && q.state === "ESTIMATOR_REVIEW" ? ` ${amountChange.text}` : ""}</p>
-          <EstimatorWorkspace quoteId={id} state={q.state} confirmedCents={q.customer_confirmed_cents} signedOff={signedNow} draft={draft} budget={budget} pageDirty={dirty} canEdit={s2Edit}
+          {awaitingRepReconfirm && stage === 2 && (
+            <div className="mb-4" data-testid="awaiting-rep-banner"><Alert tone="warning"><strong>Awaiting the Rep.</strong> This quotation was returned to the Rep (revision {q.revision}) and the customer&rsquo;s confirmation was withdrawn. It is read-only for you until the Rep reconfirms the amount and submits it again.</Alert></div>
+          )}
+          <EstimatorWorkspace quoteId={id} state={q.state} confirmedCents={q.customer_confirmed_cents} signedOff={signedNow} draft={draft} budget={budget} pageDirty={dirty} canEdit={s2Edit && !awaitingRepReconfirm}
             title={`${draft.siteName || "Quotation"} · ${draft.customerName || "Customer"}`} subtitle={`${cfg.rooms || 0} rooms · ${draft.quoteType === "project" ? "Project pricing" : "Day-to-day pricing"} · Revision ${q.revision} · Supplier pricing on`}
             siteName={draft.siteName || "Quotation"} reference={`${q.quote_ref} rev ${q.revision}`} customerName={draft.customerName || "Customer"} rooms={cfg.rooms || 0} basis={`${draft.quoteType === "project" ? "Project" : "Day-to-day"} pricing`}
             phases={<PhaseStepper stages={stagesView} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state, estimatorOpen: mappingOpen.length, signedOff: s2Base.signoff === "current" }} />}
