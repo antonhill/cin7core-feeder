@@ -56,6 +56,7 @@ import {
 type ViewerPermission = "loading" | "member" | "admin";
 type Tab = "overview" | "stages" | "components" | "claims" | "variations" | "deliveries" | "physical" | "procurement" | "profitability";
 const NEWQUIP_ONLY_TABS: Tab[] = ["variations", "deliveries", "physical", "procurement"];
+/** The Claims list (/claims) links to `/projects/<id>?tab=claims`. Only that one value is honoured, and only on first render. */
 const TABS: { value: Tab; label: string }[] = [
   { value: "overview", label: "Overview" },
   { value: "stages", label: "Stages" },
@@ -166,13 +167,13 @@ function pendingFor(key: string): string {
   return "Saving changes…";
 }
 
-export function ProjectWorkspace({ id, embedded = false }: { id: string; embedded?: boolean }) {
+export function ProjectWorkspace({ id, embedded = false, initialTab }: { id: string; embedded?: boolean; initialTab?: "claims" }) {
   const uid = useId();
   const busyId = (claimId: string): string => `${uid}-claim-busy-${claimId}`; // ids are unique per mounted workspace: several can be on one page (embedded per variation, hidden-but-mounted)
   const router = useRouter();
   const [view, setView] = useState<ProjectView | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>(embedded ? "claims" : "overview");
+  const [tab, setTab] = useState<Tab>(embedded ? "claims" : (initialTab ?? "overview"));
   const [preview, setPreview] = useState<ClaimPreviewResult | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   // Which billing stages the next claim covers. Empty by default: a claim never silently includes every claimable stage.
