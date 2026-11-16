@@ -128,7 +128,7 @@ describe("ACCEPTANCE GATE for new quotations", () => {
     const a = await respond(w, doc.id); const dup = await respond(w, doc.id);
     expect(a.created).toBe(true); expect(dup).toMatchObject({ created: false }); expect(dup.response.id).toBe(a.response.id);
     expect(await err(respond(w, doc.id, { response: "DECLINED", evidenceRef: "later email" }))).toMatch(/already accepted/);
-    await saveProfile(w.db as never, ORG, { ...PROFILE, termsAndConditions: "changed terms" }, "m@nq");
+    await saveProfile(w.db as never, ORG, { ...PROFILE, termsAndConditions: "Fictitious revised terms for the changed-profile test." }, "m@nq");
     expect(await err(issue(w))).toMatch(/accepted this quotation; the accepted document is final/);
     expect((await listDocuments(w.db as never, ORG, w.id)).map((d) => d.version)).toEqual([1]);
     expect((await listResponses(w.db as never, ORG, w.id))).toHaveLength(1);

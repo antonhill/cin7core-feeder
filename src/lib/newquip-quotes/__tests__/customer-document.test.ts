@@ -14,7 +14,7 @@ import { NEWQUIP_STANDARD_SCHEDULE } from "@/newquip/quote/billing-schedule";
 import { buildCustomerSnapshot, withChosenContact } from "../customer-snapshot";
 import { assertNoInternalLeak, buildCustomerDocumentModel, internalTokens, internalTokenSet, messageLeaksInternal, tokenAppears, type CustomerDocumentModel } from "../customer-document";
 import { cleanProfile, looksLikePlaceholder, missingProfileFields, type CompanyProfile } from "../company-profile";
-import { formatRand, pdfSafe, renderCustomerPdf } from "../customer-pdf";
+import { fmtPercent, formatRand, pdfSafe, renderCustomerPdf, roundingNote } from "../customer-pdf";
 import { issueQuotationDocument, readDocumentBytes, saveProfile, sha256, type DocumentDeps } from "../document-store";
 
 // Test-only company details: placeholders for TESTS, never shipped as defaults.
@@ -353,5 +353,24 @@ describe("placeholder guard on company details", () => {
     const demo = mk("NQ-Q-0025");
     const r = await issueQuotationDocument(demo.db as never, DEMO_ORG, "q1", who, NEWQUIP_STANDARD_SCHEDULE, demo.deps);
     expect(r.created).toBe(true); expect(pdfText(demo.files.get(r.document.storage_path)!)).toContain("DEMONSTRATION ONLY");
+  });
+});
+
+describe("PDF payment schedule presentation", () => {
+  const sched = (amts: number[], pcts: number[]) => amts.map((a, i) => ({ name: `S${i}`, description: "", trigger: "", percent: pcts[i], amountExVat: a }));
+  it("normalises percentages", () => { expect([40, 27.5, 12.25, 5, 33.33].map(fmtPercent)).toEqual(["40", "27.5", "12.25", "5", "33.33"]); });
+  it("prints a rounding note only when the final stage differs from its exact percentage", () => {
+    // R1 234 567,06 split 40/55/5: 493 826,82 + 679 011,88 + 61 728,36 (exact 5% = 61 728,35)
+    expect(roundingNote({ totals: { subtotalExVat: 1234567.06 } as never, paymentSchedule: sched([493826.82, 679011.88, 61728.36], [40, 55, 5]) })).toBe("Final stage includes a rounding balance of R 0,01.");
+    expect(roundingNote({ totals: { subtotalExVat: 100000 } as never, paymentSchedule: sched([40000, 55000, 5000], [40, 55, 5]) })).toBeNull();
+    expect(roundingNote({ totals: { subtotalExVat: 100 } as never, paymentSchedule: sched([100], [100]) })).toBeNull();
+  });
+  it("renders a long unbroken site name, 8 sections and a rounding stage without throwing", async () => {
+    const { baseline } = freeze();
+    const m = buildCustomerDocumentModel({ baseline, quoteRef: "NQ-Q-0009", revision: 1, snapshot: snapshot(), profile: PROFILE, schedule: NEWQUIP_STANDARD_SCHEDULE, issuedOn: "2026-10-29" });
+    const big: CustomerDocumentModel = { ...m, quote: { ...m.quote, siteName: "Fictitious-".repeat(12) + "Block7" }, sections: Array.from({ length: 8 }, (_, i) => ({ title: `Section ${i + 1}`, scope: "Fictitious scope text. ".repeat(12), amountExVat: 1000 + i })) };
+    const bytes = await renderCustomerPdf(big);
+    const t = pdfText(bytes);
+    expect(t).toContain(PROFILE.brandName); expect(t).toContain("Block7");
   });
 });
