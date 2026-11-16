@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { stageLabelOf, waitingOn, type QuoteState } from "@/newquip/quote/workflow";
-import { createGrowerQuoteAction, listGrowerQuotesAction, pocDemonstrationAvailableAction } from "./actions";
+import { createGrowerQuoteAction, getGrowerViewerAction, listGrowerQuotesAction, pocDemonstrationAvailableAction } from "./actions";
 import { QuoteListSkeleton } from "./QuoteSkeleton";
 import { announceNavigation } from "@/app/navigation-events";
 import { OP } from "@/components/ui/operation-labels";
@@ -37,6 +37,8 @@ export default function NewquipGrowerPage() {
     listGrowerQuotesAction().then((r) => (r.ok ? (setRows(r.data ?? []), setError(null)) : setError(r.error ?? "The quotations could not be loaded."))).catch(() => setError("The quotations could not be loaded. Reload the page to try again."));
   }, []);
 
+  const [canSeeSettings, setCanSeeSettings] = useState(false); // Manager or Estimator only (the page and its actions re-check on the server)
+  useEffect(() => { getGrowerViewerAction().then((r) => setCanSeeSettings(r.ok && !!r.data && (r.data.roles.includes("manager") || r.data.roles.includes("estimator")))).catch(() => setCanSeeSettings(false)); }, []);
   const [demoAvailable, setDemoAvailable] = useState(false);
   useEffect(() => { pocDemonstrationAvailableAction().then((r) => setDemoAvailable(r.ok && r.data === true)).catch(() => setDemoAvailable(false)); }, []);
 
@@ -64,6 +66,7 @@ export default function NewquipGrowerPage() {
         <div className="flex gap-2">
           <Link href="/newquip-grower/project-templates" className="inline-flex min-h-11 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Project templates</Link>
           <Link href="/newquip-grower/company-profile" className="inline-flex min-h-11 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Company details</Link>
+          {canSeeSettings && <Link href="/newquip-grower/commercial-settings" className="inline-flex min-h-11 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Commercial settings</Link>}
           <Link href="/newquip-grower/template" className="inline-flex min-h-11 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Template detail</Link>
           <Button className="min-h-11" onClick={() => create()} loading={isWorking}>{isWorking ? OP.createQuotation : "New Grower quote"}</Button>
           {demoAvailable && <Button className="min-h-11" variant="secondary" onClick={() => create(true)} disabled={isWorking} title="Internal presentation only: pre-filled illustrative Estimator inputs, not for real quotations">Start demonstration quotation</Button>}

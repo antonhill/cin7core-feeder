@@ -257,6 +257,7 @@ export default function QuoteEditorPage() {
   const [handover, setHandover] = useState<{ previousCents: number | null; newCents: number | null; changes: AmountChange[] } | null>(null);
   // POC Presentation Mode: set when the Manager's one-click approval succeeded, so the presenter continues as the Rep (next responsible role) on the SAME quotation.
   const [pocContinue, setPocContinue] = useState(false);
+  const [autoPending, setAutoPending] = useState<string[]>([]); // neutral "price pending" wording from the last save's automatic pricing (never a cost, rate, freight or margin)
   const [mapRefused, setMapRefused] = useState(false); // the last Save was refused because the Rep changed a product-affecting control
   const [touched, setTouched] = useState<ReadonlySet<string>>(new Set());
   const touch = (...keys: string[]) => setTouched((p) => (keys.every((k) => p.has(k)) ? p : new Set([...p, ...keys])));
@@ -285,6 +286,7 @@ export default function QuoteEditorPage() {
       setHandover({ previousCents: v.confirmationEffect.previousCents ?? null, newCents: v.confirmationEffect.newCents ?? null, changes: describeAmountChanges(view.quote.draft, v.quote.draft) });
     }
     setEffectInfo(v.confirmationEffect ?? null);
+    setAutoPending(v.autoPricing?.pending ?? []);
     setView(v);
     setDraft(v.quote.draft);
     setEv(v.evaluation);
@@ -832,6 +834,7 @@ export default function QuoteEditorPage() {
       {q.state !== "MANAGER_APPROVED_FINAL" && stage <= 2 && !uxChrome && !previewFailure && <PricingFeedbackNote feedback={pricingFeedback(budget, { canViewCommercials: !!view.viewer.canViewCommercials })} />}
 
       {error && <div className="mt-4"><Alert tone="danger">{error}</Alert></div>}
+      {autoPending.length > 0 && q.state === "REP_DRAFT" && <div className="mt-4" data-testid="auto-pricing-pending"><Alert tone="info">{autoPending.join(". ")}.</Alert></div>}
       <ActionFeedback state={acts.stateOf("page")} floating />
       <LongRunningStatus label={phaseUx && acts.isPending("send") ? null : acts.currentLabel} />
       {final && <div className="mt-4"><Alert tone="info">This quote is the manager-approved final. Its accepted baseline is frozen; any change after acceptance must be a Variation on the Project.</Alert></div>}

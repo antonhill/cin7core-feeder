@@ -16,6 +16,8 @@ import { cleanProfile, missingProfileFields, type CompanyProfile } from "./compa
 import { renderCustomerPdf } from "./customer-pdf";
 import { applyDemoTerms } from "./demo-terms";
 import { pocDocumentMarked } from "./poc-presentation";
+import { commercialOf, nextProfileWithCommercial, nextProfileWithDetails, withoutCommercial, type CommercialVersion } from "./commercial-block";
+import type { CommercialSettings } from "@/newquip/pricing/commercial-settings";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 export const DOCUMENT_BUCKET = "newquip-quote-documents";
@@ -50,16 +52,41 @@ export async function documentsAvailable(db: Db): Promise<boolean> {
 }
 
 // ── company profile ─────────────────────────────────────────────────────────
-export async function latestProfile(db: Db, orgId: string): Promise<StoredProfile | null> {
+/** The RAW latest row, commercial block included. INTERNAL to this file's commercial functions: customer-facing code must use latestProfile(), which strips the block. */
+async function latestProfileRow(db: Db, orgId: string): Promise<StoredProfile | null> {
   const r = await db.from("newquip_company_profiles").select("*").eq("org_id", orgId).order("version", { ascending: false }).limit(1);
   if (r.error) { if (missing(r.error.message)) return null; throw new Error(r.error.message); }
   return ((r.data ?? []) as StoredProfile[])[0] ?? null;
 }
+/** The company details for customer-facing use. The Manager-only `commercial` block is REMOVED here, so the customer-document builder can never read it. */
+export async function latestProfile(db: Db, orgId: string): Promise<StoredProfile | null> {
+  const row = await latestProfileRow(db, orgId);
+  return row ? { ...row, profile: withoutCommercial(row.profile) } : null;
+}
 export async function saveProfile(db: Db, orgId: string, input: Partial<CompanyProfile>, email: string): Promise<StoredProfile> {
   const profile = cleanProfile(input);
-  const ins = await db.from("newquip_company_profiles").insert({ org_id: orgId, profile, entered_by_email: email }).select("*").single();
+  const stored = await latestProfileRow(db, orgId); // the Manager's commercial settings are carried forward untouched
+  const ins = await db.from("newquip_company_profiles").insert({ org_id: orgId, profile: nextProfileWithDetails(profile, stored?.profile), entered_by_email: email }).select("*").single();
   if (ins.error || !ins.data) throw new Error(`Could not save the company details: ${ins.error?.message ?? "no row"}`);
-  return ins.data as StoredProfile;
+  const row = ins.data as StoredProfile;
+  return { ...row, profile: withoutCommercial(row.profile) };
+}
+
+// ── commercial settings (interim store: see commercial-block.ts) ────────────
+/** The current commercial settings and their revision, or null when none have been entered (or the stored block does not validate). Cost-bearing: Manager / cost-entitled server code only. */
+export async function latestCommercialSettings(db: Db, orgId: string, nowIso: string = new Date().toISOString()): Promise<CommercialVersion | null> {
+  const row = await latestProfileRow(db, orgId);
+  return row ? commercialOf(row.profile, nowIso) : null;
+}
+/** Appends a NEW profile version carrying the settings (customer-facing fields untouched). Append-only: nothing earlier is changed. */
+export async function saveCommercialSettings(db: Db, orgId: string, settings: CommercialSettings, email: string, nowIso: string = new Date().toISOString()): Promise<CommercialVersion> {
+  const stored = await latestProfileRow(db, orgId);
+  const profile = nextProfileWithCommercial(stored?.profile, stored ? commercialOf(stored.profile, nowIso) : null, settings, email, nowIso);
+  const ins = await db.from("newquip_company_profiles").insert({ org_id: orgId, profile, entered_by_email: email }).select("*").single();
+  if (ins.error || !ins.data) throw new Error(`Could not save the commercial settings: ${ins.error?.message ?? "no row"}`);
+  const v = commercialOf((ins.data as StoredProfile).profile, nowIso);
+  if (!v) throw new Error("The saved commercial settings could not be read back.");
+  return v;
 }
 
 // ── documents ───────────────────────────────────────────────────────────────
