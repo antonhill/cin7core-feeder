@@ -25,9 +25,11 @@ export interface ActivationPanelProps {
   firstTask?: boolean;
   /** When no single product can take the first cost: the explicit, explained way to the older costing panel (never the silent default). */
   onUseLegacy?: () => void;
+  /** While set, the first cost cannot be saved (e.g. unsaved edits elsewhere on the page would be lost when the quotation reloads). */
+  pausedReason?: string | null;
 }
 
-export function ActivationPanel({ quoteId, budget, confirmedCents, canEdit, reload, onDirtyChange, firstTask = false, onUseLegacy }: ActivationPanelProps) {
+export function ActivationPanel({ quoteId, budget, confirmedCents, canEdit, reload, onDirtyChange, firstTask = false, onUseLegacy, pausedReason = null }: ActivationPanelProps) {
   const pv = activationPreview(budget);
   const [bundle, setBundle] = useState<WorkspaceBundle | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -76,8 +78,9 @@ export function ActivationPanel({ quoteId, budget, confirmedCents, canEdit, relo
               <div><label htmlFor="act-start" className="mb-1.5 block text-[13px] font-semibold">Start with the supplier cost of</label>
                 <select id="act-start" className="min-h-11 w-full max-w-md rounded-lg border-[1.5px] border-slate-500 bg-white px-3 text-[15px]" value={starter?.sku ?? ""} onChange={(e) => setSku(e.target.value)}>{pv.starters.map((s) => <option key={s.sku} value={s.sku}>{s.label} · {s.sku}</option>)}</select>
                 <p className="mt-1 text-[12.5px] text-slate-700">Supplier pricing switches on when this first cost is saved. Every other product is costed next, from the task list.</p></div>
+              {pausedReason && <Alert tone="warning"><span data-testid="activation-paused">{pausedReason}</span></Alert>}
               {error && <Alert tone="warning"><span data-testid="activation-error">{error}</span></Alert>}
-              {bundle && starter ? <SkuCostForm key={starter.sku} sku={starter.sku} label={starter.label} quantity={starter.quantity ?? 0} bundle={bundle} canEdit={canEdit} save={activate} onDirty={(d) => onDirtyChange?.(d)} saveLabel="Save cost and switch on supplier pricing" testId="activation-form" /> : !error && <p className="text-sm text-slate-700" data-testid="activation-loading">Loading…</p>}
+              {bundle && starter ? <SkuCostForm key={starter.sku} sku={starter.sku} label={starter.label} quantity={starter.quantity ?? 0} bundle={bundle} canEdit={canEdit && !pausedReason} save={activate} onDirty={(d) => onDirtyChange?.(d)} saveLabel="Save cost and switch on supplier pricing" testId="activation-form" /> : !error && <p className="text-sm text-slate-700" data-testid="activation-loading">Loading…</p>}
             </>
           )}
         </div>

@@ -20,7 +20,7 @@ let db: FakeDb;
 vi.mock("@/lib/authorization", () => ({ requireModuleAccess: vi.fn() }));
 vi.mock("@/lib/require-org-admin", () => ({ requireOrgAdmin: vi.fn() }));
 vi.mock("@/newquip/require-newquip-poc-org", () => ({ requireNewquipPocOrg: vi.fn() }));
-vi.mock("@/lib/approvals/role-store", () => ({ resolveRoles: vi.fn(), canSeeCosts: vi.fn() }));
+vi.mock("@/lib/approvals/role-store", () => ({ resolveRoles: vi.fn(), canSeeCosts: vi.fn(), rolesAvailable: vi.fn(() => Promise.resolve(false)) }));
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: () => db }));
 vi.mock("@/lib/activity-log", () => ({ logActivity: vi.fn(() => Promise.resolve()) }));
 vi.mock("next/navigation", () => ({
@@ -98,6 +98,19 @@ describe("Phase 2 (supplier pricing ON): the Estimator workspace replaces the st
     for (const gone of ["disc-cost-capture", "disc-margin", "disc-supplier-pricing", "estimator-pricing-panel", "disc-legacy-costing", "cost-next-action"]) expect(screen.queryByTestId(gone), gone).toBeNull();
     expect(document.querySelector('[data-supplier-pricing="primary"]')).toBeNull();
   }, 60000);
+  it("ALL FIVE essential Estimator actions are in this one workspace: tasks (mapping, packages, supplier costs, exceptions), itemised cost review, readiness blockers, sign-off and return to the Rep", async () => {
+    await openWs(verified());
+    await screen.findByTestId("commercial-summary");
+    expect(screen.getByTestId("needs-you")).toBeTruthy(); // mapping, package confirmation, supplier costs, pricing exceptions as tasks
+    await screen.findByTestId("cost-review"); // itemised cost review with margin and verification
+    expect(screen.getByTestId("status-legend")).toBeTruthy();
+    expect(screen.getByTestId("commercial-summary").textContent).toMatch(/Blocking sign-off|Ready/); // readiness: what blocks sign-off
+    const so = document.getElementById("ws-signoff")!;
+    expect(so).toBeTruthy(); // sign-off
+    expect(within(so).getByTestId("return-section")).toBeTruthy(); // return to the Rep
+    expect(screen.queryByTestId("step-rail")).toBeNull(); // none of it needs the older wizard
+  }, 60000);
+
   it("no misleading legacy 'costing incomplete / no supplier cost selected / Cin7 cost capture is checked' text anywhere on the page", async () => {
     await openWs(verified());
     await screen.findByTestId("commercial-summary");
@@ -193,21 +206,60 @@ describe("switching supplier pricing on is offered inside the new Estimator expe
     expect(screen.getAllByTestId("phase-header")).toHaveLength(1);
     expect(screen.getAllByTestId("next-action")).toHaveLength(1);
     expect(screen.getByTestId("next-action-headline").textContent).toMatch(/Enter the supplier cost for/);
-    for (const gone of ["step-rail", "disc-cost-capture", "disc-margin", "disc-supplier-pricing", "quote-summary-bar", "stage-nav-toggle", "estimator-workspace"]) expect(screen.queryByTestId(gone), gone).toBeNull();
+    for (const gone of ["step-rail", "disc-supplier-pricing", "disc-cost-capture", "disc-margin", "quote-summary-bar", "stage-nav-toggle", "estimator-workspace", "other-estimator-actions", "use-legacy-costing-link"]) expect(screen.queryByTestId(gone), gone).toBeNull();
+    // ALL the Estimator's essential actions are sections of THIS screen, not the older wizard
+    for (const id of ["mapping", "costs", "final", "signoff"]) expect(screen.getByTestId(`est-section-${id}`).tagName, id).toBe("DETAILS");
+    expect(screen.getByTestId("est-section-mapping").textContent).toMatch(/Products and packages/);
+    expect(screen.getByTestId("est-section-costs").textContent).toMatch(/Supplier costs and pricing exceptions/);
+    expect(screen.getByTestId("est-section-final").textContent).toMatch(/Final readiness review/);
+    expect(screen.getByTestId("est-section-signoff").textContent).toMatch(/Sign off or return to the Rep/);
+    expect(within(screen.getByTestId("est-section-signoff")).getByTestId("return-section")).toBeTruthy();
+    expect(within(screen.getByTestId("est-section-mapping")).getByRole("button", { name: /Confirm source-backed mappings/ })).toBeTruthy();
     expect(document.querySelectorAll('[data-testid="phase-stepper"]')).toHaveLength(1); // one phase line, not a second set of phase cards
   }, 60000);
-  it("the older costing panel is never the default, but an Estimator-only user can always reach mapping, sign-off and return to the Rep through the explained link, and come back", async () => {
+  it("an Estimator can map products, confirm packages, review readiness and sign off or return to the Rep from the modern screen: no link to an older panel is needed", async () => {
     await open(undefined, ["ESTIMATOR"], { waitFor: "supplier-costing-start" });
-    expect(screen.getByTestId("other-estimator-actions").textContent).toMatch(/map products, confirm packages, sign off or return this quotation to the Rep/);
-    expect(screen.queryByTestId("step-rail")).toBeNull();
-    fireEvent.click(screen.getByTestId("use-legacy-costing-link"));
-    await screen.findByTestId("disc-cost-capture", {}, { timeout: 15000 });
-    expect(screen.getByTestId("step-rail")).toBeTruthy(); // the steps that hold mapping, final review and sign-off or return
-    expect(screen.getByTestId("legacy-costing-note").textContent).toMatch(/on purpose/);
-    fireEvent.click(screen.getByTestId("back-to-workspace"));
-    await screen.findByTestId("supplier-costing-start");
-    expect(screen.queryByTestId("disc-cost-capture")).toBeNull();
+    expect(screen.getByTestId("estimator-checklist-intro").textContent).toMatch(/You do not need to start supplier costing first/);
+    expect(screen.queryByTestId("use-legacy-costing-link")).toBeNull();
+    const signoff = screen.getByTestId("est-section-signoff");
+    fireEvent.click(signoff.querySelector("summary")!);
+    expect(signoff.hasAttribute("open")).toBe(true);
+    expect(within(signoff).getByTestId("return-section")).toBeTruthy();
+    expect(within(signoff).getByRole("button", { name: /Return to rep/i })).toBeTruthy();
+    expect(within(signoff).getByRole("button", { name: /^Sign off/i })).toBeTruthy(); // the sign-off action itself, with its existing gate
+    // the section statuses are plain words
+    expect(["Complete", "Needs attention", "Waiting"]).toContain(screen.getByTestId("est-section-status-mapping").textContent);
   }, 90000);
+  it("COMPLETE WORKFLOW (disposable fixture): from the modern screen the Estimator returns the quotation to the Rep with a reason; it comes back as a new revision with the Rep", async () => {
+    const id = await open(undefined, ["ESTIMATOR"], { waitFor: "supplier-costing-start" });
+    const signoff = screen.getByTestId("est-section-signoff");
+    fireEvent.click(signoff.querySelector("summary")!);
+    const btn = within(signoff).getByRole("button", { name: /Return to rep/i }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true); // no reason yet: the existing gate
+    fireEvent.change(within(signoff).getByLabelText(/Return to rep — reason/), { target: { value: "Please confirm the delivery charge with the customer." } });
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    fireEvent.click(btn);
+    await waitFor(() => expect([...document.querySelectorAll('[data-testid="action-feedback"]')].map((e) => e.textContent).join(" | ")).toMatch(/[Rr]eturned|could not|not allowed|error/i), { timeout: 20000 });
+    await waitFor(() => { const r = (db.rows("newquip_quotes") as Array<Record<string, unknown>>).find((x) => x.id === id)!; expect(r.state).toBe("REP_DRAFT"); expect(r.revision).toBe(2); }, { timeout: 20000 });
+  }, 90000);
+
+  it("COMPLETE WORKFLOW: the start screen has its own Save draft, so an edit made in Products and packages can be saved without any older panel", async () => {
+    const id = await open(undefined, ["ESTIMATOR"], { waitFor: "supplier-costing-start" });
+    const row = screen.getByTestId("start-save-row");
+    const save = within(row).getByRole("button", { name: /^Save draft$/ }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true); // nothing to save yet
+    const mapping = screen.getByTestId("est-section-mapping");
+    fireEvent.click(mapping.querySelector("summary")!);
+    // a pricing exception: a manual unit price with its reason, in the same section
+    fireEvent.change(within(mapping).getByLabelText(/Unit price for Feed saver mat/), { target: { value: "1000" } });
+    fireEvent.change(within(mapping).getByLabelText(/Reason for the manual price of Feed saver mat/), { target: { value: "Supplier quote by phone, ref UX-77" } });
+    await waitFor(() => expect(save.disabled).toBe(false)); // the edit is unsaved: Save draft is now live
+    expect(within(row).getByTestId("save-state").textContent).toMatch(/Unsaved changes/);
+    expect(screen.getByTestId("activation-paused").textContent).toMatch(/Save them first/); // starting supplier costing reloads the quotation: unsaved edits are never discarded silently
+    fireEvent.click(save);
+    await waitFor(() => expect(JSON.stringify((db.rows("newquip_quotes") as Array<Record<string, unknown>>).find((r) => r.id === id)!.draft)).toContain("Supplier quote by phone, ref UX-77"), { timeout: 20000 }); // saved
+  }, 90000);
+
   it("is not offered to a Manager-only viewer, a viewer without cost visibility, a day-to-day quotation, or once supplier pricing is on", async () => {
     await open(undefined, ["MANAGER"], { waitFor: "stage2-status-line" });
     expect(screen.queryByTestId("activation-panel")).toBeNull();

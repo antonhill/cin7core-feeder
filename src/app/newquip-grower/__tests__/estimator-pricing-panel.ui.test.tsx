@@ -276,7 +276,7 @@ describe("only an Estimator or Manager is shown the workspace", () => {
     const at = src.indexOf("<EstimatorPricingPanel");
     expect(at).toBeGreaterThan(0);
     const before = src.slice(Math.max(0, at - 1400), at);
-    expect(before).toMatch(/canCommercials && \(\s*<StepPanel/); // inside the cost-visible step
+    expect(before).toMatch(/canCommercials && \(\s*<EstimatorSection[^>]*>\s*<StepPanel/); // inside the cost-visible step (wrapped by the modern section)
     expect(before).toMatch(/roles\.has\("estimator"\) \|\| roles\.has\("manager"\)/);
   });
 });

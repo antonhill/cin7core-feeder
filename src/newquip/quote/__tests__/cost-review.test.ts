@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCostReview, nativeCostText, UPLIFT_NONE, UPLIFT_NOTE } from "../cost-review";
+import { buildCostReview, nativeCostText, STATUS_LEGEND, UPLIFT_NONE, UPLIFT_NOTE } from "../cost-review";
 
 const row = (over: Record<string, unknown> = {}) => ({
   sku: "ERT053", usedBy: ["feed_saver_mat"], quantity: 216, status: "priced", supplier: "Mat Supplier", currency: "EUR", nativeUnitCostE7: 268_440_995, costSource: "Quote Q-77",
@@ -29,29 +29,31 @@ describe("the itemised cost review", () => {
     expect(r.totalCost.text).toBe("R 117 482,40");
     expect(r.selling.text).toBe("R 140 978,88");
     expect(r.margin.text).toBe("16.7%");
-    expect(r.status).toEqual({ text: "Entered, not yet verified", tone: "open" });
+    expect(r.status).toEqual({ text: "Needs verification", tone: "open" });
+    expect(r.statusDetail).toBeNull(); // the standard case is explained once in the legend, not on every row
   });
 
   it("a verified cost is verified; a missing cost is named as missing and nothing is invented for it", () => {
     const missingRow = row({ sku: "NQ1161", status: "no_input", costState: "missing", costStateText: "No supplier cost", supplier: null, currency: null, nativeUnitCostE7: null, costSource: null, enteredAt: null, rate: null, freightFactorMicro: null, unitLandedCostCents: null, lineCostCents: null, lineRevenueCents: null, margin: null });
     const rv = buildCostReview(view([row({ costState: "verified", costStateText: "Verified" }), missingRow]), budget);
     expect(rv.rows[0].status).toEqual({ text: "Verified", tone: "ok" });
+    expect(rv.rows[0].statusDetail).toBeNull();
     const m = rv.rows[1];
-    expect(m.status).toEqual({ text: "Cost missing", tone: "missing" });
+    expect(m.status).toEqual({ text: "Missing cost", tone: "missing" });
     for (const c of [m.source, m.originalCost, m.landedUnit, m.totalCost, m.selling, m.margin]) expect(c.tone, c.text).toBe("missing");
     expect(m.landedUnit.text).toBe("Not available");
     expect(m.missing).toEqual(expect.arrayContaining(["supplier cost", "original cost"]));
-    expect(rv.counts).toEqual({ products: 2, verified: 1, missing: 1, unverified: 0 });
+    expect(rv.counts).toEqual({ products: 2, verified: 1, missing: 1, unverified: 0, provisional: 0 });
   });
 
   it("a foreign cost with no usable rate says so; a ZAR cost needs none; self-review and a changed cost are not 'verified'", () => {
     const [noRate, zar, self, changed] = buildCostReview(view([row({ rate: null }), row({ currency: "ZAR", nativeUnitCostE7: 300_000_000, rate: null }), row({ costState: "self_reviewed", costStateText: "" }), row({ costState: "review_outdated", costStateText: "" })]), budget).rows;
     expect(noRate.fx).toEqual({ text: "No usable exchange rate", tone: "missing" });
     expect(zar.fx.text).toBe("ZAR: no conversion");
-    expect(self.status.tone).toBe("open");
-    expect(self.status.text).toMatch(/not independent/);
-    expect(changed.status.tone).toBe("open");
-    expect(changed.status.text).toMatch(/Changed since/);
+    expect(self.status).toEqual({ text: "Needs verification", tone: "open" });
+    expect(self.statusDetail).toMatch(/not independent/);
+    expect(changed.status).toEqual({ text: "Needs verification", tone: "open" });
+    expect(changed.statusDetail).toMatch(/changed after it was verified/);
   });
 
   it("no historical inflation is calculated: the uplift is always 'none applied' and the note says the model has no age-based escalation", () => {
@@ -70,5 +72,20 @@ describe("the itemised cost review", () => {
 
   it("only products the quotation actually uses are listed", () => {
     expect(buildCostReview(view([row({ usedBy: [] })]), budget).rows).toHaveLength(0);
+  });
+
+  it("a manually priced line is Provisional (its supplier cost still needs verification); the four labels are explained once in the legend", () => {
+    const rv = buildCostReview(view([row({ priceBasis: "manual_price", costState: "verified", costStateText: "Verified" })]), budget);
+    expect(rv.rows[0].status).toEqual({ text: "Provisional", tone: "open" });
+    expect(rv.rows[0].statusDetail).toMatch(/manual selling price/);
+    expect(rv.counts.provisional).toBe(1);
+    expect(STATUS_LEGEND.map(([k]) => k)).toEqual(["Verified", "Needs verification", "Missing cost", "Provisional"]);
+  });
+
+  it("a verified cost with an audited selling-price override stays Verified (the override is noted, not a cost problem)", () => {
+    const rv = buildCostReview(view([row({ costState: "verified", costStateText: "Verified", priceBasis: "price_override", priceOverride: { unitPriceCents: 70_000, reason: "r", by: "e", at: "2026-11-10" } })]), budget);
+    expect(rv.rows[0].status).toEqual({ text: "Verified", tone: "ok" });
+    expect(rv.rows[0].statusDetail).toMatch(/audited override/);
+    expect(rv.counts).toEqual({ products: 1, verified: 1, missing: 0, unverified: 0, provisional: 0 });
   });
 });
