@@ -23,6 +23,7 @@ vi.mock("@/newquip/require-newquip-poc-org", () => ({ requireNewquipPocOrg: vi.f
 vi.mock("@/lib/approvals/role-store", () => ({ resolveRoles: vi.fn(), canSeeCosts: vi.fn(), rolesAvailable: vi.fn(() => Promise.resolve(false)) }));
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: () => db }));
 vi.mock("@/lib/activity-log", () => ({ logActivity: vi.fn(() => Promise.resolve()) }));
+vi.mock("../supplier-actions", async () => (await import("./cin7-supplier-ui")).supplierActionsMock());
 vi.mock("next/navigation", () => ({
   useParams: () => ({ id: (globalThis as { __QID?: string }).__QID }),
   useSearchParams: () => new URLSearchParams("stage=2&step=2"),
@@ -258,6 +259,25 @@ describe("switching supplier pricing on is offered inside the new Estimator expe
     expect(screen.getByTestId("activation-paused").textContent).toMatch(/Save them first/); // starting supplier costing reloads the quotation: unsaved edits are never discarded silently
     fireEvent.click(save);
     await waitFor(() => expect(JSON.stringify((db.rows("newquip_quotes") as Array<Record<string, unknown>>).find((r) => r.id === id)!.draft)).toContain("Supplier quote by phone, ref UX-77"), { timeout: 20000 }); // saved
+  }, 90000);
+
+  it("the four sections are listed at the top of the start screen with their status, and each jump opens its section", async () => {
+    await open(undefined, ["ESTIMATOR"], { waitFor: "supplier-costing-start" });
+    const idx = screen.getByTestId("estimator-section-index");
+    expect(within(idx).getAllByRole("button").map((b) => b.textContent)).toEqual([
+      expect.stringMatching(/^1Products and packages· /), expect.stringMatching(/^2Supplier costs and pricing exceptions· /), expect.stringMatching(/^3Final readiness review· /), expect.stringMatching(/^4Sign off or return to the Rep· /),
+    ]);
+    const so = screen.getByTestId("est-section-signoff") as HTMLDetailsElement;
+    expect(so.open).toBe(false);
+    so.scrollIntoView = vi.fn();
+    fireEvent.click(screen.getByTestId("jump-signoff"));
+    expect(so.open).toBe(true);
+    expect((screen.getByTestId("est-section-mapping") as HTMLDetailsElement).open).toBe(false); // no section is open by default: the first task is the page
+  }, 90000);
+
+  it("Save draft says in visible words why it is disabled", async () => {
+    await open(undefined, ["ESTIMATOR"], { waitFor: "supplier-costing-start" });
+    expect(screen.getByTestId("start-save-why").textContent).toMatch(/Nothing to save: there are no unsaved changes/);
   }, 90000);
 
   it("is not offered to a Manager-only viewer, a viewer without cost visibility, a day-to-day quotation, or once supplier pricing is on", async () => {

@@ -10,6 +10,7 @@ import type { GrowerItemKey } from "@/newquip/grower/types";
 import { decodeManualReason, encodeManualReason, manualPriceComplete, money } from "@/newquip/quote/estimator-workspace";
 import { applyEditor, editorFrom, editorProblems, fxContext, isForeign, parseCostText, previewLine, type SkuEditor } from "@/newquip/quote/workspace-submission";
 import { ProductMappingPicker } from "./ProductMappingPicker";
+import { SupplierCostSection } from "./SupplierCostSection";
 
 // The focused editors of the Estimator workspace. One editor per product. They keep what was typed in local state until a save succeeds (a refused or conflicting save never clears a field),
 // report whether anything typed is unsaved so the workspace can warn before leaving, and show the model's own calculation of what the typed values would price at.
@@ -31,8 +32,8 @@ export function Rail({ tasks, activeId, onSelect }: { tasks: Array<{ id: string;
 }
 
 /** One product's supplier cost, currency, FX, freight and price. Used for a single SKU line, a package component, and the door once chosen. */
-export function SkuCostForm({ sku, label, quantity, bundle, canEdit, save, onDirty, onSaved, saveLabel = "Save cost", testId = "sku-form" }: {
-  sku: string; label: string; quantity: number; bundle: WorkspaceBundle; canEdit: boolean;
+export function SkuCostForm({ quoteId, sku, label, quantity, bundle, canEdit, save, onDirty, onSaved, saveLabel = "Save cost", testId = "sku-form" }: {
+  quoteId: string; sku: string; label: string; quantity: number; bundle: WorkspaceBundle; canEdit: boolean;
   save: (sku: string, e: SkuEditor) => Promise<SaveResult>; onDirty: (dirty: boolean) => void; onSaved?: () => void; saveLabel?: string; testId?: string;
 }) {
   const [initial, setInitial] = useState<SkuEditor>(() => editorFrom(bundle.current, sku));
@@ -64,12 +65,7 @@ export function SkuCostForm({ sku, label, quantity, bundle, canEdit, save, onDir
     <div className="flex min-w-0 flex-col gap-4 lg:flex-row lg:items-start" data-testid={testId}>
       <div className="flex min-w-0 flex-[1_1_28rem] flex-col gap-4">
         <Section title="Supplier cost" hint={`${label} · ${sku}`}>
-          <div className="flex flex-wrap gap-4">
-            <div className="min-w-[12rem] flex-[2_1_14rem]"><Input label="Supplier" value={ed.supplierName} disabled={disabled} onChange={(e) => set((d) => { d.supplierName = e.target.value; })} /></div>
-            <div className="w-28"><Input label="Currency" value={ed.currency} maxLength={3} disabled={disabled} onChange={(e) => set((d) => { d.currency = e.target.value.toUpperCase(); })} /></div>
-            <div className="min-w-[10rem] flex-[1_1_11rem]"><Input label="Unit cost (up to 7 decimals)" inputMode="decimal" className="tabular-nums" value={ed.costText} disabled={disabled} onChange={(e) => set((d) => { d.costText = e.target.value; })} error={parseProblem(ed.costText)} /></div>
-          </div>
-          <div className="mt-4"><Input label="Where this cost comes from" value={ed.source} disabled={disabled} onChange={(e) => set((d) => { d.source = e.target.value; })} helperText="Required. Shown to the Manager who verifies it." /></div>
+          <SupplierCostSection quoteId={quoteId} sku={sku} ed={ed} set={set} disabled={disabled} />
         </Section>
         {foreign && (
           <Section title="Exchange rate" hint={`${ed.currency} to rand`}>

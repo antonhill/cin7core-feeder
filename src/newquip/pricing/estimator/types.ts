@@ -16,9 +16,24 @@ export interface CostReview { by: string; at: string; /** What was checked again
  * One SKU's purchasing facts: who supplies it, in what currency, at what native cost, where that came from, plus its landed-cost assumptions. There is deliberately NO
  * "verified" flag a person can set: whether the cost is verified is DERIVED from `review` (see verification.ts), and `by` / `at` say who entered or last changed it.
  */
+/** What KIND of cost this is. Never blurred: a historical Cin7 price, a new supplier quotation, or the Estimator's own estimate. (An age-adjusted estimate is deliberately absent: there is no approved policy for one.) */
+export type CostKind = "cin7_historical" | "supplier_quotation" | "manual_estimate";
+export const COST_KINDS: readonly CostKind[] = ["cin7_historical", "supplier_quotation", "manual_estimate"];
+/** Where the currency came from: the supplier's own Cin7 record, or an authorised, reasoned override where Cin7 holds none. Never a silent default. */
+export type CurrencySource = "cin7_supplier" | "override";
+export const CURRENCY_SOURCES: readonly CurrencySource[] = ["cin7_supplier", "override"];
+
 export interface SkuPricingInput extends Omit<SupplierCostInput, "verification">, Stamp {
   freight: FreightInput | null;
   review?: CostReview;
+  /** How the currency was determined (see CurrencySource). Absent on entries made before supplier selection existed. */
+  currencySource?: CurrencySource;
+  /** Required with currencySource "override": why Cin7's supplier record could not supply the currency. */
+  currencyOverrideReason?: string;
+  /** What kind of cost this is. Absent on older entries. */
+  costKind?: CostKind;
+  /** The date the cost applies to: the quotation date, or Cin7's "last supplied" date. null/absent when the date is not known (an undated cost is never given an invented date). */
+  costDate?: string | null;
 }
 
 /**

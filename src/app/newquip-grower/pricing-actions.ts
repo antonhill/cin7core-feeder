@@ -9,6 +9,9 @@ import { applyPricingChange, attestRates, loadPricingWorkspace, recordManualEvid
 import type { PricingSubmission } from "@/newquip/pricing/estimator/apply";
 import type { PricingConflict } from "@/newquip/pricing/estimator/merge";
 import { auditActor, authoriseActor, errText as rawErrText, type Actor } from "./actor";
+import { NEWQUIP_POC_CIN7_INSTANCE_ID } from "@/newquip/access";
+import { cin7IdentityLookups } from "@/lib/projects/latest-cost-adapter";
+import { validateSupplierIdentities } from "@/newquip/pricing/estimator/supplier-identity";
 
 /** Unexpected programming errors (a malformed request) are not echoed to the browser; our own plain-language messages are. */
 const errText = (e: unknown): string => (e instanceof TypeError || e instanceof RangeError || e instanceof SyntaxError ? "The pricing request was not valid." : rawErrText(e));
@@ -28,6 +31,12 @@ async function run(quoteId: string, submission: PricingSubmission | null, reason
   if (typeof quoteId !== "string" || quoteId.length === 0 || quoteId.length > 64 || typeof reason !== "string") throw new TypeError("bad request");
   const a = await pricingActor();
   const db = createServiceRoleClient();
+  // A NEW or CHANGED supplier cost must name an active Cin7 supplier by id, with its currency from that supplier's Cin7 record (or a reasoned override where Cin7 holds none). Checked here, on the server, against Cin7;
+  // an unchanged entry is not re-checked. A failed Cin7 read refuses (it never guesses).
+  if (submission) {
+    const problems = await validateSupplierIdentities({ submission, base, lookups: cin7IdentityLookups(db, a.orgId, NEWQUIP_POC_CIN7_INSTANCE_ID), nowIso: new Date().toISOString() });
+    if (problems.length > 0) return { ok: false, error: problems[0], errors: problems };
+  }
   const r = await applyPricingChange(db, asPricingActor(a), quoteId, submission, reason, base);
   if (!r.ok) return { ok: false, error: r.errors[0], errors: r.errors, ...(r.conflicts ? { conflicts: r.conflicts } : {}) };
   // The audit record and the refreshed workspace are independent: one wait, not two. A failed audit fails the call exactly as before; a failed refresh only means the page reads it itself.

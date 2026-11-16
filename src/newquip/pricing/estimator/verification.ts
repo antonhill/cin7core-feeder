@@ -10,7 +10,12 @@ import type { CostReview, EstimatorPricing, SkuPricingInput } from "./types";
 
 /** The fields a review covers. Attribution (`by`, `at`) and the review itself are not part of the cost, so re-saving an unchanged cost keeps its review. */
 export function costInputHash(s: SkuPricingInput): string {
-  return hashOf({ supplierId: s.supplierId, supplierName: s.supplierName, currency: s.currency, nativeUnitCostE7: s.nativeUnitCostE7, source: s.source, freight: s.freight });
+  // The supplier-identity facts join the hash ONLY when present, so every cost entered before they existed keeps exactly the hash (and therefore the review) it always had.
+  return hashOf({
+    supplierId: s.supplierId, supplierName: s.supplierName, currency: s.currency, nativeUnitCostE7: s.nativeUnitCostE7, source: s.source, freight: s.freight,
+    ...(s.currencySource ? { currencySource: s.currencySource } : {}), ...(s.currencyOverrideReason ? { currencyOverrideReason: s.currencyOverrideReason } : {}),
+    ...(s.costKind ? { costKind: s.costKind } : {}), ...(s.costDate ? { costDate: s.costDate } : {}),
+  });
 }
 
 export type CostState =

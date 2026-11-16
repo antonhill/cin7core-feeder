@@ -2,12 +2,21 @@
 // parses typed text exactly and merges one product's inputs onto the CURRENT stored pricing). Validation here only says what is missing in plain words; the server and the Phase 1 model
 // remain the authority and re-check everything.
 
-import { cost7, emptySubmission, formatCost7, fromMicro, LEGACY_RULE_VERSION, micro, type PricingSubmission } from "@/newquip/pricing/estimator";
+import { cost7, emptySubmission, formatCost7, fromMicro, LEGACY_RULE_VERSION, micro, type CostKind, type CurrencySource, type PricingSubmission } from "@/newquip/pricing/estimator";
 
 export interface ForwardCoverEditor { rateText: string; coverDaysText: string; reference: string; validFrom: string; validUntil: string; reason: string }
 export interface SkuEditor {
+  /** The Cin7 supplier chosen (identity is the id; the name is only its label). null until one is chosen. */
+  supplierId: string | null;
   supplierName: string;
+  /** DERIVED from the chosen supplier's Cin7 record (cin7_supplier), or set by hand with a reason (override) where Cin7 holds none. Never typed freely and never defaulted. */
   currency: string;
+  currencySource: CurrencySource | null;
+  currencyOverrideReason: string;
+  /** A Cin7 historical cost, a new supplier quotation or the Estimator's own estimate. Never blurred. */
+  costKind: CostKind | null;
+  /** The date the cost applies to (YYYY-MM-DD): the quotation date, or Cin7's last-supplied date; "" when not known (never invented). */
+  costDate: string;
   costText: string;
   source: string;
   freightFactorText: string;
@@ -36,14 +45,16 @@ const toCents = (s: string): number | null => { const n = Number(s.replace(/\s/g
 const isDate = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s);
 const dec = (m: number | null | undefined): string => (m == null ? "" : String(fromMicro(m)));
 
-export function blankEditor(currency = "ZAR"): SkuEditor {
-  return { supplierName: "", currency, costText: "", source: "", freightFactorText: "1", addOnText: "", freightSource: "", fxMode: "spot", spotRateText: "", spotSource: "", forward: { rateText: "", coverDaysText: "90", reference: "", validFrom: "", validUntil: "", reason: "" }, override: { on: false, priceText: "", reason: "" } };
+export function blankEditor(currency = ""): SkuEditor {
+  // No currency is assumed: it comes from the supplier chosen. (An older stored entry brings its own.)
+  return { supplierId: null, supplierName: "", currency, currencySource: null, currencyOverrideReason: "", costKind: null, costDate: "", costText: "", source: "", freightFactorText: "1", addOnText: "", freightSource: "", fxMode: "spot", spotRateText: "", spotSource: "", forward: { rateText: "", coverDaysText: "90", reference: "", validFrom: "", validUntil: "", reason: "" }, override: { on: false, priceText: "", reason: "" } };
 }
 /** The editor's starting values for one SKU, read from the stored submission (so reopening an editor shows exactly what was saved). */
 export function editorFrom(current: PricingSubmission | null, sku: string): SkuEditor {
   const s = current?.skus[sku];
-  const e = blankEditor(s?.currency ?? "ZAR");
+  const e = blankEditor(s?.currency ?? "");
   if (!s) return e;
+  e.supplierId = s.supplierId ?? null; e.currencySource = s.currencySource ?? null; e.currencyOverrideReason = s.currencyOverrideReason ?? ""; e.costKind = s.costKind ?? null; e.costDate = s.costDate ?? "";
   e.supplierName = s.supplierName ?? ""; e.costText = formatCost7(s.nativeUnitCostE7); e.source = s.source;
   e.freightFactorText = dec(s.freight?.factorMicro ?? 1_000_000); e.addOnText = s.freight?.addOnCents ? (s.freight.addOnCents / 100).toFixed(2) : ""; e.freightSource = s.freight?.source ?? "";
   const fc = current?.forwardCover[s.currency], spot = current?.fxQuotes[s.currency];
@@ -68,7 +79,12 @@ export function editorProblems(e: SkuEditor, fx: { others: string[]; hasForward:
   if (c.kind === "empty") p.push("Enter the supplier cost.");
   else if (c.kind === "bad") p.push(c.message);
   else if (c.value <= 0) p.push("A zero cost is not a cost. Enter the quoted cost.");
-  if (!/^[A-Z]{3}$/.test(e.currency)) p.push("Choose a three-letter currency such as ZAR, USD or EUR.");
+  if (!e.supplierId) p.push("Choose the supplier from Cin7.");
+  if (e.supplierId && !e.currencySource) p.push("The currency is set from the supplier's Cin7 record. Choose the supplier again.");
+  if (e.currencySource === "override" && e.currencyOverrideReason.trim().length < 10) p.push("Cin7 holds no currency for this supplier: say why you are setting it by hand (at least 10 characters).");
+  if (e.supplierId && !/^[A-Z]{3}$/.test(e.currency)) p.push(e.currencySource === "override" ? "Choose the currency the supplier invoices in." : "Choose the supplier so its currency can be set.");
+  if (e.supplierId && !e.costKind) p.push("Say what kind of cost this is: a Cin7 historical cost, a new supplier quotation or your own estimate.");
+  if (e.costKind === "supplier_quotation") { if (!isDate(e.costDate)) p.push("Enter the date of the supplier quotation (YYYY-MM-DD)."); else if (e.costDate > new Date().toISOString().slice(0, 10)) p.push("The quotation date cannot be in the future."); }
   if (e.source.trim().length < 3) p.push("Say where this cost comes from (a supplier quote or Cin7 price).");
   const f = toMicro(e.freightFactorText);
   if (f === null || f <= 0) p.push("Enter the freight factor as a number above zero (1 means none).");
@@ -103,7 +119,9 @@ export function applyEditor(current: PricingSubmission | null, sku: string, e: S
   const prior = sub.skus[sku];
   const cost = parseCostText(e.costText) as { kind: "ok"; value: number };
   sub.skus[sku] = {
-    supplierId: prior?.supplierId ?? null, supplierName: e.supplierName.trim() || null, currency: e.currency, nativeUnitCostE7: cost.value, source: e.source.trim(),
+    supplierId: e.supplierId, supplierName: e.supplierName.trim() || null, currency: e.currency, nativeUnitCostE7: cost.value, source: e.source.trim(),
+    ...(e.currencySource ? { currencySource: e.currencySource } : {}), ...(e.currencySource === "override" ? { currencyOverrideReason: e.currencyOverrideReason.trim() } : {}),
+    ...(e.costKind ? { costKind: e.costKind, costDate: e.costDate.trim() === "" ? null : e.costDate.trim() } : {}),
     freight: { factorMicro: toMicro(e.freightFactorText)!, ...(e.addOnText.trim() !== "" && toCents(e.addOnText)! > 0 ? { addOnCents: toCents(e.addOnText)! } : {}), source: e.freightSource.trim() || e.source.trim() },
   };
   if (isForeign(e.currency)) {

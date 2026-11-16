@@ -17,6 +17,7 @@ export interface CostReviewRow {
 }
 export interface CostReview { rows: CostReviewRow[]; counts: { products: number; verified: number; missing: number; unverified: number; provisional: number }; upliftNote: string }
 
+const KIND_LABEL: Record<"cin7_historical" | "supplier_quotation" | "manual_estimate", string> = { cin7_historical: "Cin7 historical cost", supplier_quotation: "Supplier quotation", manual_estimate: "Manual estimate" };
 export const STATUS_VERIFIED = "Verified";
 export const STATUS_NEEDS = "Needs verification";
 export const STATUS_MISSING = "Missing cost";
@@ -53,12 +54,18 @@ function rowOf(r: SkuRow, desc: Map<string, string>): CostReviewRow {
   const missing: string[] = [];
   const need = (cell: ReviewCell, what: string): ReviewCell => { if (cell.tone === "missing") missing.push(what); return cell; };
   const entered = r.status !== "no_input" && r.costState !== "missing";
-  const source: ReviewCell = !entered ? MISSING("No supplier cost entered") : { text: [r.supplier, r.costSource].filter(Boolean).join(" · ") || "Source not recorded", ...(r.supplier || r.costSource ? {} : { tone: "missing" as const }) };
-  const date: ReviewCell = r.enteredAt ? { text: r.enteredAt.slice(0, 10) } : MISSING(entered ? "Date not recorded" : "—");
+  const kind = r.costKind ? KIND_LABEL[r.costKind] : null;
+  const supplierLabel = r.supplier ? `${r.supplier}${r.supplierId ? " (Cin7)" : ""}` : null;
+  const source: ReviewCell = !entered ? MISSING("No supplier cost entered") : { text: [supplierLabel, kind, r.costSource].filter(Boolean).join(" · ") || "Source not recorded", ...(r.supplier || r.costSource ? {} : { tone: "missing" as const }) };
+  // The date the cost APPLIES to (a quotation date, or Cin7's last-supplied date). A Cin7 price with no date says so; an older entry shows only when it was entered. No date is ever invented.
+  const date: ReviewCell = r.costDate ? { text: r.costDate }
+    : r.costKind === "cin7_historical" ? { text: "not recorded in Cin7", tone: "open" }
+    : r.enteredAt ? { text: `entered ${r.enteredAt.slice(0, 10)}` } : MISSING(entered ? "Date not recorded" : "—");
   const original: ReviewCell = r.nativeUnitCostE7 != null && r.currency ? { text: nativeCostText(r.nativeUnitCostE7, r.currency) } : MISSING("Not entered");
+  const byHand = r.currencySource === "override" ? " · currency set by hand" : "";
   const fx: ReviewCell = !r.currency ? MISSING("—")
-    : r.currency === "ZAR" ? { text: "ZAR: no conversion" }
-    : r.rate ? { text: `${r.rate.currency} ${(r.rate.rateMicro / 1e6).toFixed(4)} · ${r.rate.kind === "forward_cover" ? "forward cover" : "spot"}${r.rate.asOf ? ` · ${r.rate.asOf.slice(0, 10)}` : ""}` }
+    : r.currency === "ZAR" ? { text: `ZAR: no conversion${byHand}` }
+    : r.rate ? { text: `${r.rate.currency} ${(r.rate.rateMicro / 1e6).toFixed(4)} · ${r.rate.kind === "forward_cover" ? "forward cover" : "spot"}${r.rate.asOf ? ` · ${r.rate.asOf.slice(0, 10)}` : ""}${byHand}` }
     : MISSING("No usable exchange rate");
   const freight: ReviewCell = r.freightFactorMicro == null && r.freightAddOnCents == null ? MISSING("Not recorded")
     : { text: [r.freightFactorMicro != null ? `× ${(r.freightFactorMicro / 1e6).toFixed(3)}` : null, r.freightAddOnCents ? `+ ${formatZarCents(r.freightAddOnCents)}` : null].filter(Boolean).join(" ") || "None" };
@@ -70,6 +77,7 @@ function rowOf(r: SkuRow, desc: Map<string, string>): CostReviewRow {
     : { text: STATUS_NEEDS, tone: "open" };
   const statusDetail: string | null = r.costState === "missing" ? null
     : manual ? "Priced with a manual selling price. Its supplier cost still needs independent verification."
+    : r.currencySource === "override" ? `The currency was set by hand because Cin7 holds none for this supplier: ${r.currencyOverrideReason ?? "no reason recorded"}`
     : r.priceOverride != null ? "The selling price is an audited override of the model's price. The cost status above is unaffected."
     : r.costState === "self_reviewed" ? "Reviewed by the person who entered it, which is not independent."
     : r.costState === "review_outdated" ? "The cost changed after it was verified."
