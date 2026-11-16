@@ -66,18 +66,19 @@ export async function adoptTemplateRevisionAction(quoteId: string, input: { reas
     try {
       saved = await saveDraft(db, a.orgId, a.roles, quoteId, next, null, { keepStoredPricing: true, adoptTemplateRevision: true, expectedDraftHash: input.expectedDraftHash });
     } catch (e) {
-      await auditActor(db, a, { action: "newquip.template_revision_adoption_failed", summary: `Template adoption for ${q.quote_ref} FAILED after the customer confirmation was withdrawn: the quotation is still on ${impact.from} (local only)`, detail: { quoteId, from: impact.from, reason: input.reason.trim(), confirmationWithdrawn: effect.confirmationCleared, returnedToRep: effect.returnedToRep, error: errText(e) } }).catch(() => undefined);
+      await auditActor(db, a, { action: "newquip.template_revision_adoption_failed", summary: `Template adoption for ${q.quote_ref} FAILED${effect.confirmationCleared ? " after the customer confirmation was withdrawn" : ""}: the quotation is still on ${impact.from} (local only)`, detail: { quoteId, from: impact.from, reason: input.reason.trim(), confirmationWithdrawn: effect.confirmationCleared, returnedToRep: effect.returnedToRep, error: errText(e) } }).catch(() => undefined);
+      await resyncApprovalsLogged(db, who, quoteId, { returnedToRep: effect.returnedToRep, signoffCleared: effect.signoffCleared }).catch(() => undefined); // the withdrawal already happened: keep any staged approval in step
       return { ok: false, error: `${errText(e)} The quotation was NOT moved to the current template${effect.confirmationCleared ? "; the customer's confirmation was withdrawn, so the Rep must reconfirm the amount" : ""}.` };
     }
     const signoffCleared = saved.signoffCleared || effect.signoffCleared;
-    const after = await loadQuote(db, a.orgId, quoteId);
+    // From here the template HAS moved: nothing below may report the action as failed.
+    const syncErr = await resyncApprovalsLogged(db, who, quoteId, { returnedToRep: effect.returnedToRep, signoffCleared }).catch((e) => errText(e));
+    const after = await loadQuote(db, a.orgId, quoteId).catch(() => null);
     await auditActor(db, a, {
       action: "newquip.template_revision_adopted",
       summary: `Moved NewQuip quote ${q.quote_ref} from template ${impact.from} to ${impact.to} (local only; no Cin7 write)`,
-      detail: { quoteId, from: impact.from, to: impact.to, reason: input.reason.trim(), confirmedNewLedPackage: confirm, totalBeforeExVat: impact.totals.before.exVat, totalAfterExVat: shown, ledBefore: impact.led.before?.components.map((c) => [c.sku, c.quantity]) ?? null, ledAfter: (confirm ? impact.led.afterConfirmed : impact.led.afterUnconfirmed)?.components.map((c) => [c.sku, c.quantity]) ?? null, confirmationWithdrawn: effect.confirmationCleared, signoffCleared, returnedToRep: effect.returnedToRep },
-    });
-    const syncErr = await resyncApprovalsLogged(db, who, quoteId, { returnedToRep: effect.returnedToRep, signoffCleared }).catch(() => null);
-    void syncErr;
+      detail: { quoteId, from: impact.from, to: impact.to, reason: input.reason.trim(), confirmedNewLedPackage: confirm, totalBeforeExVat: impact.totals.before.exVat, totalAfterExVat: shown, ledBefore: impact.led.before?.components.map((c) => [c.sku, c.quantity]) ?? null, ledAfter: (confirm ? impact.led.afterConfirmed : impact.led.afterUnconfirmed)?.components.map((c) => [c.sku, c.quantity]) ?? null, confirmationWithdrawn: effect.confirmationCleared, signoffCleared, returnedToRep: effect.returnedToRep, ...(typeof syncErr === "string" ? { approvalSyncError: syncErr } : {}) },
+    }).catch(() => undefined); // the move is committed: a failed audit write must not turn a success into an error
     return { ok: true, data: { revision: after?.revision ?? q.revision, returnedToRep: effect.returnedToRep, confirmationWithdrawn: effect.confirmationCleared, signoffCleared, totalExVat: shown, totalComplete: (confirm ? impact.totals.afterConfirmed : impact.totals.afterUnconfirmed).complete } };
   } catch (e) { return { ok: false, error: errText(e) }; }
 }
