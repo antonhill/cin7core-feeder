@@ -14,6 +14,7 @@ import { ModuleHeader } from "@/app/ModuleHeader";
 import { SOLUTION_BUILDER_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
 import { Status } from "@/components/ui/Status";
+import { PackageOwnConfirmation } from "./PackageOwnConfirmation";
 import type { BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
@@ -22,7 +23,7 @@ import { CCM_FEEDER_CAPACITY_PIGS } from "@/newquip/grower/rules";
 import { buildCustomerSummary } from "@/newquip/grower/customer-summary";
 import { READINESS_LABEL, type ReadinessCategory, type ReadinessState } from "@/newquip/grower/readiness";
 import { expectedSkuFor } from "@/newquip/grower/quote-bridge";
-import { alternativesFor, isCatalogueDefaultItem, packageFor, manualSelectionSkusFor, templateRevisionOf, TEMPLATE_REVISION_LEGACY } from "@/newquip/grower/commercial";
+import { alternativesFor, isCatalogueDefaultItem, bulkConfirmablePackageKeys, packageAutoConfirmable, packageFor, manualSelectionSkusFor, templateRevisionOf, TEMPLATE_REVISION_LEGACY } from "@/newquip/grower/commercial";
 import { ROOMS_HELP, VENTILATION_SCOPE_STATUS } from "@/newquip/grower/open-items";
 import { QUOTE_TYPE_LABEL, QUOTE_TYPE_NEUTRAL, neutralPriceText, type QuoteType } from "@/newquip/grower/pricing-source";
 import { DEMO_DEFAULTS_SOURCE, RECOMMENDED_CONFIG_FILLS, SAMPLE_MEASUREMENTS_FILLS, applyDemoDefaults, applyMeasurementsSample, applyRecommendedConfiguration, hasEntries, hasEquipmentEntries, hasMeasurementEntries } from "@/newquip/grower/demo-defaults";
@@ -726,7 +727,8 @@ export default function QuoteEditorPage() {
       const chosen = d.estimator.confirmedMappings[l.itemKey];
       const keepAlternative = !!chosen && alternativesFor(l.itemKey).some((x) => x.sku === chosen); // an approved alternative the Estimator chose is not overwritten by "confirm source-backed"
       if (sku && l.itemKey !== "pvc_door" && !keepAlternative) d.estimator.confirmedMappings[l.itemKey] = sku;
-      if (packageFor(l.itemKey, templateRevisionOf(d)) && !packageFor(l.itemKey, templateRevisionOf(d))!.estimatorPriced && !d.estimator.confirmedPackages.includes(l.itemKey)) d.estimator.confirmedPackages.push(l.itemKey);
+      // Bulk confirmation only ever covers packages whose definition is authoritative and complete. A package that needs the Estimator's own decision (the LED light: Sean confirmed its SKUs, not its quantities; the cup drinker: the Master names a different sellable SKU) is confirmed individually below, after its composition has been shown.
+      if (bulkConfirmablePackageKeys([l.itemKey], templateRevisionOf(d)).length > 0 && !d.estimator.confirmedPackages.includes(l.itemKey)) d.estimator.confirmedPackages.push(l.itemKey);
     }
   });
   const repSummary = (
@@ -1234,7 +1236,7 @@ export default function QuoteEditorPage() {
             {s2Edit && (
               <div className="flex flex-wrap items-center gap-3" data-testid="step1-first-action">
                 <Button variant="secondary" className="min-h-11" onClick={confirmSourceBacked}>Confirm source-backed mappings</Button>
-                <span className="text-xs text-slate-700">Confirms the recommended product for every line the price list names. Anything it cannot confirm stays listed above.</span>
+                <span className="text-xs text-slate-700">Confirms the recommended product for every line the price list names. Packages that need your own decision (the LED light and the cup drinker) are not confirmed here: confirm each one below, after reading its composition. Anything it cannot confirm stays listed above.</span>
               </div>
             )}
             {wizard2.steps.find((x) => x.id === "mapping")!.access === "edit" && q.state !== "MANAGER_APPROVED_FINAL" && mappingOpen.length > 0 && (
@@ -1313,6 +1315,9 @@ export default function QuoteEditorPage() {
                         </select>
                       ) : isOptionalItemKey(l.itemKey) ? (
                         confirmed ? <Status tone="success">Mapped to {confirmed}</Status> : <Status tone="warning">Not chosen - choose the product in the Line decisions table above</Status>
+                      ) : pkg && !packageAutoConfirmable(pkg) ? (
+                        <PackageOwnConfirmation pkg={pkg} confirmed={draft.estimator.confirmedPackages.includes(l.itemKey)} canEdit={s2Edit}
+                          onChange={(yes) => edit((d) => { const rest = d.estimator.confirmedPackages.filter((k) => k !== l.itemKey); d.estimator.confirmedPackages = yes ? [...rest, l.itemKey] : rest; })} />
                       ) : pkg ? (
                         <Status tone={draft.estimator.confirmedPackages.includes(l.itemKey) ? "success" : "warning"}>{draft.estimator.confirmedPackages.includes(l.itemKey) ? "Package confirmed" : "Package unconfirmed"}</Status>
                       ) : (

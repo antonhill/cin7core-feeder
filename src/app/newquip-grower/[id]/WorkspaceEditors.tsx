@@ -211,6 +211,7 @@ export function PackageConfirm({ templateRevision, itemKey, confirmed, canEdit, 
   const pkg = packageFor(itemKey as GrowerItemKey, templateRevision);
   return (
     <Section title={`A. Confirm the ${pkg?.components.length ?? 7}-component package`} hint="the existing, supported pricing path" testId="package-confirm">
+      {(pkg?.estimatorConfirmation || pkg?.alternativeIdentity) && <p className="mb-2 text-xs text-amber-900" data-testid="package-confirm-reason">{pkg.estimatorConfirmation ?? `The NewQuip Master lists ${pkg?.alternativeIdentity?.sku} (${pkg?.alternativeIdentity?.description}) as a different representation of this item. ${pkg?.alternativeIdentity?.note}`}</p>}
       <label className={`flex cursor-pointer items-start gap-3 rounded-lg border-[1.5px] p-3 text-sm ${confirmed ? "border-blue-700 bg-sky-50" : "border-slate-400"}`}>
         <input type="checkbox" className="mt-0.5 size-5" checked={confirmed} disabled={!canEdit || busy} onChange={(e) => onConfirm(e.target.checked)} />
         <span>I confirm this package is priced from its {pkg?.components.length ?? 7} components below ({pkg?.components.map((c) => `${c.qtyPerUnit ?? ""} ${c.description}`.trim()).join("; ")}). Each is a Cin7 product. <span className="text-slate-700">Recorded with your name and the time when saved.</span></span>
