@@ -261,10 +261,25 @@ export async function middleware(request: NextRequest) {
   // silently discard the org name they typed and reuse their existing
   // membership instead — confusing either way. You can't have two accounts
   // in one session; sign out first to genuinely start a second trial.
+  //
+  // getClaims() above only proves the access-token JWT is correctly signed and unexpired; it cannot see a session the Auth server has since REVOKED (a global sign-out
+  // from another browser, a password reset, an admin revoke). For these two public pages we therefore confirm the session with the Auth server before bouncing: with
+  // a revoked session the JWT still verifies for up to its lifetime, so trusting it alone sent the user from /login to a home page that (rightly) saw no user and
+  // showed the marketing page, leaving no way to reach the form. This is a redirect-convenience check on public pages, not an authorisation gate (protected routes
+  // are unchanged), and any failure to confirm (revoked, error, rate limit) simply shows the form.
   if (userId && (request.nextUrl.pathname.startsWith("/login") || request.nextUrl.pathname.startsWith("/signup"))) {
-    const homeUrl = request.nextUrl.clone();
-    homeUrl.pathname = "/";
-    return NextResponse.redirect(homeUrl);
+    let confirmed = false;
+    try {
+      const { data, error } = await supabase.auth.getUser();
+      confirmed = !error && Boolean(data?.user);
+    } catch {
+      confirmed = false;
+    }
+    if (confirmed) {
+      const homeUrl = request.nextUrl.clone();
+      homeUrl.pathname = "/";
+      return NextResponse.redirect(homeUrl);
+    }
   }
 
   return response;
