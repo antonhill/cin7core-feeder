@@ -7,6 +7,7 @@
 
 import Image from "next/image";
 import { isNewquipPocOrg } from "@/newquip/access";
+import { isNewquipOnlyUser } from "@/newquip/route-guard";
 import { APPROVALS_DISABLED } from "@/lib/approvals/kill-switch";
 import { useId } from "react";
 
@@ -679,6 +680,45 @@ export function newquipWorkspaceLinks(orgId: string | null, disabledModules: str
 /** True for the routes that belong to NewQuip: Solution Builder, Projects and Approvals and everything nested under them (a segment boundary, so /projects-x never matches). Pure and client-safe; it only chooses chrome, authorisation is enforced by each route's layout and actions. */
 export function isNewquipWorkspacePath(pathname: string): boolean {
   return NEWQUIP_GROUP_HREFS.some((h) => isNavLinkActive(pathname, h));
+}
+
+// ── NewQuip-only interface ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// A NewQuip-organisation member who is not a super-admin sees ONLY the NewQuip workspace: its own navigation (below) on every path they may reach, with no Toolbox
+// module links and no "Back to Toolbox". Presentation only: src/middleware.ts enforces the same allowlist (src/newquip/route-guard.ts) and every route re-authorises.
+
+export const NEWQUIP_CLAIMS_HREF = "/claims";
+export const NEWQUIP_SETTINGS_HREF = "/newquip-grower/settings";
+
+/** A workspace link. `alsoActiveFor` / `notActiveFor` let one link own routes that live outside / inside its own path (e.g. Settings owns /settings/members). */
+export type WorkspaceLink = ModuleConfig & { alsoActiveFor?: readonly string[]; notActiveFor?: readonly string[] };
+
+const NEWQUIP_SETTINGS_PATHS = [NEWQUIP_SETTINGS_HREF, "/newquip-grower/company-profile", "/newquip-grower/project-templates", "/newquip-grower/cost-survey", "/settings"];
+
+const NEWQUIP_DASHBOARD_LINK: WorkspaceLink = { href: "/", label: "Dashboard", gradient: SELF_COLORED_ICON_BADGE, Icon: ReportsIcon, blurb: "Quotations, approvals, projects and claims at a glance." };
+const NEWQUIP_QUOTATIONS_LINK: WorkspaceLink = { ...SOLUTION_BUILDER_MODULE, label: "Quotations", notActiveFor: NEWQUIP_SETTINGS_PATHS };
+const NEWQUIP_CLAIMS_LINK: WorkspaceLink = { href: NEWQUIP_CLAIMS_HREF, label: "Claims", gradient: SELF_COLORED_ICON_BADGE, Icon: ReportsIcon, blurb: "Progress claims across every project." };
+const NEWQUIP_SETTINGS_LINK: WorkspaceLink = { href: NEWQUIP_SETTINGS_HREF, label: "Settings", gradient: SELF_COLORED_ICON_BADGE, Icon: AuditIcon, blurb: "Company details, project templates, members and security.", alsoActiveFor: NEWQUIP_SETTINGS_PATHS };
+
+/**
+ * The navigation of the NewQuip-only interface (Dashboard, Quotations, Projects, Claims, Approvals, Settings), or [] when it does not apply (not a NewQuip-organisation
+ * non-super-admin). Honours the same module toggles and the approvals kill switch as the Toolbox sidebar. Pure.
+ */
+export function newquipOnlyLinks(orgId: string | null, disabledModules: string[], isSuperAdmin: boolean): WorkspaceLink[] {
+  if (!isNewquipOnlyUser(orgId, isSuperAdmin)) return [];
+  const projectsOn = !disabledModules.includes(PROJECTS_MODULE.href);
+  const links: WorkspaceLink[] = [NEWQUIP_DASHBOARD_LINK];
+  if (!disabledModules.includes(QUOTES_MODULE.href)) links.push(NEWQUIP_QUOTATIONS_LINK);
+  if (projectsOn) links.push({ ...PROJECTS_MODULE, notActiveFor: [] }, NEWQUIP_CLAIMS_LINK);
+  if (!APPROVALS_DISABLED && projectsOn) links.push(APPROVALS_MODULE);
+  links.push(NEWQUIP_SETTINGS_LINK);
+  return links;
+}
+
+/** Active state of a workspace link: its own route (or what it also owns), unless a more specific link owns the path. "/" matches only itself. */
+export function isWorkspaceLinkActive(pathname: string, link: WorkspaceLink): boolean {
+  if (link.notActiveFor?.some((h) => isNavLinkActive(pathname, h))) return false;
+  if (isNavLinkActive(pathname, link.href)) return true;
+  return link.alsoActiveFor?.some((h) => isNavLinkActive(pathname, h)) ?? false;
 }
 
 /**

@@ -4,7 +4,8 @@ import { useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { AppNav, isNavHiddenPath, type AppNavProps } from "./AppNav";
 import { NewquipShell } from "./NewquipShell";
-import { isNewquipWorkspacePath, newquipWorkspaceLinks } from "./module-nav";
+import { isNewquipWorkspacePath, newquipOnlyLinks, newquipWorkspaceLinks } from "./module-nav";
+import { isNewquipOnlyPathAllowed } from "@/newquip/route-guard";
 
 /**
  * Owns the one piece of state a responsive shell needs that AppNav can't own
@@ -32,6 +33,16 @@ export function AppShell({ nav, children }: { nav: AppNavProps; children: React.
 
   // NewQuip routes get their own workspace chrome instead of the Toolbox sidebar. Only for the NewQuip organisation with at least one NewQuip
   // module visible; anyone else on these paths is redirected by the route layout, and keeps the Toolbox shell meanwhile.
+  // The NewQuip-only interface (NewQuip organisation, not a super-admin) wraps EVERY path that user may reach, including "/" and Settings, with the NewQuip navigation
+  // and no way back to the Toolbox. Spark super-admins keep the Toolbox shell, and get the NewQuip workspace chrome (with a Back to Toolbox link) on the NewQuip routes only.
+  const onlyLinks = isNewquipOnlyPathAllowed(pathname) ? newquipOnlyLinks(nav.orgId, nav.disabledModules, nav.isSuperAdmin) : [];
+  if (onlyLinks.length > 0) {
+    return (
+      <NewquipShell links={onlyLinks} orgName={nav.orgName} userEmail={nav.userEmail ?? ""} showToolboxLink={false}>
+        {children}
+      </NewquipShell>
+    );
+  }
   const workspaceLinks = isNewquipWorkspacePath(pathname) ? newquipWorkspaceLinks(nav.orgId, nav.disabledModules, nav.isSuperAdmin) : [];
   if (workspaceLinks.length > 0) {
     return (
