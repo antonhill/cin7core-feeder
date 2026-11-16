@@ -36,6 +36,10 @@ describe("amounts are labelled by what they are", () => {
     expect(totalCaption({ final: false, awaitingLines: 2, incomplete: true, confirmed: false }).label).toBe("Indicative total (2 lines await the Estimator)");
     expect(totalCaption({ final: false, awaitingLines: 0, incomplete: true, confirmed: false }).label).toBe("Partial total (ex VAT)");
     expect(totalCaption({ final: false, awaitingLines: 0, incomplete: false, confirmed: false }).note).toBe("Not a contract value.");
+    // a confirmed indicative amount is never described as an approved price
+    const c = totalCaption({ final: false, awaitingLines: 0, incomplete: false, confirmed: true });
+    expect(c.label).toBe("Indicative total, confirmed by the Rep");
+    expect(c.note).toMatch(/Not an approved price/);
   });
 });
 

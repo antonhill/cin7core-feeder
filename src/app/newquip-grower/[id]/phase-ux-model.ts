@@ -36,7 +36,7 @@ export function totalCaption(i: { final: boolean; awaitingLines: number; incompl
   if (i.final) return { label: "Contract value (ex VAT)", note: null };
   if (i.awaitingLines > 0) return { label: `Indicative total (${i.awaitingLines} line${i.awaitingLines === 1 ? "" : "s"} await the Estimator)`, note: "Not a contract value." };
   if (i.incomplete) return { label: "Partial total (ex VAT)", note: "Indicative only. Not a contract value." };
-  return { label: i.confirmed ? "Amount confirmed by the Rep" : "Calculated total, not yet confirmed", note: "Not a contract value." };
+  return i.confirmed ? { label: "Indicative total, confirmed by the Rep", note: "Not an approved price: costs are unverified and the Manager has not approved it." } : { label: "Calculated total, not yet confirmed", note: "Not a contract value." };
 }
 
 /** The heading of the Manager's collapsed supporting detail. A role that cannot see costs is never told that cost evidence exists. */

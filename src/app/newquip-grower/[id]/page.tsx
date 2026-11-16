@@ -84,6 +84,7 @@ import { phaseOfStage, phaseViews } from "@/newquip/quote/phases";
 import { ReadOnlyPhase1 } from "./ReadOnlyPhase1";
 import { ManagerDecision, SupportingDetail } from "./ManagerDecision";
 import { HandoverOverview } from "./HandoverOverview";
+import { EstimatorSection } from "./EstimatorSection";
 import { rand, randCents } from "./phase-ux-format";
 import { OPTIONAL_NAMES } from "./Stage23Panels";
 import { HandoverResult } from "./HandoverResult";
@@ -734,6 +735,12 @@ export default function QuoteEditorPage() {
   const p1Totals = { exVat: budget ? budget.totals.subtotalExTax : null, vat: budget ? budget.totals.taxTotal : null, incVat: budget ? budget.totals.totalIncTax : null };
   const phaseFactsNow = { state: q.state, revision: q.revision, final, signedOffCurrent: s2Base.signoff === "current", repReady, viewerIsRep: roles.has("rep") };
   const p1StatusLine = phase1State(phaseFactsNow);
+  // The Estimator checklist sections shown on the modern Phase 2 screen while supplier costing is not on yet (titles and plain statuses over the existing step panels).
+  const SECTION_TITLE: Record<string, string> = { mapping: "Products and packages", costs: "Supplier costs and pricing exceptions", final: "Final readiness review", signoff: "Sign off or return to the Rep" };
+  const sectionStatus = (id: string): { status: string; tone: "ok" | "open" } => {
+    const st = wizard2.steps.find((x) => x.id === id);
+    return !st ? { status: "", tone: "open" } : st.status === "complete" ? { status: "Complete", tone: "ok" } : st.access === "locked" ? { status: "Waiting", tone: "open" } : { status: "Needs attention", tone: "open" };
+  };
   const wizard3 = deriveStage3Wizard({ state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", revision: q.revision, roles: { rep: roles.has("rep"), estimator: isEstimator, manager: roles.has("manager") }, signoff: s2Base.signoff, dirty, ...(final && (q.project_id || gateReady) ? { after: { hasDocument: gate.hasDocument, commercial: gate.status, projectLinked: !!q.project_id, requiresAcceptance: q.requires_customer_acceptance === true } } : {}) });
 
   // Stage 4 steps: guidance only. Statuses come from the issued-document and sent records the page already reads (never from a visit); the Issue and Send actions keep their own gates.
@@ -828,7 +835,7 @@ export default function QuoteEditorPage() {
           status={phaseBadge(stage as 1 | 2 | 3 | 4 | 5 | 6, { state: q.state, revision: q.revision, final, signedOffCurrent: s2Base.signoff === "current", repReady, viewerIsRep: roles.has("rep") }).text} tone={phaseBadge(stage as 1 | 2 | 3 | 4 | 5 | 6, { state: q.state, revision: q.revision, final, signedOffCurrent: s2Base.signoff === "current", repReady, viewerIsRep: roles.has("rep") }).tone}
           figures={(() => { const cap = totalCaption({ final, awaitingLines, incomplete: !!budget?.incomplete, confirmed: q.customer_confirmed_cents != null && totalCents === q.customer_confirmed_cents }); return [
             { labelTestId: dirty || previewFailure ? undefined : "total-caption", label: cap.label, value: budget ? rand(budget.totals.subtotalExTax) : "—", note: cap.note ?? undefined, tone: final ? "ok" as const : "warn" as const, testId: "phase-header-total" },
-            { label: "Rep-confirmed amount", value: q.customer_confirmed_cents == null ? "none yet" : randCents(q.customer_confirmed_cents), testId: "phase-header-confirmed" },
+            { label: final ? "Rep-confirmed amount" : "Rep-confirmed (indicative)", value: q.customer_confirmed_cents == null ? "none yet" : randCents(q.customer_confirmed_cents), note: q.customer_confirmed_cents != null && !final ? "Not an approved price." : undefined, testId: "phase-header-confirmed" },
             ...(budget && !budget.incomplete ? [{ label: "Total (inc VAT)", value: rand(budget.totals.totalIncTax) }] : []),
           ]; })()}
           phases={<div data-testid="stage-nav"><PhaseStepper stages={stagesView} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state, estimatorOpen: mappingOpen.length, signedOff: s2Base.signoff === "current" }} /></div>}
@@ -923,11 +930,9 @@ export default function QuoteEditorPage() {
         <div className="mt-4 space-y-4" data-testid="supplier-costing-start">
           <ActivationPanel firstTask quoteId={id} budget={budget} confirmedCents={q.customer_confirmed_cents} canEdit={s2Edit} reload={reloadQuote} onDirtyChange={setWsDirty} onUseLegacy={() => setLegacyOpen(true)} />
           <p className="text-sm text-slate-700">Room measurements, quantities, delivery, installation and the M75 price belong to the Rep.</p>
-          <section className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm text-slate-800" aria-label="Other Estimator actions" data-testid="other-estimator-actions">
-            <h3 className="font-bold text-slate-900">Not ready to start supplier costing?</h3>
-            <p className="mt-1">You can still map products, confirm packages, sign off or return this quotation to the Rep without switching to supplier costing. Those actions are in the older costing panel (it also holds the Manager&apos;s incomplete-costing waiver).</p>
-            <button type="button" className="mt-1 inline-flex min-h-11 items-center font-semibold text-blue-800 underline disabled:text-slate-700 disabled:no-underline" disabled={wsDirty} onClick={() => setLegacyOpen(true)} data-testid="use-legacy-costing-link">Open the older costing panel</button>
-            {wsDirty && <p className="text-xs text-slate-700" data-testid="legacy-blocked-dirty">Save or clear the cost you are typing first, so it is not lost.</p>}
+          <section className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm text-slate-800" aria-label="Estimator checklist" data-testid="estimator-checklist-intro">
+            <h3 className="font-bold text-slate-900">Everything else you do on this quotation</h3>
+            <p className="mt-1">Map products, confirm packages, quote pricing exceptions, review readiness and sign off or return to the Rep are below. You do not need to start supplier costing first.</p>
           </section>
         </div>
       )}
@@ -972,7 +977,7 @@ export default function QuoteEditorPage() {
 
       {stage === 2 && canCommercials && <div role="status" aria-live="polite" data-testid="cost-ack-live">{ackMsg && <p className="mt-3 text-sm text-slate-800" data-testid="cost-ack-status">{ackMsg}</p>}</div>}
       {stage === 2 && <div role="status" data-testid="next-role-live">{signedNow && <p className="mt-3 text-sm font-semibold text-slate-900" data-testid="next-manager-cue">Next: Manager approval (Stage 3).</p>}</div>}
-      {((stage === 1 && !readOnlyP1) || (stage === 2 && !repPhase2 && !startUx && (s2Edit || dirty))) && (
+      {((stage === 1 && !readOnlyP1) || (stage === 2 && !repPhase2 && (s2Edit || dirty))) && (
         <>
           <div className="mt-2 space-y-1">{editable && <div className={!dirty ? "sr-only" : ""}><DisabledReason id="save-why">{saveWhy}</DisabledReason></div>}<ActionFeedback state={acts.stateOf("save")} /></div>
           <div className="mt-2 space-y-2">
@@ -1168,7 +1173,7 @@ export default function QuoteEditorPage() {
       )}
 
       {/* ───────────── 2 · ESTIMATOR REVIEW ───────────── */}
-      {stage === 2 && !repPhase2 && !startUx && (
+      {stage === 2 && !repPhase2 && (
         <>
         {workspaceMode && budget && (
           <>
@@ -1208,7 +1213,7 @@ export default function QuoteEditorPage() {
         <div className="mt-4 min-w-0 space-y-6">
         <fieldset disabled={!s2Edit} className="min-w-0 space-y-6 border-0 p-0">
           {/* Hidden steps stay mounted (hidden + inert): the requests and timers started on mount are the same whichever step is shown. A LOCKED step stays mounted too; show-all lists it as heading + reason. */}
-          <StepPanel railId="s2" stepId="mapping" number={visible2.indexOf("mapping") + 1} title={STAGE2_WIZARD_LABEL.mapping} current={step2Id === "mapping"} showAll={showAllSteps} locked={lockedFor2("mapping")} className="space-y-6">
+          <EstimatorSection wrap={startUx} id="mapping" number={1} title={SECTION_TITLE.mapping} status={sectionStatus("mapping").status} tone={sectionStatus("mapping").tone} openByDefault={mappingOpen.length > 0}><StepPanel railId="s2" stepId="mapping" number={visible2.indexOf("mapping") + 1} title={STAGE2_WIZARD_LABEL.mapping} current={step2Id === "mapping"} showAll={showAllSteps || startUx} headingClassName={startUx ? "sr-only" : "col-span-full"} locked={lockedFor2("mapping")} className="space-y-6">
             {editWarning && <Alert tone="warning"><span data-testid="edit-clears-signoff">{editWarning}</span></Alert>}
             {s2Edit && (
               <div className="flex flex-wrap items-center gap-3" data-testid="step1-first-action">
@@ -1327,14 +1332,14 @@ export default function QuoteEditorPage() {
 
             {!canCommercials && scopePanel}
             {!canCommercials && totalsPanel}
-          </StepPanel>
+          </StepPanel></EstimatorSection>
         </fieldset>
 
           {canCommercials && (
-            <StepPanel railId="s2" stepId="costs" number={visible2.indexOf("costs") + 1} title={STAGE2_WIZARD_LABEL.costs} current={step2Id === "costs"} showAll={showAllSteps} locked={lockedFor2("costs")} className="space-y-6">
+            <EstimatorSection wrap={startUx} id="costs" number={2} title={SECTION_TITLE.costs} status={sectionStatus("costs").status} tone={sectionStatus("costs").tone}><StepPanel railId="s2" stepId="costs" number={visible2.indexOf("costs") + 1} title={STAGE2_WIZARD_LABEL.costs} current={step2Id === "costs"} showAll={showAllSteps || startUx} headingClassName={startUx ? "sr-only" : "col-span-full"} locked={lockedFor2("costs")} className="space-y-6">
               {editWarning && <Alert tone="warning"><span data-testid="edit-clears-signoff-costs">{editWarning}</span></Alert>}
               {costNextAction && <CostVerifyBanner action={costNextAction} />}
-              {(roles.has("estimator") || roles.has("manager")) && (
+              {(roles.has("estimator") || roles.has("manager")) && !startUx && (
                 <div data-supplier-pricing={p2Status ? "primary" : "optional"}>
                   <Disclosure testId="disc-supplier-pricing" forceOpen={!!p2Status} title={p2Status ? "Supplier pricing and verification" : "Supplier pricing (Estimator workspace)"} summary={p2Status ? "The supplier costs, exchange rates, freight and markup this quotation is priced from, and their independent verification." : "Supplier, currency, cost, exchange rate and forward cover, freight, markup and margin per SKU; original versus revised price. Off unless you switch it on for this quotation."}>
                     <EstimatorPricingPanel quoteId={id} unsaved={dirty} editable={s2Edit} refreshKey={`${q.draft_hash}|${q.revision}|${q.state}`} reload={() => { void getGrowerQuoteAction(id).then((r) => { if (r.ok && r.data) adopt(r.data, true); }); }} />
@@ -1365,12 +1370,12 @@ export default function QuoteEditorPage() {
                   {!final && <p className="text-xs text-slate-700">SKU mapping and the Cin7 latest-supplier-price capture work on the frozen physical scope, so they open for the Estimator once the quotation is approved.</p>}
                 </LegacyCostingDisclosure>
               )}
-            </StepPanel>
+            </StepPanel></EstimatorSection>
           )}
         </div>
 
         {canCommercials && (
-          <StepPanel railId="s2" stepId="final" number={visible2.indexOf("final") + 1} title={STAGE2_WIZARD_LABEL.final} current={step2Id === "final"} showAll={showAllSteps} locked={lockedFor2("final")} className="mt-6 space-y-6">
+          <EstimatorSection wrap={startUx} id="final" number={3} title={SECTION_TITLE.final} status={sectionStatus("final").status} tone={sectionStatus("final").tone}><StepPanel railId="s2" stepId="final" number={visible2.indexOf("final") + 1} title={STAGE2_WIZARD_LABEL.final} current={step2Id === "final"} showAll={showAllSteps || startUx} headingClassName={startUx ? "sr-only" : "col-span-full"} locked={lockedFor2("final")} className="mt-6 space-y-6">
             <Panel>
               <h3 className="sr-only">Final review</h3>
               <div className="mt-3" data-testid="cost-ack">
@@ -1400,13 +1405,13 @@ export default function QuoteEditorPage() {
               <FinalReviewChecklist items={finalChecklist} />
               {isEstimator && q.state === "ESTIMATOR_REVIEW" && <p className="mt-3 text-xs text-slate-700" data-testid="session-only-note">&ldquo;Mark reviewed&rdquo; is kept on this screen for this session only: it is not saved, and after a reload you mark it again. Signing off needs it in the same session, so repeat it after a reload. Returning the quote to the Rep never does.</p>}
             </Panel>
-          </StepPanel>
+          </StepPanel></EstimatorSection>
         )}
         </>
         )}
 
         <div id="ws-signoff">
-        <StepPanel railId="s2" stepId="signoff" number={visible2.indexOf("signoff") + 1} title={STAGE2_WIZARD_LABEL.signoff} current={workspaceMode || step2Id === "signoff"} showAll={showAllSteps || workspaceMode} locked={lockedFor2("signoff")} className="mt-6 space-y-6">
+        <EstimatorSection wrap={startUx} id="signoff" number={4} title={SECTION_TITLE.signoff} status={sectionStatus("signoff").status} tone={sectionStatus("signoff").tone}><StepPanel railId="s2" stepId="signoff" number={visible2.indexOf("signoff") + 1} title={STAGE2_WIZARD_LABEL.signoff} current={workspaceMode || step2Id === "signoff"} showAll={showAllSteps || workspaceMode || startUx} headingClassName={startUx ? "sr-only" : "col-span-full"} locked={lockedFor2("signoff")} className="mt-6 space-y-6">
           <Panel>
             <h3 className="sr-only">Sign off or return</h3>
             {editWarning && <div className="mt-1"><Alert tone="warning"><span data-testid="edit-clears-signoff-signoff">{editWarning}</span></Alert></div>}
@@ -1448,10 +1453,10 @@ export default function QuoteEditorPage() {
               {handoffFacts}
             </div>
           </Panel>
-        </StepPanel>
+        </StepPanel></EstimatorSection>
         </div>
 
-        {!showAllSteps && !workspaceMode && (
+        {!showAllSteps && !workspaceMode && !startUx && (
         <div className="sticky bottom-0 z-10 -mx-4 mt-6 flex flex-wrap items-end justify-between gap-3 border-t border-slate-200 bg-white px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:-mx-6 md:px-6" data-testid="step-buttons">
           {step2Cur > 1 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep2Id(visible2[step2Cur - 2])}>Back</Button> : <span />}
           {(() => {

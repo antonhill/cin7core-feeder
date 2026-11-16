@@ -13,10 +13,21 @@ export type ReviewTone = "ok" | "open" | "missing";
 export interface ReviewCell { text: string; tone?: ReviewTone }
 export interface CostReviewRow {
   sku: string; description: string; quantity: ReviewCell; source: ReviewCell; costDate: ReviewCell; originalCost: ReviewCell; uplift: ReviewCell; fx: ReviewCell; freight: ReviewCell;
-  landedUnit: ReviewCell; totalCost: ReviewCell; selling: ReviewCell; margin: ReviewCell; status: ReviewCell; missing: string[];
+  landedUnit: ReviewCell; totalCost: ReviewCell; selling: ReviewCell; margin: ReviewCell; status: ReviewCell; /** Extra detail for an unusual status (shown once on that row), null for the standard cases the legend explains. */ statusDetail: string | null; missing: string[];
 }
-export interface CostReview { rows: CostReviewRow[]; counts: { products: number; verified: number; missing: number; unverified: number }; upliftNote: string }
+export interface CostReview { rows: CostReviewRow[]; counts: { products: number; verified: number; missing: number; unverified: number; provisional: number }; upliftNote: string }
 
+export const STATUS_VERIFIED = "Verified";
+export const STATUS_NEEDS = "Needs verification";
+export const STATUS_MISSING = "Missing cost";
+export const STATUS_PROVISIONAL = "Provisional";
+/** The legend, shown ONCE under the table (never repeated in every row). */
+export const STATUS_LEGEND: ReadonlyArray<readonly [string, string]> = [
+  [STATUS_VERIFIED, "A different person has independently checked this exact supplier cost."],
+  [STATUS_NEEDS, "A cost is entered but has not been independently verified (or it changed after it was). A Manager verifies it; you cannot verify your own entry."],
+  [STATUS_MISSING, "No supplier cost has been entered, so this product has no supplier price yet."],
+  [STATUS_PROVISIONAL, "The line is priced with a manual selling price. Its supplier cost still needs independent verification."],
+];
 export const UPLIFT_NONE = "None applied";
 export const UPLIFT_NOTE = "Historical cost uplift: none applied. The pricing model has no age-based escalation of old costs: each cost is used exactly as entered. Only exchange rates have an age limit.";
 
@@ -51,14 +62,22 @@ function rowOf(r: SkuRow, desc: Map<string, string>): CostReviewRow {
     : MISSING("No usable exchange rate");
   const freight: ReviewCell = r.freightFactorMicro == null && r.freightAddOnCents == null ? MISSING("Not recorded")
     : { text: [r.freightFactorMicro != null ? `× ${(r.freightFactorMicro / 1e6).toFixed(3)}` : null, r.freightAddOnCents ? `+ ${formatZarCents(r.freightAddOnCents)}` : null].filter(Boolean).join(" ") || "None" };
-  const status: ReviewCell = r.costState === "verified" ? { text: "Verified", tone: "ok" }
-    : r.costState === "missing" ? MISSING("Cost missing")
-    : { text: r.costStateText || (r.costState === "self_reviewed" ? "Reviewed by the person who entered it: not independent" : r.costState === "review_outdated" ? "Changed since it was verified" : "Not yet verified"), tone: "open" };
+  // FOUR compact labels (explained once in the legend): Verified, Needs verification, Missing cost, Provisional.
+  const manual = r.priceBasis === "manual_price" || r.priceOverride != null;
+  const status: ReviewCell = r.costState === "missing" ? MISSING(STATUS_MISSING)
+    : manual ? { text: STATUS_PROVISIONAL, tone: "open" }
+    : r.costState === "verified" ? { text: STATUS_VERIFIED, tone: "ok" }
+    : { text: STATUS_NEEDS, tone: "open" };
+  const statusDetail: string | null = r.costState === "missing" ? null
+    : manual ? "Priced with a manual selling price. Its supplier cost still needs independent verification."
+    : r.costState === "self_reviewed" ? "Reviewed by the person who entered it, which is not independent."
+    : r.costState === "review_outdated" ? "The cost changed after it was verified."
+    : null;
   const margin: ReviewCell = r.margin?.marginPct != null ? { text: `${r.margin.marginPct.toFixed(1)}%` } : MISSING("Not available");
   const row: CostReviewRow = {
     sku: r.sku, description: desc.get(r.sku) ?? r.usedBy.join(", "), quantity: { text: r.quantity.toLocaleString("en-US") },
     source: need(source, "supplier cost"), costDate: date, originalCost: need(original, "original cost"), uplift: { text: UPLIFT_NONE }, fx: need(fx, "exchange rate"), freight: freight,
-    landedUnit: money(r.unitLandedCostCents), totalCost: money(r.lineCostCents), selling: money(r.lineRevenueCents), margin, status, missing,
+    landedUnit: money(r.unitLandedCostCents), totalCost: money(r.lineCostCents), selling: money(r.lineRevenueCents), margin, status, statusDetail, missing,
   };
   return row;
 }
@@ -68,7 +87,7 @@ export function buildCostReview(view: PricingWorkspaceView, budget: BudgetQuote 
   const rows = view.rows.filter((r) => r.usedBy.length > 0).map((r) => rowOf(r, desc));
   return {
     rows,
-    counts: { products: rows.length, verified: rows.filter((r) => r.status.tone === "ok").length, missing: rows.filter((r) => r.status.text === "Cost missing").length, unverified: rows.filter((r) => r.status.tone === "open").length },
+    counts: { products: rows.length, verified: rows.filter((r) => r.status.text === STATUS_VERIFIED).length, missing: rows.filter((r) => r.status.text === STATUS_MISSING).length, unverified: rows.filter((r) => r.status.text === STATUS_NEEDS).length, provisional: rows.filter((r) => r.status.text === STATUS_PROVISIONAL).length },
     upliftNote: UPLIFT_NOTE,
   };
 }

@@ -164,15 +164,18 @@ describe("the itemised cost review is on the workspace", () => {
   it("lists every costed product with cost, FX, freight, landed, total, selling, margin and verification; missing values are named, and no uplift is invented", async () => {
     mount({}, { view: { rows, costs: { required: 2, verified: 0 }, totals: { margin: null }, currencies: [] } as never });
     const box = await screen.findByTestId("cost-review");
-    expect(within(box).getByTestId("cost-review-counts").textContent).toBe("0 verified · 1 not yet verified · 1 with no supplier cost");
+    expect(within(box).getByTestId("cost-review-counts").textContent).toBe("0 verified · 1 needs verification · 0 provisional · 1 missing cost");
+    expect(within(box).getByTestId("status-legend").textContent).toMatch(/Verified[\s\S]*Needs verification[\s\S]*Missing cost[\s\S]*Provisional/); // explained ONCE
+    expect(box.textContent!.match(/independently verified/g)?.length ?? 0).toBeLessThanOrEqual(2); // not repeated in every row
     const slat = within(box).getByTestId("cost-review-NQ1161");
     expect(slat.textContent).toContain("ZAR 193.6");
     expect(slat.textContent).toContain("ZAR: no conversion");
     expect(slat.textContent).toContain("None applied");
-    expect(slat.textContent).toContain("Entered, not yet verified");
+    expect(slat.textContent).toContain("Needs verification");
+    expect(slat.textContent).not.toContain("independently verified");
     const tank = within(box).getByTestId("cost-review-SYSH-2750-3");
     expect(tank.textContent).toContain("No supplier cost entered");
-    expect(tank.textContent).toContain("Cost missing");
+    expect(tank.textContent).toContain("Missing cost");
     expect(within(box).getByTestId("uplift-note").textContent).toMatch(/no age-based escalation/);
     expect(box.querySelector("table")!.parentElement!.className).toContain("overflow-x-auto"); // a narrow screen scrolls the table inside its box, never the page
   });
