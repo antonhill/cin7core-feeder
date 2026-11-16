@@ -1,3 +1,4 @@
+import { Cin7ReadOnlyGate, cin7Transport } from "@/cin7/readonly-diagnostic";
 import "server-only";
 // The ONE place the NewQuip cost estimate touches the Cin7 API: a READ-ONLY lookup of each SKU's supplier price records. Credentials are loaded for the org's own
 // instance, never leave the server and are never logged. (The Grower module itself stays sealed from Cin7; it asks this adapter.)
@@ -110,3 +111,34 @@ export function cin7IdentityLookups(db: Db, orgId: string, instanceId: string): 
     },
   };
 }
+
+/**
+ * SURVEY READ (read-only): the raw /Product records for a short list of SKUs, GET only through the diagnostic's read-only gate (allowed paths and query keys are enforced there;
+ * there is no method parameter, so a write cannot be expressed). Paced, with bounded backoff on rate limiting. A SKU Cin7 does not return exactly is `null`; a failed read is a short code.
+ */
+export async function readRawProductsForSurvey(db: Db, orgId: string, instanceId: string, skus: readonly string[]): Promise<Record<string, { raw: Record<string, unknown> | null } | { error: string }>> {
+  const creds = await loadCin7Credentials(db, orgId, instanceId);
+  const gate = new Cin7ReadOnlyGate(cin7Transport(creds));
+  const nap = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+  const out: Record<string, { raw: Record<string, unknown> | null } | { error: string }> = {};
+  let first = true;
+  for (const sku of skus) {
+    if (!first) await nap(700);
+    first = false;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        const resp = (await gate.get("/Product", { SKU: sku, IncludeSuppliers: true, page: 1, limit: 10 })) as { Products?: unknown[] } | null;
+        const p = (Array.isArray(resp?.Products) ? resp!.Products! : []).find((x): x is Record<string, unknown> => !!x && typeof x === "object" && (x as { SKU?: unknown }).SKU === sku);
+        out[sku] = { raw: p ?? null };
+        break;
+      } catch (e) {
+        const st = (e as { status?: number })?.status;
+        if ((st === 429 || st === 503) && attempt < 3) { await nap(2000 * 2 ** attempt); continue; }
+        out[sku] = { error: st ? `http_${st}` : "network" };
+        break;
+      }
+    }
+  }
+  return out;
+}
+
