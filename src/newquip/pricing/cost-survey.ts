@@ -23,7 +23,7 @@ export interface SurveyInput {
 export type Tier = "ready" | "historical" | "review" | "missing";
 export type Reason =
   | "not_in_cin7" | "product_inactive" | "no_supplier_record" | "no_positive_cost"
-  | "undated" | "future_dated" | "ambiguous_same_date" | "older_than_maximum" | "supplier_unknown_or_inactive" | "currency_unknown" | "currency_conflict";
+  | "ignored_sibling_records" | "newer_non_positive_record" | "undated" | "future_dated" | "ambiguous_same_date" | "older_than_maximum" | "supplier_unknown_or_inactive" | "currency_unknown" | "currency_conflict";
 export interface Candidate { supplierId: string | null; supplierName: string | null; cost: number; currency: string | null; lastSupplied: string | null }
 export interface SurveyResult {
   sku: string; tier: Tier; reasons: Reason[];
@@ -97,11 +97,15 @@ export function classifySku(i: SurveyInput, master: ReadonlyMap<string, MasterSu
   const m = pick.supplierId ? master.get(pick.supplierId) : undefined;
   if (!m || !m.active) reasons.push("supplier_unknown_or_inactive");
   const masterCcy = m?.currency ?? null;
-  if (!masterCcy && !pick.currency) reasons.push("currency_unknown");
+  if (!masterCcy) reasons.push("currency_unknown"); // the supplier's own Cin7 record is the authority; a record-only currency is a conflict to resolve, not a currency to use
   if (masterCcy && pick.currency && masterCcy !== pick.currency) reasons.push("currency_conflict");
   const currency = masterCcy;
   if (years !== null && years > MAX_SOURCE_AGE_YEARS) reasons.push("older_than_maximum");
 
+  // Records the rule does not use but that a person should know about: undated/future siblings beside a dated winner, and a NEWER record whose cost is zero or missing.
+  if (valid.length > 0 && positive.length > valid.length) reasons.push("ignored_sibling_records");
+  const pickT = isoDate(pick.lastSupplied);
+  if (pickT !== null && i.suppliers.some((s) => !(typeof s.cost === "number" && s.cost > 0) && (isoDate(s.lastSupplied) ?? -Infinity) > pickT && (isoDate(s.lastSupplied) ?? Infinity) <= today)) reasons.push("newer_non_positive_record");
   const selected: Candidate = { supplierId: pick.supplierId, supplierName: pick.supplierName, cost: pick.cost!, currency: pick.currency, lastSupplied: pick.lastSupplied };
   const common = { ...base, selected, ageYears: years, band: years === null ? null : bandOf(years), currency, fxNeeded: !!currency && currency !== "ZAR", simpleFactor: years === null ? null : simpleFactor(years), compoundFactor: years === null ? null : compoundFactor(years) };
   if (reasons.length > 0) return { sku: i.sku, tier: "review", reasons, ...common };

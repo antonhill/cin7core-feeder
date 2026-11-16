@@ -1,5 +1,5 @@
-import { Cin7ReadOnlyGate, cin7Transport } from "@/cin7/readonly-diagnostic";
 import "server-only";
+import { Cin7ReadOnlyGate, cin7Transport } from "@/cin7/readonly-diagnostic";
 // The ONE place the NewQuip cost estimate touches the Cin7 API: a READ-ONLY lookup of each SKU's supplier price records. Credentials are loaded for the org's own
 // instance, never leave the server and are never logged. (The Grower module itself stays sealed from Cin7; it asks this adapter.)
 //
@@ -122,10 +122,13 @@ export async function readRawProductsForSurvey(db: Db, orgId: string, instanceId
   const nap = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
   const out: Record<string, { raw: Record<string, unknown> | null } | { error: string }> = {};
   let first = true;
+  const deadline = Date.now() + 45_000; // stay inside the route budget: SKUs not reached are reported as "deadline", never silently dropped
   for (const sku of skus) {
+    if (Date.now() >= deadline) { out[sku] = { error: "deadline" }; continue; }
     if (!first) await nap(700);
     first = false;
     for (let attempt = 0; attempt < 4; attempt++) {
+      if (Date.now() >= deadline) { out[sku] = { error: "deadline" }; break; }
       try {
         const resp = (await gate.get("/Product", { SKU: sku, IncludeSuppliers: true, page: 1, limit: 10 })) as { Products?: unknown[] } | null;
         const p = (Array.isArray(resp?.Products) ? resp!.Products! : []).find((x): x is Record<string, unknown> => !!x && typeof x === "object" && (x as { SKU?: unknown }).SKU === sku);

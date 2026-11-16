@@ -60,6 +60,14 @@ describe("classification", () => {
     expect(classifySku(input({ suppliers: [rec("X1", 5, "2026-10-01")] }), master, TODAY).reasons).toEqual(["supplier_unknown_or_inactive"]);
     expect(classifySku(input({ suppliers: [rec("GONE", 5, "2026-10-01")] }), master, TODAY).reasons).toContain("supplier_unknown_or_inactive");
   });
+  it("a supplier whose own Cin7 record holds no currency is review even when the product record states one (the master is the authority)", () => {
+    const r = classifySku(input({ suppliers: [rec("N1", 5, "2026-10-01", "USD")] }), master, TODAY);
+    expect(r).toMatchObject({ tier: "review", reasons: ["currency_unknown"], currency: null, fxNeeded: false });
+  });
+  it("records the rule ignores are flagged: undated/future siblings beside a dated winner, and a newer zero-cost record", () => {
+    expect(classifySku(input({ suppliers: [rec("Z1", 10, "2026-09-01"), rec("E1", 12, null)] }), master, TODAY).reasons).toEqual(["ignored_sibling_records"]);
+    expect(classifySku(input({ suppliers: [rec("Z1", 10, "2025-09-01"), rec("E1", 0, "2026-09-01")] }), master, TODAY).reasons).toEqual(["newer_non_positive_record"]);
+  });
   it("the average cost is reference only: it never makes a SKU priceable", () => {
     expect(classifySku(input({ averageCost: 99, suppliers: [] }), master, TODAY)).toMatchObject({ tier: "missing", averageCostReference: 99, selected: null });
   });

@@ -6,8 +6,9 @@ vi.mock("server-only", () => ({}));
 const calls: string[] = [];
 const query: Record<string, unknown[]> = { newquip_package_mappings: [{ lines: [{ sku: "KNQ160" }] }], newquip_quotes: [{ skus: { ERT053: {}, PNQ082: {} } }] };
 vi.mock("@/supabase/server", () => ({
-  createServiceRoleClient: () => ({ from: (t: string) => { calls.push(`from:${t}`); const q: Record<string, unknown> = { select: () => q, eq: () => q, limit: () => q, then: (ok: (v: unknown) => void) => ok({ data: query[t] ?? [] }) }; return q; } }),
+  createServiceRoleClient: () => ({ from: (t: string) => { calls.push(`from:${t}`); const q: Record<string, unknown> = { select: () => q, eq: () => q, order: () => q, limit: () => q, then: (ok: (v: unknown) => void) => ok(failTable === t ? { data: null, error: { message: "x" } } : { data: query[t] ?? [] }) }; return q; } }),
 }));
+let failTable: string | null = null;
 let actor: Actor;
 vi.mock("../actor", async (orig) => ({ ...(await orig<typeof import("../actor")>()), authoriseActor: vi.fn(async () => actor) }));
 const read = vi.fn();
@@ -19,7 +20,7 @@ vi.mock("@/lib/projects/latest-cost-adapter", async (orig) => ({
 import * as actions from "../survey-actions";
 
 const asActor = (over: Partial<Actor> = {}): Actor => ({ orgId: "org-nq", userId: "u1", email: "e@nq", tier: "member", roles: new Set(["estimator"]) as never, canSeeCost: true, activeRole: null, demo: null, ...over } as Actor);
-beforeEach(() => { actor = asActor(); calls.length = 0; read.mockReset(); });
+beforeEach(() => { actor = asActor(); calls.length = 0; failTable = null; read.mockReset(); });
 
 describe("cost survey actions", () => {
   it("a Rep (no cost visibility) and Demo Mode are refused, and nothing is read", async () => {
@@ -38,6 +39,12 @@ describe("cost survey actions", () => {
     expect(r.data!.sources.ERT053).toEqual(expect.arrayContaining(["commercial mapping", "existing quotation"]));
     expect(new Set(calls)).toEqual(new Set(["from:newquip_package_mappings", "from:newquip_quotes"]));
   });
+  it("a failed database read fails the whole call (never a silently partial universe), and the cap is reported", async () => {
+    failTable = "newquip_quotes";
+    expect((await actions.getCostSurveyUniverseAction()).ok).toBe(false);
+    failTable = null;
+    expect((await actions.getCostSurveyUniverseAction()).data!.truncated).toBe(false);
+  });
   it("classifies what Cin7 returns (ERT053 observed: EUR 26.8440995, last supplied 2026-11-13) and surfaces unit-like fields as evidence", async () => {
     read.mockResolvedValue({ ERT053: { raw: { SKU: "ERT053", Status: "Active", Name: "Mat", UOM: "Item", AverageCost: 494.46, Suppliers: [{ SupplierID: "E1", SupplierName: "ERRA TECNI-RAM SL", Cost: 26.8440995, LastSupplied: "2026-11-13T00:00:00Z", PurchaseUnit: "Box" }] } }, NOPE: { raw: null }, BAD: { error: "http_500" } });
     const r = await actions.surveyCin7SkusAction(["ERT053", "NOPE", "BAD"]);
@@ -53,5 +60,6 @@ describe("cost survey actions", () => {
     expect((await actions.surveyCin7SkusAction([])).error).toBe("The request was not valid.");
     expect((await actions.surveyCin7SkusAction(Array.from({ length: 13 }, (_, i) => `S${i}`))).error).toBe("The request was not valid.");
     expect((await actions.surveyCin7SkusAction(["bad;sku"])).error).toBe("The request was not valid.");
+    expect((await actions.surveyCin7SkusAction([" padded"])).error).toBe("The request was not valid.");
   });
 });

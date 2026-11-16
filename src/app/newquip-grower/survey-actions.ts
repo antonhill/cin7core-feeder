@@ -12,7 +12,7 @@ import { DEMO_DEFAULTS } from "@/newquip/grower/demo-defaults";
 import { classifySku, pickUnitFields, type MasterSupplier, type RawSupplierRecord, type SurveyInput, type SurveyResult } from "@/newquip/pricing/cost-survey";
 import { authoriseActor } from "./actor";
 
-export interface SurveyUniverse { skus: string[]; sources: Record<string, string[]> }
+export interface SurveyUniverse { skus: string[]; sources: Record<string, string[]>; /** true when the quotation read hit its row cap, so SKUs from older quotations may be missing. */ truncated: boolean }
 export interface SurveyChunk { generatedAt: string; results: SurveyResult[]; inputs: SurveyInput[]; productKeys: string[]; supplierKeys: string[]; errors: Record<string, string> }
 export interface SurveyActionResult<T> { ok: boolean; error?: string; data?: T }
 
@@ -39,19 +39,22 @@ export async function getCostSurveyUniverseAction(): Promise<SurveyActionResult<
     const add = (sku: unknown, src: string) => { if (typeof sku === "string" && sku.trim()) (sources[sku.trim()] ??= []).includes(src) || sources[sku.trim()].push(src); };
     referencedSkus().forEach((s) => add(s, "commercial mapping"));
     Object.values(DEMO_DEFAULTS.estimator?.confirmedMappings ?? {}).forEach((s) => add(s, "grower default"));
-    const { data: maps } = await db.from("newquip_package_mappings").select("lines").eq("org_id", a.orgId).eq("status", "ACTIVE");
+    const { data: maps, error: mapErr } = await db.from("newquip_package_mappings").select("lines").eq("org_id", a.orgId).eq("status", "ACTIVE");
     for (const m of maps ?? []) for (const l of (m.lines as Array<{ sku?: string }>) ?? []) add(l.sku, "saved package mapping");
-    const { data: qs } = await db.from("newquip_quotes").select("skus:draft->estimator->pricing->skus").eq("org_id", a.orgId).limit(2000);
+    if (mapErr) throw new Error("read failed");
+    const CAP = 2000;
+    const { data: qs, error: qErr } = await db.from("newquip_quotes").select("skus:draft->estimator->pricing->skus").eq("org_id", a.orgId).order("created_at", { ascending: false }).limit(CAP);
+    if (qErr) throw new Error("read failed");
     for (const q of qs ?? []) { const s = (q as { skus?: unknown }).skus; if (isObj(s)) Object.keys(s).forEach((k) => add(k, "existing quotation")); }
-    return { ok: true, data: { skus: Object.keys(sources).sort(), sources } };
+    return { ok: true, data: { skus: Object.keys(sources).sort(), sources, truncated: (qs ?? []).length >= CAP } };
   } catch { return { ok: false, error: MSG }; }
 }
 
 /** Reads up to 12 SKUs from Cin7 (GET only, paced, bounded backoff) and classifies each. */
 export async function surveyCin7SkusAction(skus: string[]): Promise<SurveyActionResult<SurveyChunk>> {
   try {
-    if (!Array.isArray(skus) || skus.length === 0 || skus.length > MAX_CHUNK || !skus.every((s) => typeof s === "string" && /^[A-Za-z0-9._\-/ ]{1,64}$/.test(s) && isQueryableString(s))) throw new TypeError("bad request");
-    const a = await costActor();
+    const a = await costActor(); // authority first: an unauthorised caller learns nothing about input validity
+    if (!Array.isArray(skus) || skus.length === 0 || skus.length > MAX_CHUNK || !skus.every((s) => typeof s === "string" && /^[A-Za-z0-9._\-/]{1,64}(?: [A-Za-z0-9._\-/]+)*$/.test(s) && isQueryableString(s))) throw new TypeError("bad request");
     const db = createServiceRoleClient();
     const dir = await listCin7Suppliers(db, a.orgId, NEWQUIP_POC_CIN7_INSTANCE_ID);
     const master = new Map<string, MasterSupplier>(dir.map((s) => [s.id, { id: s.id, name: s.name, currency: s.currency, active: s.active }]));
