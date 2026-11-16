@@ -373,6 +373,11 @@ export function packageAutoConfirmable(pkg: PackageMapping | undefined): boolean
   return pkg.components.length > 0 && pkg.components.every((c) => c.identity === "source_backed" && !!c.sku && c.quantityStatus === "source_fixed" && c.qtyPerUnit != null && !c.pricingException);
 }
 
+/** The items a BULK "confirm source-backed" action may confirm: only packages that are authoritative and complete. Anything needing the Estimator's own decision (LED, cup drinker) is excluded. */
+export function bulkConfirmablePackageKeys(itemKeys: readonly GrowerItemKey[], revision: TemplateRevision): GrowerItemKey[] {
+  return itemKeys.filter((k) => packageAutoConfirmable(packageFor(k, revision)));
+}
+
 /** SKUs an estimator may pick BETWEEN by hand for an item (never auto-confirmed). Excluded SKUs are never offered. */
 export function manualSelectionSkusFor(itemKey: GrowerItemKey, revision: TemplateRevision): string[] {
   const m = commercialMappingFor(itemKey, revision);
