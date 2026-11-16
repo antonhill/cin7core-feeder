@@ -44,7 +44,7 @@ beforeEach(() => {
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ id: (globalThis as { __QID?: string }).__QID }),
-  useSearchParams: () => new URLSearchParams("stage=" + ((globalThis as { __STAGE?: string }).__STAGE ?? "2") + ((globalThis as { __STEP?: string }).__STEP ? `&step=${(globalThis as { __STEP?: string }).__STEP}` : "")),
+  useSearchParams: () => new URLSearchParams("stage=" + ((globalThis as { __STAGE?: string }).__STAGE ?? "2") + ((globalThis as { __STEP?: string }).__STEP ? `&step=${(globalThis as { __STEP?: string }).__STEP}` : "") + "&tools=1"), // the Preview utility is opt-in (?tools=1)
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
   usePathname: () => "/newquip-grower/x",
 }));

@@ -7,6 +7,7 @@
 //   - ONE next action that follows the workflow order: price the open tasks, the Rep reconfirms a changed amount, a Manager verifies the costs, the Estimator signs off, a Manager approves.
 // It invents nothing: no price, no SKU, no margin. A manual quotation price carries its REASON and EVIDENCE in the existing reason field in a fixed, readable format (see encodeManualReason).
 
+import { formatZar } from "@/lib/format-money";
 import type { BridgeComponent, BridgeLine, BudgetQuote } from "@/newquip/grower/quote-bridge";
 import type { PricingWorkspaceView, SkuRow } from "@/newquip/pricing/estimator";
 import type { IndicativeComparison } from "@/newquip/pricing/comparison";
@@ -103,6 +104,8 @@ export interface NextAction { kind: NextActionKind; headline: string; detail: st
 export interface WorkspaceFacts {
   /** REP_DRAFT | ESTIMATOR_REVIEW | MANAGER_APPROVED_FINAL */
   state: string;
+  /** The quotation revision. Above 1 with state REP_DRAFT means it was RETURNED to the Rep; optional so older callers still work (then it is treated as a first draft). */
+  revision?: number;
   confirmedCents: number | null;
   /** true when the Estimator's sign-off is stored against the current content. */
   signedOff: boolean;
@@ -136,7 +139,7 @@ export const needsEvidence = (c: Pick<CompleteLine, "evidence">): boolean => !!c
 export const completeStatusWord = (c: CompleteLine): StatusWord => (needsEvidence(c) ? "Evidence needed" : c.provisional ? "Provisional" : "Complete");
 
 /** Rand with its cents, always: R193.60 stays R193.60 (never rounded to a whole rand). Formats only: the amount comes from the model's exact cents. */
-export const money = (n: number): string => { const r = Math.round(Math.abs(n) * 100) / 100; return `${n < 0 && r !== 0 ? "-" : ""}R${r.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }; // grouping as shipped in #251 (commas), cents added; a negative reads -R1.00
+export const money = (n: number): string => formatZar(n); // the single South African presentation (R 1 234,50), as on the rest of the quotation
 /** An exact supplier cost (units of 1e-7): up to 7 decimals as entered, at least 2 (193.60, 6.5454755). */
 export const costText = (e7: number): string => { const t = formatCost7(e7); const [i, f = ""] = t.split("."); return f.length >= 2 ? t : `${i}.${f.padEnd(2, "0")}`; };
 const qtyText = (n: number | null): string => (n == null ? "" : n.toLocaleString("en-ZA").replace(/\s/g, ","));
@@ -284,6 +287,7 @@ export function buildWorkspace(i: { budget: BudgetQuote; view: PricingWorkspaceV
   const g0 = gates[0];
   const taskHeadline = (t: Omit<WorkspaceTask, "n"> & { n: number }): string => (t.kind === "m75" ? `Enter the M75 system price` : t.kind === "cost" ? `Enter the supplier cost for ${t.label.toLowerCase()}` : t.kind === "product" ? `Choose and price ${t.label.toLowerCase()}` : t.kind === "manual" ? `Quote a manual price for ${t.label.toLowerCase()}` : `Confirm and cost ${t.label.toLowerCase()}`);
   if (facts.state === "MANAGER_APPROVED_FINAL") next = { kind: "approved", headline: "Approved", detail: "This quotation is approved and sealed.", button: null };
+  else if (facts.state === "REP_DRAFT" && (facts.revision ?? 1) > 1 && !facts.canEdit) next = { kind: "wait_rep", headline: "Waiting for the Rep to reconfirm the amount and submit it again", detail: "The quotation is with the Rep. You can read it here; nothing changes until it comes back.", button: null };
   else if (g0?.id === "tasks") {
     next = facts.canEdit
       ? { kind: "open_task", headline: taskHeadline(first), detail: first.why, taskId: first.id, button: `Open task 1 of ${open}` }

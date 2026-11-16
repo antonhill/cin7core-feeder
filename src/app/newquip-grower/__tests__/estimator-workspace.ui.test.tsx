@@ -79,8 +79,8 @@ describe("the workspace: header, exception-first tasks and compact indicators", 
     await screen.findByTestId("commercial-summary");
     expect(screen.getByTestId("header-total-note").textContent).toBe("Not a contract value.");
     expect(screen.getByTestId("header-total-label").textContent).toBe("PARTIAL TOTAL, EX VAT");
-    expect(screen.getByTestId("header-total").textContent).toBe("R7,607,144.00");
-    expect(screen.getByTestId("summary-confirmed").textContent).toMatch(/R5,132,000/);
+    expect(screen.getByTestId("header-total").textContent).toBe("R\u00a07\u00a0607\u00a0144,00");
+    expect(screen.getByTestId("summary-confirmed").textContent).toMatch(/R\s5\s132\s000/);
     expect(screen.getByTestId("summary-margin").textContent).not.toMatch(/verified$/);
     expect(screen.getByTestId("four-checks").textContent).toMatch(/FOUR SEPARATE CHECKS/);
   });
@@ -163,8 +163,8 @@ describe("the supplier-cost editor", () => {
     type("Unit cost (up to 7 decimals)", "193.60");
     type("Where this cost comes from", "Supplier quote");
     const calc = screen.getByTestId("live-calc").textContent!;
-    expect(calc).toMatch(/Landed cost each.*R194|Landed cost each.*R193/);
-    expect(calc).toMatch(/Selling price each.*R232/);
+    expect(calc).toMatch(/Landed cost each.*R\s194|Landed cost each.*R\s193/);
+    expect(calc).toMatch(/Selling price each.*R\s232/);
     expect(calc).toMatch(/UNVERIFIED/);
   });
   it("a foreign currency asks for a rate and its source before it can be saved", () => {

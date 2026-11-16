@@ -1,3 +1,5 @@
-// Plain money formatting for the phase screens (the same R1,234.00 style as the Estimator workspace).
-export const rand = (n: number): string => `R${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-export const randCents = (c: number): string => rand(c / 100);
+import { formatZar, formatZarCents } from "@/lib/format-money";
+
+// The phase screens use the application's single South African money presentation (R 1 234,50), the same as the quotation, the banner and the submit step.
+export const rand = (n: number): string => formatZar(n);
+export const randCents = (c: number): string => formatZarCents(c);

@@ -57,7 +57,7 @@ describe("final simplification: one compact header, one status per line, a compa
     expect(h.textContent).toMatch(/Spark · 12 rooms · Project pricing/);
     expect(screen.getByTestId("header-stage").textContent).toBe("ESTIMATOR REVIEW");
     expect(screen.getByTestId("header-total-label").textContent).toBe("PARTIAL TOTAL, EX VAT");
-    expect(screen.getByTestId("header-confirmed").textContent).toBe("R5,132,000.00");
+    expect(screen.getByTestId("header-confirmed").textContent).toBe("R\u00a05\u00a0132\u00a0000,00");
     expect(screen.getByTestId("header-outstanding").textContent).toBe("5 items");
     expect(screen.queryByTestId("header-checks")).toBeNull();
     expect(screen.getAllByTestId("workspace-header")).toHaveLength(1);
@@ -132,5 +132,26 @@ describe("evidence needed is an open line, not a hidden completed one", () => {
     expect(screen.getByTestId("header-outstanding").textContent).toBe("1 item");
     expect(screen.getByTestId("needs-you").contains(row)).toBe(true);
     expect(screen.getByTestId("next-action").textContent).toMatch(/Record the pricing evidence/i);
+  });
+});
+
+describe("with the Rep: the one next action is to wait, never an Estimator instruction", () => {
+  it("a read-only workspace on a RETURNED (revision 2) Rep-draft quotation says it is waiting for the Rep to reconfirm and resubmit", async () => {
+    mount({ state: "REP_DRAFT", revision: 2, canEdit: false });
+    const na = await screen.findByTestId("next-action");
+    expect(na.textContent).toMatch(/Waiting for the Rep to reconfirm the amount and submit it again/);
+    expect(na.textContent).not.toMatch(/The Estimator records/);
+  });
+
+  it("a read-only workspace on a FIRST draft (revision 1) never claims it was returned or needs reconfirming", async () => {
+    mount({ state: "REP_DRAFT", revision: 1, canEdit: false });
+    const na = await screen.findByTestId("next-action");
+    expect(na.textContent).not.toMatch(/reconfirm|submit it again|returned/i);
+  });
+
+  it("an older caller that passes no revision is treated as a first draft", async () => {
+    mount({ state: "REP_DRAFT", canEdit: false });
+    const na = await screen.findByTestId("next-action");
+    expect(na.textContent).not.toMatch(/reconfirm the amount and submit it again/i);
   });
 });

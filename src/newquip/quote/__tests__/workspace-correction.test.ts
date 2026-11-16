@@ -10,16 +10,16 @@ const view = (o: Record<string, unknown> = {}) => ({ rows: [], costs: { required
 
 describe("money keeps its cents", () => {
   it("R193.60 stays R193.60, R232.32 stays R232.32, 800 -> R960.00, R881.00, totals to cents", () => {
-    expect(money(193.6)).toBe("R193.60");
-    expect(money(232.32)).toBe("R232.32");
-    expect(money(960)).toBe("R960.00");
-    expect(money(881)).toBe("R881.00");
-    expect(money(3_679_948.8)).toBe("R3,679,948.80");
-    expect(money(34_426_756.8)).toBe("R34,426,756.80");
-    expect(money(0.1 + 0.2)).toBe("R0.30");
-    expect(money(-1)).toBe("-R1.00");
-    expect(money(-2_475_144.5)).toBe("-R2,475,144.50");
-    expect(money(-0.001)).toBe("R0.00");
+    expect(money(193.6)).toBe("R\u00a0193,60");
+    expect(money(232.32)).toBe("R\u00a0232,32");
+    expect(money(960)).toBe("R\u00a0960,00");
+    expect(money(881)).toBe("R\u00a0881,00");
+    expect(money(3_679_948.8)).toBe("R\u00a03\u00a0679\u00a0948,80");
+    expect(money(34_426_756.8)).toBe("R\u00a034\u00a0426\u00a0756,80");
+    expect(money(0.1 + 0.2)).toBe("R\u00a00,30");
+    expect(money(-1)).toBe("-R\u00a01,00");
+    expect(money(-2_475_144.5)).toBe("-R\u00a02\u00a0475\u00a0144,50");
+    expect(money(-0.001)).toBe("R\u00a00,00");
   });
   it("a supplier cost shows its exact decimals, at least two", () => {
     expect(costText(1_936_000_000)).toBe("193.60");
