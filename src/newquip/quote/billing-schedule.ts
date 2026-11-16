@@ -54,13 +54,13 @@ export function validateSchedule(schedule: readonly Pick<ScheduleStageTemplate, 
   return { ok: errors.length === 0, totalBps: total, errors };
 }
 
-/** Splits an ex-VAT contract (integer cents) across a schedule; the final stage absorbs rounding so the total is exact. */
+/** Splits an ex-VAT contract (integer cents) across a schedule: each stage is rounded to the nearest cent (half-up); the final stage takes the (few-cent, positive or negative) remainder so the total is exact. */
 export function splitContractBySchedule(contractCents: number, schedule: readonly ScheduleStageTemplate[] = NEWQUIP_STANDARD_SCHEDULE): SuggestedStage[] {
   const v = validateSchedule(schedule);
   if (!v.ok) throw new Error(`Invalid billing schedule: ${v.errors.join(" ")}`);
   let allocated = 0;
   return schedule.map((s, i) => {
-    const valueCents = i === schedule.length - 1 ? contractCents - allocated : Math.floor((contractCents * s.bps) / 10_000);
+    const valueCents = i === schedule.length - 1 ? contractCents - allocated : Math.floor((contractCents * s.bps + 5_000) / 10_000);
     allocated += valueCents;
     return { name: s.name, description: s.description, valueCents };
   });
