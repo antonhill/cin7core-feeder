@@ -174,3 +174,15 @@ describe("role permissions are unchanged", () => {
     expect(await state(id)).toEqual(before);
   });
 });
+describe("a forged base cannot admit an unvalidated cost", () => {
+  it("a submission whose base is the submission itself (so nothing looks 'changed') stores nothing new: the free-text cost never reaches the quotation", async () => {
+    const id = await inReview();
+    const free = submissionOf();
+    for (const v of Object.values(free.skus)) { const e = v as unknown as Record<string, unknown>; e.supplierId = null; e.supplierName = "Typed by hand"; }
+    const before = await state(id);
+    await actions.applyEstimatorPricingAction(id, free, "Initial supplier pricing", structuredClone(free));
+    const after = await loaded(id);
+    expect(JSON.stringify(after.draft.estimator.pricing ?? null)).not.toContain("Typed by hand");
+    expect((await state(id)).revisions).toBeLessThanOrEqual(before.revisions);
+  });
+});

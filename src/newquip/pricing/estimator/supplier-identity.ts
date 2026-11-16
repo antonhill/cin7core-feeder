@@ -57,7 +57,7 @@ export async function validateSupplierIdentities(i: { submission: PricingSubmiss
       if ((e.costDate ?? null) !== rec.lastSupplied) errors.push(`${at} the cost date must be Cin7's last-supplied date${rec.lastSupplied ? ` (${rec.lastSupplied})` : " (Cin7 holds none, so the date stays blank)"}.`);
     }
   }
-  return errors;
+  return [...new Set(errors)]; // one outage message, not one per product
 }
 
 /**

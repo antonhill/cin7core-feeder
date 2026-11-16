@@ -5,6 +5,8 @@ import type { Actor } from "../actor";
 // shown as undated information, authority (cost-entitled only), and a Cin7 outage that says so without leaking internals. The Cin7 reads are fakes; the actions are the real ones.
 vi.mock("server-only", () => ({}));
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: () => ({}) }));
+let quoteExists = true;
+vi.mock("@/lib/newquip-quotes/quote-store", () => ({ loadQuote: vi.fn(async () => (quoteExists ? { id: "q1" } : null)) }));
 let actor: Actor;
 vi.mock("../actor", async (orig) => ({ ...(await orig<typeof import("../actor")>()), authoriseActor: vi.fn(async () => actor) }));
 
@@ -22,7 +24,7 @@ import { toProductSupplierRefs, toSupplierRef } from "@/lib/projects/latest-cost
 
 const asActor = (over: Partial<Actor> = {}): Actor => ({ orgId: "org-nq", userId: "u1", email: "est@nq", tier: "member", roles: new Set(["estimator"]) as never, canSeeCost: true, activeRole: null, demo: null, ...over } as Actor);
 beforeEach(() => {
-  actor = asActor(); cin7Down = false;
+  actor = asActor(); cin7Down = false; quoteExists = true;
   directory = [ref("S1", "Alpha Plastics", "ZAR"), ref("S2", "Alpine Imports", "EUR"), ref("S3", "Beta Alpha Steel", "USD"), ref("S4", "Alpha Retired", "ZAR", false), ref("S5", "Gamma Supplies", null)];
   product = { found: true, productName: "Feed saver mat", averageCost: 31.5, suppliers: [{ supplierId: "S2", supplierName: "Alpine Imports", cost: 26.8440995, currency: "EUR", lastSupplied: "2026-03-02" }] };
 });
@@ -49,20 +51,33 @@ describe("supplier search over the active Cin7 catalogue", () => {
 });
 
 describe("what Cin7 already holds for the product, before anything is entered", () => {
-  it("lists the product's own suppliers with the exact Cin7 price, currency and last-supplied date", async () => {
+  it("lists the product's own suppliers with the exact Cin7 price, the SUPPLIER's own Cin7 currency and the last-supplied date", async () => {
     const r = await actions.getSkuCostContextAction("q1", "ERT053");
     expect(r.ok).toBe(true);
     expect(r.data!.found).toBe(true);
-    expect(r.data!.suppliers).toEqual([{ supplierId: "S2", supplierName: "Alpine Imports", cost: "26.8440995", currency: "EUR", currencySource: "cin7_product_supplier", lastSupplied: "2026-03-02" }]);
+    expect(r.data!.suppliers).toEqual([{ supplierId: "S2", supplierName: "Alpine Imports", active: true, cost: "26.8440995", currency: "EUR", currencySource: "cin7_supplier", productCurrency: "EUR", lastSupplied: "2026-03-02" }]);
   });
-  it("the currency falls back to the supplier's own Cin7 record, and stays null when Cin7 holds none (never ZAR)", async () => {
+  it("the currency is the supplier's own Cin7 currency, never the product record's: where they differ the record's is only information; where the supplier holds none it stays null (never ZAR)", async () => {
     product.suppliers = [
-      { supplierId: "S1", supplierName: "Alpha Plastics", cost: 10, currency: null, lastSupplied: null },
-      { supplierId: "S5", supplierName: "Gamma Supplies", cost: 5, currency: null, lastSupplied: null },
+      { supplierId: "S2", supplierName: "Alpine Imports", cost: 10, currency: "USD", lastSupplied: null }, // supplier master says EUR
+      { supplierId: "S5", supplierName: "Gamma Supplies", cost: 5, currency: "USD", lastSupplied: null }, // supplier master holds none
+      { supplierId: "S1", supplierName: "Alpha Plastics", cost: 7, currency: null, lastSupplied: null },
     ];
     const s = (await actions.getSkuCostContextAction("q1", "ERT053")).data!.suppliers;
-    expect(s[0]).toMatchObject({ currency: "ZAR", currencySource: "cin7_supplier", lastSupplied: null }); // an undated cost stays undated
-    expect(s[1]).toMatchObject({ currency: null, currencySource: null });
+    expect(s[0]).toMatchObject({ currency: "EUR", currencySource: "cin7_supplier", productCurrency: "USD" });
+    expect(s[1]).toMatchObject({ currency: null, currencySource: null, productCurrency: "USD", lastSupplied: null });
+    expect(s[2]).toMatchObject({ currency: "ZAR", currencySource: "cin7_supplier", productCurrency: null }); // an undated cost stays undated
+  });
+  it("the supplier's Cin7 NAME wins over a stale name on the product record, and an inactive supplier is flagged", async () => {
+    product.suppliers = [{ supplierId: "S2", supplierName: "Alpine Old Name", cost: 1, currency: null, lastSupplied: null }, { supplierId: "S4", supplierName: "Alpha Retired", cost: 2, currency: null, lastSupplied: null }];
+    const s = (await actions.getSkuCostContextAction("q1", "ERT053")).data!.suppliers;
+    expect(s[0]).toMatchObject({ supplierName: "Alpine Imports", active: true });
+    expect(s[1]).toMatchObject({ supplierId: "S4", active: false });
+  });
+  it("when the supplier catalogue cannot be read the whole call fails: no currency is guessed", async () => {
+    const mod = await import("@/lib/projects/latest-cost-adapter");
+    vi.mocked(mod.listCin7Suppliers).mockRejectedValueOnce(new Error("fetch failed"));
+    expect(await actions.getSkuCostContextAction("q1", "ERT053")).toMatchObject({ ok: false, error: "Cin7 supplier data is not available right now. Nothing was changed." });
   });
   it("the average cost is offered only as an UNDATED reference; it is never a supplier record", async () => {
     const d = (await actions.getSkuCostContextAction("q1", "ERT053")).data!;
@@ -91,6 +106,17 @@ describe("authority and failure", () => {
       expect(r.ok).toBe(false);
       expect(r.error).toBe("Cin7 supplier data is not available right now. Nothing was changed.");
     }
+  });
+  it("a quotation that does not exist in this organisation is refused, for both reads", async () => {
+    quoteExists = false;
+    expect((await actions.searchCin7SuppliersAction("q1", "alp")).error).toBe("That quotation could not be found.");
+    expect((await actions.getSkuCostContextAction("q1", "ERT053")).error).toBe("That quotation could not be found.");
+  });
+  it("only our own refusals are shown as written: an unexpected error that merely mentions a permission or module never reaches the browser", async () => {
+    const mod = await import("@/lib/projects/latest-cost-adapter");
+    vi.mocked(mod.listCin7Suppliers).mockRejectedValueOnce(new Error("Cin7 permission denied for module /supplier: key sk_live_x"));
+    const r = await actions.searchCin7SuppliersAction("q1", "alp");
+    expect(r.error).toBe("Cin7 supplier data is not available right now. Nothing was changed.");
   });
   it("malformed input is refused", async () => {
     expect((await actions.getSkuCostContextAction("q1", "bad sku;drop")).error).toBe("The request was not valid.");

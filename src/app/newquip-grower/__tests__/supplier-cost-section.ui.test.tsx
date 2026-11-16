@@ -12,7 +12,7 @@ import * as supplier from "../supplier-actions";
 vi.mock("../supplier-actions", () => ({ getSkuCostContextAction: vi.fn(), searchCin7SuppliersAction: vi.fn() }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); vi.useRealTimers(); });
 
-const rec = (id: string, name: string, cost: string | null, currency: string | null, lastSupplied: string | null) => ({ supplierId: id, supplierName: name, cost, currency, currencySource: currency ? ("cin7_product_supplier" as const) : null, lastSupplied });
+const rec = (id: string, name: string, cost: string | null, currency: string | null, lastSupplied: string | null, over: Record<string, unknown> = {}) => ({ supplierId: id, supplierName: name, active: true, cost, currency, currencySource: currency ? ("cin7_supplier" as const) : null, productCurrency: null as string | null, lastSupplied, ...over });
 const ctx = (suppliers: ReturnType<typeof rec>[], over: Record<string, unknown> = {}) => ({ ok: true, data: { sku: "ERT053", found: true, productName: "Feed saver mat", averageCostUndated: null, suppliers, retrievedAt: "2026-11-17T08:00:00Z", ...over } });
 const hit = (id: string, name: string, currency: string | null) => ({ supplierId: id, name, currency });
 const bundle = (current: PricingSubmission | null = null): WorkspaceBundle => ({
@@ -227,6 +227,51 @@ describe("stale Cin7 prices", () => {
     fireEvent.click(screen.getByTestId("kind-cin7_historical"));
     expect(screen.queryByTestId("stale-cost-warning")).toBeNull(); // undated: no age, no warning
     expect(screen.getByTestId("cin7-record-S1").textContent).not.toMatch(/ago/);
+  });
+});
+
+describe("Cin7 data that disagrees or has moved", () => {
+  it("a supplier inactive in Cin7 is listed but cannot be chosen", async () => {
+    vi.mocked(supplier.getSkuCostContextAction).mockResolvedValue(ctx([rec("S3", "Old Co", "5", "ZAR", null, { active: false })]) as never);
+    mount();
+    const b = (await screen.findByTestId("cin7-record-S3")) as HTMLButtonElement;
+    expect(b.disabled).toBe(true);
+    expect(b.textContent).toMatch(/inactive in Cin7: cannot be chosen/);
+  });
+
+  it("when Cin7's price record is in a different currency from the supplier's own, 'Cin7 historical cost' is unavailable with the reason (a quotation or estimate remains)", async () => {
+    vi.mocked(supplier.getSkuCostContextAction).mockResolvedValue(ctx([rec("S2", "Alpine Imports", "26.8440995", "ZAR", "2026-03-02", { productCurrency: "USD" })]) as never);
+    mount();
+    fireEvent.click(await screen.findByTestId("cin7-record-S2"));
+    expect((screen.getByTestId("kind-cin7_historical") as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByTestId("cost-kind").textContent).toMatch(/Cin7 prices this product from Alpine Imports in USD, but the supplier's own currency is ZAR/);
+    expect((screen.getByTestId("kind-supplier_quotation") as HTMLInputElement).disabled).toBe(false);
+  });
+
+  it("the supplier has no Cin7 currency but its price record states one: the exception form pre-selects that currency for a historical cost (the reason is still required)", async () => {
+    vi.mocked(supplier.getSkuCostContextAction).mockResolvedValue(ctx([rec("S5", "Gamma Supplies", "5", null, "2026-03-02", { productCurrency: "USD" })]) as never);
+    mount();
+    fireEvent.click(await screen.findByTestId("cin7-record-S5"));
+    expect(screen.getByTestId("currency-exception")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("kind-cin7_historical"));
+    expect((screen.getByTestId("currency-override-select") as HTMLSelectElement).value).toBe("USD");
+    expect(screen.getByTestId("save-why").textContent).toMatch(/say why you are setting it by hand/);
+  });
+
+  it("a saved Cin7 historical cost whose Cin7 price has since moved offers 'Use Cin7's current price'", async () => {
+    mount();
+    fireEvent.click(await screen.findByTestId("cin7-record-S2"));
+    fireEvent.click(screen.getByTestId("kind-cin7_historical"));
+    expect(screen.queryByTestId("historical-refresh")).toBeNull();
+    vi.mocked(supplier.getSkuCostContextAction).mockResolvedValue(ctx([rec("S2", "Alpine Imports", "28.5", "EUR", "2026-10-01")]) as never);
+    cleanup();
+    const stored = { ruleVersionId: "r", skus: { ERT053: { supplierId: "S2", supplierName: "Alpine Imports", currency: "EUR", nativeUnitCostE7: 268_440_995, source: "Cin7", freight: { factorMicro: 1_000_000, source: "Cin7" }, currencySource: "cin7_supplier", costKind: "cin7_historical", costDate: "2026-03-02" } }, fxQuotes: {}, forwardCover: {}, skuPriceOverrides: {}, projectMarkup: null, targetAdjustment: null } as unknown as PricingSubmission;
+    mount({ current: stored });
+    const note = await screen.findByTestId("historical-refresh");
+    expect(note.textContent).toMatch(/Cin7 now holds 28.5/);
+    fireEvent.click(within(note).getByRole("button", { name: "Use Cin7's current price" }));
+    expect((screen.getByLabelText("Unit cost (up to 7 decimals)") as HTMLInputElement).value).toBe("28.5");
+    expect(screen.getByTestId("historical-date").textContent).toMatch(/2026-10-01/);
   });
 });
 

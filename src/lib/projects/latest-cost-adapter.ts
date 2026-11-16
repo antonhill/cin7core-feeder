@@ -48,6 +48,7 @@ export async function readSupplierPrices(db: Db, orgId: string, instanceId: stri
 // Currency, LastSupplied. A field Cin7 does not return stays null (never defaulted). The credentials are the org's own NewQuip instance, loaded server-side only.
 const TTL_MS = 120_000;
 const cache = new Map<string, { at: number; list: Cin7SupplierRef[] }>();
+let inflight: Record<string, Promise<Cin7SupplierRef[]> | undefined> = {}; // concurrent callers share ONE read of the catalogue
 const str = (v: unknown): string | null => (typeof v === "string" && v.trim() !== "" ? v.trim() : null);
 const day = (v: unknown): string | null => { const s = str(v); return s && /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : null; };
 
@@ -64,19 +65,25 @@ export async function listCin7Suppliers(db: Db, orgId: string, instanceId: strin
   const key = `${orgId}:${instanceId}`;
   const hit = cache.get(key);
   if (hit && now - hit.at < TTL_MS) return hit.list;
-  const creds = await loadCin7Credentials(db, orgId, instanceId);
-  const list = (await fetchAllSuppliers(creds)).map(toSupplierRef).filter((x): x is Cin7SupplierRef => x !== null);
-  cache.set(key, { at: now, list });
-  return list;
+  const running = inflight[key];
+  if (running) return running;
+  const p = (async () => {
+    const creds = await loadCin7Credentials(db, orgId, instanceId);
+    const list = (await fetchAllSuppliers(creds)).map(toSupplierRef).filter((x): x is Cin7SupplierRef => x !== null);
+    cache.set(key, { at: now, list });
+    return list;
+  })().finally(() => { inflight[key] = undefined; });
+  inflight[key] = p;
+  return p;
 }
-export function clearSupplierCache(): void { cache.clear(); }
+export function clearSupplierCache(): void { cache.clear(); inflight = {}; }
 
 export interface ProductSupplierRead { found: boolean; productName: string | null; /** Cin7's AverageCost: an UNDATED figure, only ever shown as information, never used as a supplier cost. */ averageCost: number | null; suppliers: Cin7ProductSupplierRef[] }
 
 export function toProductSupplierRefs(raw: Record<string, unknown>[]): Cin7ProductSupplierRef[] {
   const out: Cin7ProductSupplierRef[] = [];
   for (const s of raw) {
-    const supplierId = str(s.SupplierID) ?? str(s.ID);
+    const supplierId = str(s.SupplierID); // never the row's own ID: only the supplier's id is an identity
     const supplierName = str(s.SupplierName) ?? str(s.Supplier);
     if (!supplierId || !supplierName) continue;
     const cur = str(s.Currency);

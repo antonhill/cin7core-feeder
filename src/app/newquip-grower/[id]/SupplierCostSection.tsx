@@ -44,7 +44,8 @@ export function SupplierCostSection({ quoteId, sku, ed, set, disabled }: { quote
 
   const records: SkuSupplierRecord[] = ctx.state === "ok" ? ctx.data.suppliers : [];
   const chosenRecord = ed.supplierId ? records.find((r) => r.supplierId === ed.supplierId) ?? null : null;
-  const historicalAvailable = !!chosenRecord && chosenRecord.cost !== null;
+  const currencyClash = !!chosenRecord && !!chosenRecord.currency && !!chosenRecord.productCurrency && chosenRecord.currency !== chosenRecord.productCurrency;
+  const historicalAvailable = !!chosenRecord && chosenRecord.cost !== null && !currencyClash;
 
   function chooseSupplier(id: string, name: string, currency: string | null) {
     set((d) => {
@@ -59,12 +60,12 @@ export function SupplierCostSection({ quoteId, sku, ed, set, disabled }: { quote
   function chooseKind(kind: SkuEditor["costKind"]) {
     set((d) => {
       d.costKind = kind;
-      if (kind === "cin7_historical" && chosenRecord && chosenRecord.cost !== null) { d.costText = chosenRecord.cost; d.costDate = chosenRecord.lastSupplied ?? ""; d.source = `Cin7 latest supplier price from ${chosenRecord.supplierName} (last supplied ${fmtDate(chosenRecord.lastSupplied)})`; }
+      if (kind === "cin7_historical" && chosenRecord && chosenRecord.cost !== null) { if (d.currencySource === "override" && !d.currency && chosenRecord.productCurrency) d.currency = chosenRecord.productCurrency; d.costText = chosenRecord.cost; d.costDate = chosenRecord.lastSupplied ?? ""; d.source = `Cin7 latest supplier price from ${chosenRecord.supplierName} (last supplied ${fmtDate(chosenRecord.lastSupplied)})`; }
       if (kind !== "supplier_quotation" && kind !== "cin7_historical") d.costDate = "";
     });
   }
   const KIND: Array<{ id: NonNullable<SkuEditor["costKind"]>; title: string; text: string; off?: boolean }> = [
-    { id: "cin7_historical", title: "Cin7 historical cost", text: historicalAvailable ? "The price Cin7 already holds from this supplier for this product." : "Needs a supplier that Cin7 already lists for this product, with a price.", off: !historicalAvailable },
+    { id: "cin7_historical", title: "Cin7 historical cost", text: currencyClash ? `Not available: Cin7 prices this product from ${chosenRecord!.supplierName} in ${chosenRecord!.productCurrency}, but the supplier's own currency is ${chosenRecord!.currency}. Enter a quotation instead.` : historicalAvailable ? "The price Cin7 already holds from this supplier for this product." : "Needs a supplier that Cin7 already lists for this product, with a price.", off: !historicalAvailable },
     { id: "supplier_quotation", title: "New supplier quotation", text: "A current quotation you hold. Needs the quotation date and its reference." },
     { id: "manual_estimate", title: "Manually estimated cost", text: "Your own estimate. It is recorded as an estimate, not a supplier price." },
   ];
@@ -86,10 +87,10 @@ export function SupplierCostSection({ quoteId, sku, ed, set, disabled }: { quote
               <ul className="mt-2 flex flex-col gap-2" data-testid="cin7-supplier-records">
                 {records.map((r) => (
                   <li key={r.supplierId}>
-                    <button type="button" disabled={disabled} onClick={() => chooseSupplier(r.supplierId, r.supplierName, r.currency)} aria-pressed={ed.supplierId === r.supplierId} data-testid={`cin7-record-${r.supplierId}`}
+                    <button type="button" disabled={disabled || !r.active} onClick={() => chooseSupplier(r.supplierId, r.supplierName, r.currency)} aria-pressed={ed.supplierId === r.supplierId} data-testid={`cin7-record-${r.supplierId}`}
                       className={`flex min-h-11 w-full flex-wrap items-baseline justify-between gap-x-4 rounded-lg border-[1.5px] px-3 py-2 text-left text-sm ${ed.supplierId === r.supplierId ? "border-blue-700 bg-sky-50" : "border-slate-400 bg-white hover:bg-slate-50"} disabled:opacity-60`}>
-                      <span className="font-semibold text-slate-900">{r.supplierName}</span>
-                      <span className="text-slate-800">{r.cost ? <><span className="tabular-nums">{r.currency ?? "currency not held"} {r.cost}</span> · last supplied {fmtDate(r.lastSupplied)}{(() => { const a = priceAge(r.lastSupplied, new Date().toISOString()); return a ? ` (${a.text})` : ""; })()}</> : "no price held in Cin7"}</span>
+                      <span className="font-semibold text-slate-900">{r.supplierName}{!r.active && <span className="ml-2 text-xs font-normal text-amber-900">inactive in Cin7: cannot be chosen</span>}</span>
+                      <span className="text-slate-800">{r.cost ? <><span className="tabular-nums">{r.productCurrency ?? r.currency ?? "currency not held"} {r.cost}</span> · last supplied {fmtDate(r.lastSupplied)}{(() => { const a = priceAge(r.lastSupplied, new Date().toISOString()); return a ? ` (${a.text})` : ""; })()}</> : "no price held in Cin7"}</span>
                     </button>
                   </li>
                 ))}
@@ -166,6 +167,7 @@ export function SupplierCostSection({ quoteId, sku, ed, set, disabled }: { quote
       <div className="flex flex-wrap gap-4">
         <div className="min-w-[10rem] flex-[1_1_11rem]"><Input label="Unit cost (up to 7 decimals)" inputMode="decimal" className="tabular-nums" value={ed.costText} disabled={disabled || ed.costKind === "cin7_historical"} readOnly={ed.costKind === "cin7_historical"} onChange={(e) => set((d) => { d.costText = e.target.value; })} error={(() => { const c = parseCostText(ed.costText); return c.kind === "bad" ? c.message : undefined; })()} helperText={ed.costKind === "cin7_historical" ? "Taken from Cin7 and not editable: a different figure is a new quotation." : undefined} data-testid="unit-cost" /></div>
         {ed.costKind === "supplier_quotation" && <div className="w-44"><Input label="Quotation date" placeholder="YYYY-MM-DD" value={ed.costDate} disabled={disabled} onChange={(e) => set((d) => { d.costDate = e.target.value; })} data-testid="cost-date" /></div>}
+        {ed.costKind === "cin7_historical" && chosenRecord?.cost && chosenRecord.cost !== ed.costText && <p className="basis-full rounded-lg bg-sky-50 px-3 py-2 text-sm text-sky-950" data-testid="historical-refresh">Cin7 now holds {chosenRecord.cost}. <button type="button" className="min-h-11 font-semibold text-blue-800 underline" onClick={() => chooseKind("cin7_historical")}>Use Cin7&apos;s current price</button></p>}
         {ed.costKind === "cin7_historical" && (() => { const a = priceAge(ed.costDate || null, new Date().toISOString()); return a?.stale ? <p className="basis-full rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-950" data-testid="stale-cost-warning">This Cin7 price was last supplied {a.text}. Confirm it is still current, or enter a new supplier quotation instead. Nothing is adjusted for its age.</p> : null; })()}
         {ed.costKind === "cin7_historical" && <div className="w-56 text-sm text-slate-800" data-testid="historical-date"><span className="mb-1.5 block text-[13px] font-semibold text-slate-900">Cost date (Cin7)</span>{ed.costDate ? ed.costDate : "date not recorded in Cin7"}</div>}
       </div>

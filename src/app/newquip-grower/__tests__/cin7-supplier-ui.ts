@@ -11,7 +11,7 @@ export const CATALOGUE = [
 ];
 export const supplierActionsMock = () => ({
   getSkuCostContextAction: vi.fn(async (_q: string, sku: string) => ({ ok: true, data: { sku, found: true, productName: null, averageCostUndated: null, retrievedAt: "2026-11-17T08:00:00Z",
-    suppliers: CATALOGUE.map((c) => ({ supplierId: c.supplierId, supplierName: c.supplierName, cost: null, currency: c.currency, currencySource: c.currency ? "cin7_product_supplier" : null, lastSupplied: null })) } })),
+    suppliers: CATALOGUE.map((c) => ({ supplierId: c.supplierId, supplierName: c.supplierName, cost: null, active: true, currency: c.currency, currencySource: c.currency ? "cin7_supplier" : null, productCurrency: null, lastSupplied: null })) } })),
   searchCin7SuppliersAction: vi.fn(async (_q: string, query: string) => ({ ok: true, data: { hits: CATALOGUE.filter((c) => c.supplierName.toLowerCase().includes(query.toLowerCase())).map((c) => ({ supplierId: c.supplierId, name: c.supplierName, currency: c.currency })), total: 1, truncated: false } })),
 });
 /** Choose the Cin7 supplier that holds `currency`, and "Manually estimated cost" (needs no date), as the Estimator would. */
