@@ -1,8 +1,8 @@
 // Shared test scaffolding for the Manager baseline exception (UX-006 S3).
 //
-// The golden / demo quotation has three systems with no Cin7 SKU: M75 and penning (Estimator-priced BY DESIGN, so a Manager's baseline exception can cover them) and an LED light
-// package that the Estimator merely typed a price for (so it can NOT be covered: it must be mapped). A fixture that wants to get a COSTED demo quotation approved therefore maps the
-// LED package in the library (`ledLibraryMapping`) and approves with the Manager's recorded exception (`managerExceptionOpts`).
+// The golden / demo quotation has two systems with no Cin7 SKU: M75 and penning (Estimator-priced BY DESIGN, so a Manager's baseline exception can cover them). The LED light package is
+// SKU-backed now (Sean 2026-11), so it needs no mapping; `ledLibraryMapping` is kept as a harmless extra that fixtures may still seed. A fixture that wants to get a COSTED demo quotation
+// approved approves with the Manager's recorded exception (`managerExceptionOpts`). A typed-price product with no Cin7 mapping (that cannot be covered) is the optional controller.
 import type { QuoteRecord } from "@/lib/newquip-quotes/quote-store";
 
 export const LED_MAPPED_SKU = "TEST-FORTIS-LED";
@@ -24,14 +24,20 @@ export const managerExceptionOpts = (q: Pick<QuoteRecord, "revision" | "draft_ha
  * golden quotation was sealed before the Manager exception existed. `buildAcceptedBaseline` now refuses to freeze such a quotation without the exception and a mapped LED package, so
  * this seals it with the golden library and then restores the unresolved scope (and a fresh seal). Only the scope differs from a real seal; nothing downstream reads `exceptions`.
  */
-import { buildAcceptedBaseline, deepFreeze, hashOf, type BaselineInput } from "@/newquip/quote/baseline";
+import { buildAcceptedBaseline, deepFreeze, hashOf, type BaselineCommercialLine, type BaselineInput } from "@/newquip/quote/baseline";
 import { buildPhysicalScope } from "@/newquip/quote/physical-scope";
 import { applyMappingLibrary, type LibraryMapping } from "@/lib/projects/product-scope";
 import { GOLDEN_LIBRARY } from "./golden-catalogue";
-export function sealWithUnresolvedScope(input: Omit<BaselineInput, "baselineException" | "mappingLibrary">, library?: ReadonlyMap<string, LibraryMapping>) {
+/**
+ * The LED package is SKU-backed now (HNQ7046 / HNQ7093 / HNQ7088, Sean 2026-11), so it is no longer an unresolved item. For fixtures ABOUT unresolved physical scope that need a THIRD
+ * unmapped, Estimator-priced product next to M75 and penning, `unmappedController: true` adds the optional controller (a typed price, no Cin7 mapping) to the PHYSICAL SCOPE ONLY: the commercial
+ * lines, prices and the contract amount are untouched.
+ */
+export const UNMAPPED_CONTROLLER_LINE: BaselineCommercialLine = { itemKey: "controller", label: "Thomas-CL1 controller (Estimator price, no Cin7 mapping)", sku: null, quantity: 2, unitPriceExVat: 3000, revenueCents: 600_000, pricedBy: "estimator_resolution", note: "" };
+export function sealWithUnresolvedScope(input: Omit<BaselineInput, "baselineException" | "mappingLibrary">, library?: ReadonlyMap<string, LibraryMapping>, opts: { unmappedController?: boolean } = {}) {
   const { baseline } = buildAcceptedBaseline({ ...input, mappingLibrary: GOLDEN_LIBRARY as never });
   const b = structuredClone(baseline) as typeof baseline;
-  const scope = buildPhysicalScope(b.commercial.lines);
+  const scope = buildPhysicalScope(opts.unmappedController ? [...b.commercial.lines, UNMAPPED_CONTROLLER_LINE] : b.commercial.lines);
   b.physicalScope = library && library.size ? applyMappingLibrary(scope, library, input.approvals.managerApprovedAt) : scope;
   delete b.exceptions;
   return { baseline: deepFreeze(b), hash: hashOf(b) };

@@ -40,7 +40,7 @@ const reviewedEntry = (over: Partial<SkuPricingInput> = {}): SkuPricingInput => 
   const e: SkuPricingInput = { supplierId: "sup-za", supplierName: "Fixture Components (Pty) Ltd", currency: "ZAR", nativeUnitCostE7: cost7("1000"), source: "Fixture supplier sheet", freight: { factorMicro: micro("1"), source: "Fixture" }, by: EST, at: AT, ...over };
   return { ...e, review: { by: REVIEWER, at: AT, evidence: "Supplier quote SQ-FIXTURE", inputHash: costInputHash(e) } };
 };
-/** The mapped component SKUs of the Estimator-priced packages (M75, penning, LED) are physical SKUs of the scope too: their costs are recorded and independently verified like any other. */
+/** The mapped component SKUs of the Estimator-priced packages (M75, penning) are physical SKUs of the scope too: their costs are recorded and independently verified like any other. (The LED package is SKU-backed now: HNQ7046 / HNQ7093 / HNQ7088 are catalogue SKUs costed by equivalentInputs; FIXTURE-LED is kept only because the golden library still seeds it.) */
 const COMPONENTS = ["FIXTURE-M75", "FIXTURE-PENNING", "FIXTURE-LED"] as const;
 const completePricing = (over: Partial<EstimatorPricing> = {}): EstimatorPricing => {
   const p = equivalentInputs(over, "verified");
@@ -167,13 +167,23 @@ describe("B. legacy behaviour is preserved where supplier pricing is not in use"
 });
 
 describe("C. nothing unverified, missing, stale or unrelated is ever treated as complete", () => {
-  it("Estimator-priced package components (M75 / penning / LED mapped SKUs) with NO cost of their own stay listed: the legacy reason names exactly them", async () => {
+  it("Estimator-priced package components (M75 / penning mapped SKUs) with NO cost of their own stay listed: the legacy reason names exactly them; the LED's SKU-backed components (HNQ7046 / HNQ7093 / HNQ7088) are covered by the catalogue costs", async () => {
     const d = noWaiver(withPricing(equivalentInputs({}, "verified"))); // verified costs for the catalogue SKUs only
     const id = await stored(d);
     await handoff(id, cents(d));
     const e = await err(signOff(id));
     expect(e).toMatch(SIGNOFF_BLOCKED);
-    expect(e).toMatch(/3 SKU\(s\) have no supplier cost selected \(FIXTURE-M75, FIXTURE-PENNING, FIXTURE-LED\)/);
+    expect(e).toMatch(/2 SKU\(s\) have no supplier cost selected \(FIXTURE-M75, FIXTURE-PENNING\)/);
+    expect(e).not.toMatch(/FIXTURE-LED|HNQ70/); // the LED needs no library mapping: its three confirmed SKUs are in the scope and carry catalogue costs
+  });
+  it("...and an LED component SKU WITHOUT a cost is named like any other scope SKU (the SKU-backed LED is not exempt from costing)", async () => {
+    const p = equivalentInputs({}, "verified"); delete p.skus.HNQ7093;
+    const d = noWaiver(withPricing(p));
+    const id = await stored(d);
+    await handoff(id, cents(d));
+    const e = await err(signOff(id));
+    expect(e).toMatch(SIGNOFF_BLOCKED);
+    expect(e).toMatch(/HNQ7093/);
   });
   it("a cost recorded for an UNRELATED SKU covers nothing in this quotation's scope", async () => {
     const p = equivalentInputs({}, "verified");
@@ -182,7 +192,7 @@ describe("C. nothing unverified, missing, stale or unrelated is ever treated as 
     const d = noWaiver(withPricing(p));
     const id = await stored(d);
     await handoff(id, cents(d));
-    expect(await err(signOff(id))).toMatch(/3 SKU\(s\) have no supplier cost selected/);
+    expect(await err(signOff(id))).toMatch(/2 SKU\(s\) have no supplier cost selected/);
   });
   it("a MISSING supplier cost leaves the quotation BLOCKED (never priced at zero) and nothing can be signed off", async () => {
     const p = completePricing(); delete p.skus.ERT053;

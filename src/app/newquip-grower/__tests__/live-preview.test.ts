@@ -5,7 +5,10 @@ import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
 import { canSeeCosts, resolveRoles } from "@/lib/approvals/role-store";
 import { createQuote, loadQuote, saveDraft } from "@/lib/newquip-quotes/quote-store";
-import { readyDraft } from "@/newquip/grower/__tests__/golden";
+import { readyDraft as plainReadyDraft } from "@/newquip/grower/__tests__/golden";
+import { onCurrentTemplate } from "@/newquip/grower/__tests__/current-template";
+// These quotations are created through the real action, so they are stored on the CURRENT template and the editing client holds that revision (a tab opened before a template change is refused).
+const readyDraft: typeof plainReadyDraft = (over) => onCurrentTemplate(plainReadyDraft(over));
 import { seedGoldenCatalogue } from "@/newquip/grower/__tests__/golden-catalogue";
 import { rolesFor } from "@/newquip/quote/roles";
 import * as actions from "../actions";
@@ -48,6 +51,20 @@ async function storedQuote() {
 }
 const KEY = "feed_saver_mat";
 const draftWith = (reason: string) => { const d = readyDraft(); d.config.exclusions = { [KEY]: reason } as never; return d; };
+
+describe("a stale Estimator tab cannot undo a template change", () => {
+  it("an Estimator save of a draft read under the other template revision is refused and writes nothing; a Rep-only save is unaffected", async () => {
+    asRoles("REP", "ESTIMATOR");
+    const id = await storedQuote(); // stored on the CURRENT template
+    const before = JSON.stringify(await loadQuote(db as never, ORG, id));
+    const stale = await actions.saveGrowerDraftAction(id, plainReadyDraft()); // a tab whose draft carries no revision (opened before the quotation moved)
+    expect(stale.ok).toBe(false);
+    expect(stale.error).toMatch(/moved to a different template since you opened it/);
+    expect(JSON.stringify(await loadQuote(db as never, ORG, id))).toBe(before);
+    asRoles("REP");
+    expect((await actions.saveGrowerDraftAction(id, plainReadyDraft())).ok).toBe(true);
+  });
+});
 
 describe("UAT-003 live preview versus Save", () => {
   it("the read-only preview applies a ticked exclusion at once, stores nothing, and does not touch the stored quote", async () => {

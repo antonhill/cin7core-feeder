@@ -93,7 +93,8 @@ export function applyDemoDefaults(current: QuoteDraft): DemoLoad {
     ...demo,
     // The customer the Rep selected is NOT part of the demonstration: it is kept exactly as it is (blank stays blank).
     customerName: current.customerName,
-    estimator: { ...demo.estimator, ...(current.estimator.costOverrides ? { costOverrides: structuredClone(current.estimator.costOverrides) } : {}) },
+    // The template revision belongs to the QUOTATION, not to the demonstration values: it is carried over (a demonstration load must not move a quotation between templates).
+    estimator: { ...demo.estimator, ...(current.estimator.templateRevision ? { templateRevision: current.estimator.templateRevision } : {}), ...(current.estimator.costOverrides ? { costOverrides: structuredClone(current.estimator.costOverrides) } : {}) },
   };
   return { draft, replaced };
 }

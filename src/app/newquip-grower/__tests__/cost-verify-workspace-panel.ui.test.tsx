@@ -12,6 +12,9 @@ import * as actions from "../pricing-actions";
 vi.mock("../pricing-actions", () => ({ getEstimatorPricingAction: vi.fn(), applyEstimatorPricingAction: vi.fn(), disableEstimatorPricingAction: vi.fn(), verifyEstimatorCostsAction: vi.fn(), attestEstimatorRatesAction: vi.fn(), recordManualPriceEvidenceAction: vi.fn() }));
 import { EstimatorPricingPanel } from "../[id]/EstimatorPricingPanel";
 
+// The quotation now carries three more SKUs (the confirmed LED parts), so each rendered workspace has more rows: these full-workspace tests take ~3-4s on a fast machine and exceeded the 5s default on the CI runners.
+vi.setConfig({ testTimeout: 20_000 });
+
 function bundle(p: EstimatorPricing, over: Partial<WorkspaceBundle> = {}, skipSku?: string): WorkspaceBundle {
   const pricing = { ...p, skus: { ...p.skus } };
   if (skipSku) delete pricing.skus[skipSku];

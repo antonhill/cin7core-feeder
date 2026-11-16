@@ -1,3 +1,4 @@
+import { keepServerOwnedTemplateRevision, stampNewQuotationRevision } from "./template-revision";
 import { approvedInPocMode, excludeUnverifiedScope, isPocQuote, keepServerOwnedPocFlag, pocPresentationEnabled } from "./poc-presentation";
 import "server-only";
 // NewQuip quotes — persistence orchestration. LOCAL ONLY: this module imports nothing from src/cin7 and never calls fetch
@@ -127,7 +128,8 @@ async function mustLoad(db: Db, orgId: string, quoteId: string): Promise<QuoteRe
 export async function createQuote(db: Db, orgId: string, email: string, submitted: QuoteDraft = emptyDraft(), opts: { pocPresentation?: boolean } = {}): Promise<{ id: string; quoteRef: string }> {
   // The POC flag is server-owned: whatever the caller's draft carries is discarded; only the server's own `opts.pocPresentation` (createGrowerQuoteAction, mode on) sets it.
   const stripped = keepServerOwnedPocFlag(submitted, null);
-  const draft = opts.pocPresentation === true ? { ...stripped, estimator: { ...stripped.estimator, pocPresentation: true as const } } : stripped;
+  const withPoc = opts.pocPresentation === true ? { ...stripped, estimator: { ...stripped.estimator, pocPresentation: true as const } } : stripped;
+  const draft = stampNewQuotationRevision(withPoc, opts.pocPresentation === true); // a NEW quotation is created under the current template; an existing one never moves by a save
   for (let attempt = 0; attempt < 3; attempt++) {
     const existing = await db.from("newquip_quotes").select("quote_ref").eq("org_id", orgId);
     if (existing.error) fail(existing.error.message);
@@ -155,11 +157,12 @@ export async function saveDraft(
    * `keepStoredPricing`: the SERVER-OWNED supplier pricing is taken from the row loaded HERE, not from the caller's (possibly older) copy of the draft. Every server writer that
    * clones a draft and then saves it passes this, so a pricing / verification revision that landed in between can never be overwritten by the older pricing it cloned.
    */
-  opts: { keepStoredPricing?: boolean } = {},
+  opts: { keepStoredPricing?: boolean; /** ONLY the explicit adoption action: lets the server-built draft move the quotation to the current template revision. */ adoptTemplateRevision?: boolean; /** The draft hash the caller decided on: the save is refused (nothing written) if the stored draft is not exactly that one. */ expectedDraftHash?: string } = {},
 ): Promise<{ draftHash: string; signoffCleared: boolean }> {
   const q = await mustLoad(db, orgId, quoteId);
+  if (opts.expectedDraftHash !== undefined && q.draft_hash !== opts.expectedDraftHash) fail("The quotation changed while you were editing; refresh and try again.");
   const named = authoritativeCustomerName ? { ...submitted, customerName: authoritativeCustomerName } : submitted;
-  const draft = keepServerOwnedPocFlag(opts.keepStoredPricing ? keepServerOwnedPricing(named, q.draft) : named, q.draft); // POC flag: ALWAYS the stored value, whoever saves
+  const draft = keepServerOwnedTemplateRevision(keepServerOwnedPocFlag(opts.keepStoredPricing ? keepServerOwnedPricing(named, q.draft) : named, q.draft), q.draft, opts.adoptTemplateRevision === true); // POC flag and template revision: ALWAYS the stored value, whoever saves (adoption excepted)
   if (!canEditDraft(roles, q.state)) fail(q.state === "MANAGER_APPROVED_FINAL" ? "The accepted quote is final and cannot be edited. Post-acceptance changes must be Variations." : "You do not have permission to edit this quote.");
   const draftHash = hashOf(draft);
   const changed = draftHash !== q.draft_hash;

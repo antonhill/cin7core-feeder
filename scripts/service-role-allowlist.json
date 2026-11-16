@@ -43,6 +43,7 @@
     "src/app/newquip-grower/document-actions.ts",
     "src/app/newquip-grower/mapping-actions.ts",
     "src/app/newquip-grower/supplier-actions.ts",
+    "src/app/newquip-grower/template-adoption-actions.ts",
     "src/app/newquip-grower/survey-actions.ts",
     "src/app/newquip-grower/template-actions.ts",
     "src/app/page.tsx",

@@ -1,7 +1,7 @@
 import { computeLine, computeQuote, type QuoteLineInput, type QuoteResult } from "@/lib/quote-margin";
 import { isOptionalItemKey } from "./types";
 import type { FeederVariant, GeneratedLine, GrowerItemKey, PenningPigSize } from "./types";
-import { estimatorPricedFor, feederSkuFor, isCatalogueDefaultItem, manualLinesFor, packageAutoConfirmable, packageFor, recommendedSkuFor, type PackageComponent } from "./commercial";
+import { TEMPLATE_REVISION_LEGACY, type TemplateRevision, alternativesFor, estimatorPricedFor, feederSkuFor, isCatalogueDefaultItem, manualLinesFor, packageAutoConfirmable, packageFor, recommendedSkuFor, type PackageComponent } from "./commercial";
 import { PENNING_RATE_PER_RM } from "./workbook-price-source";
 import { QUOTE_TYPE_BASIS, type PriceSource, type PriceSourceDescriptor, type QuoteType } from "./pricing-source";
 
@@ -126,6 +126,8 @@ export interface BudgetOptions {
   /** Output items whose package definition an estimator has confirmed. */
   confirmedPackages?: ReadonlySet<GrowerItemKey>;
   feederVariant?: FeederVariant;
+  /** The template revision the quotation was created under (default: the ORIGINAL template, so nothing that omits it can be re-scoped). */
+  templateRevision?: TemplateRevision;
   penningPigSize?: PenningPigSize | null;
   /** Estimator-entered ex-VAT delivery / installation / slat-delivery amounts. */
   estimatorCharges?: Partial<Record<ChargeKey, number | null>>;
@@ -251,7 +253,7 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
       continue;
     }
 
-    const pkg = packageFor(g.itemKey);
+    const pkg = packageFor(g.itemKey, opts.templateRevision ?? TEMPLATE_REVISION_LEGACY);
 
     // ---- M75: estimator-priced by design; the historic package is a reference only ----
     if (pkg?.estimatorPriced) {
@@ -304,7 +306,9 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
     const defaulted = !explicit && isCatalogueDefaultItem(g.itemKey) ? expected : null;
     const confirmed = explicit ?? defaulted;
     // pvc_door and the optional additional elements have no recommended SKU: the estimator's confirmed Cin7 choice IS the SKU. Everything else must be the expected one.
-    const sku = g.itemKey === "pvc_door" || isOptionalItemKey(g.itemKey) ? confirmed : confirmed && confirmed === expected ? confirmed : null;
+    // An item's expected product, or one of the alternatives NewQuip said are included for that SAME item (an Estimator choice: it replaces the item's product, it is never an extra line).
+    const isAlternative = !!confirmed && alternativesFor(g.itemKey).some((a) => a.sku === confirmed);
+    const sku = g.itemKey === "pvc_door" || isOptionalItemKey(g.itemKey) ? confirmed : confirmed && (confirmed === expected || isAlternative) ? confirmed : null;
     if (!sku) {
       fail({ ...emptyLine(g), status: "unmapped", reason: confirmed && expected ? `Confirmed ${confirmed} does not match the expected ${expected}.` : "Product mapping not yet confirmed." }, `${g.label}: product mapping ${expected ? `to ${expected} ` : ""}not confirmed`);
       continue;

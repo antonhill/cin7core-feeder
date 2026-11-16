@@ -129,7 +129,11 @@ describe("F-12 Solution Builder disabled controls say why", () => {
     const ret = screen.getByRole("button", { name: /Return to rep/ }) as HTMLButtonElement;
     expect(ret.disabled).toBe(true);
     expect(described(ret)).toMatch(/enter the reason for returning it/);
-    expect(screen.getByText(/Waiting for the Estimator/)).toBeTruthy();
+    // The status banner says it once. Since the LED package is SKU-backed (nothing blocks on a missing mapping), the Manager's recorded-exception control is on screen too and repeats the reason
+    // as ITS OWN disabled reason: that second sentence belongs to a different button.
+    const waiting = screen.getAllByText(/Waiting for the Estimator/);
+    expect(waiting.filter((n) => n.closest('[role="status"]'))).toHaveLength(1);
+    expect(waiting.length).toBeLessThanOrEqual(2);
     fireEvent.change(screen.getByLabelText(/Return to rep/), { target: { value: "Price wrong" } });
     expect(ret.disabled).toBe(false);
     expect(ret.getAttribute("aria-describedby")).toBeNull();

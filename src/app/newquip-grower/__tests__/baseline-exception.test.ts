@@ -263,16 +263,20 @@ describe("it waives ONLY the listed Estimator-priced systems", () => {
   });
   it("the cost exception does NOT waive a genuinely unmapped package (a typed price on a product with no Cin7 SKU), even with the Manager's exception", async () => {
     as(true);
-    db.rows("newquip_package_mappings").length = 0; // the LED package is unmapped again: the Estimator typed a price for it
+    // The LED package is SKU-backed now (HNQ7046 / HNQ7093 / HNQ7088), so the genuinely unmapped, Estimator-typed-price product is the optional controller: selected, priced, no Cin7 mapping.
+    quote().draft.config.optionalEquipment = { ...quote().draft.config.optionalEquipment, controller: true };
+    quote().draft.config.estimatorQuantities = { ...quote().draft.config.estimatorQuantities, controller: 2 };
+    quote().draft.estimator.priceResolutions = { ...quote().draft.estimator.priceResolutions, controller: { unitPriceExVat: 3000, reason: "Estimator price; no Cin7 product chosen" } };
+    quote().customer_confirmed_cents = Math.round(evaluateDraft(quote().draft, { ...ctx, withholdCost: true }).budget!.totals.subtotalExTax * 100); // the Rep's confirmed amount follows the added controller
     quote().draft.estimator.costBasis = { incompleteAccepted: costException };
     const v = (await grower.getGrowerQuoteAction("q1")).data!;
     expect(v.baselineException?.baselineExceptionRequired).toBe(false);
-    expect(v.baselineException?.otherBlockers.join(" ")).toMatch(/LED/);
+    expect(v.baselineException?.otherBlockers.join(" ")).toMatch(/controller/i);
     // D-19: the view NAMES the non-waivable item (labels + pricing route only) so the Manager checklist can show it and disable plain Approve
-    expect(v.baselineException?.blocking).toEqual([{ label: expect.stringMatching(/LED/), pricedBy: "estimator_resolution" }]);
+    expect(v.baselineException?.blocking).toEqual([{ label: expect.stringMatching(/controller/i), pricedBy: "estimator_resolution" }]);
     const before = snapshot();
     // ... and the server refusal names it too, saying an exception cannot cover it
-    expect((await grower.approveGrowerQuoteAction("q1")).error).toMatch(/3 package\(s\) are not mapped to Cin7 SKUs \(.*LED.*\).*need an active library mapping/);
+    expect((await grower.approveGrowerQuoteAction("q1")).error).toMatch(/3 package\(s\) are not mapped to Cin7 SKUs \(.*controller.*\).*need an active library mapping/i);
     expect((await grower.approveGrowerQuoteAction("q1", { baselineException: req() })).error).toMatch(/cannot cover everything still unresolved/);
     expect(snapshot()).toBe(before);
   });

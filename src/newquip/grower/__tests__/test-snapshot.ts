@@ -25,6 +25,7 @@ export const TEST_SNAPSHOT: PriceSnapshot = {
     e("QCA00003", 20, 1, 1.2, 1.4), e("NQ1380", 15, 1, 1.2, 1.4), e("NQ2784", 5, 1, 1.2, 1.4), e("NQ2886", 12, 1, 1.2, 1.4),
     e("NQ1386", 2, 1, 1.2, 1.4), e("NYNUT", 1, 1, 1.2, 1.4), e("NQ1017", 1, 1, 1.2, 1.4),
     e("NQ2114", 800, 1, 1.2, 1.4),
+    e("HNQ7046", 300, 1, 1.2, 1.4), e("HNQ7088", 10, 1, 1.2, 1.4), e("HNQ7093", 6, 1, 1.2, 1.4), // the Grower LED (Sean 2026-11): luminaire, cable, clip
     e("NQ3132", 0, 1, 1, 1, 0), // the Master shows Retail 0 for NQ3132
   ].map((x) => [x.sku, x])),
 };

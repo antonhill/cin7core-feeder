@@ -22,7 +22,7 @@ import { CCM_FEEDER_CAPACITY_PIGS } from "@/newquip/grower/rules";
 import { buildCustomerSummary } from "@/newquip/grower/customer-summary";
 import { READINESS_LABEL, type ReadinessCategory, type ReadinessState } from "@/newquip/grower/readiness";
 import { expectedSkuFor } from "@/newquip/grower/quote-bridge";
-import { isCatalogueDefaultItem, packageFor, manualSelectionSkusFor } from "@/newquip/grower/commercial";
+import { alternativesFor, isCatalogueDefaultItem, packageFor, manualSelectionSkusFor, templateRevisionOf, TEMPLATE_REVISION_LEGACY } from "@/newquip/grower/commercial";
 import { ROOMS_HELP, VENTILATION_SCOPE_STATUS } from "@/newquip/grower/open-items";
 import { QUOTE_TYPE_LABEL, QUOTE_TYPE_NEUTRAL, neutralPriceText, type QuoteType } from "@/newquip/grower/pricing-source";
 import { DEMO_DEFAULTS_SOURCE, RECOMMENDED_CONFIG_FILLS, SAMPLE_MEASUREMENTS_FILLS, applyDemoDefaults, applyMeasurementsSample, applyRecommendedConfiguration, hasEntries, hasEquipmentEntries, hasMeasurementEntries } from "@/newquip/grower/demo-defaults";
@@ -99,6 +99,9 @@ import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
 import { ApprovalHistory } from "@/components/ApprovalHistory";
 import { getDocumentApprovalAction } from "@/app/approvals/actions";
 import { DisabledReason } from "@/components/ApprovalDisabledReason";
+import { PenningScopePanel } from "./PenningScopePanel";
+import { TemplateRevisionPanel } from "./TemplateRevisionPanel";
+import { penningScope } from "@/newquip/grower/penning";
 import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/billing-schedule";
 
 // NewQuip Grower quote editor, in six stages: 1 Configuration → 2 Costing & Estimator Review → 3 Manager Approval → 4 Customer Quotation → 5 Customer Acceptance → 6 Project Handover.
@@ -720,8 +723,10 @@ export default function QuoteEditorPage() {
     for (const l of ev.calc.lines) {
       if (l.basis === "not_selected") continue;
       const sku = expectedSkuFor(l.itemKey, d.config.feederVariant);
-      if (sku && l.itemKey !== "pvc_door") d.estimator.confirmedMappings[l.itemKey] = sku;
-      if (packageFor(l.itemKey) && !packageFor(l.itemKey)!.estimatorPriced && !d.estimator.confirmedPackages.includes(l.itemKey)) d.estimator.confirmedPackages.push(l.itemKey);
+      const chosen = d.estimator.confirmedMappings[l.itemKey];
+      const keepAlternative = !!chosen && alternativesFor(l.itemKey).some((x) => x.sku === chosen); // an approved alternative the Estimator chose is not overwritten by "confirm source-backed"
+      if (sku && l.itemKey !== "pvc_door" && !keepAlternative) d.estimator.confirmedMappings[l.itemKey] = sku;
+      if (packageFor(l.itemKey, templateRevisionOf(d)) && !packageFor(l.itemKey, templateRevisionOf(d))!.estimatorPriced && !d.estimator.confirmedPackages.includes(l.itemKey)) d.estimator.confirmedPackages.push(l.itemKey);
     }
   });
   const repSummary = (
@@ -1294,7 +1299,7 @@ export default function QuoteEditorPage() {
               <ul className="mt-3 space-y-2 text-sm">
                 {ev.calc.lines.filter((l) => l.basis !== "not_selected").map((l) => {
                   const exp = expectedSkuFor(l.itemKey, cfg.feederVariant);
-                  const pkg = packageFor(l.itemKey);
+                  const pkg = packageFor(l.itemKey, templateRevisionOf(draft));
                   const confirmed = draft.estimator.confirmedMappings[l.itemKey];
                   const door = l.itemKey === "pvc_door";
                   if (l.itemKey === "penning_package" || pkg?.estimatorPriced) return null;
@@ -1304,7 +1309,7 @@ export default function QuoteEditorPage() {
                       {door ? (
                         <select aria-label="Door product" value={confirmed ?? ""} onChange={(e) => edit((d) => { if (e.target.value) d.estimator.confirmedMappings.pvc_door = e.target.value; else delete d.estimator.confirmedMappings.pvc_door; })} className="h-11 rounded-md border border-slate-300 bg-white px-2 text-sm">
                           <option value="">Select door product…</option>
-                          {manualSelectionSkusFor("pvc_door").map((s) => <option key={s} value={s}>{s}</option>)}
+                          {manualSelectionSkusFor("pvc_door", templateRevisionOf(draft)).map((s) => <option key={s} value={s}>{s}</option>)}
                         </select>
                       ) : isOptionalItemKey(l.itemKey) ? (
                         confirmed ? <Status tone="success">Mapped to {confirmed}</Status> : <Status tone="warning">Not chosen - choose the product in the Line decisions table above</Status>
@@ -1319,6 +1324,10 @@ export default function QuoteEditorPage() {
                 })}
               </ul>
             </Panel>
+
+            {ev.calc.lines.some((l) => l.itemKey === "penning_package" && l.basis !== "not_selected") && <PenningScopePanel scope={penningScope(cfg)} />}
+
+            {isEstimator && !final && templateRevisionOf(draft) === TEMPLATE_REVISION_LEGACY && <TemplateRevisionPanel quoteId={id} disabled={dirty} onAdopted={reloadQuote} />}
 
             {(budget?.lines ?? []).some((b) => ["unmapped", "not_in_price_source", "supplier_quote_required", "package_unconfirmed", "package_incomplete"].includes(b.status) || b.pricedBy === "estimator_resolution") && (
               <Panel>

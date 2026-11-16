@@ -34,6 +34,7 @@ import { returnInfoForViewer, type ReturnInfo } from "@/newquip/quote/return-inf
 import { appendSnapshot, customerFeaturesAvailable, latestSnapshot } from "@/lib/newquip-quotes/customer-store";
 import { fieldValue } from "@/lib/newquip-quotes/customer-snapshot";
 import { reconcileConfirmationAmount, resyncApprovalsLogged } from "@/lib/newquip-quotes/confirmation-reconcile";
+import { keepServerOwnedTemplateRevision, staleTemplateRefusal } from "@/lib/newquip-quotes/template-revision";
 import { assertConfirmationCurrent, assertNameMatchesSnapshot } from "@/lib/newquip-quotes/confirmation-guard";
 import { keepServerOwnedCostBasis, keepServerOwnedCosts, redactEvaluationFinancials, redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
 import { isPocQuote, keepServerOwnedPocFlag, pocPresentationEnabled, seedPocEstimator, POC_BASELINE_REASON } from "@/lib/newquip-quotes/poc-presentation";
@@ -214,7 +215,7 @@ async function sanitiseSubmittedDraft(a: Actor, db: ReturnType<typeof createServ
   d = { ...d, estimator: { ...d.estimator, priceResolutions: stampPriceResolutions(d.estimator.priceResolutions, prior?.estimator.priceResolutions, a.roles, a.email, nowIso) as QuoteDraft["estimator"]["priceResolutions"] } };
   const stamped = keepServerOwnedCostBasis(keepServerOwnedCosts(stampCostOverrides(d, prior?.estimator.costOverrides, a.canSeeCost, a.email, nowIso), prior?.estimator.physicalCosts), prior?.estimator.costBasis);
   // Last line of defence (field ownership): a caller without Estimator / Manager authority can never change an Estimator-owned field, whatever the checks above did.
-  const owned = keepServerOwnedPocFlag(keepServerOwnedPricing(keepEstimatorOwnedFields(stamped, prior, a.roles), prior), prior); // the POC flag is server-owned: the stored value, never the client's // NQ-008B Phase 2: supplier pricing is changed only by its own action
+  const owned = keepServerOwnedTemplateRevision(keepServerOwnedPocFlag(keepServerOwnedPricing(keepEstimatorOwnedFields(stamped, prior, a.roles), prior), prior), prior); // the POC flag is server-owned: the stored value, never the client's // NQ-008B Phase 2: supplier pricing is changed only by its own action
   // NQ-008A: after the handoff, who changed each price-affecting input and when is decided HERE (never by the client) and stored in the same save.
   return stampChanges(owned, prior, { state: at?.state ?? "REP_DRAFT", revision: at?.revision ?? 1, email: a.email, nowIso });
 }
@@ -333,6 +334,8 @@ export async function saveGrowerDraftAction(quoteId: string, draft: QuoteDraft):
     const prior = await loadQuote(db, a.orgId, quoteId);
     // Once the quotation has a Cin7 customer snapshot, the snapshot is the ONLY source of the customer name: a typed or edited name in the submitted draft is replaced by it.
     const snapName = (await customerFeaturesAvailable(db)) ? fieldValue((await latestSnapshot(db, a.orgId, quoteId))?.snapshot.name ?? { state: "missing" }) : null;
+    const stale = staleTemplateRefusal(hasAny(a.roles, ["estimator", "manager"]), draft, prior?.draft); // a stale Estimator tab must never undo a template change
+    if (stale) throw new Error(stale);
     const priorHash = prior?.draft_hash; // read now (D-12, #195): a store that updates the row it handed out in place must not change what "before" means
     const saved = await saveDraft(db, a.orgId, a.roles, quoteId, await sanitiseSubmittedDraft(a, db, draft, prior?.draft, prior ? { state: prior.state, revision: prior.revision } : undefined), snapName, { keepStoredPricing: true });
     // Changed content invalidates the estimator's sign-off (saveDraft clears it) and any open approval of the older content: the quote goes back to estimator review.

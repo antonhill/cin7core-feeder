@@ -5,7 +5,10 @@ import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
 import { createQuote, saveDraft, sendToEstimator, estimatorSignOff } from "@/lib/newquip-quotes/quote-store";
-import { readyDraft } from "@/newquip/grower/__tests__/golden";
+import { readyDraft as plainReadyDraft } from "@/newquip/grower/__tests__/golden";
+import { onCurrentTemplate } from "@/newquip/grower/__tests__/current-template";
+// These quotations are created through the real action, so they are stored on the CURRENT template and the editing client holds that revision (a tab opened before a template change is refused).
+const readyDraft: typeof plainReadyDraft = (over) => onCurrentTemplate(plainReadyDraft(over));
 import { testPriceSource } from "@/newquip/grower/__tests__/test-snapshot";
 import { rolesFor } from "@/newquip/quote/roles";
 import * as actions from "../actions";

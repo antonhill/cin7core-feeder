@@ -13,6 +13,8 @@ import type { QuoteEvaluation } from "@/newquip/grower/evaluate";
 import type { GrowerItemKey } from "@/newquip/grower/types";
 import type { BadgeTone } from "@/components/ui/Badge";
 import { ProductMappingPicker } from "./ProductMappingPicker";
+import { AlternativeProductChoice } from "./AlternativeProductChoice";
+import { expectedSkuFor } from "@/newquip/grower/quote-bridge";
 import { fmtZar, NumField, TextField } from "../fields";
 
 // The Rep's configuration sections, shared by Stage 1 (step 3 "Equipment & options": Quantities, Charges & assumptions, Exclusions) and by Stage 2 once the quotation is with the
@@ -92,6 +94,12 @@ export function LineDecisionsTable({ draft, ev, edit, roles, editable, mode, qua
                 ) : mapControl === "chooser" ? (
                   <div className="min-w-[280px]" data-testid={`mapping-chooser-${l.itemKey}`}>
                     <ProductMappingPicker label={l.label} value={draft.estimator.confirmedMappings[l.itemKey]}
+                      onChange={(sku) => edit((d) => { if (sku) d.estimator.confirmedMappings[l.itemKey] = sku; else delete d.estimator.confirmedMappings[l.itemKey]; })} />
+                  </div>
+                ) : mapControl === "alternative" ? (
+                  <div className="min-w-[280px]">
+                    <div>{b?.sku ?? "—"}</div>
+                    <AlternativeProductChoice itemKey={k} standardSku={expectedSkuFor(k, cfg.feederVariant) ?? undefined} value={draft.estimator.confirmedMappings[l.itemKey]}
                       onChange={(sku) => edit((d) => { if (sku) d.estimator.confirmedMappings[l.itemKey] = sku; else delete d.estimator.confirmedMappings[l.itemKey]; })} />
                   </div>
                 ) : mapControl === "waiting_for_estimator" && !b?.sku ? <span className="text-amber-800">Awaiting an Estimator to choose the Cin7 product.</span> : b?.sku ?? (b?.pricedBy === "penning_rate" ? "Pig-size / running-metre basis" : b?.pricedBy === "estimator_input" ? "Estimator-priced system" : b?.pricedBy === "estimator_resolution" ? "Estimator-resolved" : "—")}</td>

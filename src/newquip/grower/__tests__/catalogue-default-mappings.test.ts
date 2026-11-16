@@ -50,7 +50,7 @@ describe("explicit confirmations stay authoritative and validated", () => {
     expect(l).toMatchObject({ status: "priced", sku: "SYSH-2750-3", mappingSource: "estimator" });
   });
   it("an explicit confirmation of a DIFFERENT product is refused, not silently replaced by the default", () => {
-    const d = none(); d.estimator.confirmedMappings = { bulk_tank: "SYSH-2750-4" };
+    const d = none(); d.estimator.confirmedMappings = { bulk_tank: "SYSH-2750-9" }; // not the default and not an approved alternative (SYSH-2750-4 is, since Sean's 2026-11 answer)
     expect(line(d, "bulk_tank")).toMatchObject({ status: "unmapped", sku: null });
     expect(line(d, "bulk_tank").reason).toMatch(/does not match the expected SYSH-2750-3/);
   });
@@ -67,9 +67,9 @@ describe("only the named established items default; everything ambiguous keeps a
     expect(all.filter((k) => isCatalogueDefaultItem(k as never)).sort()).toEqual(Object.keys(DEFAULTS).sort());
   });
   it("cup drinker is NOT auto-confirmed (a later source disputes which representation prices it); LED, M75 and penning are not either", () => {
-    expect(packageAutoConfirmable(packageFor("cup_drinker"))).toBe(false);
-    expect(packageAutoConfirmable(packageFor("led_light"))).toBe(false);
-    expect(packageAutoConfirmable(packageFor("flex_auger"))).toBe(false);
+    expect(packageAutoConfirmable(packageFor("cup_drinker", "grower-2026-11"))).toBe(false);
+    expect(packageAutoConfirmable(packageFor("led_light", "grower-2026-11"))).toBe(false);
+    expect(packageAutoConfirmable(packageFor("flex_auger", "grower-2026-11"))).toBe(false);
     expect(packageAutoConfirmable(undefined)).toBe(false);
     expect(line(none(), "cup_drinker")).toMatchObject({ status: "package_unconfirmed" });
     const noRes = none(); noRes.estimator.priceResolutions = {};

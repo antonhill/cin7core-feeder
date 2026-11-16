@@ -11,6 +11,7 @@ import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { emptyDraft } from "@/newquip/grower/draft";
 import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
 import { withAcceptedIncompleteCosting } from "@/newquip/grower/__tests__/golden";
+import { onCurrentTemplate } from "@/newquip/grower/__tests__/current-template";
 import { sealWithUnresolvedScope } from "@/newquip/grower/__tests__/baseline-exception-fixture";
 import { baselineMatchesHash, commercialLinesOf } from "@/newquip/quote/baseline";
 import { buildPhysicalScope } from "@/newquip/quote/physical-scope";
@@ -46,6 +47,15 @@ describe("reusable mappings are applied while the solution is configured (Soluti
     const qty = Object.fromEntries(v.saleLines.filter((l) => l.sku.startsWith("TEST-")).map((l) => [l.sku, l.quantity]));
     expect(qty).toEqual({ "TEST-M75-SYSTEM": 12, "TEST-M75-AUGER": 36, "TEST-M75-MOTOR": 24, "TEST-PEN-ROLL": 12, "TEST-PEN-POST": 120, "TEST-FORTIS-LED": 456, "TEST-FORTIS-MOUNT": 456, "TEST-FORTIS-CABLE": 912 });
     expect(v.items.find((i) => i.id === "penning_package:UNMAPPED")).toMatchObject({ state: "FROM_LIBRARY", mappingRef: { packageKey: "penning_package", version: 1 } });
+  });
+  it("legacy vs current template, same quotation: the ORIGINAL LED is a third unresolved package (3); the current SKU-backed LED expands to HNQ7046 / HNQ7093 / HNQ7088 and only M75 + penning are unresolved (2)", () => {
+    const legacy = quoteScopeView({ finalBaseline: null, evaluation: ev, library: null, now: AT });
+    expect(legacy.unresolvedCount).toBe(3);
+    expect(legacy.items.filter((i) => i.state === "UNRESOLVED").map((i) => i.id).sort()).toEqual(["flex_auger:UNMAPPED", "led_light:UNMAPPED", "penning_package:UNMAPPED"]);
+    const cur = quoteScopeView({ finalBaseline: null, evaluation: evaluateDraft(onCurrentTemplate(draft), ctx(true)), library: null, now: AT });
+    expect(cur.unresolvedCount).toBe(2);
+    expect(cur.items.filter((i) => i.state === "UNRESOLVED").map((i) => i.id).sort()).toEqual(["flex_auger:UNMAPPED", "penning_package:UNMAPPED"]);
+    expect(Object.fromEntries(cur.saleLines.filter((l) => l.sku.startsWith("HNQ")).map((l) => [l.sku, l.quantity]))).toEqual({ HNQ7046: 456, HNQ7093: 1368, HNQ7088: 456 });
   });
   it("4+5: a Cin7 assembly is ONE Sales Order line (never expanded); a separately supplied accessory is its own valid line; both quantities are exact", () => {
     const v = quoteScopeView({ finalBaseline: null, evaluation: ev, library: FULL, now: AT });

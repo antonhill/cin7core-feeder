@@ -7,7 +7,10 @@ import { canSeeCosts, resolveRoles } from "@/lib/approvals/role-store";
 import { createQuote, estimatorSignOff, loadQuote, saveDraft, sendToEstimator } from "@/lib/newquip-quotes/quote-store";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { expectedSkuFor } from "@/newquip/grower/quote-bridge";
-import { readyDraft } from "@/newquip/grower/__tests__/golden";
+import { readyDraft as plainReadyDraft } from "@/newquip/grower/__tests__/golden";
+import { onCurrentTemplate } from "@/newquip/grower/__tests__/current-template";
+// These quotations are created through the real action, so they are stored on the CURRENT template and the editing client holds that revision (a tab opened before a template change is refused).
+const readyDraft: typeof plainReadyDraft = (over) => onCurrentTemplate(plainReadyDraft(over));
 import { seedGoldenCatalogue } from "@/newquip/grower/__tests__/golden-catalogue";
 import { testPriceSource } from "@/newquip/grower/__tests__/test-snapshot";
 import { rolesFor } from "@/newquip/quote/roles";
