@@ -56,17 +56,28 @@ export async function adoptTemplateRevisionAction(quoteId: string, input: { reas
     if (typeof input.acknowledgedTotalExVat !== "number" || Math.round(input.acknowledgedTotalExVat * 100) !== Math.round(shown * 100)) return { ok: false, error: "The acknowledged total does not match the impact now computed. Review it again." };
 
     const next = adoptedDraft(q.draft, { confirmNewLedPackage: confirm });
-    const saved = await saveDraft(db, a.orgId, a.roles, quoteId, next, null, { keepStoredPricing: true, adoptTemplateRevision: true }); // compare-and-set on the draft hash; withdraws an existing sign-off
-    // The quotation's content changed: a customer confirmation of the OLD amount no longer applies. Withdraw it and, from estimator review, return the quotation to the Rep as a new revision to reconfirm.
     const who = { orgId: a.orgId, userId: a.userId, email: a.email, isAdmin: a.tier === "admin", demo: a.demo };
-    const effect = await invalidateConfirmation(db, a.orgId, quoteId, returnByOf(a), undefined, { kind: "AMOUNT_CHANGED", newCents: Math.round(shown * 100) });
-    const syncErr = await resyncApprovalsLogged(db, who, quoteId, { returnedToRep: effect.returnedToRep, signoffCleared: effect.signoffCleared || saved.signoffCleared }).catch(() => null);
+    // ORDER MATTERS (the safe direction first). 1) Withdraw the customer's confirmation of the OLD amount (compare-and-set on state, revision and amount; from estimator review the quotation returns to the
+    // Rep as a new revision). If that fails nothing has changed. 2) Move the template, compare-and-set on the EXACT draft hash the Estimator reviewed. If THAT fails after step 1, the quotation is on its
+    // original template with the confirmation withdrawn: a conservative, visible, audited state, never a moved template with a live confirmation.
+    const hadConfirmation = q.customer_confirmed_cents != null || q.customer_confirmed_by != null;
+    const effect = hadConfirmation ? await invalidateConfirmation(db, a.orgId, quoteId, returnByOf(a), { cents: q.customer_confirmed_cents, revision: q.revision }, { kind: "AMOUNT_CHANGED", newCents: Math.round(shown * 100) }) : { returnedToRep: false, signoffCleared: false, confirmationCleared: false };
+    let saved: { draftHash: string; signoffCleared: boolean };
+    try {
+      saved = await saveDraft(db, a.orgId, a.roles, quoteId, next, null, { keepStoredPricing: true, adoptTemplateRevision: true, expectedDraftHash: input.expectedDraftHash });
+    } catch (e) {
+      await auditActor(db, a, { action: "newquip.template_revision_adoption_failed", summary: `Template adoption for ${q.quote_ref} FAILED after the customer confirmation was withdrawn: the quotation is still on ${impact.from} (local only)`, detail: { quoteId, from: impact.from, reason: input.reason.trim(), confirmationWithdrawn: effect.confirmationCleared, returnedToRep: effect.returnedToRep, error: errText(e) } }).catch(() => undefined);
+      return { ok: false, error: `${errText(e)} The quotation was NOT moved to the current template${effect.confirmationCleared ? "; the customer's confirmation was withdrawn, so the Rep must reconfirm the amount" : ""}.` };
+    }
+    const signoffCleared = saved.signoffCleared || effect.signoffCleared;
     const after = await loadQuote(db, a.orgId, quoteId);
     await auditActor(db, a, {
       action: "newquip.template_revision_adopted",
       summary: `Moved NewQuip quote ${q.quote_ref} from template ${impact.from} to ${impact.to} (local only; no Cin7 write)`,
-      detail: { quoteId, from: impact.from, to: impact.to, reason: input.reason.trim(), confirmedNewLedPackage: confirm, totalBeforeExVat: impact.totals.before.exVat, totalAfterExVat: shown, ledBefore: impact.led.before?.components.map((c) => [c.sku, c.quantity]) ?? null, ledAfter: (confirm ? impact.led.afterConfirmed : impact.led.afterUnconfirmed)?.components.map((c) => [c.sku, c.quantity]) ?? null, confirmationWithdrawn: effect.confirmationCleared, signoffCleared: saved.signoffCleared || effect.signoffCleared, returnedToRep: effect.returnedToRep, ...(syncErr ? { approvalSyncError: syncErr } : {}) },
+      detail: { quoteId, from: impact.from, to: impact.to, reason: input.reason.trim(), confirmedNewLedPackage: confirm, totalBeforeExVat: impact.totals.before.exVat, totalAfterExVat: shown, ledBefore: impact.led.before?.components.map((c) => [c.sku, c.quantity]) ?? null, ledAfter: (confirm ? impact.led.afterConfirmed : impact.led.afterUnconfirmed)?.components.map((c) => [c.sku, c.quantity]) ?? null, confirmationWithdrawn: effect.confirmationCleared, signoffCleared, returnedToRep: effect.returnedToRep },
     });
-    return { ok: true, data: { revision: after?.revision ?? q.revision, returnedToRep: effect.returnedToRep, confirmationWithdrawn: effect.confirmationCleared, signoffCleared: saved.signoffCleared || effect.signoffCleared, totalExVat: shown, totalComplete: (confirm ? impact.totals.afterConfirmed : impact.totals.afterUnconfirmed).complete } };
+    const syncErr = await resyncApprovalsLogged(db, who, quoteId, { returnedToRep: effect.returnedToRep, signoffCleared }).catch(() => null);
+    void syncErr;
+    return { ok: true, data: { revision: after?.revision ?? q.revision, returnedToRep: effect.returnedToRep, confirmationWithdrawn: effect.confirmationCleared, signoffCleared, totalExVat: shown, totalComplete: (confirm ? impact.totals.afterConfirmed : impact.totals.afterUnconfirmed).complete } };
   } catch (e) { return { ok: false, error: errText(e) }; }
 }

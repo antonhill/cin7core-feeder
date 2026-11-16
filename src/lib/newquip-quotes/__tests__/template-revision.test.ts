@@ -5,7 +5,7 @@ import { readyDraft } from "@/newquip/grower/__tests__/golden";
 import { hashOf } from "@/newquip/quote/baseline";
 import { rolesFor } from "@/newquip/quote/roles";
 import { createQuote, loadQuote, saveDraft } from "../quote-store";
-import { keepServerOwnedTemplateRevision, stampNewQuotationRevision } from "../template-revision";
+import { keepServerOwnedTemplateRevision, stampNewQuotationRevision, staleTemplateRefusal } from "../template-revision";
 
 vi.mock("server-only", () => ({}));
 const ORG = "org-nq";
@@ -72,5 +72,26 @@ describe("the template revision is server-owned", () => {
     const after = (await loadQuote(db as never, ORG, id))!;
     expect(after.draft_hash).toBe(before.draft_hash);
     expect(after.draft).toEqual(before.draft);
+  });
+
+  it("a save bound to the draft hash the caller decided on is refused, and writes nothing, when the stored draft has moved", async () => {
+    const id = await legacyQuote();
+    const decidedOn = String((await loadQuote(db as never, ORG, id))!.draft_hash); // a copy: the fake store updates rows in place
+    const d = readyDraft(); d.siteName = "moved on";
+    await saveDraft(db as never, ORG, rolesFor("member"), id, d); // another writer gets in first
+    const before = JSON.stringify(db.tables.newquip_quotes);
+    const next = readyDraft(); next.estimator.templateRevision = "grower-2026-11";
+    await expect(saveDraft(db as never, ORG, rolesFor("member"), id, next, null, { adoptTemplateRevision: true, expectedDraftHash: decidedOn })).rejects.toThrow(/changed while you were editing/);
+    expect(JSON.stringify(db.tables.newquip_quotes)).toBe(before);
+  });
+  it("a stale Estimator tab (read under the other template) cannot save; a Rep and a matching tab can", () => {
+    const cur = readyDraft(); cur.estimator.templateRevision = "grower-2026-11";
+    const old = readyDraft();
+    expect(staleTemplateRefusal(true, old, cur)).toMatch(/moved to a different template/);
+    expect(staleTemplateRefusal(true, cur, old)).toMatch(/moved to a different template/);
+    expect(staleTemplateRefusal(true, cur, cur)).toBeNull();
+    expect(staleTemplateRefusal(true, old, old)).toBeNull();
+    expect(staleTemplateRefusal(false, old, cur)).toBeNull();
+    expect(staleTemplateRefusal(true, old, null)).toBeNull();
   });
 });

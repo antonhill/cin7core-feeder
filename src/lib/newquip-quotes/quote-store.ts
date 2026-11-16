@@ -157,9 +157,10 @@ export async function saveDraft(
    * `keepStoredPricing`: the SERVER-OWNED supplier pricing is taken from the row loaded HERE, not from the caller's (possibly older) copy of the draft. Every server writer that
    * clones a draft and then saves it passes this, so a pricing / verification revision that landed in between can never be overwritten by the older pricing it cloned.
    */
-  opts: { keepStoredPricing?: boolean; /** ONLY the explicit adoption action: lets the server-built draft move the quotation to the current template revision. */ adoptTemplateRevision?: boolean } = {},
+  opts: { keepStoredPricing?: boolean; /** ONLY the explicit adoption action: lets the server-built draft move the quotation to the current template revision. */ adoptTemplateRevision?: boolean; /** The draft hash the caller decided on: the save is refused (nothing written) if the stored draft is not exactly that one. */ expectedDraftHash?: string } = {},
 ): Promise<{ draftHash: string; signoffCleared: boolean }> {
   const q = await mustLoad(db, orgId, quoteId);
+  if (opts.expectedDraftHash !== undefined && q.draft_hash !== opts.expectedDraftHash) fail("The quotation changed while you were editing; refresh and try again.");
   const named = authoritativeCustomerName ? { ...submitted, customerName: authoritativeCustomerName } : submitted;
   const draft = keepServerOwnedTemplateRevision(keepServerOwnedPocFlag(opts.keepStoredPricing ? keepServerOwnedPricing(named, q.draft) : named, q.draft), q.draft, opts.adoptTemplateRevision === true); // POC flag and template revision: ALWAYS the stored value, whoever saves (adoption excepted)
   if (!canEditDraft(roles, q.state)) fail(q.state === "MANAGER_APPROVED_FINAL" ? "The accepted quote is final and cannot be edited. Post-acceptance changes must be Variations." : "You do not have permission to edit this quote.");

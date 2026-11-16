@@ -89,6 +89,29 @@ describe("adopting is explicit and bound to what was shown", () => {
     expect(r).toMatchObject({ ok: true, data: { confirmationWithdrawn: false } });
     expect((db.tables.newquip_quotes[0].draft as { estimator: { confirmedPackages: string[] } }).estimator.confirmedPackages).toContain("led_light");
   });
+  it("a stale preview changes NOTHING: the confirmation is not withdrawn and the template does not move", async () => {
+    const row = seed(); const before = JSON.stringify(db.tables.newquip_quotes);
+    const imp = (await actions.previewTemplateAdoptionAction("q1")).data!.impact;
+    const r = await actions.adoptTemplateRevisionAction("q1", good("not-the-stored-hash", imp.totals.afterUnconfirmed.exVat));
+    expect(r.ok).toBe(false);
+    expect(JSON.stringify(db.tables.newquip_quotes)).toBe(before);
+    expect(audits).toHaveLength(0);
+    expect(row.customer_confirmed_cents).not.toBeNull();
+  });
+  it("if the move fails AFTER the confirmation was withdrawn, the quotation stays on the original template, the failure is audited and the Estimator is told exactly that", async () => {
+    const row = seed();
+    const imp = (await actions.previewTemplateAdoptionAction("q1")).data!.impact;
+    const orig = db.from.bind(db);
+    // the draft update (compare-and-set) loses a race: it matches no row
+    (db as unknown as { from: (t: string) => unknown }).from = (t: string) => { const b = orig(t) as Record<string, unknown>; if (t !== "newquip_quotes") return b; const upd = b.update as (v: Record<string, unknown>) => unknown; b.update = (v: Record<string, unknown>) => (v.draft ? { eq: () => ({ eq: () => ({ eq: () => ({ in: () => ({ select: async () => ({ data: [], error: null }) }) }) }) }) } : upd.call(b, v)); return b; };
+    const r = await actions.adoptTemplateRevisionAction("q1", good(row.draft_hash as string, imp.totals.afterUnconfirmed.exVat));
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/NOT moved to the current template.*confirmation was withdrawn/);
+    expect(audits.map((a) => a.action)).toEqual(["newquip.template_revision_adoption_failed"]);
+    const q = db.tables.newquip_quotes[0] as unknown as { state: string; customer_confirmed_cents: number | null; draft: { estimator: { templateRevision?: string } } };
+    expect(q.draft.estimator.templateRevision).toBeUndefined();
+    expect(q).toMatchObject({ state: "REP_DRAFT", customer_confirmed_cents: null });
+  });
   it("an approved (sealed) quotation can never adopt", async () => {
     const row = seed({ state: "MANAGER_APPROVED_FINAL" });
     expect((await actions.adoptTemplateRevisionAction("q1", good(row.draft_hash as string, 1))).error).toMatch(/sealed/);
