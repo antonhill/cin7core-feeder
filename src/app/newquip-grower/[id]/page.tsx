@@ -22,7 +22,7 @@ import { CCM_FEEDER_CAPACITY_PIGS } from "@/newquip/grower/rules";
 import { buildCustomerSummary } from "@/newquip/grower/customer-summary";
 import { READINESS_LABEL, type ReadinessCategory, type ReadinessState } from "@/newquip/grower/readiness";
 import { expectedSkuFor } from "@/newquip/grower/quote-bridge";
-import { isCatalogueDefaultItem, packageFor, manualSelectionSkusFor } from "@/newquip/grower/commercial";
+import { alternativesFor, isCatalogueDefaultItem, packageFor, manualSelectionSkusFor } from "@/newquip/grower/commercial";
 import { ROOMS_HELP, VENTILATION_SCOPE_STATUS } from "@/newquip/grower/open-items";
 import { QUOTE_TYPE_LABEL, QUOTE_TYPE_NEUTRAL, neutralPriceText, type QuoteType } from "@/newquip/grower/pricing-source";
 import { DEMO_DEFAULTS_SOURCE, RECOMMENDED_CONFIG_FILLS, SAMPLE_MEASUREMENTS_FILLS, applyDemoDefaults, applyMeasurementsSample, applyRecommendedConfiguration, hasEntries, hasEquipmentEntries, hasMeasurementEntries } from "@/newquip/grower/demo-defaults";
@@ -722,7 +722,9 @@ export default function QuoteEditorPage() {
     for (const l of ev.calc.lines) {
       if (l.basis === "not_selected") continue;
       const sku = expectedSkuFor(l.itemKey, d.config.feederVariant);
-      if (sku && l.itemKey !== "pvc_door") d.estimator.confirmedMappings[l.itemKey] = sku;
+      const chosen = d.estimator.confirmedMappings[l.itemKey];
+      const keepAlternative = !!chosen && alternativesFor(l.itemKey).some((x) => x.sku === chosen); // an approved alternative the Estimator chose is not overwritten by "confirm source-backed"
+      if (sku && l.itemKey !== "pvc_door" && !keepAlternative) d.estimator.confirmedMappings[l.itemKey] = sku;
       if (packageFor(l.itemKey) && !packageFor(l.itemKey)!.estimatorPriced && !d.estimator.confirmedPackages.includes(l.itemKey)) d.estimator.confirmedPackages.push(l.itemKey);
     }
   });
