@@ -95,7 +95,7 @@ export async function issueQuotationDocument(
   // Only the designated demonstration quotes (whose terms are replaced in the PDF) keep the pre-guard behaviour.
   const marked = pocDocumentMarked(q, orgId);
   const isDemo = !!prof && applyDemoTerms(prof.profile, orgId, q.quote_ref, marked) !== prof.profile;
-  const lacking = missingProfileFields(prof?.profile, { allowPlaceholders: isDemo });
+  const lacking = missingProfileFields(prof?.profile, { allowPlaceholderTerms: isDemo });
   if (!prof || lacking.length) throw new Error(`Complete NewQuip company details (Manager > Company details) before issuing a customer PDF: ${lacking.join(", ") || "all company details"}`);
 
   const accepted = await db.from("newquip_quote_responses").select("id").eq("org_id", orgId).eq("quote_id", quoteId).eq("response", "ACCEPTED").limit(1);

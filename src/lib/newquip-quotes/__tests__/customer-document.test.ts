@@ -19,7 +19,7 @@ import { issueQuotationDocument, readDocumentBytes, saveProfile, sha256, type Do
 
 // Test-only company details: placeholders for TESTS, never shipped as defaults.
 const PROFILE: CompanyProfile = {
-  brandName: "TestBrand", legalName: "Test Company (Pty) Ltd", registrationNumber: "0000/000000/00", vatNumber: "0000000000", addressLines: ["1 Test Street", "Testville 0001"], phone: "000 000 0000",
+  brandName: "TestBrand", legalName: "Test Company (Pty) Ltd", registrationNumber: "2012/123456/07", vatNumber: "4123456789", addressLines: ["1 Test Street", "Testville 0001"], phone: "021 555 0100",
   email: "sales@testbrand.example", website: "", validityDays: 30, paymentTerms: "TERMS-PAYMENT-MARKER (fictitious fixture text)", deliveryInstallationConditions: "TERMS-DELIVERY-MARKER (fictitious fixture text)", termsAndConditions: "TERMS-GENERAL-MARKER (fictitious fixture text)", acceptanceInstructions: "TERMS-ACCEPT-MARKER (fictitious fixture text)",
 };
 const approvals = { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "rep.person@nq.example", handoffBy: "rep.person@nq.example", estimatorSignoffBy: "est.person@nq.example", estimatorSignoffAt: "t", managerApprovedBy: "mgr.person@nq.example", managerApprovedAt: "t" };
@@ -335,6 +335,16 @@ describe("placeholder guard on company details", () => {
     expect(missingProfileFields({ ...PROFILE, vatNumber: "4123456789", registrationNumber: "2012/123456/07", phone: "+27 21 555 0100", legalName: "Test Valley Farms (Pty) Ltd" })).toEqual([]);
     expect(looksLikePlaceholder("Terms of Trade apply to all work")).toBe(false);
   });
+  it("names are matched whole-value only: real names that start with a placeholder word are accepted", () => {
+    expect(missingProfileFields({ ...PROFILE, brandName: "Test Valley", legalName: "Sample Farms" })).toEqual([]);
+    expect(missingProfileFields({ ...PROFILE, brandName: "Terms Co", legalName: "Dummy Holdings" })).toEqual([]);
+    expect(looksLikePlaceholder("Test Valley")).toBe(false); expect(looksLikePlaceholder("test 123", { terms: true })).toBe(true);
+  });
+  it("rejects repeated-digit identity values and a repeated-word terms value, but not real numbers", () => {
+    for (const k of ["vatNumber", "registrationNumber", "phone"] as const) { expect(missingProfileFields({ ...PROFILE, [k]: "0000000000" })).toHaveLength(1); expect(missingProfileFields({ ...PROFILE, [k]: "1111111111" })).toHaveLength(1); }
+    expect(missingProfileFields({ ...PROFILE, termsAndConditions: "test test test test test" })).toEqual(["Terms and conditions"]);
+    expect(missingProfileFields({ ...PROFILE, vatNumber: "4123456789", registrationNumber: "2012/123456/07" })).toEqual([]);
+  });
   it("cleanProfile (profile save) refuses the live placeholder terms", () => {
     expect(() => cleanProfile({ ...PROFILE, paymentTerms: "Test", termsAndConditions: "Terms", acceptanceInstructions: "Please do this", deliveryInstallationConditions: "Test" })).toThrow(/Payment terms, Delivery and installation conditions, Terms and conditions, Customer acceptance instructions/);
   });
@@ -353,6 +363,9 @@ describe("placeholder guard on company details", () => {
     const demo = mk("NQ-Q-0025");
     const r = await issueQuotationDocument(demo.db as never, DEMO_ORG, "q1", who, NEWQUIP_STANDARD_SCHEDULE, demo.deps);
     expect(r.created).toBe(true); expect(pdfText(demo.files.get(r.document.storage_path)!)).toContain("DEMONSTRATION ONLY");
+    // the demo exception relaxes ONLY the four terms: a placeholder identity field still blocks a demo quote
+    const badId = mk("NQ-Q-0025"); badId.db.rows("newquip_company_profiles")[0].profile = { ...PLACEHOLDER_PROFILE, brandName: "TBD", vatNumber: "1111111111" };
+    await expect(issueQuotationDocument(badId.db as never, DEMO_ORG, "q1", who, NEWQUIP_STANDARD_SCHEDULE, badId.deps)).rejects.toThrow(/before issuing a customer PDF: Brand \/ trading name, VAT registration number$/);
   });
 });
 

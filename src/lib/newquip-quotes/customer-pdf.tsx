@@ -52,6 +52,7 @@ const st = StyleSheet.create({
   tot: { flexDirection: "row", justifyContent: "flex-end", paddingVertical: 2, paddingHorizontal: 6 },
   totLabel: { width: 130, textAlign: "right", paddingRight: 8 }, totVal: { width: 92, textAlign: "right" },
   para: { marginBottom: 3 },
+  // A4 is 841.89pt high. react-pdf does not honour `bottom` on an absolute child here (the footer silently vanished), so it is placed with `top`: 802 + ~12pt of text ends ~28pt above the page edge, below the 64pt paddingBottom content limit (841.89 - 64 = 777.89).
   foot: { position: "absolute", top: 802, left: 40, right: 40, flexDirection: "row", justifyContent: "space-between", fontSize: 8, color: GREY, borderTopWidth: 0.5, borderTopColor: LINE, paddingTop: 4 },
 });
 

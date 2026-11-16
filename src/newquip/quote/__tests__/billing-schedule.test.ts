@@ -16,10 +16,15 @@ describe("NewQuip standard 40/55/5 billing schedule", () => {
     const stages = splitContractBySchedule(10_001);
     expect(stages.reduce((a, s) => a + s.valueCents, 0)).toBe(10_001);
     expect(stages.map((s) => s.valueCents)).toEqual([4_000, 5_501, 500]); // 4000.4->4000, 5500.55->5501, remainder 500
-    const neg = splitContractBySchedule(10_003); // 4001.2->4001, 5501.65->5502, remainder 500
-    expect(neg.map((s) => s.valueCents)).toEqual([4_001, 5_502, 500]);
-    const down = splitContractBySchedule(10_009); // 4003.6->4004, 5504.95->5505, remainder 500 (negative-rounding case below)
-    expect(down.reduce((a, s) => a + s.valueCents, 0)).toBe(10_009);
+    expect(splitContractBySchedule(10_003).map((s) => s.valueCents)).toEqual([4_001, 5_502, 500]); // 4001.2->4001, 5501.65->5502, remainder 500
+    // trivial contract: the remainder can be NEGATIVE (5 cents on the six-stage schedule: 1+2+1+1+1 = 6 > 5)
+    const tiny = splitContractBySchedule(5, POC_SIX_STAGE_SCHEDULE);
+    expect(tiny.map((s) => s.valueCents)).toEqual([1, 2, 1, 1, 1, -1]);
+    expect(tiny.reduce((a, s) => a + s.valueCents, 0)).toBe(5);
+    // real contracts (>= R1,000) never produce a negative stage on any built-in schedule
+    for (const c of [R(1_000), 100_001, 123_457, 999_999, 12_345_67, 98_765_43]) for (const sch of [NEWQUIP_STANDARD_SCHEDULE, POC_SIX_STAGE_SCHEDULE, VARIATION_DEFAULT_SCHEDULE]) {
+      expect(splitContractBySchedule(c, sch).every((s) => s.valueCents >= 0)).toBe(true);
+    }
     for (const c of [1, 7, 99, 10_001, 12_345_67, 98_765_43, 33_333_33]) for (const sch of [NEWQUIP_STANDARD_SCHEDULE, POC_SIX_STAGE_SCHEDULE]) {
       const r = splitContractBySchedule(c, sch);
       expect(r.reduce((a, s) => a + s.valueCents, 0)).toBe(c);

@@ -39,7 +39,7 @@ import { resetRateLimits } from "@/lib/newquip-portal/rate-limit";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const PROFILE = { brandName: "TestBrand", legalName: "Test Company (Pty) Ltd", registrationNumber: "0000/000000/00", vatNumber: "0000000000", addressLines: ["1 Test Street", "Testville 0001"], phone: "000", email: "sales@testbrand.example", website: "", validityDays: 30, paymentTerms: "Fictitious fixture: 40% deposit, 55% on delivery, 5% on completion.", deliveryInstallationConditions: "Fictitious fixture: delivery to the site gate; installation on a cleared site.", termsAndConditions: "Fictitious fixture: terms and conditions for automated tests only.", acceptanceInstructions: "Fictitious fixture: reply to the sender to accept this quotation." };
+const PROFILE = { brandName: "TestBrand", legalName: "Test Company (Pty) Ltd", registrationNumber: "2012/123456/07", vatNumber: "4123456789", addressLines: ["1 Test Street", "Testville 0001"], phone: "000", email: "sales@testbrand.example", website: "", validityDays: 30, paymentTerms: "Fictitious fixture: 40% deposit, 55% on delivery, 5% on completion.", deliveryInstallationConditions: "Fictitious fixture: delivery to the site gate; installation on a cleared site.", termsAndConditions: "Fictitious fixture: terms and conditions for automated tests only.", acceptanceInstructions: "Fictitious fixture: reply to the sender to accept this quotation." };
 const as = (roles: string[], opts: { email?: string; demo?: boolean; admin?: boolean } = {}) => {
   const email = opts.email ?? "rep@x.co";
   vi.mocked(requireModuleAccess).mockResolvedValue({ orgId: "org-a", userId: "u1", email } as never);

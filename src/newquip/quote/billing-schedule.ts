@@ -54,7 +54,7 @@ export function validateSchedule(schedule: readonly Pick<ScheduleStageTemplate, 
   return { ok: errors.length === 0, totalBps: total, errors };
 }
 
-/** Splits an ex-VAT contract (integer cents) across a schedule: each stage is rounded to the nearest cent (half-up); the final stage takes the (few-cent, positive or negative) remainder so the total is exact. */
+/** Splits an ex-VAT contract (integer cents) across a schedule: each stage is rounded to the nearest cent (half-up); the final stage takes the remainder so the total is exact. The remainder can differ from the last stage's exact share by a few cents (at most about half a cent per earlier stage), and for trivial contracts (e.g. 5 cents on the six-stage schedule) the last stage can even be negative. Real contracts (>= R1,000) never produce a negative stage. */
 export function splitContractBySchedule(contractCents: number, schedule: readonly ScheduleStageTemplate[] = NEWQUIP_STANDARD_SCHEDULE): SuggestedStage[] {
   const v = validateSchedule(schedule);
   if (!v.ok) throw new Error(`Invalid billing schedule: ${v.errors.join(" ")}`);
