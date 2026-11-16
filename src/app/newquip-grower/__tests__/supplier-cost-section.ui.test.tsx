@@ -273,5 +273,17 @@ describe("Cin7 data that disagrees or has moved", () => {
     expect((screen.getByLabelText("Unit cost (up to 7 decimals)") as HTMLInputElement).value).toBe("28.5");
     expect(screen.getByTestId("historical-date").textContent).toMatch(/2026-10-01/);
   });
+
+  it("a read-only viewer cannot change the displayed cost through 'Use Cin7's current price' (the control is disabled and does nothing)", async () => {
+    vi.mocked(supplier.getSkuCostContextAction).mockResolvedValue(ctx([rec("S2", "Alpine Imports", "28.5", "EUR", "2026-10-01")]) as never);
+    const stored = { ruleVersionId: "r", skus: { ERT053: { supplierId: "S2", supplierName: "Alpine Imports", currency: "EUR", nativeUnitCostE7: 268_440_995, source: "Cin7", freight: { factorMicro: 1_000_000, source: "Cin7" }, currencySource: "cin7_supplier", costKind: "cin7_historical", costDate: "2026-03-02" } }, fxQuotes: {}, forwardCover: {}, skuPriceOverrides: {}, projectMarkup: null, targetAdjustment: null } as unknown as PricingSubmission;
+    mount({ current: stored, canEdit: false });
+    const note = await screen.findByTestId("historical-refresh");
+    const btn = within(note).getByRole("button", { name: "Use Cin7's current price" }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    fireEvent.click(btn);
+    expect((screen.getByLabelText("Unit cost (up to 7 decimals)") as HTMLInputElement).value).toBe("26.8440995"); // unchanged
+    expect(screen.getByTestId("historical-date").textContent).toMatch(/2026-03-02/);
+  });
 });
 
