@@ -2,9 +2,7 @@
 
 import { useState } from "react";
 import { coverage, type SurveyInput, type SurveyResult } from "@/newquip/pricing/cost-survey";
-import { SUPPLIED_COSTS } from "@/newquip/grower/commercial";
-import { compareSuppliedCost } from "@/newquip/grower/supplied-cost-compare";
-import { getCostSurveyUniverseAction, surveyCin7SkusAction } from "../survey-actions";
+import { compareSuppliedCostsAction, getCostSurveyUniverseAction, surveyCin7SkusAction } from "../survey-actions";
 
 // Read-only survey runner: asks the server for the mapped SKUs, then reads Cin7 in chunks of 10 (GET only). Nothing is saved anywhere.
 export function SurveyClient() {
@@ -15,6 +13,7 @@ export function SurveyClient() {
   const [keys, setKeys] = useState<{ product: string[]; supplier: string[] }>({ product: [], supplier: [] });
   const [errs, setErrs] = useState<Record<string, string>>({});
   const [truncated, setTruncated] = useState(false);
+  const [supplied, setSupplied] = useState<unknown[]>([]);
   const [sources, setSources] = useState<Record<string, string[]>>({});
 
   async function run() {
@@ -29,16 +28,13 @@ export function SurveyClient() {
       if (!c.ok || !c.data) { for (const s of all.slice(n, n + 10)) e[s] = "chunk_failed"; continue; } // keep what was read; report the gap
       r.push(...c.data.results); i.push(...c.data.inputs); c.data.productKeys.forEach((k) => pk.add(k)); c.data.supplierKeys.forEach((k) => sk.add(k)); Object.assign(e, c.data.errors);
     }
+    const facts = r.map((x) => ({ sku: x.sku, found: !x.reasons.includes("not_in_cin7"), cost: x.selected?.cost ?? null, currency: x.currency, lastSupplied: x.selected?.lastSupplied ?? null }));
+    const cmp = await compareSuppliedCostsAction(facts);
+    setSupplied(cmp.ok && cmp.data ? cmp.data.map((d) => ({ ...d, cin7Name: i.find((y) => y.sku === d.sku)?.productName ?? null })) : []);
     setResults(r); setInputs(i); setErrs(e); setKeys({ product: [...pk].sort(), supplier: [...sk].sort() }); setState("done"); setProgress("");
   }
 
   const cov = coverage(results);
-  // What Sean / Tereesha supplied (2026-11) against what Cin7 holds, per SKU. Read-only: nothing is overridden.
-  const supplied = SUPPLIED_COSTS.map((c) => {
-    const r = results.find((x) => x.sku === c.sku);
-    const i = inputs.find((x) => x.sku === c.sku);
-    return { ...compareSuppliedCost(c.sku, r ? { found: !r.reasons.includes("not_in_cin7"), cost: r.selected?.cost ?? null, currency: r.currency, lastSupplied: r.selected?.lastSupplied ?? null } : undefined), cin7Name: i?.productName ?? null };
-  });
   const payload = JSON.stringify({ supplied, truncated, generatedAt: new Date().toISOString(), coverage: cov, productKeys: keys.product, supplierKeys: keys.supplier, errors: errs, sources, skus: results.map((x) => ({ ...x, unitFields: inputs.find((y) => y.sku === x.sku)?.unitFields, name: inputs.find((y) => y.sku === x.sku)?.productName, status: inputs.find((y) => y.sku === x.sku)?.productStatus, uom: inputs.find((y) => y.sku === x.sku)?.uom })) });
   return (
     <main className="mx-auto max-w-6xl p-4 text-slate-900">

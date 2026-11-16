@@ -1,4 +1,5 @@
-import { SUPPLIED_COSTS } from "./commercial";
+import "server-only";
+import { SUPPLIED_COSTS } from "./supplied-references";
 
 // Compares a figure Sean / Tereesha SUPPLIED with what Cin7 holds for the same SKU. Pure and read-only: it changes no cost and creates no override. Cin7 stays the primary automatic cost
 // authority; a different supplied figure is only a PROPOSED sourced override until its basis and applicable date are established.

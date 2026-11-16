@@ -50,7 +50,7 @@ describe("explicit confirmations stay authoritative and validated", () => {
     expect(l).toMatchObject({ status: "priced", sku: "SYSH-2750-3", mappingSource: "estimator" });
   });
   it("an explicit confirmation of a DIFFERENT product is refused, not silently replaced by the default", () => {
-    const d = none(); d.estimator.confirmedMappings = { bulk_tank: "SYSH-2750-4" };
+    const d = none(); d.estimator.confirmedMappings = { bulk_tank: "SYSH-2750-9" }; // not the default and not an approved alternative (SYSH-2750-4 is, since Sean's 2026-11 answer)
     expect(line(d, "bulk_tank")).toMatchObject({ status: "unmapped", sku: null });
     expect(line(d, "bulk_tank").reason).toMatch(/does not match the expected SYSH-2750-3/);
   });

@@ -1,9 +1,14 @@
-import { describe, expect, it } from "vitest";
-import { COMMERCIAL_MAPPINGS, EXCLUDED_SKUS, SELECTABLE_ALTERNATIVES, SUPPLIED_COSTS, alternativesFor, isExcludedSku, manualSelectionSkusFor, packageAutoConfirmable, packageFor, referencedSkus, type PackageMapping } from "../commercial";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("server-only", () => ({}));
+import { COMMERCIAL_MAPPINGS, EXCLUDED_SKUS, SELECTABLE_ALTERNATIVES, alternativesFor, isExcludedSku, manualSelectionSkusFor, packageAutoConfirmable, packageFor, referencedSkus, type PackageMapping } from "../commercial";
 import { mappingError } from "../mapping-integrity";
 import { mergeCandidates, resolveMapping } from "../mapping";
 import { PENNING_COMPONENTS, penningScope } from "../penning";
 import { compareSuppliedCost } from "../supplied-cost-compare";
+import { SUPPLIED_COSTS } from "../supplied-references";
+import { CHOICE_PRODUCT_NAMES } from "../commercial";
+import { POC_ITEM_REGISTER } from "../open-items";
 
 // Sean / Tereesha's answers of 2026-11 applied to the Grower House template. Every correction is a confirmed IDENTITY; nothing here confirms a quantity, a cost basis or a selling price.
 const pkg = (k: "led_light" | "flex_auger" | "cup_drinker") => packageFor(k) as PackageMapping;
@@ -37,12 +42,13 @@ describe("M75 / drop-kit package", () => {
     expect(packageAutoConfirmable(m75)).toBe(false);
   });
   it("NQ1942 is the complete drop kit with the supplied R30 as a component reference only; NQ1984 is never present", () => {
-    expect(c("dropkit")).toMatchObject({ sku: "NQ1942", suppliedReference: { amountZar: 30, per: "each" } });
-    expect(c("dropkit").suppliedReference!.basis).toMatch(/not the drop-kit package cost, not the M75 system price/);
+    expect(c("dropkit")).toMatchObject({ sku: "NQ1942", hasSuppliedReference: true });
+    expect(SUPPLIED_COSTS.find((x) => x.sku === "NQ1942")).toMatchObject({ amountZar: 30, per: "each" });
+    expect(SUPPLIED_COSTS.find((x) => x.sku === "NQ1942")!.basis).toMatch(/not the drop-kit package cost, not the M75 system price/);
     expect(JSON.stringify(m75)).not.toMatch(/"sku":"NQ1984"/);
   });
   it("the drop tube is NOT chosen: NQ.TUBE.63 (Sean) and NQ.TUBE.75 (Master) stay candidates; R52.72 is a reference", () => {
-    expect(c("droptube")).toMatchObject({ sku: null, identity: "uncertain", candidateSkus: ["NQ.TUBE.63", "NQ.TUBE.75"], suppliedReference: { amountZar: 52.72 } });
+    expect(c("droptube")).toMatchObject({ sku: null, identity: "uncertain", candidateSkus: ["NQ.TUBE.63", "NQ.TUBE.75"], hasSuppliedReference: true });
   });
   it("NQ3132 is neither confirmed nor excluded: it stays a supplier-quote exception with its function and Cin7 name discrepancy recorded", () => {
     expect(c("drive")).toMatchObject({ sku: "NQ3132" });
@@ -56,8 +62,9 @@ describe("M75 / drop-kit package", () => {
     expect(c("post").candidateSkus).toBeUndefined();
   });
   it("auger: the quantity unit is the METRE, with R57.37/m as an unreconciled reference (never multiplied by systems)", () => {
-    expect(c("auger")).toMatchObject({ sku: "NQ1163", quantityUnit: "metre", quantityStatus: "requires_validation", qtyPerUnit: null, suppliedReference: { amountZar: 57.37, per: "metre" } });
-    expect(c("auger").suppliedReference!.basis).toMatch(/NOT been reconciled/);
+    expect(c("auger")).toMatchObject({ sku: "NQ1163", quantityUnit: "metre", quantityStatus: "requires_validation", qtyPerUnit: null, hasSuppliedReference: true });
+    expect(SUPPLIED_COSTS.find((x) => x.sku === "NQ1163")).toMatchObject({ amountZar: 57.37, per: "metre" });
+    expect(SUPPLIED_COSTS.find((x) => x.sku === "NQ1163")!.basis).toMatch(/NOT been reconciled/);
   });
   it("no SKU is listed twice in a package (no double counting)", () => {
     for (const p of [pkg("led_light"), m75, pkg("cup_drinker")]) { const s = skusOf(p); expect(new Set(s).size).toBe(s.length); }
@@ -72,8 +79,9 @@ describe("PVC door", () => {
     expect(d.proposedSku).toBe("NQ3444");
     expect(manualSelectionSkusFor("pvc_door")[0]).toBe("NQ3444");
     for (const r of ["NQ2112", "NQ2113", "NQ2114"]) { expect(d.retiredSkus).toContain(r); expect(manualSelectionSkusFor("pvc_door")).not.toContain(r); }
-    expect(d.suppliedReference).toMatchObject({ amountZar: 9000, per: "each" });
-    expect(d.suppliedReference!.basis).toMatch(/NOT a selling price, no markup is applied/);
+    expect(d.hasSuppliedReference).toBe(true);
+    expect(SUPPLIED_COSTS.find((x) => x.sku === "NQ3444")).toMatchObject({ amountZar: 9000, per: "each" });
+    expect(SUPPLIED_COSTS.find((x) => x.sku === "NQ3444")!.basis).toMatch(/NOT a selling price, no markup is applied/);
     expect(d.reason).toMatch(/no component is added alongside it/);
   });
   it("is never selected automatically (a manual choice, not a catalogue default)", () => {
@@ -119,8 +127,11 @@ describe("figures Sean / Tereesha supplied are references, compared with Cin7 an
     expect(compareSuppliedCost("NQ3444", { found: true, cost: 400, currency: "USD", lastSupplied: null })).toMatchObject({ status: "foreign_currency_not_comparable" });
     expect(compareSuppliedCost("NQ1163", { found: true, cost: 323.29, currency: "ZAR", lastSupplied: null })).toMatchObject({ status: "unit_basis_not_reconciled" });
   });
-  it("every supplied SKU is in the survey universe so it can be checked live", () => {
-    for (const c of SUPPLIED_COSTS) expect(referencedSkus()).toContain(c.sku);
+  it("the supplied figures live ONLY in the server-only module: nothing a client component imports carries one (they would ship to every Rep)", () => {
+    const FIGURES = ["57.37", "57,37", "52.72", "52,72", "9000", "9,000", "119.79", "119,79"];
+    const clientSafe = JSON.stringify([COMMERCIAL_MAPPINGS, CHOICE_PRODUCT_NAMES, SELECTABLE_ALTERNATIVES, POC_ITEM_REGISTER.map((i) => [i.treatment, i.repTreatment])]);
+    for (const f of FIGURES) expect(clientSafe, f).not.toContain(f);
+    expect(clientSafe).not.toMatch(/R\s?(30|3\.14|0\.82)\b/);
   });
 });
 
@@ -164,7 +175,8 @@ describe("the item register never shows a supplied cost to a viewer without cost
     expect(rep).not.toMatch(/\bR\s?\d|supplied reference|markup|basis not stated|Cin7 holds its own cost|NQ\.TUBE|R57|R30/);
     expect(rep).not.toMatch(/repTreatment/);
     const est = pocItemRegisterFor(true).find((i) => i.n === 14)!;
-    expect(est.treatment).toMatch(/R9,000/);
+    expect(est.treatment).toMatch(/A figure was supplied for it/);
+    expect(est.treatment).not.toBe(pocItemRegisterFor(false).find((i) => i.n === 14)!.treatment);
   });
 });
 
@@ -175,5 +187,26 @@ describe("saved reusable mappings that Sean's answers contradict are flagged, ne
     expect(savedMappingCaution("penning_package", ["DPL-PVC20X600", "KNQ074"])).toMatch(/not on Sean's 2026-11 Grower Penning Posts list/);
     expect(savedMappingCaution("led_light", ["HNQ7046", "HNQ7093", "HNQ7088"])).toBeNull();
     expect(savedMappingCaution("flex_auger", ["NQ2064"])).toBeNull();
+  });
+});
+
+describe("an approved alternative actually prices through the bridge (it must not dead-end)", async () => {
+  const { applyDemoDefaults } = await import("../demo-defaults");
+  const { emptyDraft } = await import("../draft");
+  const { evaluateDraft } = await import("../evaluate");
+  const { createWorkbookPriceSource } = await import("../workbook-price-source");
+  const { TEST_SNAPSHOT } = await import("./test-snapshot");
+  const ctx = { priceSource: createWorkbookPriceSource({ ...TEST_SNAPSHOT, entries: { ...TEST_SNAPSHOT.entries, PNQ002: { sku: "PNQ002", description: "x", cost: 900, roe: 1, freight: 1.2, mu: 1.4, retailExVat: 1512 }, "SYSH-2750-4": { sku: "SYSH-2750-4", description: "x", cost: 120000, roe: 1, freight: 1.2, mu: 1.4, retailExVat: 201600 } } }), withholdCost: false };
+  const base = applyDemoDefaults({ ...emptyDraft(), customerName: "T" }).draft;
+  const lineOf = (d: typeof base, k: string) => evaluateDraft(d, ctx).budget!.lines.find((l) => l.itemKey === k)!;
+  it("the feeder maps to PNQ002 and the tank to SYSH-2750-4: priced from the source, SKU kept, never 'unmapped'", () => {
+    const d = { ...base, estimator: { ...base.estimator, confirmedMappings: { ...base.estimator.confirmedMappings, feeder: "PNQ002", bulk_tank: "SYSH-2750-4" } } };
+    expect(lineOf(d, "feeder")).toMatchObject({ sku: "PNQ002", status: "priced" });
+    expect(lineOf(d, "bulk_tank")).toMatchObject({ sku: "SYSH-2750-4", status: "priced" });
+  });
+  it("any other product is still refused for those lines, and the standard stays the default", () => {
+    const d = { ...base, estimator: { ...base.estimator, confirmedMappings: { ...base.estimator.confirmedMappings, feeder: "NQ9999" } } };
+    expect(lineOf(d, "feeder")).toMatchObject({ status: "unmapped" });
+    expect(lineOf(base, "feeder")).toMatchObject({ sku: "PNQ082" });
   });
 });

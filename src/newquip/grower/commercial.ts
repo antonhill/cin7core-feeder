@@ -12,8 +12,8 @@ const WB = "AS.23.4015.07 - Topigs Warden (Update 2026).xlsm";
 /** Sean / Tereesha's answers of 2026-11 (the questions workbook, both sheets). A confirmed SKU IDENTITY only: it does not confirm a quantity, a cost basis or a selling price. */
 export const FEEDBACK_2026_11 = "NewQuip_Simple_Questions_Sean_Tereesha - Updated.xlsx (Questions and Penning sheets)";
 
-/** A figure Sean / Tereesha supplied. A labelled REFERENCE: never a selling price, never a verified landed cost, and never silently replacing a Cin7 supplier cost. */
-export interface SuppliedReference { amountZar: number; per: "each" | "metre"; basis: string }
+// The figures Sean / Tereesha supplied (2026-11) are deliberately NOT in this module: it is imported by client components, so a figure here would ship to every viewer including a Rep.
+// They live in the server-only supplied-references.ts and reach a cost-entitled viewer through a server action.
 
 /** How a component's quantity per commercial unit is known. */
 export type ComponentQuantityStatus =
@@ -46,8 +46,8 @@ export interface PackageComponent {
   confirmedBy?: string;
   /** The unit the quantity is expressed in (default "each"). The auger is quoted and costed per METRE although Cin7 reports Item. */
   quantityUnit?: "each" | "metre";
-  /** A figure supplied for this component; see SuppliedReference. */
-  suppliedReference?: SuppliedReference;
+  /** True when Sean / Tereesha supplied a figure for this component (the figure itself is server-only; it is a reference, never a price). */
+  hasSuppliedReference?: boolean;
   /** Shown instead of a SKU while none is confirmed (e.g. FORTIS 1.2). */
   skuRequired?: string;
   /** A HISTORIC SURROGATE used in an old quote. Shown for context only — NEVER substituted or priced. */
@@ -129,8 +129,8 @@ export interface UnresolvedMapping {
   proposedSku?: string;
   /** Earlier candidates NewQuip replaced: no longer offered for this item. */
   retiredSkus?: string[];
-  /** The figure supplied for the proposed SKU. Its commercial basis is NOT established. */
-  suppliedReference?: SuppliedReference;
+  /** True when a figure was supplied for the proposed SKU (server-only; its commercial basis is NOT established). */
+  hasSuppliedReference?: boolean;
 }
 
 export type CommercialMapping = SingleSkuMapping | PackageMapping | ManualMapping | UnresolvedMapping | EstimatorPricedMapping;
@@ -207,22 +207,19 @@ export const COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMappin
     provenance: `${WB} sheet 'W1' (Topigs case: 2 × lines of ±49.5m, 18 drop kits). Quantities below are the HISTORIC TOPIGS PACKAGE REFERENCE — formula-driven in the workbook, NOT authorised engineering and NOT priced: M75 is an ESTIMATOR INPUT (Sean final), priced by the estimator as a system.`,
     components: [
       layout("auger", "NQ1163", "Auger M-75 (new), per metre", 134, "W1 row 71", {
-        quantityUnit: "metre", confirmedBy: FEEDBACK_2026_11,
-        suppliedReference: { amountZar: 57.37, per: "metre", basis: "Tereesha 2026-11: 'quoted per meter, use a per meter cost (R57,37 per meter)'. Cin7 reports the unit as Item and holds its own supplier cost for NQ1163; the two have NOT been reconciled and no conversion between them is established." },
-        note: "Quoted and costed per METRE although Cin7 says Item. The quantity is the auger LENGTH in metres (never the number of systems, never an item count). The physical-length rule is not established (the historic 134 m is a hidden workbook formula for the 2 × 49.5 m Topigs lines), so the Estimator enters the metres; the supplied R57.37/m is a reference, not a verified cost.",
+        quantityUnit: "metre", confirmedBy: FEEDBACK_2026_11, hasSuppliedReference: true,
+        note: "Quoted and costed per METRE although Cin7 says Item. The quantity is the auger LENGTH in metres (never the number of systems, never an item count). The physical-length rule is not established (the historic 134 m is a hidden workbook formula for the 2 × 49.5 m Topigs lines), so the Estimator enters the metres; the supplied per-metre figure is a reference, not a verified cost.",
       }),
       layout("tube", "NQ1223", "TUBE M75 (WHITE) / AUGER PIPE (NEW TYPE) — the M75 MAIN auger tube", 40, "W1 row 52; SKU per the NewQuip Master (workbook listed T2750300)", { note: "The M75 main auger tube. NOT the clear drop tube and NOT NQ.TUBE.63." }),
       layout("clamps", "NQ1764", "M75 tube clamp", 48, "W1 row 56; SKU per the NewQuip Master (workbook listed T2750015)"),
       layout("elbow", "NQ1227", "M75 PVC ELBOW (NEW TYPE)", 8, "W1 row 64; SKU per the NewQuip Master (workbook listed T2750301)"),
       layout("dropkit", "NQ1942", "M75 complete drop kit", 18, "W1 row 13; input B2 = 18 drops; SKU per the NewQuip Master (workbook listed NQ1984)", {
-        confirmedBy: FEEDBACK_2026_11,
-        suppliedReference: { amountZar: 30, per: "each", basis: "Sean/Tereesha 2026-11 answer for NQ1942. It is a component figure only: not the drop-kit package cost, not the M75 system price, and its basis (cost, landed cost or price) is not stated. Cin7 holds no supplier record for NQ1942." },
+        confirmedBy: FEEDBACK_2026_11, hasSuppliedReference: true,
         note: "NQ1942 = 'M75 COMPLETE DROP KIT (SHEEP/PIG INCL KNOBS & ROPE)'. NQ1984 (the drop kit WITHOUT knobs and rope) is excluded by Sean (2026-11) and is never offered.",
       }),
       layout("droptube", null, "M75 clear drop tube", 5, "W1 row 14 = ROUNDUP(drops / 4)", {
-        identity: "uncertain", candidateSkus: ["NQ.TUBE.63", "NQ.TUBE.75"],
-        suppliedReference: { amountZar: 52.72, per: "each", basis: "Sean/Tereesha 2026-11 answer for NQ.TUBE.63. Component figure only; its basis is not stated." },
-        note: "Clear DROP tube (distinct from the M75 main auger tube NQ1223). Sean (2026-11) supplied NQ.TUBE.63 (R52.72); the NewQuip Master has NQ.TUBE.75. Which size the drop kit uses is not settled, and NQ.TUBE.63 is not in the synced catalogue copy, so it must be verified live in Cin7. Not chosen automatically.",
+        identity: "uncertain", candidateSkus: ["NQ.TUBE.63", "NQ.TUBE.75"], hasSuppliedReference: true,
+        note: "Clear DROP tube (distinct from the M75 main auger tube NQ1223). Sean (2026-11) supplied NQ.TUBE.63 with a figure; the NewQuip Master has NQ.TUBE.75. Which size the drop kit uses is not settled, and NQ.TUBE.63 is not in the synced catalogue copy, so it must be verified live in Cin7. Not chosen automatically.",
       }),
       layout("control", "T3750001", "M75 control unit with safety switch", 2, "W1 row 39"),
       layout("unloader", "TSA3750505", "M75 unloader double right/left (new type)", 1, "W1 row 35"),
@@ -253,8 +250,8 @@ export const COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMappin
     reason: "MANUAL SELECTION — the estimator picks the door product. There is no automatic door-sizing rule (Sean Round 2 #11). Sean (2026-11) proposes NQ3444 (Cin7: 'PVC SINGLE DOORS'; 'a mixture of Kunlong and local parts') as the Grower House door and replaced NQ2112, NQ2113 and NQ2114. Cin7's description gives no door size, so the specification cannot be validated from the catalogue: the Estimator confirms the door and its size. Whether NQ3444 is one complete assembly or needs components is not stated, so no component is added alongside it.",
     manualSelectionSkus: ["NQ3444", "NQ2161", "NQ2281"],
     proposedSku: "NQ3444",
+    hasSuppliedReference: true,
     retiredSkus: ["NQ2112", "NQ2113", "NQ2114"],
-    suppliedReference: { amountZar: 9000, per: "each", basis: "Sean 2026-11: 'NQ3444 - R9000,00 (Mixture of Kunlong & Local Parts)'. Not stated whether this is a supplier cost, a landed cost or a price: it is NOT a selling price, no markup is applied to it, and it is not an approved cost." },
   },
 };
 
@@ -350,17 +347,6 @@ export const CHOICE_PRODUCT_NAMES: Readonly<Record<string, string>> = {
   NQ2281: "35MM WHITE DOOR (1990 × 790MM)",
 };
 
-/** Figures Sean / Tereesha supplied (2026-11), by SKU. REFERENCES only: Cin7 stays the primary automatic cost authority, a different figure is a PROPOSED sourced override until its basis and date are established, and none is a selling price. */
-export const SUPPLIED_COSTS: ReadonlyArray<{ sku: string; amountZar: number; per: "each" | "metre"; note: string }> = [
-  { sku: "NQ1942", amountZar: 30, per: "each", note: "M75 complete drop kit" },
-  { sku: "NQ.TUBE.63", amountZar: 52.72, per: "each", note: "63mm clear drop tube (not in the synced catalogue copy)" },
-  { sku: "NQ3444", amountZar: 9000, per: "each", note: "PVC door: mixture of Kunlong and local parts; what the figure represents is not stated" },
-  { sku: "NQ1163", amountZar: 57.37, per: "metre", note: "Auger quoted per metre; Cin7 unit is Item" },
-  { sku: "NQ1764", amountZar: 119.79, per: "each", note: "M75 tube clamp" },
-  { sku: "NQ1017", amountZar: 3.14, per: "each", note: "Washer M8x25x2" },
-  { sku: "NYNUT", amountZar: 0.82, per: "each", note: "Nylock nut M8" },
-];
-
 export function manualLinesFor(itemKey: GrowerItemKey): ManualMapping[] {
   return MANUAL_COMMERCIAL_LINES.filter((m) => m.linkedItemKey === itemKey);
 }
@@ -384,6 +370,5 @@ export function referencedSkus(): string[] {
     if (m.kind === "unresolved") m.manualSelectionSkus?.forEach((s) => out.add(s));
   }
   SELECTABLE_ALTERNATIVES.forEach((a) => out.add(a.sku));
-  SUPPLIED_COSTS.forEach((c) => out.add(c.sku));
   return [...out].filter((s) => !isExcludedSku(s));
 }

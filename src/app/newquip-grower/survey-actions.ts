@@ -8,6 +8,8 @@ import { NEWQUIP_POC_CIN7_INSTANCE_ID } from "@/newquip/access";
 import { isQueryableString } from "@/cin7/readonly-diagnostic";
 import { listCin7Suppliers, readRawProductsForSurvey } from "@/lib/projects/latest-cost-adapter";
 import { referencedSkus } from "@/newquip/grower/commercial";
+import { SUPPLIED_COSTS } from "@/newquip/grower/supplied-references";
+import { compareSuppliedCost, type Cin7CostFact, type SuppliedComparison } from "@/newquip/grower/supplied-cost-compare";
 import { PENNING_COMPONENTS } from "@/newquip/grower/penning";
 import { DEMO_DEFAULTS } from "@/newquip/grower/demo-defaults";
 import { classifySku, pickUnitFields, type MasterSupplier, type RawSupplierRecord, type SurveyInput, type SurveyResult } from "@/newquip/pricing/cost-survey";
@@ -40,6 +42,7 @@ export async function getCostSurveyUniverseAction(): Promise<SurveyActionResult<
     const add = (sku: unknown, src: string) => { if (typeof sku === "string" && sku.trim()) (sources[sku.trim()] ??= []).includes(src) || sources[sku.trim()].push(src); };
     referencedSkus().forEach((s) => add(s, "commercial mapping"));
     PENNING_COMPONENTS.forEach((c) => add(c.sku, "penning component"));
+    SUPPLIED_COSTS.forEach((c) => add(c.sku, "supplied figure"));
     Object.values(DEMO_DEFAULTS.estimator?.confirmedMappings ?? {}).forEach((s) => add(s, "grower default"));
     const { data: maps, error: mapErr } = await db.from("newquip_package_mappings").select("lines").eq("org_id", a.orgId).eq("status", "ACTIVE");
     for (const m of maps ?? []) for (const l of (m.lines as Array<{ sku?: string }>) ?? []) add(l.sku, "saved package mapping");
@@ -50,6 +53,16 @@ export async function getCostSurveyUniverseAction(): Promise<SurveyActionResult<
     for (const q of qs ?? []) { const s = (q as { skus?: unknown }).skus; if (isObj(s)) Object.keys(s).forEach((k) => add(k, "existing quotation")); }
     return { ok: true, data: { skus: Object.keys(sources).sort(), sources, truncated: (qs ?? []).length >= CAP } };
   } catch { return { ok: false, error: MSG }; }
+}
+
+/** What Sean / Tereesha supplied against what Cin7 holds, for the SKUs surveyed. Server-side because the supplied figures are cost-bearing and never leave the server except to a cost-entitled viewer. Read-only. */
+export async function compareSuppliedCostsAction(facts: Array<{ sku: string } & Cin7CostFact>): Promise<SurveyActionResult<SuppliedComparison[]>> {
+  try {
+    await costActor();
+    if (!Array.isArray(facts) || facts.length > 100) throw new TypeError("bad request");
+    const by = new Map(facts.filter((f) => f && typeof f.sku === "string").map((f) => [f.sku, { found: !!f.found, cost: typeof f.cost === "number" ? f.cost : null, currency: typeof f.currency === "string" ? f.currency : null, lastSupplied: typeof f.lastSupplied === "string" ? f.lastSupplied : null }]));
+    return { ok: true, data: SUPPLIED_COSTS.map((c) => compareSuppliedCost(c.sku, by.get(c.sku))) };
+  } catch (e) { return { ok: false, error: e instanceof TypeError ? "The request was not valid." : MSG }; }
 }
 
 /** Reads up to 12 SKUs from Cin7 (GET only, paced, bounded backoff) and classifies each. */

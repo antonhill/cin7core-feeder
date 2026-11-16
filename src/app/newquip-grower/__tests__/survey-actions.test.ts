@@ -56,6 +56,15 @@ describe("cost survey actions", () => {
     expect(r.data!.errors).toEqual({ BAD: "http_500" });
     expect(r.data!.inputs.find((i) => i.sku === "ERT053")!.unitFields).toMatchObject({ UOM: "Item", "supplier0.PurchaseUnit": "Box" });
   });
+  it("the supplied-figure comparison is cost-entitled only and compares against what Cin7 returned", async () => {
+    actor = asActor({ canSeeCost: false });
+    expect((await actions.compareSuppliedCostsAction([])).ok).toBe(false);
+    actor = asActor();
+    const r = await actions.compareSuppliedCostsAction([{ sku: "NQ1017", found: true, cost: 3.14, currency: "ZAR", lastSupplied: "2026-11-13" }, { sku: "NQ1942", found: true, cost: null, currency: null, lastSupplied: null }]);
+    expect(r.ok).toBe(true);
+    const by = Object.fromEntries(r.data!.map((x) => [x.sku, x.status]));
+    expect(by).toMatchObject({ NQ1017: "agrees", NQ1942: "cin7_has_no_cost", "NQ.TUBE.63": "not_in_cin7", NQ1163: "not_in_cin7" });
+  });
   it("refuses a malformed or oversized request", async () => {
     expect((await actions.surveyCin7SkusAction([])).error).toBe("The request was not valid.");
     expect((await actions.surveyCin7SkusAction(Array.from({ length: 13 }, (_, i) => `S${i}`))).error).toBe("The request was not valid.");
