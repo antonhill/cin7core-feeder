@@ -38,7 +38,7 @@ export function AppShell({ nav, children }: { nav: AppNavProps; children: React.
   const onlyLinks = isNewquipOnlyPathAllowed(pathname) ? newquipOnlyLinks(nav.orgId, nav.disabledModules, nav.isSuperAdmin) : [];
   if (onlyLinks.length > 0) {
     return (
-      <NewquipShell links={onlyLinks} orgName={nav.orgName} userEmail={nav.userEmail ?? ""} showToolboxLink={false}>
+      <NewquipShell links={onlyLinks} orgName={nav.orgName} userEmail={nav.userEmail ?? ""} showToolboxLink={false} switchOrgFrom={nav.hasMultipleOrgs ? (nav.orgId ?? undefined) : undefined}>
         {children}
       </NewquipShell>
     );

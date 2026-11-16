@@ -1,3 +1,4 @@
+import { isNewquipPocOrg } from "@/newquip/access";
 import "server-only";
 // Loads the NewQuip dashboard's counts through the EXISTING stores (quotations, approvals, projects). Read-only; no Cin7 call. Each section fails independently
 // (null) so one unavailable store never blanks the page, and only counts and a role list leave this module (no record, cost, margin or supplier value).
@@ -26,6 +27,7 @@ export interface NewquipDashboardData {
 export async function loadNewquipDashboard(orgId: string): Promise<NewquipDashboardData> {
   const db = createServiceRoleClient();
   const out: NewquipDashboardData = { roles: [], quotes: null, queue: [], approvalsPending: null, approvalsEnabled: !APPROVALS_DISABLED, activeProjects: null, claims: null };
+  if (!isNewquipPocOrg(orgId)) return out; // defence in depth: only the NewQuip org is ever summarised here
 
   try {
     const actor = await authoriseActor(); // NewQuip org + Quotes module access + the viewer's effective process roles

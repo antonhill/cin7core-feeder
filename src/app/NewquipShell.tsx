@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOutAction } from "@/actions/auth";
 import { isWorkspaceLinkActive, type WorkspaceLink } from "@/app/module-nav";
+import { ActiveOrgSwitcher } from "@/app/ActiveOrgSwitcher";
 
 /**
  * The dedicated NewQuip workspace chrome: one compact header in place of the Toolbox sidebar, shown on the NewQuip routes only (Solution Builder, Projects,
@@ -15,6 +16,7 @@ export function NewquipShell({
   orgName,
   userEmail,
   showToolboxLink = true,
+  switchOrgFrom,
   children,
 }: {
   links: WorkspaceLink[];
@@ -22,6 +24,8 @@ export function NewquipShell({
   userEmail: string;
   /** True for a Spark super-admin (who keeps the full Toolbox); false for the NewQuip-only interface, which has no way back to the Toolbox. */
   showToolboxLink?: boolean;
+  /** Set (to the active org id) for a member of more than one org, so a NewQuip-only user can still switch to their other organisation. */
+  switchOrgFrom?: string;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -69,6 +73,7 @@ export function NewquipShell({
           </nav>
           <div className="ml-auto flex min-w-0 items-center gap-3">
             {orgName && <span className="max-w-[16rem] truncate text-sm text-slate-700" title={orgName}>{orgName}</span>}
+            {switchOrgFrom && <ActiveOrgSwitcher currentOrgId={switchOrgFrom} />}
             {userEmail && <span className="hidden max-w-[16rem] truncate text-sm text-slate-600 xl:inline" title={userEmail}>{userEmail}</span>}
             <form action={signOutAction}>
               <button
