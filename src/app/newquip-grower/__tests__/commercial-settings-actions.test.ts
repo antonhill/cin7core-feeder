@@ -20,7 +20,7 @@ const ORG = "org-nq";
 const asActor = (email: string, roles: Array<"rep" | "estimator" | "manager">): Actor => ({ orgId: ORG, userId: `u-${email}`, email, tier: roles.includes("manager") ? "admin" : "member", roles: new Set(roles), canSeeCost: true, activeRole: null, demo: null });
 const MGR = () => asActor("mgr@nq", ["manager"]);
 const settings = (over: Partial<CommercialSettings> = {}): CommercialSettings => ({ ...emptyCommercialSettings(), freight: { factorMicro: 1_100_000, addOnCents: 250, source: "test freight policy" }, fx: { EUR: { rateMicro: 20_000_000, source: "test fixing", asOf: new Date(Date.now() - 3_600_000).toISOString() } }, ...over });
-const PROFILE = { brandName: "TestBrand", legalName: "Test Company (Pty) Ltd", registrationNumber: "0000/000000/00", vatNumber: "0000000000", addressLines: ["1 Test Street", "Testville 0001"], phone: "000", email: "sales@testbrand.example", website: "", validityDays: 30, paymentTerms: "p", deliveryInstallationConditions: "d", termsAndConditions: "t", acceptanceInstructions: "a" };
+const PROFILE = { brandName: "TestBrand", legalName: "Test Company (Pty) Ltd", registrationNumber: "2015/483920/07", vatNumber: "4812345678", addressLines: ["1 Test Street", "Testville 0001"], phone: "+27 11 555 0142", email: "sales@testbrand.example", website: "", validityDays: 30, paymentTerms: "Payment is due per the agreed billing schedule stated on this fictitious test quotation.", deliveryInstallationConditions: "Delivery and installation dates are fictitious test conditions subject to site readiness.", termsAndConditions: "These fictitious test terms and conditions apply to the quotation in this automated test only.", acceptanceInstructions: "To accept this fictitious test quotation, reply in writing to the sender named on it." };
 const rowsCount = () => db.rows("newquip_company_profiles").length;
 
 beforeEach(() => { db = new FakeDb(); db.deliveryApplied = true; actor = MGR(); audits.length = 0; });
@@ -89,13 +89,13 @@ describe("the interim store stays apart from the customer-facing company details
     expect(JSON.stringify(p.profile)).not.toMatch(/test freight policy|20000000/);
     expect(p.profile).toMatchObject(PROFILE); // the customer-facing fields were carried forward untouched
     expect(missingProfileFields(p.profile)).toEqual([]);
-    await saveProfile(db as never, ORG, { ...PROFILE, paymentTerms: "changed" }, "m@nq"); // a company-details save carries the settings forward
+    await saveProfile(db as never, ORG, { ...PROFILE, paymentTerms: "Changed fictitious payment terms for this test only." }, "m@nq"); // a company-details save carries the settings forward
     const c = (await latestCommercialSettings(db as never, ORG))!;
     expect(c).toMatchObject({ revision: 1, enteredBy: "mgr@nq" });
     expect(c.settings.freight!.source).toBe("test freight policy");
-    expect((await latestProfile(db as never, ORG))!.profile.paymentTerms).toBe("changed");
+    expect((await latestProfile(db as never, ORG))!.profile.paymentTerms).toBe("Changed fictitious payment terms for this test only.");
     await actions.saveCommercialSettingsAction(settings({ markupBps: 2100 }), 1); // and a settings save carries the details forward
-    expect((await latestProfile(db as never, ORG))!.profile.paymentTerms).toBe("changed");
+    expect((await latestProfile(db as never, ORG))!.profile.paymentTerms).toBe("Changed fictitious payment terms for this test only.");
     expect(rowsCount()).toBe(4);
   });
   it("a company-details form that was never given the block cannot erase it, and a damaged block reads as not set", async () => {
@@ -121,18 +121,18 @@ describe("two writers at once cannot silently lose a change (no migration, so de
   };
   it("company details saved between a settings save's read and insert: the settings save fails loudly and the details survive as the latest version", async () => {
     await saveProfile(db as never, ORG, PROFILE, "m@nq");
-    interleave(() => saveProfile(db as never, ORG, { ...PROFILE, paymentTerms: "other writer" }, "other@nq"), 2); // read 1 is the action's own revision check, read 2 the save's
+    interleave(() => saveProfile(db as never, ORG, { ...PROFILE, paymentTerms: "Other writer fictitious payment terms for the test." }, "other@nq"), 2); // read 1 is the action's own revision check, read 2 the save's
     const r = await actions.saveCommercialSettingsAction(settings(), null);
     expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/Someone else saved at the same time/) });
     const latest = (await latestProfile(db as never, ORG))!;
-    expect(latest.profile.paymentTerms).toBe("other writer"); // their change is the latest, not dropped
+    expect(latest.profile.paymentTerms).toBe("Other writer fictitious payment terms for the test."); // their change is the latest, not dropped
     expect(await latestCommercialSettings(db as never, ORG)).toBeNull(); // ours was refused, not half-applied
   });
   it("a settings save between a details save's read and insert: the details save fails and the Manager's settings stay latest", async () => {
     await saveProfile(db as never, ORG, PROFILE, "m@nq");
     interleave(async () => { actor = MGR(); await actions.saveCommercialSettingsAction(settings({ markupBps: 2100 }), null); });
-    await expect(saveProfile(db as never, ORG, { ...PROFILE, paymentTerms: "mine" }, "m@nq")).rejects.toThrow(/Someone else saved at the same time/);
+    await expect(saveProfile(db as never, ORG, { ...PROFILE, paymentTerms: "Mine: fictitious payment terms for this test only." }, "m@nq")).rejects.toThrow(/Someone else saved at the same time/);
     expect((await latestCommercialSettings(db as never, ORG))).toMatchObject({ revision: 1, settings: { markupBps: 2100 } });
-    expect((await latestProfile(db as never, ORG))!.profile.paymentTerms).toBe("p");
+    expect((await latestProfile(db as never, ORG))!.profile.paymentTerms).toBe(PROFILE.paymentTerms);
   });
 });
