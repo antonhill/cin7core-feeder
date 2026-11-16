@@ -923,7 +923,12 @@ export default function QuoteEditorPage() {
         <div className="mt-4 space-y-4" data-testid="supplier-costing-start">
           <ActivationPanel firstTask quoteId={id} budget={budget} confirmedCents={q.customer_confirmed_cents} canEdit={s2Edit} reload={reloadQuote} onDirtyChange={setWsDirty} onUseLegacy={() => setLegacyOpen(true)} />
           <p className="text-sm text-slate-700">Room measurements, quantities, delivery, installation and the M75 price belong to the Rep.</p>
-          {roles.has("manager") && <p className="text-sm text-slate-700">The Manager&apos;s incomplete-costing waiver is in the older costing panel. <button type="button" className="min-h-11 font-semibold text-blue-800 underline" onClick={() => setLegacyOpen(true)} data-testid="use-legacy-costing-manager">Open the older costing panel</button></p>}
+          <section className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm text-slate-800" aria-label="Other Estimator actions" data-testid="other-estimator-actions">
+            <h3 className="font-bold text-slate-900">Not ready to start supplier costing?</h3>
+            <p className="mt-1">You can still map products, confirm packages, sign off or return this quotation to the Rep without switching to supplier costing. Those actions are in the older costing panel (it also holds the Manager&apos;s incomplete-costing waiver).</p>
+            <button type="button" className="mt-1 inline-flex min-h-11 items-center font-semibold text-blue-800 underline disabled:text-slate-500 disabled:no-underline" disabled={wsDirty} onClick={() => setLegacyOpen(true)} data-testid="use-legacy-costing-link">Open the older costing panel</button>
+            {wsDirty && <p className="text-xs text-slate-700" data-testid="legacy-blocked-dirty">Save or clear the cost you are typing first, so it is not lost.</p>}
+          </section>
         </div>
       )}
       {startMode && legacyOpen && (

@@ -196,10 +196,13 @@ describe("switching supplier pricing on is offered inside the new Estimator expe
     for (const gone of ["step-rail", "disc-cost-capture", "disc-margin", "disc-supplier-pricing", "quote-summary-bar", "stage-nav-toggle", "estimator-workspace"]) expect(screen.queryByTestId(gone), gone).toBeNull();
     expect(document.querySelectorAll('[data-testid="phase-stepper"]')).toHaveLength(1); // one phase line, not a second set of phase cards
   }, 60000);
-  it("the older costing panel is never the default, and a Manager who is also an Estimator can still reach the waiver through the explained link", async () => {
-    await open(undefined, ["ESTIMATOR", "MANAGER"], { waitFor: "supplier-costing-start" });
-    fireEvent.click(screen.getByTestId("use-legacy-costing-manager"));
+  it("the older costing panel is never the default, but an Estimator-only user can always reach mapping, sign-off and return to the Rep through the explained link, and come back", async () => {
+    await open(undefined, ["ESTIMATOR"], { waitFor: "supplier-costing-start" });
+    expect(screen.getByTestId("other-estimator-actions").textContent).toMatch(/map products, confirm packages, sign off or return this quotation to the Rep/);
+    expect(screen.queryByTestId("step-rail")).toBeNull();
+    fireEvent.click(screen.getByTestId("use-legacy-costing-link"));
     await screen.findByTestId("disc-cost-capture", {}, { timeout: 15000 });
+    expect(screen.getByTestId("step-rail")).toBeTruthy(); // the steps that hold mapping, final review and sign-off or return
     expect(screen.getByTestId("legacy-costing-note").textContent).toMatch(/on purpose/);
     fireEvent.click(screen.getByTestId("back-to-workspace"));
     await screen.findByTestId("supplier-costing-start");
