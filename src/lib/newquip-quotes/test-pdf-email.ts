@@ -26,6 +26,9 @@ export const recipientAllowed = (email: string): boolean => isAllowlisted(email)
 
 const esc = (v: string | number): string => String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
+/** The approval's recorded amount must equal the sealed contract amount the PDF shows; otherwise the quotation changed since approval and nothing is sent. */
+export const amountConsistent = (approvedCents: number, sealedCents: number | null): boolean => sealedCents != null && approvedCents === sealedCents;
+
 export function buildTestPdfEmail(i: { to: string; request: ApprovalRequestRow; bytes: Uint8Array }): SendEmailInput {
   const n = buildNotification("APPROVED_FOR_REP", i.request, i.to, { baseUrl: UAT_ORIGIN, by: i.request.decided_by_email, at: i.request.decided_at });
   const text = [

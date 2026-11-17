@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildTestPdfEmail, recipientAllowed, testPdfEmailEnabled, testPdfSubject, UAT_ORIGIN, UAT_BANNER } from "../test-pdf-email";
+import { amountConsistent, buildTestPdfEmail, recipientAllowed, testPdfEmailEnabled, testPdfSubject, UAT_ORIGIN, UAT_BANNER } from "../test-pdf-email";
 import type { ApprovalRequestRow } from "@/lib/approvals/types";
 
 const req = {
@@ -55,5 +55,11 @@ describe("UAT TEST-ONLY approval email", () => {
     const m = buildTestPdfEmail({ to: "rep@sparkconsulting.co.za", request: { ...req, revision: 7 }, bytes: new Uint8Array([1]) });
     expect(m.text).toContain("(revision 7)");
     expect(m.attachments![0].filename).toBe("TEST-ONLY-NQ-Q-0001-r7.pdf");
+  });
+
+  it("blocks the send when the approved amount no longer matches the sealed quotation amount", () => {
+    expect(amountConsistent(1147238936, 1147238936)).toBe(true);
+    expect(amountConsistent(1147238936, 1147238937)).toBe(false);
+    expect(amountConsistent(1147238936, null)).toBe(false);
   });
 });
