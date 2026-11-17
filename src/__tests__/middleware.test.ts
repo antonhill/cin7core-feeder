@@ -304,3 +304,52 @@ describe("security re-audit round 3, item 1: multi-org active-org resolution mat
     expect(blockedParam).toBeNull();
   });
 });
+
+describe("NewQuip dedicated sign-in routing", () => {
+  const NQ = "e1aea782-d095-47ad-90fb-4fa65c9bf855";
+  const req = (path: string, cookie?: string) => new NextRequest(`https://app.example.com${path}`, { headers: cookie ? { cookie } : {} });
+  const loc = (res: Response | undefined) => (res?.headers.get("location") ? new URL(res.headers.get("location")!) : null);
+
+  it("unauthenticated NewQuip routes go to /newquip/login with a validated next", async () => {
+    cfg.claims = null;
+    for (const p of ["/newquip-grower", "/projects", "/claims", "/approvals"]) {
+      const res = await middleware(req(`${p}?a=1`));
+      expect(redirectTo(res, "/newquip/login"), p).toBe(true);
+      expect(loc(res)!.searchParams.get("next")).toBe(`${p}?a=1`);
+    }
+  });
+  it("unauthenticated non-NewQuip routes still go to /login", async () => {
+    cfg.claims = null;
+    expect(redirectTo(await middleware(req("/reports")), "/login")).toBe(true);
+    expect(redirectTo(await middleware(req("/settings/instances", "newquip_entry=1")), "/login")).toBe(true);
+  });
+  it("the root redirects to /newquip/login only with the entry cookie; otherwise stays the public Toolbox root", async () => {
+    cfg.claims = null;
+    expect(redirectTo(await middleware(req("/", "newquip_entry=1")), "/newquip/login")).toBe(true);
+    const plain = await middleware(req("/"));
+    expect(plain.status).toBeLessThan(300);
+  });
+  it("/newquip and /newquip/login are public, and /newquip/login sets the entry cookie", async () => {
+    cfg.claims = null;
+    const res = await middleware(req("/newquip/login"));
+    expect(res.status).toBeLessThan(300);
+    expect(res.headers.get("set-cookie")).toContain("newquip_entry=1");
+    expect((await middleware(req("/newquip"))).status).toBeLessThan(300);
+  });
+  it("signed-in user on /newquip/login is bounced to / only when getUser confirms; revoked session sees the form", async () => {
+    expect(redirectTo(await middleware(req("/newquip/login?next=/projects")), "/")).toBe(true);
+    cfg.serverSessionValid = false;
+    const res = await middleware(req("/newquip/login"));
+    expect(redirectTo(res, "/")).toBe(false);
+    expect(res.status).toBeLessThan(300);
+    cfg.serverSessionValid = true;
+    cfg.getUserThrows = true;
+    expect(redirectTo(await middleware(req("/newquip/login")), "/")).toBe(false);
+  });
+  it("a NewQuip-only member can still reach their routes (guard unchanged) and is bounced from Toolbox routes", async () => {
+    cfg.memberships = [{ org_id: NQ, role: "member", allowed_modules: null }];
+    cfg.orgs = { [NQ]: { subscription_status: "trialing", disabled_modules: [] } };
+    expect(redirectTo(await middleware(req("/projects")), "/")).toBe(false);
+    expect(redirectTo(await middleware(req("/reports")), "/")).toBe(true);
+  });
+});
