@@ -9,7 +9,7 @@ import { Status, statusText } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { formatSast } from "@/lib/approvals/time";
-import { getQuoteDocumentsAction, issueQuoteDocumentAction, type QuoteDocumentsView } from "../document-actions";
+import { getQuoteDocumentsAction, issueQuoteDocumentAction, sendTestPdfToRepAction, type QuoteDocumentsView } from "../document-actions";
 import { seedFresh, type BundleSeed } from "./bundle-seed";
 import { getQuoteDeliveryAction, retryQuoteSendAction, sendQuoteToCustomerAction, type DeliveryView } from "../delivery-actions";
 import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/billing-schedule";
@@ -98,6 +98,15 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section, steps, 
         <Alert tone="info">
           <p data-testid="test-preview-note"><strong>TEST-ONLY preview.</strong> The PDF below uses the current demonstration company details and is watermarked &quot;TEST ONLY – NOT FOR CUSTOMER ISSUE&quot;. It is not an issued quotation: it is not stored, cannot be sent, cannot be accepted by a customer and cannot start a live project. Issuing a customer PDF still needs real company details.</p>
           <a className="mt-1 inline-block text-indigo-700 underline" data-testid="test-preview-link" href={`/api/newquip-quote-preview/${quoteId}`} target="_blank" rel="noreferrer">Open TEST-ONLY preview PDF</a>
+          {docs.testEmailAvailable && (
+            <div className="mt-2">
+              <Button type="button" variant="secondary" data-testid="send-test-pdf-to-rep" loading={busy === "Sending the test PDF"} disabled={busy !== null}
+                onClick={() => void run(() => sendTestPdfToRepAction(quoteId), "TEST-ONLY PDF emailed to the assigned Rep. It was not issued or sent to a customer.", "Sending the test PDF")}>
+                Send test PDF to Rep
+              </Button>
+              <span className="ml-2 text-xs text-slate-600">UAT only. Emails the watermarked PDF to the quotation&apos;s Rep; nothing is issued or sent to a customer.</span>
+            </div>
+          )}
         </Alert>
       )}
       {docs.documents.length > 0 && (

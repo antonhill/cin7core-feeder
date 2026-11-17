@@ -181,7 +181,7 @@ export async function issueQuotationDocument(
  */
 export async function previewQuotationDocument(
   db: Db, orgId: string, quoteId: string, schedule: readonly ScheduleStageTemplate[], deps: Pick<DocumentDeps, "today">, scheduleSource?: ScheduleSource,
-): Promise<{ bytes: Uint8Array; quoteRef: string; revision: number }> {
+): Promise<{ bytes: Uint8Array; quoteRef: string; revision: number; repEmail: string | null }> {
   const q = await loadQuote(db, orgId, quoteId);
   if (!q) throw new Error("Quote not found.");
   if (q.state !== "MANAGER_APPROVED_FINAL" || !q.accepted_baseline || !q.baseline_hash) throw new Error("A preview is available only after Manager approval.");
@@ -195,7 +195,7 @@ export async function previewQuotationDocument(
   if (!prof || hard.length) throw new Error(`The preview cannot be built: ${prof ? describeProfileProblems(hard).join("; ") : "no company details have been saved"}.`);
   const model = buildCustomerDocumentModel({ baseline: q.accepted_baseline, quoteRef: q.quote_ref, revision: q.revision, snapshot: snap.snapshot, profile: prof.profile, schedule, scheduleSource, issuedOn: deps.today() });
   assertNoInternalLeak(model, q.accepted_baseline);
-  return { bytes: await renderCustomerPdf(model, { testOnly: true }), quoteRef: q.quote_ref, revision: q.revision };
+  return { bytes: await renderCustomerPdf(model, { testOnly: true }), quoteRef: q.quote_ref, revision: q.revision, repEmail: q.created_by_email ?? null };
 }
 
 /** The bytes of an issued document of THIS organisation, re-verified against the SHA-256 recorded at issue. A tampered or substituted file is refused. */
