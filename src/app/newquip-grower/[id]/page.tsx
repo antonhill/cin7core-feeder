@@ -1039,10 +1039,11 @@ export default function QuoteEditorPage() {
               <PanelTitle>Site &amp; pricing basis</PanelTitle>
               <div className="mt-4 grid gap-4">
                 <TextField label="Site / project name" error={err("siteName")} onBlur={() => touch("siteName")} value={draft.siteName} onChange={(v) => edit((d) => { d.siteName = v; })} />
-                <Select label="Pricing basis" value={draft.quoteType} onChange={(e) => edit((d) => { d.quoteType = e.target.value as QuoteType; })}>
-                  <option value="project">{QUOTE_TYPE_NEUTRAL.project}</option>
-                  <option value="day_to_day">{QUOTE_TYPE_NEUTRAL.day_to_day}</option>
-                </Select>
+                {/* Project pricing only for the Rep (owner decision). The standard price-list basis stays in the engine and on existing quotations, and returns when it can use Cin7 selling prices. */}
+                <div>
+                  <div className="text-sm font-medium text-slate-800">Pricing basis</div>
+                  <div className="mt-1 text-sm text-slate-900">{QUOTE_TYPE_NEUTRAL[draft.quoteType]}</div>
+                </div>
               </div>
             </Panel>
             <Panel>
