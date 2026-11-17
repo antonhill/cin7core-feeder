@@ -14,6 +14,7 @@ export function settingsEntries(v: { isOrgAdmin: boolean; canSeeCost: boolean; d
   ];
   if (v.canSeeCost && !v.demo) e.push({ href: "/newquip-grower/cost-survey", label: "Cost survey", description: "Internal cost coverage survey (Manager and Estimator)." });
   if (v.isManager) e.push({ href: "/newquip-grower/commercial-settings", label: "Commercial settings", description: "Cost-age escalation, exchange rates, freight and markup used by automatic supplier pricing (Manager only)." });
+  if (v.isManager || v.isOrgAdmin) e.push({ href: "/newquip-grower/team", label: "Team and invitations", description: "Invite people to NewQuip and choose their role: Rep, Estimator or Manager (Manager only)." });
   if (v.isOrgAdmin) e.push({ href: "/settings/members", label: "Members", description: "Invite people and manage who can use NewQuip." });
   e.push(
     { href: "/settings/security", label: "Security", description: "Two-factor authentication and sign-in security." },

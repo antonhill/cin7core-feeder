@@ -70,6 +70,6 @@ describe("ClaimsTable", () => {
 describe("SettingsList", () => {
   it("renders a link per visible entry", () => {
     render(<SettingsList entries={settingsEntries({ isOrgAdmin: true, canSeeCost: false, demo: false })} />);
-    expect(screen.getAllByRole("link").map((a) => a.getAttribute("href"))).toEqual(["/newquip-grower/company-profile", "/newquip-grower/project-templates", "/settings/members", "/settings/security", "/settings/notifications"]);
+    expect(screen.getAllByRole("link").map((a) => a.getAttribute("href"))).toEqual(["/newquip-grower/company-profile", "/newquip-grower/project-templates", "/newquip-grower/team", "/settings/members", "/settings/security", "/settings/notifications"]);
   });
 });
