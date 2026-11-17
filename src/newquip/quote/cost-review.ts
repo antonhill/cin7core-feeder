@@ -56,7 +56,7 @@ function rowOf(r: SkuRow, desc: Map<string, string>): CostReviewRow {
   const entered = r.status !== "no_input" && r.costState !== "missing";
   const kind = r.costKind ? KIND_LABEL[r.costKind] : null;
   const supplierLabel = r.supplier ? `${r.supplier}${r.supplierId ? " (Cin7)" : ""}` : null;
-  const source: ReviewCell = !entered ? MISSING("No supplier cost entered") : { text: [supplierLabel, kind, r.costSource].filter(Boolean).join(" · ") || "Source not recorded", ...(r.supplier || r.costSource ? {} : { tone: "missing" as const }) };
+  const source: ReviewCell = !entered ? MISSING(r.autoFlag ? r.autoFlag.text : "No supplier cost entered") : { text: [supplierLabel, kind, r.costSource].filter(Boolean).join(" · ") || "Source not recorded", ...(r.supplier || r.costSource ? {} : { tone: "missing" as const }) };
   // The date the cost APPLIES to (a quotation date, or Cin7's last-supplied date). A Cin7 price with no date says so; an older entry shows only when it was entered. No date is ever invented.
   const date: ReviewCell = r.costDate ? { text: r.costDate }
     : r.costKind === "cin7_historical" ? { text: "not recorded in Cin7", tone: "open" }
@@ -75,7 +75,7 @@ function rowOf(r: SkuRow, desc: Map<string, string>): CostReviewRow {
     : manual ? { text: STATUS_PROVISIONAL, tone: "open" }
     : r.costState === "verified" ? { text: STATUS_VERIFIED, tone: "ok" }
     : { text: STATUS_NEEDS, tone: "open" };
-  const statusDetail: string | null = r.costState === "missing" ? null
+  const statusDetail: string | null = r.costState === "missing" ? (r.autoFlag ? `Automatic pricing could not price this product. ${r.autoFlag.action}` : null)
     : manual ? "Priced with a manual selling price. Its supplier cost still needs independent verification."
     : r.currencySource === "override" ? `The currency was set by hand because Cin7 holds none for this supplier: ${r.currencyOverrideReason ?? "no reason recorded"}`
     : r.priceOverride != null ? "The selling price is an audited override of the model's price. The cost status above is unaffected."

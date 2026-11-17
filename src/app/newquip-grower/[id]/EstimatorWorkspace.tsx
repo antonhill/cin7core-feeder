@@ -13,7 +13,8 @@ import { manualSelectionSkusFor, templateRevisionOf, type TemplateRevision } fro
 import type { GrowerItemKey } from "@/newquip/grower/types";
 import { buildWorkspace, costText, decodeManualReason, money, needsEvidence, targetOf, taskStatusWord, type TaskKind, type WorkspaceTask } from "@/newquip/quote/estimator-workspace";
 import { applyEditor, revisionReason, type SkuEditor } from "@/newquip/quote/workspace-submission";
-import { applyEstimatorPricingAction, attestEstimatorRatesAction, getEstimatorPricingAction, recordManualPriceEvidenceAction, verifyEstimatorCostsAction } from "../pricing-actions";
+import { applyEstimatorPricingAction, attestEstimatorRatesAction, getEstimatorPricingAction, priceFromCin7Action, recordManualPriceEvidenceAction, verifyEstimatorCostsAction } from "../pricing-actions";
+import { AutoSummary, PricingExceptions, ReadyForVerification } from "./AutoPricingSections";
 import type { IndicativeComparison } from "@/newquip/pricing/comparison";
 import { M75PriceForm, ManualPriceForm, PackageConfirm, ProductChoice, Rail, SkuCostForm, type SaveResult } from "./WorkspaceEditors";
 import { CompleteGroup, EvidenceOpenRow, HowItWorks, NextActionBar, OpenRow, ReadinessList, RepItems, SummaryPanel, WorkspaceHeader } from "./WorkspaceParts";
@@ -78,6 +79,7 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
   /** > 0 while one of THIS workspace's own saves is running: the page changes that follow it are its own, so they do not trigger a second read of the workspace (the save already carries it). */
   const busyRef = useRef(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [pricingBusy, setPricingBusy] = useState(false);
   useUnsavedGuard(dirty, "You have unsaved changes in this editor. If you leave now they are lost.");
   const { onDirtyChange } = p;
   useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
@@ -176,16 +178,32 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
   const saveM75 = (itemKey: string, unit: number) => draftSave((d) => { d.estimator.unitPrices = { ...d.estimator.unitPrices, [itemKey]: unit }; });
   const removeManual = (itemKey: string) => draftSave((d) => { const n = { ...d.estimator.priceResolutions }; delete n[itemKey as GrowerItemKey]; d.estimator.priceResolutions = n; });
 
+  /** "Price from Cin7": the SAME gated automatic costing, add-only (every stored cost is kept), for products that have no cost yet (a door or package chosen after the Rep's save, or SKUs not read earlier). */
+  const priceFromCin7 = (): Promise<void> => own(async () => {
+    setPricingBusy(true);
+    try {
+      const r = await priceFromCin7Action(p.quoteId);
+      if (!r.ok) { setNote(r.error ?? "Cin7 pricing did not complete. Nothing was changed."); return; }
+      setNote(r.data!.message);
+      if (r.data!.workspace) { setBundle(r.data!.workspace); setLoadError(null); } else await load();
+      if (r.data!.added > 0) await refreshPage();
+    } catch { setNote("Cin7 pricing did not complete (the connection or the server failed). Nothing was changed."); } finally { setPricingBusy(false); }
+  });
   const s = ws.summary;
+  const autoLayout = ws.auto.active;
+  const exceptionTaskIds = new Set(ws.auto.exceptions.map((e) => e.taskId));
+  /** With automatic pricing in play, a product whose only gap is a cost appears under "Pricing exceptions" (with its stored reason), never as a plain "supplier cost needed" task. */
+  const needTasks = autoLayout ? ws.tasks.filter((t) => t.kind !== "cost" || !exceptionTaskIds.has(t.id)) : ws.tasks;
   /** Lines whose only open item is their pricing-evidence record: they gate sign-off, so they are listed with the open tasks (not hidden in the completed group). */
   const evidenceRows = ws.complete.filter(needsEvidence);
-  const doneLines = ws.complete.filter((c) => !needsEvidence(c));
+  const doneLines = ws.complete.filter((c) => !needsEvidence(c) && !(autoLayout && c.autoReady));
   const openRows = ws.tasks.length + evidenceRows.length;
   const taskById = (id: string) => ws.tasks.find((t) => t.id === id);
   const rail = ws.tasks.map((t) => ({ id: t.id, n: t.n, label: t.label }));
   const onNext = ((): (() => void) | null => {
     switch (ws.next.kind) {
       case "open_task": { const t = taskById(ws.next.taskId ?? ""); return t ? () => openTask(t) : null; }
+      case "price_from_cin7": return () => { void priceFromCin7(); };
       case "return_to_rep": case "sign_off": return p.reviewNeeded && ws.next.kind === "sign_off" ? p.onMarkReviewed : p.onGoSignoff;
       case "verify_costs": return () => document.getElementById("ws-verify")?.scrollIntoView({ behavior: "smooth" });
       case "wait_manager_approval": return p.onGoApproval;
@@ -194,7 +212,7 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
     }
   })();
   const nextForBar = ws.next.kind === "sign_off" && p.reviewNeeded ? { ...ws.next, headline: "Mark the final review, then sign off", detail: "Review the commercial summary once. This is not a sign-off.", button: "Mark reviewed" } : ws.next;
-  const step: 1 | 2 | 3 | 4 | 5 = ws.next.kind === "open_task" || ws.next.kind === "return_to_rep" ? 1 : ws.next.kind === "wait_rep" ? 2 : ws.next.kind === "verify_costs" || ws.next.kind === "wait_manager" ? 3 : ws.next.kind === "sign_off" ? 4 : 5;
+  const step: 1 | 2 | 3 | 4 | 5 = ws.next.kind === "open_task" || ws.next.kind === "price_from_cin7" || ws.next.kind === "return_to_rep" ? 1 : ws.next.kind === "wait_rep" ? 2 : ws.next.kind === "verify_costs" || ws.next.kind === "wait_manager" ? 3 : ws.next.kind === "sign_off" ? 4 : 5;
 
   // ── the editor for the open task ──
   const editor = (() => {
@@ -252,15 +270,18 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
       ) : (
         <div className="flex min-w-0 flex-wrap items-start gap-5">
           <div className="flex min-w-0 flex-[999_1_32rem] flex-col gap-4">
+            {autoLayout && <AutoSummary auto={ws.auto} />}
+            {autoLayout && <ReadyForVerification auto={ws.auto} />}
             <section aria-labelledby="ws-needs" className="overflow-hidden rounded-xl border border-slate-200 bg-white" data-testid="needs-you">
-              <div className="border-b border-slate-200 px-4 py-2.5 sm:px-5"><h2 id="ws-needs" className="text-base font-bold">Needs you <span className="text-amber-900">· {openRows} item{openRows === 1 ? "" : "s"}</span></h2></div>
-              {openRows === 0 ? <p className="px-5 py-4 text-sm text-emerald-900" data-testid="no-tasks">Nothing is left for you to price or choose.</p> : (
+              <div className="border-b border-slate-200 px-4 py-2.5 sm:px-5"><h2 id="ws-needs" className="text-base font-bold">{autoLayout ? "Needs confirmation" : "Needs you"} <span className="text-amber-900">· {needTasks.length + evidenceRows.length} item{needTasks.length + evidenceRows.length === 1 ? "" : "s"}</span></h2></div>
+              {needTasks.length + evidenceRows.length === 0 ? <p className="px-5 py-4 text-sm text-emerald-900" data-testid="no-tasks">{autoLayout ? "Nothing is left for you to confirm or choose." : "Nothing is left for you to price or choose."}</p> : (
                 <ol>
-                  {ws.tasks.map((t, i) => <OpenRow key={t.id} n={t.n} id={t.id} label={t.label} meta={t.meta} why={t.why} status={taskStatusWord(t)} action={t.action} active={i === 0} onAct={() => openTask(t)} canEdit={canEdit} />)}
+                  {needTasks.map((t, i) => <OpenRow key={t.id} n={t.n} id={t.id} label={t.label} meta={t.meta} why={t.why} status={taskStatusWord(t)} action={t.action} active={i === 0 && ws.next.kind !== "price_from_cin7"} onAct={() => openTask(t)} canEdit={canEdit} />)}
                   {evidenceRows.map((c, k) => <EvidenceOpenRow key={c.id} n={ws.tasks.length + k + 1} line={c} canEdit={canEdit} onRecord={recordEvidence} />)}
                 </ol>
               )}
             </section>
+            {autoLayout && <PricingExceptions auto={ws.auto} canEdit={canEdit} busy={pricingBusy} onOpen={(id) => { const t = taskById(id); if (t) openTask(t); }} onPrice={() => { void priceFromCin7(); }} />}
             <RepItems items={ws.repItems} />
             <CompleteGroup lines={doneLines} charges={p.budget.charges} onEdit={openLine} canEdit={canEdit} onRecordEvidence={recordEvidence} />
             <CostReview bundle={bundle} budget={p.budget} />

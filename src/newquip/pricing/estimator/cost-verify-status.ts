@@ -33,7 +33,11 @@ export function phase2CostStatus(view: PricingWorkspaceView | null | undefined, 
   const outstanding: string[] = [];
   const other: string[] = [];
   const miss = [...new Set(missingCost)];
-  if (miss.length > 0) outstanding.push(`${plural(miss.length, "supplier cost", "supplier costs")} to enter (${list(miss)})`);
+  // A product automatic pricing tried and could not price is a PRICING EXCEPTION with a stored reason, not a cost nobody has looked at.
+  const flagged = miss.filter((s) => !!used.find((r) => r.sku === s)?.autoFlag);
+  const plain = miss.filter((s) => !flagged.includes(s));
+  if (plain.length > 0) outstanding.push(`${plural(plain.length, "supplier cost", "supplier costs")} to enter (${list(plain)})`);
+  if (flagged.length > 0) outstanding.push(`${plural(flagged.length, "pricing exception", "pricing exceptions")} with no automatic price (${list(flagged)}); each shows its reason`);
   const unver = [...new Set(needsVerification)];
   if (unver.length > 0) {
     const changed = used.filter((r) => r.costState === "review_outdated").map((r) => r.sku);

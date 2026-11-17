@@ -69,11 +69,33 @@ export interface WorkspaceTask {
   /** The button wording. */
   action: string;
   quantity: number | null;
+  /** A package whose components ALL already have a cost: only the confirmation is outstanding (no cost is asked for again). */
+  confirmOnly?: boolean;
 }
 export type EvidenceView = { state: "missing" | "recorded" | "outdated"; text: string; note: string | null; reference: string | null };
 /** A line that WAS priced on the reference basis (the Rep's handoff) and is now excluded from the total until it has a supplier cost. */
 export interface ExcludedLine { id: string; label: string; /** What it was worth on the reference basis, ex VAT, rand. */ previous: number; why: string }
-export interface CompleteLine { /** the SKU-less manual item's pricing-evidence record (the existing approval requirement) */ evidence?: EvidenceView; /** the stored reason of a manual quotation price, decoded (reason and evidence) */ manual?: DecodedManualReason; id: string; label: string; how: string; quantity: number | null; unit: number | null; revenue: number | null; provisional: boolean; estimatorPriced: boolean; costState: "n/a" | "unverified" | "verified" }
+export interface CompleteLine { /** the SKU-less manual item's pricing-evidence record (the existing approval requirement) */ evidence?: EvidenceView; /** the stored reason of a manual quotation price, decoded (reason and evidence) */ manual?: DecodedManualReason; id: string; label: string; how: string; quantity: number | null; unit: number | null; revenue: number | null; provisional: boolean; estimatorPriced: boolean; costState: "n/a" | "unverified" | "verified"; /** Priced entirely from automatic Cin7 costs that a Manager has not yet verified: shown under "Ready for verification". */ autoReady?: boolean }
+
+/** What the Estimator needs to see about ONE automatically costed product, without opening anything. INTERNAL (the whole workspace is cost-entitled only). */
+export interface AutoSkuFact { sku: string; supplier: string | null; currency: string | null; cost: string | null; costDate: string | null; fx: string | null; freight: string | null; landed: string | null; selling: string | null; provenance: string | null }
+export interface ReadyLine { id: string; label: string; quantity: number | null; skus: AutoSkuFact[]; unit: number | null; revenue: number | null }
+/** One product that has NO automatic price: the SPECIFIC stored reason and what to do about it. */
+export interface PricingException { sku: string; usedBy: string[]; reason: string; action: string; /** The task that opens the editor for it. */ taskId: string; /** Reading Cin7 again may price it (it was not read, or a setting was missing at the time). */ retryable: boolean }
+export interface AutoView {
+  /** Automatic pricing is part of this quotation (some cost is automatic, or the pricing is entirely automatic): the three-section layout applies. */
+  active: boolean;
+  ready: ReadyLine[];
+  /** Products with an automatic cost still awaiting a Manager's verification. */
+  autoPriced: number;
+  /** Open decisions (a package or product to confirm, a manual price): never cost entry. */
+  needConfirmation: number;
+  exceptions: PricingException[];
+  /** How many exceptions "Price from Cin7" may resolve. */
+  retryable: number;
+  /** The viewer is an Estimator and the pricing is entirely automatic, so the top-up applies. */
+  canPrice: boolean;
+}
 export type TotalKind = "partial" | "calculated" | "confirmed";
 export interface Summary {
   totalKind: TotalKind;
@@ -99,7 +121,7 @@ export interface Summary {
   marginNote: string;
   blockers: string[];
 }
-export type NextActionKind = "open_task" | "wait_rep_items" | "wait_rep" | "return_to_rep" | "verify_costs" | "wait_manager" | "sign_off" | "wait_manager_approval" | "approved" | "read_only" | "record_evidence";
+export type NextActionKind = "price_from_cin7" | "open_task" | "wait_rep_items" | "wait_rep" | "return_to_rep" | "verify_costs" | "wait_manager" | "sign_off" | "wait_manager_approval" | "approved" | "read_only" | "record_evidence";
 export interface NextAction { kind: NextActionKind; headline: string; detail: string; /** The task to open, for open_task. */ taskId?: string; button: string | null }
 export interface WorkspaceFacts {
   /** REP_DRAFT | ESTIMATOR_REVIEW | MANAGER_APPROVED_FINAL */
@@ -129,11 +151,12 @@ export interface Workspace {
   complete: CompleteLine[];
   summary: Summary;
   next: NextAction;
+  auto: AutoView;
 }
 
 /** The ONE plain-English status shown for a line in the primary list (the four underlying readiness checks stay in the editor and in the derivation). */
-export type StatusWord = "Supplier cost needed" | "Product selection needed" | "Component pricing needed" | "Price needed" | "Evidence needed" | "Provisional" | "Complete";
-export const taskStatusWord = (t: Pick<WorkspaceTask, "kind">): StatusWord => (t.kind === "cost" ? "Supplier cost needed" : t.kind === "product" ? "Product selection needed" : t.kind === "m75" ? "Price needed" : "Component pricing needed");
+export type StatusWord = "Confirmation needed" | "Supplier cost needed" | "Product selection needed" | "Component pricing needed" | "Price needed" | "Evidence needed" | "Provisional" | "Complete";
+export const taskStatusWord = (t: Pick<WorkspaceTask, "kind"> & { confirmOnly?: boolean }): StatusWord => (t.confirmOnly ? "Confirmation needed" : t.kind === "cost" ? "Supplier cost needed" : t.kind === "product" ? "Product selection needed" : t.kind === "m75" ? "Price needed" : "Component pricing needed");
 /** A line whose only open item is its pricing-evidence record (it gates sign-off, so it belongs in the OPEN list, not the completed group). */
 export const needsEvidence = (c: Pick<CompleteLine, "evidence">): boolean => !!c.evidence && c.evidence.state !== "recorded";
 export const completeStatusWord = (c: CompleteLine): StatusWord => (needsEvidence(c) ? "Evidence needed" : c.provisional ? "Provisional" : "Complete");
@@ -145,6 +168,17 @@ export const costText = (e7: number): string => { const t = formatCost7(e7); con
 const qtyText = (n: number | null): string => (n == null ? "" : n.toLocaleString("en-ZA").replace(/\s/g, ","));
 const componentSkus = (l: BridgeLine): string[] => (l.components ?? []).map((c: BridgeComponent) => c.sku).filter((s): s is string => !!s);
 const rowOf = (rows: readonly SkuRow[], sku: string): SkuRow | undefined => rows.find((r) => r.sku === sku);
+/** Everything the Estimator checks about one automatically costed product, read straight from the pricing view (no arithmetic here: the landed cost and the price come from the model). */
+function autoFact(r: SkuRow): AutoSkuFact {
+  return {
+    sku: r.sku, supplier: r.supplier, currency: r.currency, cost: r.nativeUnitCostE7 == null || !r.currency ? null : `${r.currency} ${costText(r.nativeUnitCostE7)}`, costDate: r.costDate,
+    fx: r.currency === "ZAR" || !r.rate ? null : `${r.currency} ${(r.rate.rateMicro / 1e6).toFixed(4)}${r.rate.asOf ? ` as of ${r.rate.asOf.slice(0, 10)}` : ""}`,
+    freight: r.freightFactorMicro == null ? null : `× ${(r.freightFactorMicro / 1e6).toFixed(2)}${r.freightAddOnCents ? ` + ${money(r.freightAddOnCents / 100)}` : ""}`,
+    landed: r.unitLandedCostCents == null ? null : money(r.unitLandedCostCents / 100), selling: r.unitPriceCents == null ? null : money(r.unitPriceCents / 100), provenance: r.costSource,
+  };
+}
+/** Codes for which reading Cin7 again may produce a price (nothing about the product itself was wrong). */
+const RETRYABLE_CODES: ReadonlySet<string> = new Set(["not_read", "settings_incomplete", "fx_missing", "fx_stale"]);
 
 function costIndicators(skus: readonly string[], rows: readonly SkuRow[]): { cost: IndicatorState; verified: IndicatorState } {
   if (skus.length === 0) return { cost: "open", verified: "wait" };
@@ -172,6 +206,7 @@ export function buildWorkspace(i: { budget: BudgetQuote; view: PricingWorkspaceV
   const { budget, view, facts } = i;
   const tasks: Omit<WorkspaceTask, "n">[] = [];
   const complete: CompleteLine[] = [];
+  const ready: ReadyLine[] = [];
   const repItems: RepItem[] = [];
   const live = budget.lines.filter((l) => l.status !== "not_selected");
   const evidenceOf = (id: string): EvidenceView | undefined => { const r = (view.manualEvidence ?? []).find((x) => x.itemKey === id); return r ? { state: r.state, text: r.stateText, note: r.note, reference: r.reference } : undefined; };
@@ -202,7 +237,9 @@ export function buildWorkspace(i: { budget: BudgetQuote; view: PricingWorkspaceV
     if (l.status === "priced") {
       const states = skus.map((s) => rowOf(view.rows, s)?.costState);
       const verified = states.length > 0 && states.every((s) => s === "verified");
-      complete.push({ ...base, how: `${l.sku ?? "Package"} · supplier cost entered · ${verified ? "independently verified" : "awaiting Manager verification"}`, unit: l.unitPrice, revenue: l.revenueExTax, provisional: false, estimatorPriced: false, costState: verified ? "verified" : "unverified" });
+      const autoOnly = skus.length > 0 && skus.every((s) => rowOf(view.rows, s)?.costKind === "cin7_auto");
+      if (autoOnly && !verified) ready.push({ id: l.itemKey as string, label: l.label, quantity: l.quantity, unit: l.unitPrice, revenue: l.revenueExTax, skus: skus.map((s) => autoFact(rowOf(view.rows, s)!)) });
+      complete.push({ ...base, how: autoOnly && !verified ? `${l.sku ?? "Package"} · Automatically priced — awaiting Manager verification` : `${l.sku ?? "Package"} · supplier cost entered · ${verified ? "independently verified" : "awaiting Manager verification"}`, unit: l.unitPrice, revenue: l.revenueExTax, provisional: false, estimatorPriced: false, costState: verified ? "verified" : "unverified", ...(autoOnly && !verified ? { autoReady: true } : {}) });
       continue;
     }
     // ── a task ──
@@ -210,7 +247,10 @@ export function buildWorkspace(i: { budget: BudgetQuote; view: PricingWorkspaceV
       tasks.push({ ...base, kind: "manual", tags: ["COMPONENTS", "PRICE"], meta: `${qtyText(l.quantity)} × ${l.components!.length} parts`, why: "No SKU yet. Manual price with a reason and evidence, provisional.", group: "decision", indicators: { mapping: "open", price: "open", cost: "na", verified: "na" }, skus: [], action: "Quote price" });
     } else if (isPackage) {
       const confirmed = facts.confirmedPackages.includes(l.itemKey as string);
-      tasks.push({ ...base, kind: "package", tags: ["COMPONENTS", "PRICE"], meta: `${qtyText(l.quantity)} × ${l.components!.length} components`, why: confirmed ? `Cost ${l.components!.length} components (or a manual price with evidence).` : `Confirm the package, then cost ${l.components!.length} components (or a manual price with evidence).`, group: "decision", indicators: { mapping: confirmed ? "done" : "open", price: "open", cost: confirmed ? ci.cost : "open", verified: confirmed ? ci.verified : "wait" }, skus, action: confirmed ? "Cost components" : "Map and price" });
+      // Components that already carry a stored cost (an automatic one included) are never asked for again: only the missing ones are named.
+      const uncosted = skus.filter((s) => { const r = rowOf(view.rows, s); return !r || r.costState === "missing"; }).length;
+      const confirmOnly = !confirmed && uncosted === 0 && skus.length > 0;
+      tasks.push({ ...base, kind: "package", confirmOnly, tags: ["COMPONENTS", "PRICE"], meta: `${qtyText(l.quantity)} × ${l.components!.length} components`, why: confirmOnly ? `Confirm the package. All ${l.components!.length} components already have a cost; none is asked for again.` : uncosted === 0 ? `Check the ${l.components!.length} component costs.` : uncosted < skus.length ? (confirmed ? `Cost the ${uncosted} component${uncosted === 1 ? "" : "s"} without a cost (the others are already costed).` : `Confirm the package, then cost the ${uncosted} component${uncosted === 1 ? "" : "s"} without a cost (the others are already costed).`) : confirmed ? `Cost ${l.components!.length} components (or a manual price with evidence).` : `Confirm the package, then cost ${l.components!.length} components (or a manual price with evidence).`, group: "decision", indicators: { mapping: confirmed ? "done" : "open", price: "open", cost: confirmed ? ci.cost : "open", verified: confirmed ? ci.verified : "wait" }, skus, action: confirmOnly ? "Confirm package" : confirmed ? "Cost components" : "Map and price" });
     } else if (l.status === "unmapped" || !l.sku) {
       tasks.push({ ...base, kind: "product", tags: ["PRODUCT", "PRICE"], meta: `${qtyText(l.quantity)}`, why: "No product chosen. Choose the product, then cost it.", group: "decision", indicators: { mapping: "open", price: "open", cost: "open", verified: "wait" }, skus: [], action: "Choose and price" });
     } else {
@@ -281,14 +321,40 @@ export function buildWorkspace(i: { budget: BudgetQuote; view: PricingWorkspaceV
     blockers,
   };
 
+  // ── automatic pricing: three clearly separated groups, counting only what genuinely needs a person ──
+  // A product that has a stored cost (automatic or entered) is NEVER an exception and never asked for again; an exception is a product of an open task that has no cost, with the SPECIFIC stored reason.
+  const exMap = new Map<string, PricingException>();
+  for (const t of ordered) {
+    if (t.kind === "m75" || t.kind === "product" || t.kind === "manual") continue;
+    for (const sku of t.skus) {
+      const r = rowOf(view.rows, sku);
+      if (r && r.status !== "no_input" && !(r.status === "not_priced" && t.kind === "cost")) continue;
+      const prev = exMap.get(sku);
+      if (prev) { if (!prev.usedBy.includes(t.label)) prev.usedBy.push(t.label); continue; }
+      const f = r?.autoFlag ?? null;
+      const stored = r && r.status === "not_priced"
+        ? { reason: `Cannot be priced yet (${r.issues[0] ?? "check the rate and the cost"}).`, action: "Open it and check the cost and the rate.", retryable: false }
+        : f ? { reason: f.text, action: f.action, retryable: RETRYABLE_CODES.has(f.code) }
+        : { reason: "No supplier cost has been recorded for this product.", action: view.autoOwned ? "Use Price from Cin7, or enter the supplier cost yourself." : "Enter the supplier cost.", retryable: view.autoOwned };
+      exMap.set(sku, { sku, usedBy: [t.label], reason: stored.reason, action: stored.action, taskId: t.id, retryable: stored.retryable });
+    }
+  }
+  const exceptions = [...exMap.values()].sort((a, b) => a.sku.localeCompare(b.sku));
+  const autoPricedN = view.rows.filter((r) => r.usedBy.length > 0 && r.costKind === "cin7_auto" && r.status !== "no_input" && r.costState !== "verified").length;
+  const retryable = facts.canEdit && view.autoOwned ? exceptions.filter((e) => e.retryable).length : 0;
+  const auto: AutoView = { active: view.rows.some((r) => r.costKind === "cin7_auto" || !!r.autoFlag), ready, autoPriced: autoPricedN, needConfirmation: ordered.filter((t) => t.kind !== "cost").length, exceptions, retryable, canPrice: facts.canEdit && view.autoOwned };
+
   // ── the one next action: the first unmet gate (Rep reconfirmation, then Manager verification, then Estimator sign-off, then Manager approval) ──
   let next: NextAction;
   const first = ordered[0];
   const g0 = gates[0];
-  const taskHeadline = (t: Omit<WorkspaceTask, "n"> & { n: number }): string => (t.kind === "m75" ? `Enter the M75 system price` : t.kind === "cost" ? `Enter the supplier cost for ${t.label.toLowerCase()}` : t.kind === "product" ? `Choose and price ${t.label.toLowerCase()}` : t.kind === "manual" ? `Quote a manual price for ${t.label.toLowerCase()}` : `Confirm and cost ${t.label.toLowerCase()}`);
+  const taskHeadline = (t: Omit<WorkspaceTask, "n"> & { n: number }): string => (t.kind === "m75" ? `Enter the M75 system price` : t.kind === "cost" ? `Enter the supplier cost for ${t.label.toLowerCase()}` : t.kind === "product" ? `Choose and price ${t.label.toLowerCase()}` : t.kind === "manual" ? `Quote a manual price for ${t.label.toLowerCase()}` : t.confirmOnly ? `Confirm ${t.label.toLowerCase()}` : `Confirm and cost ${t.label.toLowerCase()}`);
   if (facts.state === "MANAGER_APPROVED_FINAL") next = { kind: "approved", headline: "Approved", detail: "This quotation is approved and sealed.", button: null };
   else if (facts.state === "REP_DRAFT" && (facts.revision ?? 1) > 1 && !facts.canEdit) next = { kind: "wait_rep", headline: "Waiting for the Rep to reconfirm the amount and submit it again", detail: "The quotation is with the Rep. You can read it here; nothing changes until it comes back.", button: null };
-  else if (g0?.id === "tasks") {
+  else if (g0?.id === "tasks" && facts.canEdit && retryable > 0 && ordered.every((t) => t.kind === "cost")) {
+    // Only exceptions remain and Cin7 may still price some of them: ONE obvious action reads them (decisions to confirm always come first).
+    next = { kind: "price_from_cin7", headline: `Price ${retryable} product${retryable === 1 ? "" : "s"} from Cin7`, detail: "Reads each supplier cost from Cin7 (read only), applies the commercial settings, and leaves the costs awaiting Manager verification.", button: "Price from Cin7" };
+  } else if (g0?.id === "tasks") {
     next = facts.canEdit
       ? { kind: "open_task", headline: taskHeadline(first), detail: first.why, taskId: first.id, button: `Open task 1 of ${open}` }
       : { kind: "read_only", headline: `${open} task${open === 1 ? "" : "s"} waiting for the Estimator`, detail: "Only an Estimator enters pricing.", button: null };
@@ -308,7 +374,7 @@ export function buildWorkspace(i: { budget: BudgetQuote; view: PricingWorkspaceV
     : { kind: "read_only", headline: "Waiting for the Estimator to sign off", detail: "", button: null };
   else next = { kind: "wait_manager_approval", headline: "Next: Manager approval", detail: "The Estimator has signed off. A Manager approves or returns it.", button: "Open Manager approval" };
 
-  return { tasks: ordered, repItems, complete, summary, next };
+  return { tasks: ordered, repItems, complete, summary, next, auto };
 }
 
 // ── switching supplier pricing ON: what changes, before it happens ───────────────────────────────────────────────────────────────────────────────────────────────────────────────

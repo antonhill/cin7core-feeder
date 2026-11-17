@@ -3,18 +3,19 @@ import { fxFresh, type CommercialSettings } from "./commercial-settings";
 import { escalateCostE7, escalationFor } from "./cost-escalation";
 import { cost7, formatCost7 } from "./model/money";
 import type { PricingSubmission, SkuSubmission } from "./estimator/apply";
+import { AUTO_ACTOR, autoFlagAction, isAutoOwned } from "./estimator/auto-owned";
+export { AUTO_ACTOR, autoFlagAction, isAutoOwned };
 
 // AUTOMATIC COSTING FROM CIN7 (pure; no I/O). For one SKU: the Cin7 supplier record the survey already selects (the latest-dated positive supplier cost) + the Manager's commercial settings +
 // today -> EITHER the same per-SKU cost input the Estimator workflow stores (so the prices come out of calculatePricing via createEstimatorPriceSource: there is NO second calculator),
 // OR a flag saying exactly why no price is produced. It never invents a value: a missing exchange rate, a missing freight policy, a missing / undated / future-dated / over-age / ambiguous
 // cost each give NO price and a flag. The result is marked costKind "cin7_auto" (distinct from an Estimator-entered cost) and is ALWAYS unverified: a Manager still verifies it independently.
 
-export const AUTO_ACTOR = "auto-pricing (Cin7 costs, commercial settings)";
-
-export type AutoFlagCode = "settings_incomplete" | "no_cost" | "cost_needs_review" | "cost_too_old" | "currency_unknown" | "fx_missing" | "fx_stale" | "cost_precision";
+export type AutoFlagCode = "settings_incomplete" | "not_read" | "no_cost" | "cost_needs_review" | "cost_too_old" | "currency_unknown" | "fx_missing" | "fx_stale" | "cost_precision";
 /** Text that is safe for ANY viewer, including a Rep: it never carries a cost, rate, freight or margin. */
 export const NEUTRAL_FLAG_TEXT: Record<AutoFlagCode, string> = {
   settings_incomplete: "Price pending: commercial settings incomplete",
+  not_read: "Price pending: the supplier cost has not been read yet",
   no_cost: "No Cin7 cost for this product",
   cost_needs_review: "Price pending: the supplier cost needs review",
   cost_too_old: "Price pending: a current supplier quotation is needed",

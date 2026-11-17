@@ -2,7 +2,7 @@ import "server-only";
 import type { createServiceRoleClient } from "@/supabase/server";
 import { hashOf } from "@/newquip/quote/baseline";
 import type { QuoteDraft } from "@/newquip/grower/draft";
-import type { EstimatorPricing } from "@/newquip/pricing/estimator/types";
+import type { AutoPriceFlag, EstimatorPricing } from "@/newquip/pricing/estimator/types";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { evaluationContext } from "./context";
 import { applyCostVerification, changedUnits, conflictMessage, emptySubmission, mergePricing, canEnterPricingInputs, submissionFrom, type PricingConflict, applyManualEvidence, applyPricingSubmission, applyRateAttestation, disablePricing, selectRuleVersion, type ApplyResult, type AttestItem, type EvidenceItem, type PricingChange, type PricingSubmission, type RevisionKind, type VerifyItem, type Viewer } from "@/newquip/pricing/estimator";
@@ -69,6 +69,8 @@ export function applyEstimatorPricing(
   db: Db, orgId: string, quoteId: string, viewer: Viewer, email: string, submission: PricingSubmission | null, reason: string, nowIso: string = new Date().toISOString(), base?: PricingSubmission | null,
   /** Optional precondition judged against the quotation as loaded INSIDE the write (fresh, not what the caller read earlier): a non-null message refuses the whole change and nothing is written. */
   guard?: (q: QuoteRecord) => string | null,
+  /** Server-side automatic pricing only: the specific reasons it could not price a SKU (never from a browser). */
+  autoFlags?: Record<string, AutoPriceFlag | undefined>,
 ): Promise<ApplyOutcome | ApplyFailure> {
   return persist(db, orgId, quoteId, email, (q) => {
     const refused = guard?.(q) ?? null;
@@ -89,7 +91,7 @@ export function applyEstimatorPricing(
       if (m.conflicts.length > 0) return { ok: false, errors: [conflictMessage(m.conflicts)], conflicts: m.conflicts };
       submission = m.merged;
     }
-    const res = submission ? applyPricingSubmission(prior, submission, viewer, email, nowIso, reason, q.draft.quoteType) : disablePricing(prior, viewer, reason);
+    const res = submission ? applyPricingSubmission(prior, submission, viewer, email, nowIso, reason, q.draft.quoteType, autoFlags) : disablePricing(prior, viewer, reason);
     return res.ok ? { res, reason } : res;
   });
 }

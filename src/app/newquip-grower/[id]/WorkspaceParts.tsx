@@ -22,7 +22,7 @@ export function ReadinessList({ value }: { value: TaskIndicators }) {
 }
 
 const STATUS_CLASS: Record<StatusWord, string> = {
-  "Supplier cost needed": "bg-amber-100 text-amber-950", "Product selection needed": "bg-amber-100 text-amber-950", "Component pricing needed": "bg-amber-100 text-amber-950", "Price needed": "bg-amber-100 text-amber-950",
+  "Confirmation needed": "bg-amber-100 text-amber-950", "Supplier cost needed": "bg-amber-100 text-amber-950", "Product selection needed": "bg-amber-100 text-amber-950", "Component pricing needed": "bg-amber-100 text-amber-950", "Price needed": "bg-amber-100 text-amber-950",
   "Evidence needed": "bg-amber-100 text-amber-950", Provisional: "bg-amber-800 text-white", Complete: "bg-emerald-100 text-emerald-900",
 };
 export const StatusChip = ({ word }: { word: StatusWord }) => <span className={`inline-flex items-center whitespace-nowrap rounded px-2 py-0.5 text-xs font-bold ${STATUS_CLASS[word]}`} data-testid="row-status">{word}</span>;
