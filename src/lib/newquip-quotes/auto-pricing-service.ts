@@ -81,7 +81,7 @@ async function readAllChunked(deps: AutoPricingDeps, skus: readonly string[], de
 }
 const sameFlags = (a: EstimatorPricing["autoFlags"], b: Record<string, AutoPriceFlag>): boolean => {
   const ka = Object.keys(a ?? {}).sort(), kb = Object.keys(b).sort();
-  return ka.length === kb.length && ka.every((k, i) => k === kb[i] && a![k]!.code === b[k].code && a![k]!.internal === b[k].internal);
+  return ka.length === kb.length && ka.every((k, i) => k === kb[i] && a![k]!.code === b[k].code); // the reason CODE only: a different error string must not write a revision (which would withdraw the Estimator's sign-off for no price change)
 };
 
 type Mode = "rep" | "estimator";

@@ -129,7 +129,7 @@ export async function priceFromCin7Action(quoteId: string): Promise<PricingActio
     const o = await runAutoPricingTopUp(db, { orgId: a.orgId, userId: a.userId, roles: a.roles, demo: false, canSeeCost: a.canSeeCost }, quoteId);
     console.info(`[newquip-auto-pricing] ${quoteId} at=estimator status=${o.status} added=${o.added} pending=${o.pendingCount} flags=${o.internal.map((i) => `${i.sku}:${i.code}`).join(",").slice(0, 400)}`);
     if (o.status === "applied") await auditActor(db, a, { action: "newquip.auto_pricing", summary: "Estimator priced newly needed products from Cin7 supplier costs (local only; Cin7 read only)", detail: { quoteId, added: o.added, stillPending: o.pendingCount, at: "estimator" } });
-    const message = o.status === "applied" ? `Priced ${o.added} product${o.added === 1 ? "" : "s"} from Cin7${o.pendingCount > 0 ? `; ${o.pendingCount} still need${o.pendingCount === 1 ? "s" : ""} your attention` : ""}. The costs await Manager verification.`
+    const message = o.status === "applied" ? `Priced ${o.added} product${o.added === 1 ? "" : "s"} from Cin7${o.pendingCount > 0 ? `; ${o.pendingCount} still need${o.pendingCount === 1 ? "s" : ""} your attention` : ""}. The costs await Manager verification.${o.added > 0 ? " If the Rep had already confirmed an amount and the total has changed, the quotation returns to the Rep to reconfirm it." : ""}`
       : o.status === "nothing_to_add" ? "Every product already has a cost."
       : o.status === "no_prices" ? "Cin7 could not price the remaining products; the reason for each is shown with it."
       : o.status === "not_applicable" ? "Price from Cin7 is not available for this quotation (automatic pricing is off for it, or a person has already entered or changed its pricing)."
