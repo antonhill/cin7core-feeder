@@ -14,7 +14,7 @@ const COST_FUNCTIONS = ["report_sales_by_product", "report_sales_pivot", "report
 const USER_JWT_CLIENT = /createSessionClient|createBrowserSupabaseClient|createServerClient|createBrowserClient|supabase\/server-session|supabase\/browser/;
 /** Same reviewed set as the 0122 guard: these files use a user-JWT client and touch only org_members / organizations / super_admins / create_self_serve_org. */
 const REVIEWED = new Set([
-  "src/actions/active-org.ts", "src/actions/auth.ts", "src/app/auth/callback/route.ts", "src/app/login/page.tsx", "src/app/mfa-challenge/page.tsx", "src/app/presenter/actions.ts", "src/app/settings/security/page.tsx",
+  "src/actions/active-org.ts", "src/actions/auth.ts", "src/actions/newquip-access.ts", "src/app/newquip/login/page.tsx", "src/app/auth/callback/route.ts", "src/app/login/page.tsx", "src/app/mfa-challenge/page.tsx", "src/app/presenter/actions.ts", "src/app/settings/security/page.tsx",
   "src/app/signup/actions.ts", "src/app/signup/page.tsx", "src/lib/current-org.ts", "src/lib/require-privileged.ts", "src/lib/require-super-admin.ts", "src/middleware.ts",
   "src/supabase/browser.ts", "src/supabase/server-session.ts",
 ]);
