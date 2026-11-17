@@ -5,6 +5,7 @@
     "src/actions/auth.ts",
     "src/actions/billing.ts",
     "src/actions/instances.ts",
+    "src/actions/newquip-access.ts",
     "src/actions/org-logo.ts",
     "src/actions/org-switch.ts",
     "src/app/activity/actions.ts",
