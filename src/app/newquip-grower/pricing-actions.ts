@@ -9,6 +9,10 @@ import { applyPricingChange, attestRates, loadPricingWorkspace, recordManualEvid
 import type { PricingSubmission } from "@/newquip/pricing/estimator/apply";
 import type { PricingConflict } from "@/newquip/pricing/estimator/merge";
 import { runAutoPricingTopUp } from "@/lib/newquip-quotes/auto-pricing-service";
+import { loadQuote } from "@/lib/newquip-quotes/quote-store";
+import { evaluationContext } from "@/lib/newquip-quotes/context";
+import { evaluateDraft } from "@/newquip/grower/evaluate";
+import { reconfirmNote } from "@/newquip/quote/reconfirm-note";
 import { auditActor, authoriseActor, errText as rawErrText, type Actor } from "./actor";
 import { NEWQUIP_POC_CIN7_INSTANCE_ID } from "@/newquip/access";
 import { cin7IdentityLookups } from "@/lib/projects/latest-cost-adapter";
@@ -133,7 +137,10 @@ export async function priceFromCin7Action(quoteId: string): Promise<PricingActio
     const stillMissing = o.internal.filter((i) => i.sku !== "*");
     const missingText = stillMissing.length > 0 ? ` Still without a cost: ${stillMissing.slice(0, 6).map((i) => `${i.sku} (${i.text.replace(/\.$/, "")})`).join("; ")}${stillMissing.length > 6 ? `; and ${stillMissing.length - 6} more` : ""}.` : "";
     const why = o.internal.find((i) => i.sku === "*")?.text;
-    const message = o.status === "applied" ? `Priced ${o.added} product${o.added === 1 ? "" : "s"} from Cin7. The costs await Manager verification, and every cost already on the quotation was kept.${o.added > 0 ? " If the Rep had already confirmed an amount and the total has changed, the quotation returns to the Rep to reconfirm it." : ""}${missingText}`
+    // Is the quotation's total still partial? (Wording only: it decides which sentence is shown; the state machine is untouched.)
+    let incomplete = true;
+    if (o.status === "applied" && o.added > 0) { try { const cur = await loadQuote(db, a.orgId, quoteId); incomplete = !cur || !!evaluateDraft(cur.draft, evaluationContext(true)).budget?.incomplete; } catch { incomplete = true; } }
+    const message = o.status === "applied" ? `Priced ${o.added} product${o.added === 1 ? "" : "s"} from Cin7. The costs await Manager verification, and every cost already on the quotation was kept.${o.added > 0 ? ` ${reconfirmNote(o.added, incomplete)}` : ""}${missingText}`
       : o.status === "nothing_to_add" ? "Every product that needs a supplier cost already has one."
       : o.status === "no_prices" ? `Nothing could be priced from Cin7.${missingText || " The reason for each product is shown with it."}`
       : o.status === "not_applicable" ? `Price from Cin7 is not available here. ${why ?? "The quotation is not eligible."}`
