@@ -1,4 +1,5 @@
 import "server-only";
+import { testPdfEmailEnabled } from "@/lib/newquip-quotes/test-pdf-email";
 // NewQuip quote page: the READ-ONLY views the page loads on open, kept out of the "use server" action files so that they can be shared by the individual actions AND the one-call
 // page bundle (getQuotePageBundleAction) without ever becoming callable from the browser themselves. Every caller passes the database client and an Actor it has just authorised: nothing in here
 // authorises, writes, or reaches Cin7.
@@ -78,6 +79,6 @@ export async function documentsViewOf(db: Db, a: Actor, quoteId: string): Promis
     // The TEST-ONLY preview needs only a complete, buildable profile (placeholder wording is tolerated); it never issues, stores or sends anything.
     previewAvailable = profileBlocked && s != null && snapshotIssues(s.snapshot).length === 0 && profileProblems(prof, { lenient: true }).length === 0;
   }
-  return { available: true, blockers, previewAvailable, canIssue: (a.roles.has("rep") || a.roles.has("manager")) && blockers.length === 0,
+  return { available: true, blockers, previewAvailable, testEmailAvailable: previewAvailable && testPdfEmailEnabled(process.env), canIssue: (a.roles.has("rep") || a.roles.has("manager")) && blockers.length === 0,
     documents: docs.map((d) => ({ id: d.id, version: d.version, revision: d.revision, issuedAt: d.created_at, issuedBy: d.issued_by_email, byteSize: d.byte_size, contentHash: d.content_hash })) };
 }
