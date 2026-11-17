@@ -11,7 +11,8 @@ export function isAutoOwned(p: EstimatorPricing): boolean {
   if (p.ruleVersionId !== SUPPLIER_AUTO_RULE_VERSION.id) return false;
   if (Object.keys(p.skuPriceOverrides).length > 0 || p.targetAdjustment || Object.keys(p.forwardCover).length > 0) return false;
   if (p.projectMarkup && p.projectMarkup.by !== AUTO_ACTOR) return false;
-  return Object.values(p.skus).every((s) => !!s && s.by === AUTO_ACTOR && s.costKind === "cin7_auto");
+  // An independent review is a person's decision about that cost: it ends automatic ownership (the revision history says the same, server-side).
+  return Object.values(p.skus).every((s) => !!s && s.by === AUTO_ACTOR && s.costKind === "cin7_auto" && !s.review);
 }
 
 /** The corrective action the Estimator takes for each exception (INTERNAL: shown only to cost-entitled roles, beside the stored specific reason). */
