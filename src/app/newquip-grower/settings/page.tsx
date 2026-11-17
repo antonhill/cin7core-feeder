@@ -22,7 +22,7 @@ export default async function NewquipSettingsPage() {
     <main className={`${pageContainerClass("form", "compact")} space-y-4`}>
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Settings</h1>
-        <p className="mt-1 text-sm text-slate-700">NewQuip company, project and account settings.</p>
+        <p className="mt-1 text-sm text-slate-700">Company, pricing, project and account settings for NewQuip. You see only the areas your role can open.</p>
       </div>
       {error && <Alert tone="info">{error}</Alert>}
       <SettingsList entries={entries} />
