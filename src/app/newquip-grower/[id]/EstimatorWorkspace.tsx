@@ -270,14 +270,14 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
       ) : (
         <div className="flex min-w-0 flex-wrap items-start gap-5">
           <div className="flex min-w-0 flex-[999_1_32rem] flex-col gap-4">
-            {autoLayout && <AutoSummary auto={ws.auto} />}
+            {autoLayout && <AutoSummary auto={{ ...ws.auto, needConfirmation: needTasks.length + evidenceRows.length }} />}
             {autoLayout && <ReadyForVerification auto={ws.auto} />}
             <section aria-labelledby="ws-needs" className="overflow-hidden rounded-xl border border-slate-200 bg-white" data-testid="needs-you">
               <div className="border-b border-slate-200 px-4 py-2.5 sm:px-5"><h2 id="ws-needs" className="text-base font-bold">{autoLayout ? "Needs confirmation" : "Needs you"} <span className="text-amber-900">· {needTasks.length + evidenceRows.length} item{needTasks.length + evidenceRows.length === 1 ? "" : "s"}</span></h2></div>
               {needTasks.length + evidenceRows.length === 0 ? <p className="px-5 py-4 text-sm text-emerald-900" data-testid="no-tasks">{autoLayout ? "Nothing is left for you to confirm or choose." : "Nothing is left for you to price or choose."}</p> : (
                 <ol>
                   {needTasks.map((t, i) => <OpenRow key={t.id} n={t.n} id={t.id} label={t.label} meta={t.meta} why={t.why} status={taskStatusWord(t)} action={t.action} active={i === 0 && ws.next.kind !== "price_from_cin7"} onAct={() => openTask(t)} canEdit={canEdit} />)}
-                  {evidenceRows.map((c, k) => <EvidenceOpenRow key={c.id} n={ws.tasks.length + k + 1} line={c} canEdit={canEdit} onRecord={recordEvidence} />)}
+                  {evidenceRows.map((c, k) => <EvidenceOpenRow key={c.id} n={needTasks.length + k + 1} line={c} canEdit={canEdit} onRecord={recordEvidence} />)}
                 </ol>
               )}
             </section>
