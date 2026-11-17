@@ -104,6 +104,6 @@ export function mergeAutoEntries(prior: PricingSubmission | null, entries: reado
     const c = e.input.currency;
     if (c !== "ZAR" && !out.fxQuotes[c] && settings.fx[c]) out.fxQuotes[c] = { rateMicro: settings.fx[c].rateMicro, source: settings.fx[c].source, asOf: settings.fx[c].asOf };
   }
-  if (!out.projectMarkup && settings.markupBps !== null) out.projectMarkup = { markupBps: settings.markupBps, reason: `Manager-entered markup in commercial settings v${ref.version} (entered by ${ref.enteredBy})` };
+  if (!out.projectMarkup && settings.markupBps !== null) out.projectMarkup = { markupBps: settings.markupBps, reason: `Markup from the Manager's commercial settings v${ref.version}${ref.enteredBy.startsWith("Open Exchange Rates feed") ? "" : ` (entered by ${ref.enteredBy})`}` };
   return out;
 }

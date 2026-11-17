@@ -53,7 +53,7 @@ export async function fetchOxrRates(appId: string, opts: { fetchFn?: typeof fetc
   const now = opts.now ?? (() => new Date());
   let res: Response;
   try {
-    res = await fetchFn(OXR_URL, { method: "GET", headers: { Authorization: `Token ${appId.trim()}`, Accept: "application/json" }, cache: "no-store" });
+    res = await fetchFn(OXR_URL, { method: "GET", headers: { Authorization: `Token ${appId.trim()}`, Accept: "application/json" }, cache: "no-store", signal: AbortSignal.timeout(8000) }); // a hanging provider must never hold up a quotation save
   } catch {
     throw new OxrError("Open Exchange Rates could not be reached");
   }
