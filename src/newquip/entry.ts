@@ -11,7 +11,7 @@ const underPrefix = (pathname: string, prefix: string): boolean => pathname === 
 
 /** True for the NewQuip sign-in page itself and its bare "/newquip" alias (exact matches: "/newquip-grower" must NOT be public). */
 export function isNewquipPublicPath(pathname: string): boolean {
-  return pathname === "/newquip" || pathname === NEWQUIP_LOGIN_PATH;
+  return pathname === "/newquip" || pathname === NEWQUIP_LOGIN_PATH || pathname === "/newquip/login/complete";
 }
 
 /** True when an UNAUTHENTICATED request to `pathname` should go to the NewQuip sign-in. "/" counts only when the browser carries the newquip_entry cookie. */
