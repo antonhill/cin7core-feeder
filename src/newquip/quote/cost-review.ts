@@ -30,7 +30,7 @@ export const STATUS_LEGEND: ReadonlyArray<readonly [string, string]> = [
   [STATUS_PROVISIONAL, "The line is priced with a manual selling price. Its supplier cost still needs independent verification."],
 ];
 export const UPLIFT_NONE = "None applied";
-export const UPLIFT_NOTE = "Historical cost uplift: none applied. The pricing model has no age-based escalation of old costs: each cost is used exactly as entered. Only exchange rates have an age limit.";
+export const UPLIFT_NOTE = "Historical cost uplift: shown per product. A cost read automatically from Cin7 is escalated by its age under the Manager's commercial settings; a cost entered by a person is used exactly as entered. Exchange rates have an age limit.";
 
 const MISSING = (text: string): ReviewCell => ({ text, tone: "missing" });
 const money = (c: number | null): ReviewCell => (c == null ? MISSING("Not available") : { text: formatZarCents(c) });

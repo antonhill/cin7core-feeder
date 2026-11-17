@@ -176,7 +176,7 @@ describe("the itemised cost review is on the workspace", () => {
     const tank = within(box).getByTestId("cost-review-SYSH-2750-3");
     expect(tank.textContent).toContain("No supplier cost entered");
     expect(tank.textContent).toContain("Missing cost");
-    expect(within(box).getByTestId("uplift-note").textContent).toMatch(/no age-based escalation/);
+    expect(within(box).getByTestId("uplift-note").textContent).toMatch(/escalated by its age/);
     expect(box.querySelector("table")!.parentElement!.className).toContain("overflow-x-auto"); // a narrow screen scrolls the table inside its box, never the page
   });
 });

@@ -48,3 +48,13 @@ describe("exact integer cost-age escalation (owner-approved marginal simple band
     expect(escalateCostE7(65_454_755, 10_000)).toBe(65_454_755);
   });
 });
+
+describe("worked example for the acceptance report", () => {
+  it("a cost last supplied 2023-05-17, priced on 2026-11-17, with the owner-approved bands (0/10/15/20% by year, simple)", async () => {
+    const { escalationFor } = await import("../cost-escalation");
+    const bands = [{ fromYears: 0, toYears: 1, rateBps: 0 }, { fromYears: 1, toYears: 2, rateBps: 1000 }, { fromYears: 2, toYears: 3, rateBps: 1500 }, { fromYears: 3, toYears: null, rateBps: 2000 }];
+    const r = escalationFor("2023-05-17", "2026-11-17", bands, 5);
+    expect(r).toMatchObject({ status: "ok", ageDays: 1280 });
+    expect(r.status === "ok" && r.escalationBps).toBe(3509); // 1y x 10% + 1y x 15% + 0.5045y x 20% = 35.09%
+  });
+});
