@@ -94,6 +94,12 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section, steps, 
       <Sec steps={steps} id="issue" number={1} title="Issue PDF">
       <h3 className="mt-4 text-sm font-semibold text-slate-800">Quotation PDF</h3>
       {docs.blockers.length > 0 && <Alert tone="warning"><ul className="list-disc pl-4">{docs.blockers.map((b) => <li key={b}>{b}</li>)}</ul><Link className="underline" href="/newquip-grower/company-profile">Company details</Link></Alert>}
+      {docs.previewAvailable && (
+        <Alert tone="info">
+          <p data-testid="test-preview-note"><strong>TEST-ONLY preview.</strong> The PDF below uses the current demonstration company details and is watermarked &quot;TEST ONLY – NOT FOR CUSTOMER ISSUE&quot;. It is not an issued quotation: it is not stored, cannot be sent, cannot be accepted by a customer and cannot start a live project. Issuing a customer PDF still needs real company details.</p>
+          <a className="mt-1 inline-block text-indigo-700 underline" data-testid="test-preview-link" href={`/api/newquip-quote-preview/${quoteId}`} target="_blank" rel="noreferrer">Open TEST-ONLY preview PDF</a>
+        </Alert>
+      )}
       {docs.documents.length > 0 && (
         <ul className="mt-2 divide-y rounded-md border border-slate-200 text-sm">
           {docs.documents.map((x) => (

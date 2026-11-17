@@ -7,7 +7,7 @@ import { loadQuote } from "@/lib/newquip-quotes/quote-store";
 import { documentsAvailable, latestProfile, listDocuments } from "@/lib/newquip-quotes/document-store";
 import { latestSnapshot } from "@/lib/newquip-quotes/customer-store";
 import { snapshotIssues } from "@/lib/newquip-quotes/customer-snapshot";
-import { missingProfileFields } from "@/lib/newquip-quotes/company-profile";
+import { describeProfileProblems, profileProblems } from "@/lib/newquip-quotes/company-profile";
 import { listSends } from "@/lib/newquip-quotes/send-store";
 import { COMMERCIAL_STATUS_LABEL, commercialStatus, evidenceCounts, listResponses, listReviews, portalAvailable, requiresAcceptance, standingOf } from "@/lib/newquip-quotes/acceptance";
 import { listEvidence } from "@/lib/newquip-quotes/response-evidence";
@@ -64,16 +64,20 @@ export async function deliveryViewOf(db: Db, a: Actor, quoteId: string): Promise
 export async function documentsViewOf(db: Db, a: Actor, quoteId: string): Promise<QuoteDocumentsView> {
   const q = await loadQuote(db, a.orgId, quoteId);
   if (!q) throw new Error("Quote not found.");
-  if (!(await documentsAvailable(db))) return { available: false, documents: [], blockers: [], canIssue: false };
+  if (!(await documentsAvailable(db))) return { available: false, documents: [], blockers: [], previewAvailable: false, canIssue: false };
   const docs = await listDocuments(db, a.orgId, quoteId);
   const blockers: string[] = [];
+  let profileBlocked = false; let previewAvailable = false;
   if (q.state !== "MANAGER_APPROVED_FINAL") blockers.push("The quotation must be approved by a Manager before a customer document can be issued.");
   else {
     const s = await latestSnapshot(db, a.orgId, quoteId);
     blockers.push(...(s ? snapshotIssues(s.snapshot) : ["Select the customer from Cin7."]));
-    const missing = missingProfileFields((await latestProfile(db, a.orgId))?.profile);
-    if (missing.length) blockers.push(`NewQuip company details are incomplete: ${missing.join(", ")}.`);
+    const prof = (await latestProfile(db, a.orgId))?.profile;
+    const problems = profileProblems(prof);
+    if (problems.length) { profileBlocked = true; blockers.push(`The company details cannot be used on a customer document: ${describeProfileProblems(problems).join("; ")}.`); }
+    // The TEST-ONLY preview needs only a complete, buildable profile (placeholder wording is tolerated); it never issues, stores or sends anything.
+    previewAvailable = profileBlocked && s != null && snapshotIssues(s.snapshot).length === 0 && profileProblems(prof, { lenient: true }).length === 0;
   }
-  return { available: true, blockers, canIssue: (a.roles.has("rep") || a.roles.has("manager")) && blockers.length === 0,
+  return { available: true, blockers, previewAvailable, canIssue: (a.roles.has("rep") || a.roles.has("manager")) && blockers.length === 0,
     documents: docs.map((d) => ({ id: d.id, version: d.version, revision: d.revision, issuedAt: d.created_at, issuedBy: d.issued_by_email, byteSize: d.byte_size, contentHash: d.content_hash })) };
 }

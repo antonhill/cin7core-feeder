@@ -150,7 +150,7 @@ describe("issuing an immutable customer document", () => {
     w.addSnapshot(snapshot({ Currency: "USD" }));
     await expect(issue(w)).rejects.toThrow(/ZAR only/);
     w.db.rows("newquip_quote_customers").length = 0; w.addSnapshot();
-    await expect(issue(w)).rejects.toThrow(/Complete NewQuip company details \(Manager > Company details\) before issuing a customer PDF/);
+    await expect(issue(w)).rejects.toThrow(/The company details cannot be used on a customer document \(Manager > Company details\)/);
     await saveProfile(w.db as never, "org-a", { ...PROFILE, termsAndConditions: "" }, "m@x").catch(() => undefined);
     expect(w.db.rows("newquip_company_profiles")).toHaveLength(0);
     expect(w.deps.renders).toBe(0); expect(w.files.size).toBe(0); expect(w.db.rows("newquip_quote_documents")).toHaveLength(0);
@@ -352,20 +352,20 @@ describe("placeholder guard on company details", () => {
   const seedBadProfile = (w: ReturnType<typeof world>, org: string) => w.db.rows("newquip_company_profiles").push({ id: "p1", org_id: org, version: 1, profile: PLACEHOLDER_PROFILE, created_by_email: "m@x" });
   it("issuing with a stored placeholder profile fails with the plain message and renders nothing", async () => {
     const w = world(); w.addSnapshot(); seedBadProfile(w, "org-a");
-    await expect(issue(w)).rejects.toThrow("Complete NewQuip company details (Manager > Company details) before issuing a customer PDF: Payment terms, Delivery and installation conditions, Terms and conditions, Customer acceptance instructions");
+    await expect(issue(w)).rejects.toThrow("The company details cannot be used on a customer document (Manager > Company details): Payment terms contains placeholder text, not real wording; Delivery and installation conditions contains placeholder text, not real wording; Terms and conditions contains placeholder text, not real wording; Customer acceptance instructions contains placeholder text, not real wording.");
     expect(w.deps.renders).toBe(0); expect(w.files.size).toBe(0);
   });
   it("the demo override cannot mask a bad stored profile for a non-demo quote in the demo organisation, but demo quotes keep working", async () => {
     const DEMO_ORG = "e1aea782-d095-47ad-90fb-4fa65c9bf855";
     const mk = (ref: string) => { const w = world(); w.addSnapshot(); seedBadProfile(w, DEMO_ORG); Object.assign(w.db.rows("newquip_quotes")[0], { org_id: DEMO_ORG, quote_ref: ref }); w.db.rows("newquip_quote_customers").forEach((r) => { r.org_id = DEMO_ORG; }); return w; };
     const other = mk("NQ-Q-0031");
-    await expect(issueQuotationDocument(other.db as never, DEMO_ORG, "q1", who, NEWQUIP_STANDARD_SCHEDULE, other.deps)).rejects.toThrow(/Complete NewQuip company details/);
+    await expect(issueQuotationDocument(other.db as never, DEMO_ORG, "q1", who, NEWQUIP_STANDARD_SCHEDULE, other.deps)).rejects.toThrow(/The company details cannot be used on a customer document/);
     const demo = mk("NQ-Q-0025");
     const r = await issueQuotationDocument(demo.db as never, DEMO_ORG, "q1", who, NEWQUIP_STANDARD_SCHEDULE, demo.deps);
     expect(r.created).toBe(true); expect(pdfText(demo.files.get(r.document.storage_path)!)).toContain("DEMONSTRATION ONLY");
     // the demo exception relaxes ONLY the four terms: a placeholder identity field still blocks a demo quote
     const badId = mk("NQ-Q-0025"); badId.db.rows("newquip_company_profiles")[0].profile = { ...PLACEHOLDER_PROFILE, brandName: "TBD", vatNumber: "1111111111" };
-    await expect(issueQuotationDocument(badId.db as never, DEMO_ORG, "q1", who, NEWQUIP_STANDARD_SCHEDULE, badId.deps)).rejects.toThrow(/before issuing a customer PDF: Brand \/ trading name, VAT registration number$/);
+    await expect(issueQuotationDocument(badId.db as never, DEMO_ORG, "q1", who, NEWQUIP_STANDARD_SCHEDULE, badId.deps)).rejects.toThrow(/cannot be used on a customer document.*Brand \/ trading name contains placeholder text.*VAT registration number is not valid/);
   });
 });
 
@@ -385,5 +385,22 @@ describe("PDF payment schedule presentation", () => {
     const bytes = await renderCustomerPdf(big);
     const t = pdfText(bytes);
     expect(t).toContain(PROFILE.brandName); expect(t).toContain("Block7");
+  });
+});
+
+describe("TEST-ONLY preview", () => {
+  it("renders a watermarked PDF from the placeholder profile, stores nothing and records no document; strict issue still refuses", async () => {
+    const { previewQuotationDocument } = await import("../document-store");
+    const w = world(); w.addSnapshot(); w.db.rows("newquip_company_profiles").push({ id: "p1", org_id: "org-a", version: 1, profile: { ...PROFILE, paymentTerms: "Test", termsAndConditions: "Terms", acceptanceInstructions: "Please do this", deliveryInstallationConditions: "Test" }, created_by_email: "m@x" });
+    const before = w.db.rows("newquip_quote_documents").length;
+    const r = await previewQuotationDocument(w.db as never, "org-a", "q1", NEWQUIP_STANDARD_SCHEDULE, { today: () => "2026-10-30" });
+    expect(Buffer.from(r.bytes.subarray(0, 5)).toString("latin1")).toBe("%PDF-");
+    expect(w.files.size).toBe(0); expect(w.db.rows("newquip_quote_documents").length).toBe(before); expect(w.deps.renders).toBe(0);
+    await expect(issue(w)).rejects.toThrow(/cannot be used on a customer document/);
+  });
+  it("the preview still refuses an unusable profile (no address / bad email) and an unapproved quotation", async () => {
+    const { previewQuotationDocument } = await import("../document-store");
+    const w = world(); w.addSnapshot(); w.db.rows("newquip_company_profiles").push({ id: "p1", org_id: "org-a", version: 1, profile: { ...PROFILE, email: "nope" }, created_by_email: "m@x" });
+    await expect(previewQuotationDocument(w.db as never, "org-a", "q1", NEWQUIP_STANDARD_SCHEDULE, { today: () => "2026-10-30" })).rejects.toThrow(/Company email is not valid/);
   });
 });

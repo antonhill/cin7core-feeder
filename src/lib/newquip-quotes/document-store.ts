@@ -12,7 +12,7 @@ import { loadQuote } from "./quote-store";
 import { latestSnapshot } from "./customer-store";
 import { fieldValue, snapshotIssues } from "./customer-snapshot";
 import { assertNoInternalLeak, buildCustomerDocumentModel, type CustomerDocumentModel } from "./customer-document";
-import { cleanProfile, missingProfileFields, type CompanyProfile } from "./company-profile";
+import { cleanProfile, describeProfileProblems, missingProfileFields, profileProblems, type CompanyProfile } from "./company-profile";
 import { renderCustomerPdf } from "./customer-pdf";
 import { applyDemoTerms } from "./demo-terms";
 import { pocDocumentMarked } from "./poc-presentation";
@@ -144,7 +144,10 @@ export async function issueQuotationDocument(
   const marked = pocDocumentMarked(q, orgId);
   const isDemo = !!prof && applyDemoTerms(prof.profile, orgId, q.quote_ref, marked) !== prof.profile;
   const lacking = missingProfileFields(prof?.profile, { allowPlaceholderTerms: isDemo });
-  if (!prof || lacking.length) throw new Error(`Complete NewQuip company details (Manager > Company details) before issuing a customer PDF: ${lacking.join(", ") || "all company details"}`);
+  if (!prof || lacking.length) {
+    const why = prof ? describeProfileProblems(profileProblems(prof.profile, { allowPlaceholderTerms: isDemo })).join("; ") : "no company details have been saved";
+    throw new Error(`The company details cannot be used on a customer document (Manager > Company details): ${why}.`);
+  }
 
   const accepted = await db.from("newquip_quote_responses").select("id").eq("org_id", orgId).eq("quote_id", quoteId).eq("response", "ACCEPTED").limit(1);
   if (accepted.error && !missing(accepted.error.message)) throw new Error(accepted.error.message);
@@ -169,6 +172,30 @@ export async function issueQuotationDocument(
     throw new Error(`Could not record the issued quotation: ${ins.error?.message ?? "no row"}`);
   }
   return { document: ins.data as StoredDocument, created: true };
+}
+
+/**
+ * TEST-ONLY preview of the customer PDF for an approved quotation. It exists so a demonstration can show the document while the company details still hold placeholder wording.
+ * It is NEVER issued: nothing is stored, no newquip_quote_documents row is written, so there is no document that can be sent, accepted or handed over. The strict issue gate
+ * (issueQuotationDocument) is unchanged and does not call this. The render is watermarked on every page. Everything except placeholder TEXT is still validated.
+ */
+export async function previewQuotationDocument(
+  db: Db, orgId: string, quoteId: string, schedule: readonly ScheduleStageTemplate[], deps: Pick<DocumentDeps, "today">, scheduleSource?: ScheduleSource,
+): Promise<{ bytes: Uint8Array; quoteRef: string; revision: number }> {
+  const q = await loadQuote(db, orgId, quoteId);
+  if (!q) throw new Error("Quote not found.");
+  if (q.state !== "MANAGER_APPROVED_FINAL" || !q.accepted_baseline || !q.baseline_hash) throw new Error("A preview is available only after Manager approval.");
+  if (!baselineMatchesHash(q.accepted_baseline, q.baseline_hash)) throw new Error("The approved baseline does not match its seal; no preview was produced.");
+  const snap = await latestSnapshot(db, orgId, quoteId);
+  if (!snap) throw new Error("Select the customer from Cin7 before previewing the quotation.");
+  const issues = snapshotIssues(snap.snapshot);
+  if (issues.length) throw new Error(`The customer details are incomplete: ${issues.join(" ")}`);
+  const prof = await latestProfile(db, orgId);
+  const hard = profileProblems(prof?.profile, { lenient: true });
+  if (!prof || hard.length) throw new Error(`The preview cannot be built: ${prof ? describeProfileProblems(hard).join("; ") : "no company details have been saved"}.`);
+  const model = buildCustomerDocumentModel({ baseline: q.accepted_baseline, quoteRef: q.quote_ref, revision: q.revision, snapshot: snap.snapshot, profile: prof.profile, schedule, scheduleSource, issuedOn: deps.today() });
+  assertNoInternalLeak(model, q.accepted_baseline);
+  return { bytes: await renderCustomerPdf(model, { testOnly: true }), quoteRef: q.quote_ref, revision: q.revision };
 }
 
 /** The bytes of an issued document of THIS organisation, re-verified against the SHA-256 recorded at issue. A tampered or substituted file is refused. */

@@ -58,12 +58,20 @@ const st = StyleSheet.create({
 
 const Paras = ({ text }: { text: string }) => <>{pdfSafe(text).split(/\n{1,}/).filter((l) => l.trim()).map((l, i) => <Text key={i} style={st.para}>{l}</Text>)}</>;
 
-export function CustomerQuotationDocument({ m }: { m: CustomerDocumentModel }) {
+export const TEST_ONLY_WATERMARK = "TEST ONLY \u2013 NOT FOR CUSTOMER ISSUE";
+
+export function CustomerQuotationDocument({ m, testOnly = false }: { m: CustomerDocumentModel; testOnly?: boolean }) {
   const co = m.company;
   const note = roundingNote(m);
   return (
-    <Document title={pdfSafe(`Quotation ${m.quote.reference} revision ${m.quote.revision}`)} author={pdfSafe(co.legalName)} subject="Customer quotation" creator="NewQuip">
+    <Document title={pdfSafe(`${testOnly ? "TEST ONLY - " : ""}Quotation ${m.quote.reference} revision ${m.quote.revision}`)} author={pdfSafe(co.legalName)} subject="Customer quotation" creator="NewQuip">
       <Page size="A4" style={st.page}>
+        {testOnly && (
+          <>
+            <View fixed style={{ position: "absolute", top: 8, left: 40, right: 40, backgroundColor: "#B91C1C", paddingVertical: 3 }}><Text style={{ color: "#FFFFFF", fontSize: 9, fontFamily: "Helvetica-Bold", textAlign: "center" }}>{TEST_ONLY_WATERMARK}</Text></View>
+            <View fixed style={{ position: "absolute", top: 330, left: 0, right: 0, alignItems: "center" }}><Text style={{ fontSize: 44, fontFamily: "Helvetica-Bold", color: "#DC2626", opacity: 0.22, transform: "rotate(-30deg)", textAlign: "center" }}>{"TEST ONLY\nNOT FOR CUSTOMER ISSUE"}</Text></View>
+          </>
+        )}
         <View style={st.head} fixed>
           <View style={st.headLeft}>
             <Image src={NEWQUIP_LOGO.src} style={st.logo} />
@@ -143,8 +151,8 @@ export function CustomerQuotationDocument({ m }: { m: CustomerDocumentModel }) {
 }
 
 /** Renders the model to PDF bytes. Throws (never returns a partial file) if the renderer fails. */
-export async function renderCustomerPdf(model: CustomerDocumentModel): Promise<Uint8Array> {
-  const buf = await renderToBuffer(<CustomerQuotationDocument m={model} />);
+export async function renderCustomerPdf(model: CustomerDocumentModel, opts: { testOnly?: boolean } = {}): Promise<Uint8Array> {
+  const buf = await renderToBuffer(<CustomerQuotationDocument m={model} testOnly={opts.testOnly === true} />);
   if (buf.length < 800 || buf.subarray(0, 5).toString("latin1") !== "%PDF-") throw new Error("The quotation PDF could not be generated.");
   return new Uint8Array(buf);
 }

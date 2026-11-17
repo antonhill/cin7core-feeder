@@ -59,23 +59,50 @@ export function looksLikePlaceholder(value: string, opts: { terms?: boolean } = 
 /** A VAT / registration / phone value whose digits are all one repeated digit (0000000000, 1111111111). Conservative: needs at least 7 digits. */
 const repeatedDigits = (v: string) => sameChars(v.replace(/\D/g, ""));
 
-/** The labels of every mandatory field that is missing or invalid. Empty = the profile is complete. `allowPlaceholderTerms` relaxes ONLY the four terms fields and is ONLY for the demonstration path (the demo override replaces exactly those four texts; see issueQuotationDocument). Identity fields are always checked. */
-export function missingProfileFields(p: Partial<CompanyProfile> | null | undefined, opts: { allowPlaceholderTerms?: boolean } = {}): string[] {
-  const out: string[] = [];
+export type ProfileProblemReason = "missing" | "placeholder" | "too_short" | "invalid";
+export interface ProfileProblem { field: keyof CompanyProfile; label: string; reason: ProfileProblemReason }
+
+/**
+ * Every mandatory field that is not acceptable for a CUSTOMER-ISSUED document, with the precise reason (missing / placeholder text / too short / invalid). `lenient` is the TEST-ONLY
+ * preview check: it tolerates placeholder and too-short TEXT but still reports a field that is blank or structurally unusable (no address, bad email, bad validity), because the
+ * preview could not be built without them. The strict check (no `lenient`) is the only one that ever authorises issuing.
+ */
+export function profileProblems(p: Partial<CompanyProfile> | null | undefined, opts: { allowPlaceholderTerms?: boolean; lenient?: boolean } = {}): ProfileProblem[] {
+  const out: ProfileProblem[] = [];
   const x = p ?? {};
+  const add = (field: keyof CompanyProfile, reason: ProfileProblemReason) => out.push({ field, label: PROFILE_LABELS[field], reason });
   const text = (k: keyof CompanyProfile) => {
     if (OPTIONAL.includes(k)) return;
     const v = x[k];
-    if (typeof v !== "string" || v.trim().length === 0) { out.push(PROFILE_LABELS[k]); return; }
+    if (typeof v !== "string" || v.trim().length === 0) { add(k, "missing"); return; }
+    if (opts.lenient) return;
     const isTerms = (TERMS_FIELDS as readonly string[]).includes(k);
-    if (isTerms) { if (!opts.allowPlaceholderTerms && (v.trim().length < MIN_TERMS_LENGTH || looksLikePlaceholder(v, { terms: true }))) out.push(PROFILE_LABELS[k]); return; }
-    if (looksLikePlaceholder(v) || ((k === "registrationNumber" || k === "vatNumber" || k === "phone") && repeatedDigits(v))) out.push(PROFILE_LABELS[k]);
+    if (isTerms) {
+      if (opts.allowPlaceholderTerms) return;
+      if (looksLikePlaceholder(v, { terms: true })) add(k, "placeholder");
+      else if (v.trim().length < MIN_TERMS_LENGTH) add(k, "too_short");
+      return;
+    }
+    if (looksLikePlaceholder(v)) add(k, "placeholder");
+    else if ((k === "registrationNumber" || k === "vatNumber" || k === "phone") && repeatedDigits(v)) add(k, "invalid");
   };
   ([...IDENTITY_FIELDS, ...TERMS_FIELDS] as const).forEach(text);
-  if (!Array.isArray(x.addressLines) || x.addressLines.filter((l) => typeof l === "string" && l.trim()).length < 2) out.push(PROFILE_LABELS.addressLines);
-  if (typeof x.email !== "string" || !EMAIL.test(x.email.trim())) out.push(PROFILE_LABELS.email);
-  if (!Number.isInteger(x.validityDays) || (x.validityDays as number) < 1 || (x.validityDays as number) > 365) out.push(PROFILE_LABELS.validityDays);
+  const lines = Array.isArray(x.addressLines) ? x.addressLines.filter((l) => typeof l === "string" && l.trim()) : [];
+  if (lines.length === 0) add("addressLines", "missing"); else if (lines.length < 2) add("addressLines", "invalid");
+  if (typeof x.email !== "string" || x.email.trim() === "") add("email", "missing"); else if (!EMAIL.test(x.email.trim())) add("email", "invalid");
+  if (!Number.isInteger(x.validityDays) || (x.validityDays as number) < 1 || (x.validityDays as number) > 365) add("validityDays", (x.validityDays as number) ? "invalid" : "missing");
   return out;
+}
+
+const REASON_TEXT: Record<ProfileProblemReason, string> = {
+  missing: "is missing", placeholder: "contains placeholder text, not real wording", too_short: `is too short (at least ${MIN_TERMS_LENGTH} characters of real terms)`, invalid: "is not valid",
+};
+/** One readable line per problem, e.g. "Payment terms contains placeholder text, not real wording". */
+export const describeProfileProblems = (problems: readonly ProfileProblem[]): string[] => problems.map((q) => `${q.label} ${REASON_TEXT[q.reason]}`);
+
+/** The labels of every mandatory field that is missing or invalid. Empty = the profile is complete. `allowPlaceholderTerms` relaxes ONLY the four terms fields and is ONLY for the demonstration path (the demo override replaces exactly those four texts; see issueQuotationDocument). Identity fields are always checked. */
+export function missingProfileFields(p: Partial<CompanyProfile> | null | undefined, opts: { allowPlaceholderTerms?: boolean } = {}): string[] {
+  return profileProblems(p, opts).map((q) => q.label);
 }
 
 /** Normalises and validates a profile submitted by a Manager. Throws a readable message listing every problem; returns the clean profile otherwise. */

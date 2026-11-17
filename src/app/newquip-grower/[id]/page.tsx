@@ -1613,7 +1613,9 @@ export default function QuoteEditorPage() {
                   <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-800"><input type="checkbox" className="size-6" checked={showAllSteps} onChange={(e) => setShowAllSteps(e.target.checked)} /> Show all steps</label>
                   {next4Open
                     ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep4No(STAGE4_STEP_IDS.indexOf(next4Open as Stage4StepId) + 1)}>Next incomplete step</Button>
-                    : <span className="text-sm text-slate-700" data-testid="all-steps-complete">Every step is complete.</span>}
+                    : (stage4.every((x) => x.status === "complete")
+                      ? <span className="text-sm text-slate-700" data-testid="all-steps-complete">Every step is complete.</span>
+                      : <span className="text-sm text-slate-700" data-testid="steps-not-complete">{stage4.filter((x) => x.status !== "complete").map((x) => `${x.label}: not complete`).join(" · ")}. {gate.hasDocument ? "" : "No customer PDF has been issued yet."}</span>)}
                 </div>
               )} />
           )}
