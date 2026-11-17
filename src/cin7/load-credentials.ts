@@ -1,6 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { decrypt } from "@/cin7/crypto";
+import { credentialColumn, storedCiphertext } from "@/cin7/credential-store";
 import { CIN7_API_ORIGIN } from "@/cin7/api-origin";
 import type { Cin7Credentials } from "@/cin7/types";
 
@@ -12,17 +13,19 @@ export async function loadCin7Credentials(
 ): Promise<Cin7Credentials & { name: string }> {
   const { data: instanceRow, error } = await db
     .from("cin7_instances")
-    .select("name, account_id, application_key_encrypted, active")
+    .select(`name, account_id, ${credentialColumn()}, active`)
     .eq("id", instanceId)
     .eq("org_id", orgId)
     .single();
   if (error || !instanceRow) throw new Error(error?.message ?? "Instance not found");
-  if (!instanceRow.active) throw new Error("Instance is inactive");
+  if (!(instanceRow as unknown as { active: boolean }).active) throw new Error("Instance is inactive");
+  const ciphertext = storedCiphertext(instanceRow);
+  if (!ciphertext) throw new Error("Cin7 credentials are not configured for this environment");
 
   return {
-    name: instanceRow.name,
-    accountId: instanceRow.account_id,
-    applicationKey: decrypt(instanceRow.application_key_encrypted),
+    name: (instanceRow as unknown as { name: string }).name,
+    accountId: (instanceRow as unknown as { account_id: string }).account_id,
+    applicationKey: decrypt(ciphertext),
     // Always the canonical origin — the stored base_url is intentionally ignored (SSRF).
     baseUrl: CIN7_API_ORIGIN,
   };
