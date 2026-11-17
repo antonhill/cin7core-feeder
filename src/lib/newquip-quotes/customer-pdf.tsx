@@ -118,16 +118,19 @@ export function CustomerQuotationDocument({ m }: { m: CustomerDocumentModel }) {
           <View style={[st.tot, { borderTopWidth: 1, borderTopColor: NAVY }]}><Text style={[st.totLabel, { fontFamily: "Helvetica-Bold" }]}>Total including VAT</Text><Text style={[st.totVal, { fontFamily: "Helvetica-Bold" }]}>{formatRand(m.totals.totalIncVat)}</Text></View>
         </View>
 
-        <Text style={st.h2} minPresenceAhead={60}>Payment schedule</Text>
+        {/* The whole schedule stays together on one page: a milestone table split across a page break is easy to misread. */}
+        <View wrap={false}>
+        <Text style={st.h2}>Payment schedule</Text>
         <View style={st.th}><Text style={st.colMain}>Milestone</Text><Text style={{ width: 50, textAlign: "right" }}>%</Text><Text style={st.colAmt}>Amount (excl. VAT)</Text></View>
         {m.paymentSchedule.map((p, i) => (
           <View key={i} style={st.tr} wrap={false}>
-            <View style={st.colMain}><Text>{pdfSafe(p.name)}</Text>{p.description ? <Text style={st.small}>{pdfSafe(p.description)}</Text> : null}{p.trigger ? <Text style={st.small}>Due: {pdfSafe(p.trigger)}</Text> : null}</View>
+            <View style={st.colMain}><Text>{pdfSafe(p.name)}</Text>{p.description ? <Text style={st.small}>{pdfSafe(p.description)}</Text> : null}{p.trigger && p.trigger.trim().toLowerCase() !== (p.description ?? "").trim().toLowerCase() ? <Text style={st.small}>Due: {pdfSafe(p.trigger)}</Text> : null}</View>
             <Text style={{ width: 50, textAlign: "right" }}>{fmtPercent(p.percent)}%</Text><Text style={st.colAmt}>{formatRand(p.amountExVat)}</Text>
           </View>
         ))}
         {note ? <Text style={[st.small, { marginTop: 3 }]}>{note}</Text> : null}
         <Text style={[st.small, { marginTop: 3 }]}>VAT is added to each invoice at the prevailing rate.</Text>
+        </View>
 
         <Text style={st.h2} minPresenceAhead={60}>Payment terms</Text><Paras text={m.paymentTerms} />
         <Text style={st.h2} minPresenceAhead={60}>Delivery and installation</Text><Paras text={m.deliveryInstallationConditions} />

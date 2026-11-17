@@ -30,7 +30,7 @@ const CONTRACT_EX_VAT = 1_234_567_891; // R12,345,678.91, cents
 const err = async (p: Promise<unknown>) => { try { await p; } catch (e) { return (e as Error).message; } return undefined; };
 
 /** Independent half-up arithmetic (BigInt), NOT the code under test. */
-const shareOf = (cents: number, bps: number) => Number((BigInt(cents) * BigInt(bps) + 5000n) / 10000n);
+const shareOf = (cents: number, bps: number) => Number((BigInt(cents) * BigInt(bps) + BigInt(5000)) / BigInt(10000));
 const vatOf = (cents: number) => shareOf(cents, 1500);
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 
