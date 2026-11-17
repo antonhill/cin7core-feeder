@@ -56,7 +56,7 @@ describe("the itemised cost review", () => {
     expect(changed.statusDetail).toMatch(/changed after it was verified/);
   });
 
-  it("no historical inflation is calculated: the uplift is always 'none applied' and the note says the model has no age-based escalation", () => {
+  it("no historical inflation is calculated: the uplift is always 'none applied' and the note explains manual costs are used as entered", () => {
     const rv = buildCostReview(view([row({ enteredAt: "2019-01-01T00:00:00Z" })]), budget);
     expect(rv.rows[0].uplift.text).toBe(UPLIFT_NONE); // an old cost is NOT escalated
     expect(rv.rows[0].originalCost.text).toBe("EUR 26.8440995");
