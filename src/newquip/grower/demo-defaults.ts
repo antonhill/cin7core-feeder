@@ -58,6 +58,7 @@ export function demoDifferences(current: QuoteDraft): string[] {
   const d = DEMO_DEFAULTS;
   const out: string[] = [];
   if (current.siteName.trim() !== d.siteName) out.push("Site"); // the customer is never part of the demo (see applyDemoDefaults)
+  if (current.quoteType !== d.quoteType) out.push("Pricing basis");
   const { estimatorQuantities: q1, quantityOverrides: o1, quantityOverrideReasons: r1, exclusions: x1, ...room1 } = current.config;
   const { estimatorQuantities: q2, quantityOverrides: o2, quantityOverrideReasons: r2, exclusions: x2, ...room2 } = d.config;
   if (!same(room1, room2)) out.push("Room inputs and system selections");
@@ -90,8 +91,6 @@ export function applyDemoDefaults(current: QuoteDraft): DemoLoad {
   const demo = structuredClone(DEMO_DEFAULTS) as QuoteDraft;
   const draft: QuoteDraft = {
     ...demo,
-    // Owner decision: every NEW quotation, demo-filled or not, is Project priced. The recovered demonstration used the standard price-list basis; that is not loaded (the engine still supports it, and saved quotations keep theirs).
-    quoteType: "project",
     // The customer the Rep selected is NOT part of the demonstration: it is kept exactly as it is (blank stays blank).
     customerName: current.customerName,
     // The template revision belongs to the QUOTATION, not to the demonstration values: it is carried over (a demonstration load must not move a quotation between templates).
