@@ -6,7 +6,10 @@ import { getShipTodayCounts, getStockHealthReport, getProductAvailabilitySyncSta
 import { StaleBadge, hoursSince, SNAPSHOT_STALE_HOURS } from "@/app/reports/sync-staleness";
 import { formatCount } from "@/lib/format-count";
 import LocalTimestamp from "@/app/local-timestamp";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import MarketingHome from "@/app/marketing-home";
+import { NEWQUIP_ENTRY_COOKIE, NEWQUIP_LOGIN_PATH } from "@/newquip/entry";
 import OnboardingChecklist from "@/app/onboarding-checklist";
 import { Panel } from "@/components/ui/Panel";
 import { Badge } from "@/components/ui/Badge";
@@ -209,7 +212,11 @@ function StockHealthCard({ summary, activeInstances }: { summary: StockHealthSum
 
 export default async function Home({ searchParams }: { searchParams: Promise<{ blocked?: string; teamAccessDenied?: string }> }) {
   const { email, orgId, orgName, isSuperAdmin, disabledModules } = await getCurrentUserInfo();
-  if (!email) return <MarketingHome />;
+  if (!email) {
+    // A browser that signs in through NewQuip never sees the Toolbox marketing page.
+    if ((await cookies()).get(NEWQUIP_ENTRY_COOKIE)?.value === "1") redirect(NEWQUIP_LOGIN_PATH);
+    return <MarketingHome />;
+  }
 
   const { blocked, teamAccessDenied } = await searchParams;
   // NewQuip users (the NewQuip organisation, not a Spark super-admin) land on the NewQuip dashboard, never the Toolbox home.

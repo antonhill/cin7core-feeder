@@ -13,6 +13,13 @@ export async function signOutAction() {
   redirect("/login");
 }
 
+/** Sign-out for the NewQuip shell: returns the user to the NewQuip sign-in rather than the Toolbox /login. */
+export async function signOutNewquipAction() {
+  const supabase = await createSessionClient();
+  await supabase.auth.signOut();
+  redirect("/newquip/login");
+}
+
 export interface CurrentUserInfo {
   email: string | null;
   isSuperAdmin: boolean;
