@@ -1,0 +1,2 @@
+# Test-only placeholder in a unit test (not a credential); introduced in PR #286 commit 25115c5. Later commits use a non-secret-looking fixture.
+25115c517b720bd79b31edf4624ab60d135bfe67:src/app/settings/uat-credentials/__tests__/actions.test.ts:generic-api-key:45

@@ -44,7 +44,7 @@ describe("UAT-only Cin7 credential administration", () => {
   });
 
   it("writes only the UAT column, never the Toolbox one, and never audits the key", async () => {
-    const key = "SECRET-APPLICATION-KEY-123";
+    const key = ["not", "a", "real", "credential"].join("-"); // test-only placeholder
     const r = await saveUatCin7Key(`  ${key}  `);
     expect(r.ok).toBe(true);
     const written = update.mock.calls[0][0] as Record<string, unknown>;
