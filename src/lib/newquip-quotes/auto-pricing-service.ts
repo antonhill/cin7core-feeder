@@ -21,6 +21,7 @@ import { listPricingRevisions } from "./pricing-store";
 import { applyPricingChange } from "./pricing-service";
 import { latestCommercialSettings } from "./document-store";
 import { settingsRevisionOf, topUpIneligibleReason } from "./top-up-availability";
+import { FEED_ACTOR, feedConfigured, refreshFxFromFeed } from "./fx-feed";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 /** Products are read from Cin7 in successive chunks of this size. EVERY product the quotation still needs is read (alphabetical order) until the ONE overall time budget for the run (suppliers + products) is spent; what is unread then is flagged "will be retried". */
@@ -109,20 +110,24 @@ async function priceQuote(mode: Mode, db: Db, actor: AutoActor, quoteId: string,
   const startHash = q.draft_hash;
 
   const nowIso = deps.now();
+  // Exchange rates: if a rate the FEED owns (or a missing USD/EUR rate) has gone stale, fetch fresh ones first (a new FX-only settings version; a Manager's manual override is never replaced; a provider problem leaves the stale rate to be flagged, never used).
+  if (feedConfigured()) await refreshFxFromFeed(db, actor.orgId, FEED_ACTOR, { onlyIfStale: true, nowIso }).catch(() => undefined);
   const stored = await latestCommercialSettings(db, actor.orgId, nowIso);
   const settings: CommercialSettings | null = stored?.settings ?? null;
   if (estimator) {
-    const why = topUpIneligibleReason(q, stored ? { revision: stored.revision, enteredBy: stored.enteredBy, settings: stored.settings } : null, evaluateDraft(q.draft, evaluationContext(true)).budget);
+    const why = topUpIneligibleReason(q, stored ? { revision: stored.revision, epoch: stored.epoch, enteredBy: stored.enteredBy, settings: stored.settings } : null, evaluateDraft(q.draft, evaluationContext(true)).budget);
     if (why) return unavailable(why);
   }
   if (!stored || !canPriceAnything(settings)) return flagsOutcome("settings_incomplete", [{ sku: "*", code: "settings_incomplete", internal: "The commercial settings are not complete (freight policy not set)." }]);
   // The revision the existing entries were priced under is read back from their source text ("commercial settings vN"). A structured field would need a stored-shape change; this is deliberately left as text.
-  if (prior && settingsRevisionOf(prior) !== null && settingsRevisionOf(prior) !== stored.revision) {
-    return out("settings_changed", { pending: ["Price pending: commercial settings changed since this quotation was priced; awaiting the Estimator"], internal: [{ sku: "*", code: "settings_changed", text: `Priced under commercial settings v${settingsRevisionOf(prior)}; current is v${stored.revision}.` }] });
+  if (prior && settingsRevisionOf(prior) !== null && (settingsRevisionOf(prior) as number) < stored.epoch) { // only a PRICING-RELEVANT change counts; a refresh of the exchange rates alone does not
+    return out("settings_changed", { pending: ["Price pending: commercial settings changed since this quotation was priced; awaiting the Estimator"], internal: [{ sku: "*", code: "settings_changed", text: `Priced under commercial settings v${settingsRevisionOf(prior)}; the pricing-relevant settings last changed at v${stored.epoch}.` }] });
   }
 
   const budget = evaluateDraft(q.draft, evaluationContext(true)).budget;
-  const needed = skuNeedsOf(budget).map((n) => n.sku).filter((s) => !prior || !Object.prototype.hasOwnProperty.call(prior.skus, s));
+  const needsAll = skuNeedsOf(budget);
+  const categoriesOf = new Map(needsAll.map((n) => [n.sku, n.itemKeys]));
+  const needed = needsAll.map((n) => n.sku).filter((s) => !prior || !Object.prototype.hasOwnProperty.call(prior.skus, s));
   if (needed.length === 0) return out("nothing_to_add");
 
   const entries: AutoCostEntry[] = [], flags: AutoFlag[] = [];
@@ -131,7 +136,7 @@ async function priceQuote(mode: Mode, db: Db, actor: AutoActor, quoteId: string,
   for (const sku of needed) {
     const r = reads[sku];
     if (!r || "error" in r) { flags.push({ sku, code: "not_read", internal: `Not read from Cin7 in this run (${r && "error" in r ? (r.error === "deadline" ? "out of time" : r.error) : "out of time"}): it will be retried when the quotation is submitted, or use Price from Cin7.` }); continue; }
-    const res = autoCostFor(surveyInputFromRaw(sku, r.raw), master, settings, { version: stored.revision, enteredBy: stored.enteredBy }, nowIso);
+    const res = autoCostFor(surveyInputFromRaw(sku, r.raw), master, settings, { version: stored.revision, enteredBy: stored.enteredBy }, nowIso, categoriesOf.get(sku) ?? []);
     if (isFlag(res)) flags.push(res); else entries.push(res);
   }
   // The specific reason per product is stored WITH the pricing (server-owned, internal; a Rep never receives the pricing) so the Estimator sees exactly why a product has no automatic price. No cost, rate, freight or margin is in it.

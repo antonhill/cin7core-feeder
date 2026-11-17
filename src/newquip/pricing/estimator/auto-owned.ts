@@ -26,5 +26,7 @@ export const AUTO_FLAG_ACTION: Record<string, string> = {
   fx_missing: "Ask a Manager to enter the exchange rate in the commercial settings, then use Price from Cin7.",
   fx_stale: "Ask a Manager to refresh the exchange rate in the commercial settings, then use Price from Cin7.",
   cost_precision: "Enter the supplier cost yourself (the Cin7 figure cannot be held exactly).",
+  freight_not_set: "Ask a Manager to set a freight policy for this product's category (or a default) in the commercial settings, then use Price from Cin7.",
+  freight_conflict: "Ask a Manager to resolve the conflicting freight categories in the commercial settings, then use Price from Cin7.",
 };
 export const autoFlagAction = (code: string): string => AUTO_FLAG_ACTION[code] ?? "Enter the supplier cost yourself.";

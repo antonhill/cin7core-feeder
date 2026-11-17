@@ -23,7 +23,18 @@ export const OWNER_APPROVED_BANDS: readonly AgeBand[] = [
 export const OWNER_APPROVED_MAX_AGE_YEARS = 5;
 
 export interface FreightPolicy { factorMicro: number; addOnCents: number; source: string }
-export interface FxSetting { rateMicro: number; source: string; /** ISO instant the rate applies to. */ asOf: string }
+export interface FxSetting {
+  rateMicro: number; source: string;
+  /** ISO instant the rate applies to (for a feed rate: the PROVIDER's own timestamp). */
+  asOf: string;
+  /** Where the rate came from: "oxr" = fetched from Open Exchange Rates; "manual" (or absent on older versions) = a Manager's own figure, an override that a feed refresh never replaces unless asked. */
+  origin?: "oxr" | "manual";
+  /** ISO instant WE retrieved a feed rate (feed rates only). */
+  retrievedAt?: string;
+}
+/** Freight categories are the quotation's own item keys (for example bulk_tank, feeder). */
+export const FREIGHT_CATEGORY_KEY = /^[a-z][a-z0-9_]{0,40}$/;
+export const MAX_FREIGHT_CATEGORIES = 30;
 
 export interface CommercialSettings {
   schema: typeof COMMERCIAL_SCHEMA;
@@ -31,6 +42,8 @@ export interface CommercialSettings {
   markupBps: number | null;
   /** null = NOT SET. Never defaulted. */
   freight: FreightPolicy | null;
+  /** Freight policies for specific product categories (the quotation item key). A category policy wins over the default `freight`; a product in no listed category uses the default, and where there is no default the product gets a clear exception (never 1.0). */
+  freightByCategory: Record<string, FreightPolicy>;
   /** Foreign-currency rates (ZAR per 1 unit). A currency absent here has NO rate. */
   fx: Record<string, FxSetting>;
   /** A rate older than this many days is not used. */
@@ -42,7 +55,7 @@ export interface CommercialSettings {
 
 /** What a fresh settings record holds: nothing commercial is invented. The bands and maximum age are the owner-approved model; the FX maximum age is the legacy 24-hour spot rule (1 day), shown as a default. */
 export function emptyCommercialSettings(): CommercialSettings {
-  return { schema: COMMERCIAL_SCHEMA, markupBps: null, freight: null, fx: {}, fxMaxAgeDays: 1, ageBands: OWNER_APPROVED_BANDS.map((b) => ({ ...b })), maxAgeYears: OWNER_APPROVED_MAX_AGE_YEARS, daysPerYearCenti: DAYS_PER_YEAR_CENTI };
+  return { schema: COMMERCIAL_SCHEMA, markupBps: null, freight: null, freightByCategory: {}, fx: {}, fxMaxAgeDays: 1, ageBands: OWNER_APPROVED_BANDS.map((b) => ({ ...b })), maxAgeYears: OWNER_APPROVED_MAX_AGE_YEARS, daysPerYearCenti: DAYS_PER_YEAR_CENTI };
 }
 
 export const MARKUP_DEFAULT_LABEL = "Default from the legacy POC rule, not approved policy";
@@ -58,18 +71,23 @@ export function validateCommercialSettings(s: CommercialSettings, nowIso: string
   const e: string[] = [];
   if (s.schema !== COMMERCIAL_SCHEMA) e.push("The settings version is not recognised.");
   if (s.markupBps !== null && (!isInt(s.markupBps) || s.markupBps < 0 || s.markupBps > 100_000)) e.push("The markup must be between 0% and 1000%, or left on the default.");
-  if (s.freight !== null) {
-    const f = s.freight;
-    if (!isInt(f.factorMicro) || f.factorMicro < 1 || f.factorMicro > 100_000_000) e.push("The freight factor must be greater than zero (1.000000 means no uplift).");
-    if (!isInt(f.addOnCents) || f.addOnCents < 0 || f.addOnCents > 10_000_000_000) e.push("The freight add-on must be a whole number of cents, not negative.");
-    if (typeof f.source !== "string" || f.source.trim().length < 3 || f.source.length > 200) e.push("The freight policy needs a source (3 to 200 characters).");
-  }
+  const checkFreight = (f: FreightPolicy, label: string) => {
+    if (!isInt(f.factorMicro) || f.factorMicro < 1 || f.factorMicro > 100_000_000) e.push(`The ${label} factor must be greater than zero (1.000000 means no uplift).`);
+    if (!isInt(f.addOnCents) || f.addOnCents < 0 || f.addOnCents > 10_000_000_000) e.push(`The ${label} add-on must be a whole number of cents, not negative.`);
+    if (typeof f.source !== "string" || f.source.trim().length < 3 || f.source.length > 200) e.push(`The ${label} needs a source (3 to 200 characters).`);
+  };
+  if (s.freight !== null) checkFreight(s.freight, "freight");
+  const cats = Object.entries(s.freightByCategory ?? {});
+  if (cats.length > MAX_FREIGHT_CATEGORIES) e.push(`At most ${MAX_FREIGHT_CATEGORIES} freight categories.`);
+  for (const [k, f] of cats) { if (RESERVED.has(k) || !FREIGHT_CATEGORY_KEY.test(k)) { e.push(`"${k.slice(0, 20)}" is not a valid freight category.`); continue; } checkFreight(f, `${k} freight`); }
   const now = Date.parse(nowIso);
   for (const [cur, q] of Object.entries(s.fx)) {
     if (RESERVED.has(cur) || !/^[A-Z]{3}$/.test(cur) || cur === "ZAR") { e.push(`"${cur.slice(0, 20)}" is not a foreign currency code (ZAR is always 1).`); continue; }
     if (!isInt(q.rateMicro) || q.rateMicro < 1 || q.rateMicro > 1_000_000_000) e.push(`The ${cur} rate must be greater than zero.`);
     if (typeof q.source !== "string" || q.source.trim().length < 3 || q.source.length > 200) e.push(`The ${cur} rate needs a source (3 to 200 characters).`);
     const t = typeof q.asOf === "string" && ISO_INSTANT.test(q.asOf) ? Date.parse(q.asOf) : NaN;
+    if (q.origin !== undefined && q.origin !== "oxr" && q.origin !== "manual") e.push(`The ${cur} rate has an unknown origin.`);
+    if (q.retrievedAt !== undefined && (typeof q.retrievedAt !== "string" || !ISO_INSTANT.test(q.retrievedAt))) e.push(`The ${cur} rate has an invalid retrieval time.`);
     if (!Number.isFinite(t)) e.push(`The ${cur} rate needs a valid date and time (for example 2026-11-12T08:00:00Z).`);
     else if (Number.isFinite(now) && t > now + 5 * 60_000) e.push(`The ${cur} rate cannot be dated in the future.`);
   }
@@ -98,13 +116,17 @@ export function validateCommercialSettings(s: CommercialSettings, nowIso: string
 export function parseCommercialSettings(raw: unknown, nowIso: string): { ok: true; value: CommercialSettings } | { ok: false; errors: string[] } {
   if (!isObj(raw)) return { ok: false, errors: ["The commercial settings are not valid."] };
   const fx: Record<string, FxSetting> = {};
-  if (isObj(raw.fx)) for (const [k, v] of Object.entries(raw.fx)) { if (RESERVED.has(k) || !isObj(v)) continue; fx[k] = { rateMicro: v.rateMicro as number, source: typeof v.source === "string" ? v.source.trim() : "", asOf: typeof v.asOf === "string" ? v.asOf : "" }; }
+  if (isObj(raw.fx)) for (const [k, v] of Object.entries(raw.fx)) { if (RESERVED.has(k) || !isObj(v)) continue; fx[k] = { rateMicro: v.rateMicro as number, source: typeof v.source === "string" ? v.source.trim() : "", asOf: typeof v.asOf === "string" ? v.asOf : "", ...(v.origin === undefined ? {} : { origin: v.origin as FxSetting["origin"] }), ...(v.retrievedAt === undefined ? {} : { retrievedAt: v.retrievedAt as string }) }; }
   else if (raw.fx !== undefined) return { ok: false, errors: ["The exchange rates are not valid."] };
+  const freightByCategory: Record<string, FreightPolicy> = {};
+  if (isObj(raw.freightByCategory)) for (const [k, v] of Object.entries(raw.freightByCategory)) { if (RESERVED.has(k) || !isObj(v)) continue; freightByCategory[k] = { factorMicro: v.factorMicro as number, addOnCents: (v.addOnCents ?? 0) as number, source: typeof v.source === "string" ? v.source.trim() : "" }; }
+  else if (raw.freightByCategory !== undefined) return { ok: false, errors: ["The freight categories are not valid."] };
   const f = raw.freight;
   const value: CommercialSettings = {
     schema: raw.schema as typeof COMMERCIAL_SCHEMA,
     markupBps: raw.markupBps === null || raw.markupBps === undefined ? null : (raw.markupBps as number),
     freight: isObj(f) ? { factorMicro: f.factorMicro as number, addOnCents: (f.addOnCents ?? 0) as number, source: typeof f.source === "string" ? f.source.trim() : "" } : f === null || f === undefined ? null : ({ factorMicro: NaN, addOnCents: NaN, source: "" }),
+    freightByCategory,
     fx,
     fxMaxAgeDays: raw.fxMaxAgeDays as number,
     ageBands: Array.isArray(raw.ageBands) ? raw.ageBands.map((x) => (isObj(x) ? { fromYears: x.fromYears as number, toYears: (x.toYears ?? null) as number | null, rateBps: x.rateBps as number } : { fromYears: NaN, toYears: null, rateBps: NaN })) : [],
@@ -118,7 +140,7 @@ export function parseCommercialSettings(raw: unknown, nowIso: string): { ok: tru
 // ── completeness: what is still UNRESOLVED ─────────────────────────────────
 
 export interface UnresolvedItem {
-  code: "freight_not_set" | "fx_none_set" | "fx_stale" | "fx_missing_currency" | "markup_default";
+  code: "freight_not_set" | "freight_default_not_set" | "fx_none_set" | "fx_stale" | "fx_missing_currency" | "markup_default";
   /** "blocking" = prices that need it are withheld; "notice" = a default is in use and is not an approved policy. */
   severity: "blocking" | "notice";
   text: string;
@@ -128,7 +150,8 @@ export interface UnresolvedItem {
 export function unresolvedItems(s: CommercialSettings | null, nowIso: string, currencies: readonly string[] = []): UnresolvedItem[] {
   const x = s ?? emptyCommercialSettings();
   const out: UnresolvedItem[] = [];
-  if (x.freight === null) out.push({ code: "freight_not_set", severity: "blocking", text: "Freight policy not set. No automatic price can be produced until a Manager enters it." });
+  if (x.freight === null && Object.keys(x.freightByCategory ?? {}).length === 0) out.push({ code: "freight_not_set", severity: "blocking", text: "Freight policy not set. No automatic price can be produced until a Manager enters it." });
+  else if (x.freight === null) out.push({ code: "freight_default_not_set", severity: "notice", text: "No default freight policy: only products in a category with its own freight policy can be priced; every other product gets an exception." });
   const cur = Object.keys(x.fx);
   if (cur.length === 0 && currencies.length === 0) out.push({ code: "fx_none_set", severity: "blocking", text: "No exchange rates set. Products costed in a foreign currency cannot be priced." });
   const now = Date.parse(nowIso);
@@ -145,4 +168,18 @@ export function fxFresh(q: FxSetting | undefined, maxAgeDays: number, nowMs: num
 }
 
 /** True when automatic pricing can price at least a ZAR-costed product: a freight policy exists. (FX is judged per currency.) */
-export const canPriceAnything = (s: CommercialSettings | null): boolean => !!s && s.freight !== null;
+export const canPriceAnything = (s: CommercialSettings | null): boolean => !!s && (s.freight !== null || Object.keys(s.freightByCategory ?? {}).length > 0);
+
+/** The freight policy for a product used by these categories (quotation item keys): a category policy wins; otherwise the default; otherwise NONE (the caller flags it: freight is never silently 1.0).
+ *  Two categories with DIFFERENT policies for one product is a conflict a person must resolve. */
+export type FreightResolution = { ok: true; policy: FreightPolicy; category: string | null } | { ok: false; reason: "not_set" | "conflict"; categories: string[] };
+export function resolveFreight(s: CommercialSettings, categories: readonly string[]): FreightResolution {
+  const hits = [...new Set(categories)].filter((c) => Object.prototype.hasOwnProperty.call(s.freightByCategory ?? {}, c)).sort();
+  if (hits.length > 0) {
+    const first = s.freightByCategory[hits[0]];
+    if (hits.some((c) => { const f = s.freightByCategory[c]; return f.factorMicro !== first.factorMicro || f.addOnCents !== first.addOnCents; })) return { ok: false, reason: "conflict", categories: hits };
+    return { ok: true, policy: first, category: hits[0] };
+  }
+  if (s.freight !== null) return { ok: true, policy: s.freight, category: null };
+  return { ok: false, reason: "not_set", categories: [...new Set(categories)].sort() };
+}

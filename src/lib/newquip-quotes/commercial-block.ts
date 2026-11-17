@@ -17,9 +17,17 @@ export interface CommercialBlock {
   revision: number;
   enteredBy: string;
   enteredAt: string;
+  /** The revision at which a PRICING-RELEVANT setting (anything but the exchange rates) last changed. A refresh of the rates alone moves `revision` but not `epoch`, so a quotation priced under an earlier revision stays consistent. Absent on older blocks (then epoch = revision). */
+  epoch?: number;
   settings: CommercialSettings;
 }
-export interface CommercialVersion { revision: number; enteredBy: string; enteredAt: string; settings: CommercialSettings }
+export interface CommercialVersion { revision: number; /** see CommercialBlock.epoch */ epoch: number; enteredBy: string; enteredAt: string; settings: CommercialSettings }
+
+/** True when two settings differ ONLY in their exchange rates (and the rates' maximum age is the same). */
+export function sameExceptFx(a: CommercialSettings, b: CommercialSettings): boolean {
+  const strip = (s: CommercialSettings) => JSON.stringify({ ...s, fx: {} });
+  return strip(a) === strip(b);
+}
 
 const isObj = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 
@@ -35,13 +43,16 @@ export function commercialOf(profile: unknown, nowIso: string): CommercialVersio
   const c = profile.commercial;
   const parsed = parseCommercialSettings(c.settings, nowIso);
   if (!parsed.ok || c.schema !== COMMERCIAL_SCHEMA || !Number.isSafeInteger(c.revision) || (c.revision as number) < 1 || typeof c.enteredBy !== "string" || typeof c.enteredAt !== "string") return null;
-  return { revision: c.revision as number, enteredBy: c.enteredBy, enteredAt: c.enteredAt, settings: parsed.value };
+  const epoch = Number.isSafeInteger(c.epoch) && (c.epoch as number) >= 1 && (c.epoch as number) <= (c.revision as number) ? (c.epoch as number) : (c.revision as number);
+  return { revision: c.revision as number, epoch, enteredBy: c.enteredBy, enteredAt: c.enteredAt, settings: parsed.value };
 }
 
 /** The next profile jsonb for a commercial change: every customer-facing field carried forward verbatim, the block replaced by the next revision. */
 export function nextProfileWithCommercial(storedProfile: unknown, prior: CommercialVersion | null, settings: CommercialSettings, enteredBy: string, nowIso: string): Record<string, unknown> {
   const base = isObj(storedProfile) ? withoutCommercial(storedProfile) : {};
-  const block: CommercialBlock = { schema: COMMERCIAL_SCHEMA, revision: (prior?.revision ?? 0) + 1, enteredBy, enteredAt: nowIso, settings };
+  const revision = (prior?.revision ?? 0) + 1;
+  const epoch = prior && sameExceptFx(prior.settings, settings) ? prior.epoch : revision;
+  const block: CommercialBlock = { schema: COMMERCIAL_SCHEMA, revision, epoch, enteredBy, enteredAt: nowIso, settings };
   return { ...base, commercial: block };
 }
 

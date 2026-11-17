@@ -12,7 +12,7 @@ import { hasPocFlag } from "./poc-presentation";
 import type { QuoteRecord } from "./quote-store";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
-export interface StoredSettings { revision: number; enteredBy: string; settings: CommercialSettings }
+export interface StoredSettings { revision: number; /** The revision at which a pricing-relevant setting last changed (see commercial-block.ts). Absent = revision. */ epoch?: number; enteredBy: string; settings: CommercialSettings }
 export interface TopUpAvailability { available: boolean; reason: string | null }
 
 /** The commercial-settings revision an automatic entry was built from (it is written into the entry's source text). */
@@ -31,7 +31,7 @@ export function topUpIneligibleReason(q: QuoteRecord, stored: StoredSettings | n
   if (!prior || !prior.enabled || prior.ruleVersionId !== SUPPLIER_AUTO_RULE_VERSION.id) return "Supplier pricing has not been started on this quotation under the supplier rule set. Start it first; Price from Cin7 then adds only the missing costs.";
   if (!stored || !canPriceAnything(stored.settings)) return "A Manager must complete the commercial settings (freight policy and exchange rates) before costs can be priced from Cin7.";
   const priced = settingsRevisionOf(prior);
-  if (priced !== null && priced !== stored.revision) return `The commercial settings changed (version ${priced} to ${stored.revision}) since this quotation was priced, so new costs cannot be added consistently. A Manager or Estimator must re-price it deliberately.`;
+  if (priced !== null && priced < (stored.epoch ?? stored.revision)) return `The commercial settings changed (version ${priced} to ${stored.epoch ?? stored.revision}) since this quotation was priced, so new costs cannot be added consistently. A Manager or Estimator must re-price it deliberately.`;
   if (!budget) return "The quotation could not be evaluated, so the products that need a cost are not known.";
   const needed = skuNeedsOf(budget).map((n) => n.sku).filter((s) => !Object.prototype.hasOwnProperty.call(prior.skus, s));
   if (needed.length === 0) return "Every product that needs a supplier cost already has one.";
@@ -40,7 +40,7 @@ export function topUpIneligibleReason(q: QuoteRecord, stored: StoredSettings | n
 
 export async function cin7TopUpAvailability(db: Db, orgId: string, q: QuoteRecord, budget: BudgetQuote | null | undefined): Promise<TopUpAvailability> {
   let stored: StoredSettings | null = null;
-  try { const v = await latestCommercialSettings(db, orgId, new Date().toISOString()); stored = v ? { revision: v.revision, enteredBy: v.enteredBy, settings: v.settings } : null; } catch { stored = null; }
+  try { const v = await latestCommercialSettings(db, orgId, new Date().toISOString()); stored = v ? { revision: v.revision, epoch: v.epoch, enteredBy: v.enteredBy, settings: v.settings } : null; } catch { stored = null; }
   const reason = topUpIneligibleReason(q, stored, budget);
   return { available: reason === null, reason };
 }
