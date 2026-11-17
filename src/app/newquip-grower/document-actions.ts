@@ -15,7 +15,7 @@ export interface DocumentActionResult<T> { ok: boolean; error?: string; data?: T
 
 export interface ProfileView { available: boolean; profile: CompanyProfile | null; version: number | null; missing: string[]; canEdit: boolean }
 export interface IssuedDocumentRow { id: string; version: number; revision: number; issuedAt: string; issuedBy: string; byteSize: number; contentHash: string }
-export interface QuoteDocumentsView { available: boolean; documents: IssuedDocumentRow[]; blockers: string[]; canIssue: boolean }
+export interface QuoteDocumentsView { available: boolean; documents: IssuedDocumentRow[]; blockers: string[]; /** TEST-ONLY preview can be opened (company details unusable for customers but buildable). */ previewAvailable: boolean; canIssue: boolean }
 
 const needManager = (a: Actor) => { if (!a.roles.has("manager")) throw new Error("Only a Manager can change NewQuip's company details."); };
 

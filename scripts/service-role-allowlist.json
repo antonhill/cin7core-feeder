@@ -14,6 +14,8 @@
     "src/app/api/approvals-deliver/route.ts",
     "src/app/api/delete-expired-trials/route.ts",
     "src/app/api/newquip-quote-documents/[id]/route.ts",
+    "src/app/api/newquip-quote-preview/[id]/route.ts",
+    "src/app/newquip/login/complete/route.ts",
     "src/app/api/newquip-quote-responses/route.ts",
     "src/app/api/newquip-response-evidence/[id]/route.ts",
     "portal/app/api/quote-response/document/route.ts",
