@@ -152,7 +152,7 @@ export function CustomerQuotationDocument({ m, testOnly = false }: { m: Customer
 
 /** Renders the model to PDF bytes. Throws (never returns a partial file) if the renderer fails. */
 export async function renderCustomerPdf(model: CustomerDocumentModel, opts: { testOnly?: boolean } = {}): Promise<Uint8Array> {
-  const buf = await renderToBuffer(<CustomerQuotationDocument m={model} testOnly={opts.testOnly === true} />);
+  const buf = await renderToBuffer(<CustomerQuotationDocument m={model} testOnly={opts.testOnly === true || model.testOnly === true} />);
   if (buf.length < 800 || buf.subarray(0, 5).toString("latin1") !== "%PDF-") throw new Error("The quotation PDF could not be generated.");
   return new Uint8Array(buf);
 }

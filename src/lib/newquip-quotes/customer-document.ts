@@ -11,6 +11,8 @@ import type { CompanyProfile } from "./company-profile";
 
 export interface CustomerDocumentModel {
   schemaVersion: 1;
+  /** UAT TEST document: watermarked, never a commercial quotation. Persisted with the issued document so every later step can tell it apart. */
+  testOnly?: boolean;
   company: Pick<CompanyProfile, "brandName" | "legalName" | "registrationNumber" | "vatNumber" | "addressLines" | "phone" | "email" | "website">;
   quote: { reference: string; revision: number; issuedOn: string; validUntil: string; validityDays: number; siteName: string };
   customer: { name: string; tradingName: string | null; vatNumber: string | null; billingAddress: string[]; contactName: string; contactEmail: string; contactPhone: string | null };

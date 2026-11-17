@@ -63,6 +63,7 @@ export default function QuoteResponsePage() {
           <div className="min-w-0"><p className="truncate text-base font-bold leading-tight">{brand}</p><p className="text-xs text-slate-500">Secure quotation response</p></div>
         </div>
       </header>
+      {data?.testOnly && <div role="note" className="bg-red-700 px-4 py-2 text-center text-sm font-bold text-white" data-testid="test-banner">TEST ONLY – NOT A COMMERCIAL QUOTATION (UAT). Nothing you do here is a real acceptance.</div>}
       <main className="mx-auto w-full max-w-2xl px-4 py-6 sm:px-6 sm:py-10">{children}</main>
       <footer className="mx-auto w-full max-w-2xl px-4 pb-8 text-xs text-slate-500 sm:px-6">This page is personal to the recipient of the quotation email. Please do not forward the link.</footer>
     </div>

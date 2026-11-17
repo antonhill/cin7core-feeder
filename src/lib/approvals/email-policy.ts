@@ -21,7 +21,8 @@ export const SUPPRESSED_MARK = "SUPPRESSED:";
 export type EmailEnv = Readonly<Record<string, string | undefined>>;
 export type EmailDecision = { action: "SEND"; subject: string; text: string } | { action: "SUPPRESS"; reason: string };
 
-export const isRestricted = (env: EmailEnv): boolean => env.VERCEL_ENV !== "production";
+// The dedicated UAT deployment (CIN7_CREDENTIAL_STORE=uat) runs as Vercel "production" but is a TEST environment: it is RESTRICTED like a Preview (allowlist only, [PREVIEW] marking).
+export const isRestricted = (env: EmailEnv): boolean => env.VERCEL_ENV !== "production" || env.CIN7_CREDENTIAL_STORE === "uat";
 
 /** The Production-only enablement control. Exactly the string "true" (anything else, including "TRUE", "1" or unset, is OFF). Irrelevant outside Production. */
 export const PRODUCTION_EMAIL_FLAG = "NEWQUIP_PRODUCTION_EMAIL_ENABLED";

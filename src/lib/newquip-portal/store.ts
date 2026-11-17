@@ -80,7 +80,7 @@ export async function readTokenDocument(db: Db, rawToken: string, env: LinkEnv):
 export interface PublicQuotation {
   quoteRef: string; revision: number; customerName: string; companyName: string; companyLegalName: string;
   currency: "ZAR"; subtotalExVat: number; vat: number; totalIncVat: number; validUntil: string; issuedOn: string;
-  schedule: Array<{ name: string; percent: number; amountExVat: number }>; actions: CustomerResponse[];
+  schedule: Array<{ name: string; percent: number; amountExVat: number }>; actions: CustomerResponse[]; /** UAT TEST document: the page shows a clear banner. */ testOnly?: boolean;
 }
 export type PublicResult<T> = { ok: true; data: T } | { ok: false; reason: LinkFailure | "INVALID_INPUT" | "RATE_LIMITED"; error: string };
 
@@ -92,7 +92,7 @@ export async function loadPublicQuotation(db: Db, token: string, env: LinkEnv, n
   return { ok: true, data: {
     quoteRef: r.doc.quote_ref, revision: r.doc.revision, customerName: m.customer.name, companyName: m.company.brandName, companyLegalName: m.company.legalName, currency: m.currency,
     subtotalExVat: m.totals.subtotalExVat, vat: m.totals.vat, totalIncVat: m.totals.totalIncVat, validUntil: m.quote.validUntil, issuedOn: m.quote.issuedOn,
-    schedule: m.paymentSchedule.map((s) => ({ name: s.name, percent: s.percent, amountExVat: s.amountExVat })), actions: r.link.allowed_actions,
+    schedule: m.paymentSchedule.map((s) => ({ name: s.name, percent: s.percent, amountExVat: s.amountExVat })), actions: r.link.allowed_actions, ...(m.testOnly === true ? { testOnly: true } : {}),
   } };
 }
 

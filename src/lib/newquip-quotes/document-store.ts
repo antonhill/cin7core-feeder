@@ -127,7 +127,7 @@ const stableOf = (m: CustomerDocumentModel) => hashOf({ ...m, quote: { ...m.quot
 const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
 
 export async function issueQuotationDocument(
-  db: Db, orgId: string, quoteId: string, who: { email: string; ownerEmail?: string | null }, schedule: readonly ScheduleStageTemplate[], deps: DocumentDeps, scheduleSource?: ScheduleSource,
+  db: Db, orgId: string, quoteId: string, who: { email: string; ownerEmail?: string | null }, schedule: readonly ScheduleStageTemplate[], deps: DocumentDeps, scheduleSource?: ScheduleSource, opts: { uatTest?: boolean } = {},
 ): Promise<{ document: StoredDocument; created: boolean }> {
   const q = await loadQuote(db, orgId, quoteId);
   if (!q) throw new Error("Quote not found.");
@@ -143,9 +143,10 @@ export async function issueQuotationDocument(
   // Only the designated demonstration quotes (whose terms are replaced in the PDF) keep the pre-guard behaviour.
   const marked = pocDocumentMarked(q, orgId);
   const isDemo = !!prof && applyDemoTerms(prof.profile, orgId, q.quote_ref, marked) !== prof.profile;
-  const lacking = missingProfileFields(prof?.profile, { allowPlaceholderTerms: isDemo });
+  // UAT TEST document (explicitly requested by the UAT-only action): the same lenient profile rule as the TEST-ONLY preview, and the stored model is marked testOnly. The strict rule below is untouched for every other caller.
+  const lacking = opts.uatTest ? (prof ? profileProblems(prof.profile, { lenient: true }).map((x) => x.label) : ["no company details"]) : missingProfileFields(prof?.profile, { allowPlaceholderTerms: isDemo });
   if (!prof || lacking.length) {
-    const why = prof ? describeProfileProblems(profileProblems(prof.profile, { allowPlaceholderTerms: isDemo })).join("; ") : "no company details have been saved";
+    const why = prof ? describeProfileProblems(profileProblems(prof.profile, opts.uatTest ? { lenient: true } : { allowPlaceholderTerms: isDemo })).join("; ") : "no company details have been saved";
     throw new Error(`The company details cannot be used on a customer document (Manager > Company details): ${why}.`);
   }
 
@@ -153,7 +154,8 @@ export async function issueQuotationDocument(
   if (accepted.error && !missing(accepted.error.message)) throw new Error(accepted.error.message);
   if ((accepted.data ?? []).length > 0) throw new Error("The customer has accepted this quotation; the accepted document is final and cannot be replaced.");
   const existing = await listDocuments(db, orgId, quoteId);
-  const model = buildCustomerDocumentModel({ baseline: q.accepted_baseline, quoteRef: q.quote_ref, revision: q.revision, snapshot: snap.snapshot, profile: applyDemoTerms(prof.profile, orgId, q.quote_ref, marked), schedule, scheduleSource, issuedOn: deps.today() });
+  const built = buildCustomerDocumentModel({ baseline: q.accepted_baseline, quoteRef: q.quote_ref, revision: q.revision, snapshot: snap.snapshot, profile: opts.uatTest ? prof.profile : applyDemoTerms(prof.profile, orgId, q.quote_ref, marked), schedule, scheduleSource, issuedOn: deps.today() });
+  const model: CustomerDocumentModel = opts.uatTest ? { ...built, testOnly: true } : built;
   assertNoInternalLeak(model, q.accepted_baseline);
   const last = existing[0];
   if (last && last.baseline_hash === q.baseline_hash && stableOf(last.content) === stableOf(model) && last.customer_snapshot_id === snap.id && last.company_profile_id === prof.id) return { document: last, created: false };
