@@ -72,6 +72,13 @@ export function NewquipShell({
             })}
           </nav>
           <div className="ml-auto flex min-w-0 items-center gap-3">
+            <Link
+              href="/newquip-grower/guide"
+              aria-current={pathname === "/newquip-grower/guide" || pathname.startsWith("/newquip-grower/guide/") ? "page" : undefined}
+              className={`inline-flex min-h-11 shrink-0 items-center rounded-md px-2 text-sm ${(pathname === "/newquip-grower/guide" || pathname.startsWith("/newquip-grower/guide/")) ? "bg-primary-subtle font-semibold text-indigo-900" : "font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900"}`}
+            >
+              User Guide
+            </Link>
             {orgName && <span className="max-w-[16rem] truncate text-sm text-slate-700" title={orgName}>{orgName}</span>}
             {switchOrgFrom && <ActiveOrgSwitcher currentOrgId={switchOrgFrom} />}
             {userEmail && <span className="hidden max-w-[16rem] truncate text-sm text-slate-600 xl:inline" title={userEmail}>{userEmail}</span>}

@@ -695,7 +695,7 @@ export type WorkspaceLink = ModuleConfig & { alsoActiveFor?: readonly string[]; 
 const NEWQUIP_SETTINGS_PATHS = [NEWQUIP_SETTINGS_HREF, "/newquip-grower/company-profile", "/newquip-grower/project-templates", "/newquip-grower/cost-survey", "/settings"];
 
 const NEWQUIP_DASHBOARD_LINK: WorkspaceLink = { href: "/", label: "Dashboard", gradient: SELF_COLORED_ICON_BADGE, Icon: ReportsIcon, blurb: "Quotations, approvals, projects and claims at a glance." };
-const NEWQUIP_QUOTATIONS_LINK: WorkspaceLink = { ...SOLUTION_BUILDER_MODULE, label: "Quotations", notActiveFor: NEWQUIP_SETTINGS_PATHS };
+const NEWQUIP_QUOTATIONS_LINK: WorkspaceLink = { ...SOLUTION_BUILDER_MODULE, label: "Quotations", notActiveFor: [...NEWQUIP_SETTINGS_PATHS, "/newquip-grower/guide"] };
 const NEWQUIP_CLAIMS_LINK: WorkspaceLink = { href: NEWQUIP_CLAIMS_HREF, label: "Claims", gradient: SELF_COLORED_ICON_BADGE, Icon: ReportsIcon, blurb: "Progress claims across every project." };
 const NEWQUIP_SETTINGS_LINK: WorkspaceLink = { href: NEWQUIP_SETTINGS_HREF, label: "Settings", gradient: SELF_COLORED_ICON_BADGE, Icon: AuditIcon, blurb: "Company details, project templates, members and security.", alsoActiveFor: NEWQUIP_SETTINGS_PATHS };
 
