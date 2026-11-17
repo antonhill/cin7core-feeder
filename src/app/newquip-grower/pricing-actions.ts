@@ -8,6 +8,7 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { applyPricingChange, attestRates, loadPricingWorkspace, recordManualEvidence, verifyCosts, type ApplyReport, type PricingActor, type WorkspaceBundle } from "@/lib/newquip-quotes/pricing-service";
 import type { PricingSubmission } from "@/newquip/pricing/estimator/apply";
 import type { PricingConflict } from "@/newquip/pricing/estimator/merge";
+import { runAutoPricingTopUp } from "@/lib/newquip-quotes/auto-pricing-service";
 import { auditActor, authoriseActor, errText as rawErrText, type Actor } from "./actor";
 import { NEWQUIP_POC_CIN7_INSTANCE_ID } from "@/newquip/access";
 import { cin7IdentityLookups } from "@/lib/projects/latest-cost-adapter";
@@ -112,5 +113,31 @@ export async function recordManualPriceEvidenceAction(quoteId: string, items: Ar
     if (!r.ok) return { ok: false, error: r.errors[0], errors: r.errors };
     await auditActor(db, a, { action: "newquip.manual_price_evidence", summary: "Recorded pricing evidence for manual items (local only; no Cin7 write)", detail: { quoteId, seq: r.report.seq, recorded: r.report.recorded } });
     return { ok: true, data: r.report };
+  } catch (e) { return { ok: false, error: errText(e) }; }
+}
+
+/**
+ * The Estimator's "Price from Cin7": reads Cin7 (GET only) for the products the quotation needs that still have no stored cost (for example the door or package components chosen after the Rep's save) and records the automatic
+ * costs through the SAME gated automatic pricing (runAutoPricingTopUp: add-only, so every stored entry is kept; refused for a quotation whose pricing a person has entered or changed). Costs stay unverified for a Manager.
+ */
+export async function priceFromCin7Action(quoteId: string): Promise<PricingActionResult<{ status: string; message: string; added: number; stillUnpriced: number; workspace?: WorkspaceBundle }>> {
+  try {
+    if (typeof quoteId !== "string" || quoteId.length === 0 || quoteId.length > 64) throw new TypeError("bad request");
+    const a = await pricingActor();
+    if (!a.roles.has("estimator") || !a.canSeeCost) return { ok: false, error: "Only an Estimator who can see costs can price from Cin7." };
+    const db = createServiceRoleClient();
+    const o = await runAutoPricingTopUp(db, { orgId: a.orgId, userId: a.userId, roles: a.roles, demo: false, canSeeCost: a.canSeeCost }, quoteId);
+    console.info(`[newquip-auto-pricing] ${quoteId} at=estimator status=${o.status} added=${o.added} pending=${o.pendingCount} flags=${o.internal.map((i) => `${i.sku}:${i.code}`).join(",").slice(0, 400)}`);
+    if (o.status === "applied") await auditActor(db, a, { action: "newquip.auto_pricing", summary: "Estimator priced newly needed products from Cin7 supplier costs (local only; Cin7 read only)", detail: { quoteId, added: o.added, stillPending: o.pendingCount, at: "estimator" } });
+    const message = o.status === "applied" ? `Priced ${o.added} product${o.added === 1 ? "" : "s"} from Cin7${o.pendingCount > 0 ? `; ${o.pendingCount} still need${o.pendingCount === 1 ? "s" : ""} your attention` : ""}. The costs await Manager verification.`
+      : o.status === "nothing_to_add" ? "Every product already has a cost."
+      : o.status === "no_prices" ? "Cin7 could not price the remaining products; the reason for each is shown with it."
+      : o.status === "not_applicable" ? "Price from Cin7 is not available for this quotation (automatic pricing is off for it, or a person has already entered or changed its pricing)."
+      : o.status === "settings_incomplete" ? "The commercial settings are not complete (freight policy), so nothing was priced."
+      : o.status === "settings_changed" ? "The commercial settings changed since this quotation was priced, so nothing was added automatically."
+      : o.status === "skipped" ? "The quotation changed while its costs were being read, so nothing was priced. Try again."
+      : "The automatic pricing could not be recorded. Nothing was changed.";
+    const workspace = await loadPricingWorkspace(db, asPricingActor(a), quoteId).catch(() => undefined);
+    return { ok: true, data: { status: o.status, message, added: o.added, stillUnpriced: o.pendingCount, ...(workspace ? { workspace } : {}) } };
   } catch (e) { return { ok: false, error: errText(e) }; }
 }

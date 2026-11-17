@@ -1,6 +1,6 @@
 import { stableStringify } from "../../quote/baseline";
 import { canEnterPricingInputs, selectRuleVersion, validateScenario, type ForwardCover, type FxQuote, type PricingScenario, type Viewer } from "../model";
-import { COST_KINDS, CURRENCY_SOURCES, type CostKind, type CurrencySource, type EstimatorPricing, type SkuPricingInput, type StoredForwardCover } from "./types";
+import { COST_KINDS, CURRENCY_SOURCES, type AutoPriceFlag, type CostKind, type CurrencySource, type EstimatorPricing, type SkuPricingInput, type StoredForwardCover } from "./types";
 
 // APPLYING AN ESTIMATOR PRICING CHANGE (NQ-008B Phase 2). Pure. The form submits the inputs WITHOUT attribution; this decides who may change them, validates the whole
 // result with the Phase 1 model, stamps who/when for exactly the entries that changed (never trusting a client's by/at), bumps the revision and lists every changed value
@@ -156,7 +156,22 @@ export function normaliseSubmission(raw: unknown, nowIso: string): { ok: true; v
   return e.length ? { ok: false, errors: [...new Set(e)] } : { ok: true, value: out };
 }
 
-export function applyPricingSubmission(prior: EstimatorPricing | undefined, sub: PricingSubmission, viewer: Viewer, email: string, nowIso: string, reason: string, quoteType: string): ApplyResult {
+/**
+ * The automatic-pricing flags a write stores: `incoming` (undefined = keep the stored ones) restricted to well-formed entries for SKUs that have NO stored cost, bounded. Pure. Nothing a browser sends reaches it
+ * (the pricing submission has no such field: only the server-side automatic pricing passes `incoming`).
+ */
+export function sanitiseAutoFlags(prior: EstimatorPricing["autoFlags"], incoming: Record<string, AutoPriceFlag | undefined> | undefined, pricedSkus: ReadonlySet<string>): Record<string, AutoPriceFlag> | undefined {
+  const src = incoming === undefined ? prior : incoming;
+  const out: Record<string, AutoPriceFlag> = {};
+  for (const [k, v] of Object.entries(src ?? {})) {
+    if (!v || !SKU.test(k) || RESERVED.has(k) || pricedSkus.has(k) || Object.keys(out).length >= MAX.maps) continue;
+    if (typeof v.code !== "string" || typeof v.internal !== "string" || typeof v.at !== "string") continue;
+    out[k] = { code: v.code.slice(0, 40), internal: v.internal.slice(0, 300), at: v.at.slice(0, 40) };
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+export function applyPricingSubmission(prior: EstimatorPricing | undefined, sub: PricingSubmission, viewer: Viewer, email: string, nowIso: string, reason: string, quoteType: string, autoFlags?: Record<string, AutoPriceFlag | undefined>): ApplyResult {
   if (!canEnterPricingInputs(viewer)) return { ok: false, errors: ["Only an Estimator who can see costs can enter or change pricing inputs."] };
   if (typeof reason !== "string" || reason.trim().length < 3 || reason.length > 500) return { ok: false, errors: ["Say why the pricing is being changed (3 to 500 characters; it is kept with the revision)."] };
   if (quoteType !== "project") return { ok: false, errors: ["Supplier pricing applies to project quotations only."] };
@@ -197,6 +212,9 @@ export function applyPricingSubmission(prior: EstimatorPricing | undefined, sub:
     // Pricing evidence for manual items is server-owned (it is written only by its own action): a pricing save carries it over untouched.
     ...(prior?.manualEvidence ? { manualEvidence: structuredClone(prior.manualEvidence) } : {}),
   };
+  // Automatic-pricing flags are server-owned too: carried over (or replaced by the automatic pricing's own list), and always dropped for a SKU that now has a stored cost.
+  const flags = sanitiseAutoFlags(prior?.autoFlags, autoFlags, new Set(Object.keys(skus)));
+  if (flags) next.autoFlags = flags;
 
   // Validate the WHOLE result with the Phase 1 model (rates, costs, freight, overrides, reasons, markup bounds).
   const scenario: PricingScenario = {

@@ -140,14 +140,14 @@ export interface QuoteView {
 }
 
 /** Automatic initial pricing of a Rep draft (NEWQUIP_AUTO_PRICING=on only). NEVER fails the caller: any problem simply leaves the quotation as it was. */
-async function autoPriceRepDraft(db: ReturnType<typeof createServiceRoleClient>, a: Actor, quoteId: string): Promise<QuoteView["autoPricing"] | undefined> {
+async function autoPriceRepDraft(db: ReturnType<typeof createServiceRoleClient>, a: Actor, quoteId: string, where = "save"): Promise<{ view: QuoteView["autoPricing"] | undefined; added: number }> {
   try {
-    // runAutoPricing gates itself (NEWQUIP_AUTO_PRICING + NEWQUIP_AUTO_PRICING_FROM, non-demo, Rep): every entry point is gated identically there.
+    // runAutoPricing gates itself (NEWQUIP_AUTO_PRICING + NEWQUIP_AUTO_PRICING_FROM, non-demo, Rep): every entry point (a draft save AND the hand-off retry) is gated identically there.
     const o = await runAutoPricing(db, { orgId: a.orgId, userId: a.userId, roles: a.roles, demo: !!a.demo }, quoteId);
-    console.info(`[newquip-auto-pricing] ${quoteId} status=${o.status} added=${o.added ?? 0} pending=${o.pendingCount} flags=${o.internal.map((i) => `${i.sku}:${i.code}`).join(",").slice(0, 400)}`); // status and flag codes only: never a cost, rate or margin
-    if (o.status === "applied") await audit(db, a, { action: "newquip.auto_pricing", summary: "Priced a Rep draft automatically from Cin7 supplier costs (local only; Cin7 read only)", detail: { quoteId, added: o.added, stillPending: o.pendingCount } });
-    return o.pendingCount > 0 || o.pending.length > 0 ? { pending: o.pending, pendingCount: o.pendingCount } : undefined;
-  } catch (e) { console.error(`[newquip-auto-pricing] ${quoteId} failed: ${e instanceof Error ? e.message.slice(0, 200) : "unknown"}`); return undefined; }
+    console.info(`[newquip-auto-pricing] ${quoteId} at=${where} status=${o.status} added=${o.added ?? 0} pending=${o.pendingCount} flags=${o.internal.map((i) => `${i.sku}:${i.code}`).join(",").slice(0, 400)}`); // status and flag codes only: never a cost, rate or margin
+    if (o.status === "applied") await audit(db, a, { action: "newquip.auto_pricing", summary: "Priced a Rep draft automatically from Cin7 supplier costs (local only; Cin7 read only)", detail: { quoteId, added: o.added, stillPending: o.pendingCount, at: where } });
+    return { view: o.pendingCount > 0 || o.pending.length > 0 ? { pending: o.pending, pendingCount: o.pendingCount } : undefined, added: o.added ?? 0 };
+  } catch (e) { console.error(`[newquip-auto-pricing] ${quoteId} failed: ${e instanceof Error ? e.message.slice(0, 200) : "unknown"}`); return { view: undefined, added: 0 }; }
 }
 
 async function view(db: ReturnType<typeof createServiceRoleClient>, quote: QuoteRecord, a: Actor): Promise<QuoteView> {
@@ -370,7 +370,7 @@ export async function saveGrowerDraftAction(quoteId: string, draft: QuoteDraft):
         if (err) confirmationEffect = { confirmationCleared: false, signoffCleared: saved.signoffCleared, returnedToRep: false, approvalSyncError: err };
       })().catch(() => undefined);
     }
-    const autoPricing = saved.draftHash !== priorHash ? await autoPriceRepDraft(db, a, quoteId) : undefined; // only when the content changed: an unchanged save never re-reads Cin7
+    const autoPricing = saved.draftHash !== priorHash ? (await autoPriceRepDraft(db, a, quoteId)).view : undefined; // only when the content changed: an unchanged save never re-reads Cin7
     const q = await loadQuote(db, a.orgId, quoteId);
     return q ? { ok: true, data: { ...(await view(db, q, a)), ...(confirmationEffect ? { confirmationEffect } : {}), ...(autoPricing ? { autoPricing } : {}) } } : { ok: false, error: "Quote not found." };
   } catch (e) {
@@ -437,7 +437,14 @@ export async function sendGrowerQuoteUnpricedToEstimatorAction(quoteId: string, 
     if (available && !snap) throw new Error("Select the Cin7 customer and quotation contact in Step 1 (Customer & site) before the quotation can be submitted.");
     if (snap) { const cur = await loadQuote(db, a.orgId, quoteId); if (cur) assertNameMatchesSnapshot(cur.draft.customerName, cur.customer_name, snap.snapshot); }
     if (available && snap && !snap.snapshot.chosenContact) throw new Error("Choose the quotation contact in Step 1 (Customer & site) before the quotation can be submitted.");
-    await sendToEstimatorUnpriced(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true), { acknowledged: acknowledged === true });
+    // A quotation must not reach the Estimator with products that automatic pricing could still read: it is retried once here (the same single gated entry as a draft save; it never throws, never blocks and never fails the submit).
+    const retry = await autoPriceRepDraft(db, a, quoteId, "handoff");
+    try { await sendToEstimatorUnpriced(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true), { acknowledged: acknowledged === true }); }
+    catch (e) {
+      // Pricing just completed the quotation, so it now has a total the customer must confirm: say so (the normal price-confirmation submit applies); nothing else about the refusal changes.
+      if (retry.added > 0 && /indicative price exists/i.test(errMsg(e))) throw new Error("Automatic pricing has just completed the remaining prices, so the quotation now has a total. Refresh, review it and submit it with the customer's price confirmation.");
+      throw e;
+    }
     if (await stagedAvailable(db)) await resyncQuoteApprovals(db, ctxOf(a), quoteId);
     return { basis: "Pricing to be established by Estimator", acknowledgedBy: a.email, at: new Date().toISOString(), total: null };
   });

@@ -50,6 +50,12 @@ export type StoredForwardCover = ForwardCover & { review?: RateReview };
  */
 export interface ManualPriceEvidence { note: string; reference?: string; by: string; at: string; priceHash: string }
 
+/**
+ * WHY one product has NO automatic price. SERVER-OWNED and INTERNAL, like the rest of the pricing: it lives inside `estimator.pricing`, which is never sent to a Rep, so the specific reason (which may
+ * name a currency) is for the Estimator / Manager only. Never holds a cost, rate, freight or margin value. Cleared for a SKU the moment it has a stored cost.
+ */
+export interface AutoPriceFlag { code: string; internal: string; at: string }
+
 export interface EstimatorPricing {
   /** Literal true: the model is only ever switched ON explicitly, never inferred. */
   enabled: true;
@@ -71,4 +77,6 @@ export interface EstimatorPricing {
   projectMarkup: ProjectMarkupChange | null;
   /** INTERNAL ONLY: a target total for the project. Never applied to the customer quotation (its presentation is an undecided NewQuip rule); it is shown to the Estimator as the adjustment it WOULD need. */
   targetAdjustment: (Reasoned & { targetTotalCents: number }) | null;
+  /** Server-owned: the specific reason automatic pricing could not price a SKU, by SKU (see AutoPriceFlag). Absent when there is none. Carried over by every pricing save; never submitted by a browser. */
+  autoFlags?: Record<string, AutoPriceFlag | undefined>;
 }

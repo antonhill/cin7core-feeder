@@ -9,6 +9,7 @@ import { EVIDENCE_STATE_TEXT, evidenceStateOf, skuLessManualItems, type Evidence
 import { COST_STATE_TEXT, costInputHash, costStateOf, type CostState } from "./verification";
 import { LEGACY_RULE_VERSION, selectRuleVersion } from "../model";
 import type { EstimatorPricing } from "./types";
+import { autoFlagAction, isAutoOwned } from "../auto-costing";
 
 // THE ESTIMATOR PRICING WORKSPACE, as data (NQ-008B Phase 2). Pure: a quotation's evaluation (cost visible) + its pricing inputs + the original indicative price in, a view-model
 // out. INTERNAL ONLY: it carries supplier costs, rates, freight, markup and margin, so the server builds it for a cost-entitled Estimator/Manager and for nobody else. The screen
@@ -42,10 +43,14 @@ export interface SkuRow {
   priceOverride: { unitPriceCents: number; reason: string; by: string; at: string } | null;
   lineRevenueCents: number | null; lineCostCents: number | null; margin: MarginFigures | null;
   issues: string[];
+  /** WHY automatic pricing could not price this SKU (stored with the pricing; INTERNAL, cost-entitled viewers only) and what to do about it. null when it was priced, or there is no stored reason. */
+  autoFlag: { code: string; text: string; action: string; at: string } | null;
 }
 export interface WorkspaceTotals { totalCents: number | null; pricedSubtotalCents: number; costOnCostedLinesCents: number; costedRevenueCents: number; margin: MarginFigures | null; priceComplete: boolean }
 export interface PricingWorkspaceView {
   enabled: boolean;
+  /** Every stored cost is an automatic (Cin7) one and nothing was changed by a person: the Estimator's "Price from Cin7" top-up applies (the server re-checks every gate). */
+  autoOwned: boolean;
   /** false: supplier pricing applies to project quotations only. */
   available: boolean;
   ruleVersionId: string | null; revision: number; pricingDate: string | null;
@@ -127,6 +132,7 @@ export function buildPricingWorkspace(i: {
       unitLandedCostCents: zero ? null : (l?.unitLandedCostCents ?? null), calculatedUnitPriceCents: zero ? null : (l?.calculatedUnitPriceCents ?? null), unitPriceCents: unit, priceOrigin: zero ? null : (l?.priceOrigin ?? null),
       priceOverride: ov ? { unitPriceCents: ov.unitPriceCents, reason: ov.reason, by: ov.by, at: ov.at } : null,
       lineRevenueCents: rev, lineCostCents: cost, margin: rev !== null ? figures(rev, cost) : null,
+      autoFlag: !input && p?.autoFlags?.[sku] ? { code: p.autoFlags[sku]!.code, text: p.autoFlags[sku]!.internal, action: autoFlagAction(p.autoFlags[sku]!.code), at: p.autoFlags[sku]!.at } : null,
       issues: [...(zero ? ["the supplier cost is zero, so a supplier quote is required (a zero price is never quoted)"] : []), ...(l?.issues ?? []).map((x) => x.message.replace(`${sku}: `, ""))],
     };
   });
@@ -144,13 +150,13 @@ export function buildPricingWorkspace(i: {
   const finality = pricingFinality(p, i.budget, nowIso);
   const attention: string[] = [];
   for (const r of rows) {
-    if (r.status === "no_input" && r.priceBasis !== "manual_price") attention.push(`${r.sku}: no supplier cost entered, so it is not priced.`);
+    if (r.status === "no_input" && r.priceBasis !== "manual_price") attention.push(r.autoFlag ? `${r.sku}: ${r.autoFlag.text}` : `${r.sku}: no supplier cost entered, so it is not priced.`);
     else if (r.status === "not_priced") attention.push(`${r.sku}: cannot be priced yet (${r.issues[0] ?? "check the rate and cost"}).`);
   }
   attention.push(...finality.reasons.map((x) => x.replace(" This cannot be waived by the incomplete-costing exception.", "")));
   const current = totalCents;
   return {
-    enabled: !!p?.enabled, available: i.quoteType === "project",
+    enabled: !!p?.enabled, autoOwned: !!p && isAutoOwned(p), available: i.quoteType === "project",
     ruleVersionId: p?.ruleVersionId ?? null, revision: p?.revision ?? 0, pricingDate: p?.pricingDate ?? null,
     markup: { bps: p ? (p.projectMarkup?.markupBps ?? null) : null, changedBy: p?.projectMarkup ? { by: p.projectMarkup.by, at: p.projectMarkup.at, reason: p.projectMarkup.reason } : null },
     rows, currencies,

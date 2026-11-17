@@ -3,6 +3,8 @@ import { fxFresh, type CommercialSettings } from "./commercial-settings";
 import { escalateCostE7, escalationFor } from "./cost-escalation";
 import { cost7, formatCost7 } from "./model/money";
 import type { PricingSubmission, SkuSubmission } from "./estimator/apply";
+import type { EstimatorPricing } from "./estimator/types";
+import { SUPPLIER_AUTO_RULE_VERSION } from "./model";
 
 // AUTOMATIC COSTING FROM CIN7 (pure; no I/O). For one SKU: the Cin7 supplier record the survey already selects (the latest-dated positive supplier cost) + the Manager's commercial settings +
 // today -> EITHER the same per-SKU cost input the Estimator workflow stores (so the prices come out of calculatePricing via createEstimatorPriceSource: there is NO second calculator),
@@ -11,10 +13,19 @@ import type { PricingSubmission, SkuSubmission } from "./estimator/apply";
 
 export const AUTO_ACTOR = "auto-pricing (Cin7 costs, commercial settings)";
 
-export type AutoFlagCode = "settings_incomplete" | "no_cost" | "cost_needs_review" | "cost_too_old" | "currency_unknown" | "fx_missing" | "fx_stale" | "cost_precision";
+/** Auto-pricing owns a quotation's pricing only while NOTHING in it was entered or changed by a person: every cost, the markup and the rule version are the automatic ones. Pure. */
+export function isAutoOwned(p: EstimatorPricing): boolean {
+  if (p.ruleVersionId !== SUPPLIER_AUTO_RULE_VERSION.id) return false;
+  if (Object.keys(p.skuPriceOverrides).length > 0 || p.targetAdjustment || Object.keys(p.forwardCover).length > 0) return false;
+  if (p.projectMarkup && p.projectMarkup.by !== AUTO_ACTOR) return false;
+  return Object.values(p.skus).every((s) => !!s && s.by === AUTO_ACTOR && s.costKind === "cin7_auto");
+}
+
+export type AutoFlagCode = "settings_incomplete" | "not_read" | "no_cost" | "cost_needs_review" | "cost_too_old" | "currency_unknown" | "fx_missing" | "fx_stale" | "cost_precision";
 /** Text that is safe for ANY viewer, including a Rep: it never carries a cost, rate, freight or margin. */
 export const NEUTRAL_FLAG_TEXT: Record<AutoFlagCode, string> = {
   settings_incomplete: "Price pending: commercial settings incomplete",
+  not_read: "Price pending: the supplier cost has not been read yet",
   no_cost: "No Cin7 cost for this product",
   cost_needs_review: "Price pending: the supplier cost needs review",
   cost_too_old: "Price pending: a current supplier quotation is needed",
@@ -23,6 +34,20 @@ export const NEUTRAL_FLAG_TEXT: Record<AutoFlagCode, string> = {
   fx_stale: "Price pending: commercial settings incomplete",
   cost_precision: "Price pending: the supplier cost needs review",
 };
+/** The corrective action the Estimator takes for each exception (INTERNAL: shown only to cost-entitled roles, beside the stored specific reason). */
+export const AUTO_FLAG_ACTION: Record<string, string> = {
+  settings_incomplete: "Ask a Manager to complete the commercial settings (freight policy), then use Price from Cin7.",
+  not_read: "Use Price from Cin7 to read it again; if it still fails, enter the supplier cost yourself.",
+  no_cost: "Cin7 holds no supplier cost: enter a supplier quotation cost yourself.",
+  cost_needs_review: "Check the supplier records for this product in Cin7, or enter the supplier cost yourself.",
+  cost_too_old: "The Cin7 cost is older than the allowed maximum: get a current supplier quotation and enter it.",
+  currency_unknown: "Set the supplier's currency in Cin7, or enter the cost with a reasoned currency override.",
+  fx_missing: "Ask a Manager to enter the exchange rate in the commercial settings, then use Price from Cin7.",
+  fx_stale: "Ask a Manager to refresh the exchange rate in the commercial settings, then use Price from Cin7.",
+  cost_precision: "Enter the supplier cost yourself (the Cin7 figure cannot be held exactly).",
+};
+export const autoFlagAction = (code: string): string => AUTO_FLAG_ACTION[code] ?? "Enter the supplier cost yourself.";
+
 export interface AutoFlag { sku: string; code: AutoFlagCode; /** Internal detail for the Estimator / Manager (may name a currency or reason; never a cost value). */ internal: string }
 
 export interface SettingsRef { version: number; enteredBy: string }

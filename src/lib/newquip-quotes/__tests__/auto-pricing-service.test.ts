@@ -11,7 +11,7 @@ import { AUTO_ACTOR } from "@/newquip/pricing/auto-costing";
 import { createQuote, loadQuote, saveDraft } from "../quote-store";
 import { listPricingRevisions } from "../pricing-store";
 import { saveCommercialSettings } from "../document-store";
-import { autoPricingCutoff, isAutoOwned, MAX_SKUS_PER_RUN, RUN_BUDGET_MS, runAutoPricing, type AutoActor, type AutoEnv, type AutoPricingDeps } from "../auto-pricing-service";
+import { autoPricingCutoff, isAutoOwned, READ_CHUNK, RUN_BUDGET_MS, runAutoPricing, type AutoActor, type AutoEnv, type AutoPricingDeps } from "../auto-pricing-service";
 import { createEstimatorPriceSource } from "@/newquip/pricing/estimator";
 
 // ALL FIGURES ARE FICTITIOUS TEST NUMBERS. The Cin7 reads are faked (the real ones are GET-only); nothing here touches Cin7 or a database.
@@ -108,7 +108,7 @@ describe("runAutoPricing: pricing a Rep draft", () => {
 
   it("is IDEMPOTENT: a second run reads nothing and changes nothing", async () => {
     const id = await newQuote();
-    while ((await run(id)).status === "applied") { /* at most MAX_SKUS_PER_RUN products per run: repeat until everything is priced */ }
+    while ((await run(id)).status === "applied") { /* every needed product is read in one run: the loop ends at once */ }
     const before = JSON.stringify((await priceOf(id)).draft);
     calls.length = 0;
     const o = await run(id);
@@ -233,14 +233,15 @@ describe("no stale write over a concurrent change (H2)", () => {
 
 describe("one overall Cin7 budget per run (M2)", () => {
   beforeEach(async () => { await saveCommercialSettings(db as never, ORG, SETTINGS(), "mgr@nq", NOW); });
-  it("reads at most MAX_SKUS_PER_RUN products, hands the adapter ONE overall deadline, and flags the unreached", async () => {
+  it("reads EVERY needed product in successive chunks of READ_CHUNK, hands the adapter ONE overall deadline, and flags the unreached", async () => {
     const id = await newQuote();
     const need = skuNeedsOf(evaluateDraft(draftOn(), { priceSource: testPriceSource(), withholdCost: true }).budget).length;
-    expect(need).toBeGreaterThan(MAX_SKUS_PER_RUN);
-    let seen = 0, deadline = 0; const t0 = Date.now();
-    const o = await run(id, deps({ readRaw: async (skus, d) => { seen = skus.length; deadline = d; return Object.fromEntries(skus.map((s) => [s, { error: "deadline" }])); } }));
-    expect(seen).toBe(MAX_SKUS_PER_RUN);
-    expect(deadline - t0).toBeLessThanOrEqual(RUN_BUDGET_MS + 1000);
+    expect(need).toBeGreaterThan(READ_CHUNK);
+    const sizes: number[] = []; const deadlines = new Set<number>(); const t0 = Date.now();
+    const o = await run(id, deps({ readRaw: async (skus, d) => { sizes.push(skus.length); deadlines.add(d); return Object.fromEntries(skus.map((s) => [s, { error: "deadline" }])); } }));
+    expect(sizes.reduce((a, b) => a + b, 0)).toBe(need); // beyond the old cap of 12: all of them
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(READ_CHUNK);
+    expect(deadlines.size).toBe(1); expect([...deadlines][0] - t0).toBeLessThanOrEqual(RUN_BUDGET_MS + 1000);
     expect(RUN_BUDGET_MS).toBeLessThanOrEqual(45_000);
     expect(o.status).toBe("no_prices");
     expect(o.pendingCount).toBe(need);
