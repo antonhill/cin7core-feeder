@@ -15,14 +15,14 @@ vi.mock("@/actions/newquip-access", () => ({ completeNewquipSignInAction: h.comp
 
 import NewquipLoginPage from "../page";
 
-const hrefSet = vi.fn();
+const assign = vi.fn();
 beforeEach(() => {
   vi.clearAllMocks();
   h.next = null;
   h.signInWithOtp.mockResolvedValue({ error: null });
   h.verifyOtp.mockResolvedValue({ error: null });
   h.signOut.mockResolvedValue({});
-  Object.defineProperty(window, "location", { configurable: true, value: { set href(v: string) { hrefSet(v); } } });
+  Object.defineProperty(window, "location", { configurable: true, value: { origin: "http://localhost", assign } });
 });
 afterEach(cleanup);
 
@@ -58,32 +58,22 @@ describe("NewQuip login page", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("invalid");
     expect(h.complete).not.toHaveBeenCalled();
   });
-  it("a verified account without NewQuip access is signed out and told so, never navigated", async () => {
-    h.complete.mockResolvedValue({ ok: false, error: "This account does not have access to NewQuip." });
+  it("after a verified code it navigates to the server completion route (access is decided there), never calling the action in the same tick", async () => {
     await toCodeStep();
     await submitCode();
-    expect((await screen.findByRole("alert")).textContent).toBe("This account does not have access to NewQuip.");
-    expect(h.signOut).toHaveBeenCalled();
-    expect(hrefSet).not.toHaveBeenCalled();
-  });
-  it("success hard-navigates to / (or a safe NewQuip next)", async () => {
-    h.complete.mockResolvedValue({ ok: true });
-    await toCodeStep();
-    await submitCode();
-    await waitFor(() => expect(hrefSet).toHaveBeenCalledWith("/"));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/newquip/login/complete"));
+    expect(h.complete).not.toHaveBeenCalled();
   });
   it("ignores an unsafe next", async () => {
     h.next = "https://evil.example/projects";
-    h.complete.mockResolvedValue({ ok: true });
     await toCodeStep();
     await submitCode();
-    await waitFor(() => expect(hrefSet).toHaveBeenCalledWith("/"));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/newquip/login/complete"));
   });
-  it("honours a safe NewQuip next", async () => {
+  it("passes a safe NewQuip next to the completion route", async () => {
     h.next = "/projects/abc";
-    h.complete.mockResolvedValue({ ok: true });
     await toCodeStep();
     await submitCode();
-    await waitFor(() => expect(hrefSet).toHaveBeenCalledWith("/projects/abc"));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/newquip/login/complete?next=%2Fprojects%2Fabc"));
   });
 });
