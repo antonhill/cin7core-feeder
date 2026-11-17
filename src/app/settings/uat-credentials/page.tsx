@@ -8,7 +8,7 @@ export default function UatCredentialsPage() {
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, start] = useTransition();
   const refresh = () => start(async () => setStatus(await getUatCredentialStatus()));
-  useEffect(() => { refresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { refresh(); }, []);
 
   return (
     <main className="mx-auto max-w-xl p-6" data-testid="uat-credentials">

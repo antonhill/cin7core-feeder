@@ -37,11 +37,18 @@ async function theInstance() {
   const db = createServiceRoleClient();
   const { data, error } = await db
     .from("cin7_instances")
-    .select("id, name, account_id, application_key_encrypted_uat")
+    .select("id, name, account_id, active, application_key_encrypted_uat")
     .eq("org_id", NEWQUIP_ORG_ID);
   if (error) throw new Error("Could not read the NewQuip Cin7 instance.");
   if (!data || data.length !== 1) throw new Error("Expected exactly one NewQuip Cin7 instance.");
   return { db, row: data[0] };
+}
+
+/** Saving or testing credentials is refused for an inactive instance. */
+async function theActiveInstance() {
+  const found = await theInstance();
+  if (!found.row.active) throw new Error("The NewQuip Cin7 instance is inactive. Activate it before setting or testing credentials.");
+  return found;
 }
 
 export async function getUatCredentialStatus(): Promise<UatCredentialStatus> {
@@ -62,7 +69,7 @@ export async function saveUatCin7Key(applicationKey: string): Promise<UatCredent
     const actor = { userId, email: await currentEmail() };
     const key = typeof applicationKey === "string" ? applicationKey.trim() : "";
     if (key.length < 8 || key.length > 200 || /\s/.test(key)) return { ok: false, message: "That does not look like a Cin7 Application Key." };
-    const { db, row } = await theInstance();
+    const { db, row } = await theActiveInstance();
     const { error } = await db
       .from("cin7_instances")
       .update({ application_key_encrypted_uat: encrypt(key), updated_at: new Date().toISOString() })
@@ -89,11 +96,18 @@ export async function testUatCin7Connection(): Promise<UatCredentialResult> {
   try {
     uatOnly();
     await requirePrivilegedSuperAdmin("test the UAT Cin7 connection");
-    const { db, row } = await theInstance();
+    const { db, row } = await theActiveInstance();
     if (!row.application_key_encrypted_uat) return { ok: false, message: "No UAT Application Key has been saved yet." };
     const creds = await loadCin7Credentials(db, NEWQUIP_ORG_ID, row.id);
     const r = await testConnection(creds);
-    return { ok: r.ok, message: r.message };
+    // Sanitised: only the HTTP status and a fixed diagnostic. The raw Cin7 response body / error text is never returned.
+    if (r.ok) return { ok: true, message: "Connected to Cin7 successfully (HTTP 200)." };
+    const diagnostic =
+      r.status === 403 ? "authentication failed: check the Account ID and Application Key"
+      : r.status === 503 ? "Cin7 rate limit reached; try again shortly"
+      : r.status === 0 ? "network error reaching Cin7"
+      : "unexpected response from Cin7";
+    return { ok: false, message: `Cin7 connection test failed (HTTP ${r.status}): ${diagnostic}.` };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unavailable" };
   }
