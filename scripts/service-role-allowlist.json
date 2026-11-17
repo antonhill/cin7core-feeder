@@ -37,6 +37,7 @@
     "src/app/import/actions.ts",
     "src/app/migrate/actions.ts",
     "src/app/newquip-grower/actions.ts",
+    "src/app/newquip-grower/team-actions.ts",
     "src/app/newquip-grower/actor.ts",
     "src/app/newquip-grower/cin7-diagnostic-actions.ts",
     "src/app/newquip-grower/auto-pricing-actions.ts",

@@ -159,3 +159,10 @@ export async function setStrictRoles(db: Db, gates: { canAdminister: boolean }, 
   const r = await db.from("approval_settings").upsert({ org_id: input.orgId, roles_enforced: input.strict, updated_by_email: actorEmail, updated_at: new Date().toISOString() }, { onConflict: "org_id" });
   if (r.error) fail(r.error.message);
 }
+
+/** Adds an ORDINARY member (never owner/admin, no module restriction) to the organisation. Returns false when the person was already a member. */
+export async function addOrdinaryMember(db: Db, orgId: string, userId: string): Promise<boolean> {
+  const r = await db.from("org_members").insert({ org_id: orgId, user_id: userId, role: "member", allowed_modules: null });
+  if (r.error) { if (r.error.code === "23505") return false; fail(r.error.message); }
+  return true;
+}
