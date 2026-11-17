@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createBrowserSupabaseClient } from "@/supabase/browser";
 import { Spinner } from "@/app/Spinner";
-import { NEWQUIP_ENTRY_COOKIE, NEWQUIP_ENTRY_COOKIE_MAX_AGE, safeNewquipNext } from "@/newquip/entry";
+import { NEWQUIP_ENTRY_COOKIE, NEWQUIP_ENTRY_COOKIE_MAX_AGE, NEWQUIP_NO_ACCESS_MESSAGE, safeNewquipNext } from "@/newquip/entry";
 
 type Step = "email" | "code";
 
@@ -15,7 +15,14 @@ function NewquipLoginForm() {
   const [code, setCode] = useState("");
   const [step, setStep] = useState<Step>("email");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(() => {
+    const reason = searchParams.get("error");
+    if (reason === "access") return NEWQUIP_NO_ACCESS_MESSAGE;
+    if (reason === "lookup") return "NewQuip access could not be checked. Please try again.";
+    if (reason === "session") return "Your sign-in session was not established. Please request a new code.";
+    if (reason === "unexpected") return "Sign-in could not be completed. Please try again.";
+    return null;
+  });
 
   // Remember that this browser signs in via NewQuip (no secrets): middleware also sets it on render.
   useEffect(() => {
