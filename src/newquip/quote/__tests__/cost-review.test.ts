@@ -61,7 +61,7 @@ describe("the itemised cost review", () => {
     expect(rv.rows[0].uplift.text).toBe(UPLIFT_NONE); // an old cost is NOT escalated
     expect(rv.rows[0].originalCost.text).toBe("EUR 26.8440995");
     expect(rv.upliftNote).toBe(UPLIFT_NOTE);
-    expect(UPLIFT_NOTE).toMatch(/no age-based escalation/);
+    expect(UPLIFT_NOTE).toMatch(/escalated by its age/);
   });
 
   it("native costs are shown exactly", () => {
