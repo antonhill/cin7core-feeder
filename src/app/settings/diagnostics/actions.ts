@@ -20,6 +20,7 @@
  */
 
 import { createServiceRoleClient } from "@/supabase/server";
+import { credentialColumn, requireCiphertext } from "@/cin7/credential-store";
 import { requireCurrentOrg } from "@/lib/current-org";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { requirePrivilegedSuperAdmin } from "@/lib/require-privileged";
@@ -136,14 +137,14 @@ async function loadInstanceCreds(instanceId: string) {
   const db = createServiceRoleClient();
   const { data, error } = await db
     .from("cin7_instances")
-    .select("account_id, application_key_encrypted")
+    .select(`account_id, ${credentialColumn()}`)
     .eq("id", instanceId)
     .eq("org_id", orgId)
     .single();
   if (error || !data) throw new Error(error?.message ?? "Instance not found.");
   return {
-    accountId: data.account_id,
-    applicationKey: decrypt(data.application_key_encrypted),
+    accountId: (data as unknown as { account_id: string }).account_id,
+    applicationKey: decrypt(requireCiphertext(data)),
     baseUrl: CIN7_API_ORIGIN,
   };
 }
