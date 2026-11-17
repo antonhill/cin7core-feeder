@@ -930,8 +930,9 @@ describe("D-4: a Rep never reads the cost basis or markup", () => {
     await open({ view: snapshotView(true), draftOver: { ...readyDraft, quoteType: "project" }, roles: ["REP"] });
     expect((document.body.textContent ?? "").match(new RegExp(".{40}(" + LEAK.source + ").{40}", "i"))?.[0] ?? "").toBe("");
     const opts = [...document.querySelectorAll('select option')].map((o) => o.textContent);
-    expect(opts).toContain("Project pricing");
-    expect(opts).toContain("Standard price list basis");
+    expect(opts).not.toContain("Standard price list basis"); // owner decision: Project pricing only for the Rep
+    expect(opts).not.toContain("Project pricing"); // read-only text, no selector
+    expect(document.body.textContent).toContain("Pricing basisProject pricing");
     cleanup();
     await open({ view: snapshotView(true), draftOver: { ...readyDraft, quoteType: "project" }, roles: ["REP"], stage: "2", waitFor: "phase2-readonly" });
     expect(document.body.textContent).not.toMatch(LEAK);
