@@ -80,6 +80,7 @@
     "src/app/reports/stock-health/actions.ts",
     "src/app/settings/diagnostics/actions.ts",
     "src/app/settings/instances/actions.ts",
+    "src/app/settings/uat-credentials/actions.ts",
     "src/app/settings/members/actions.ts",
     "src/app/settings/notifications/actions.ts",
     "src/app/signup/actions.ts",
