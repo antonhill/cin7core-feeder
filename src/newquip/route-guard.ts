@@ -16,6 +16,7 @@ export const NEWQUIP_ONLY_ALLOWED_PREFIXES: readonly string[] = [
   "/settings/notifications",
   // Sign-in, MFA and enrolment flows, and the policy page.
   "/login",
+  "/newquip",
   "/auth",
   "/mfa-challenge",
   "/privacy",

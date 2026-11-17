@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { signOutAction } from "@/actions/auth";
+import { signOutNewquipAction } from "@/actions/auth";
 import { isWorkspaceLinkActive, type WorkspaceLink } from "@/app/module-nav";
 import { ActiveOrgSwitcher } from "@/app/ActiveOrgSwitcher";
 
@@ -75,7 +75,7 @@ export function NewquipShell({
             {orgName && <span className="max-w-[16rem] truncate text-sm text-slate-700" title={orgName}>{orgName}</span>}
             {switchOrgFrom && <ActiveOrgSwitcher currentOrgId={switchOrgFrom} />}
             {userEmail && <span className="hidden max-w-[16rem] truncate text-sm text-slate-600 xl:inline" title={userEmail}>{userEmail}</span>}
-            <form action={signOutAction}>
+            <form action={signOutNewquipAction}>
               <button
                 type="submit"
                 className="inline-flex min-h-11 items-center rounded-md px-2 text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900"

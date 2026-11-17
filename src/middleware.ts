@@ -7,6 +7,7 @@ import type { SubscriptionStatus } from "@/lib/billing";
 import { ACTIVE_ORG_COOKIE, resolveActiveOrgId } from "@/lib/active-org-resolution";
 import { presenterGate } from "@/lib/demo-mode/presenter";
 import { newquipGuardRedirects } from "@/newquip/route-guard";
+import { NEWQUIP_ENTRY_COOKIE, NEWQUIP_ENTRY_COOKIE_MAX_AGE, NEWQUIP_LOGIN_PATH, isNewquipPublicPath, isNewquipSignInRoute, safeNewquipNext } from "@/newquip/entry";
 
 // Must match src/lib/org-switch.ts's IMPERSONATED_ORG_COOKIE — duplicated
 // rather than imported, since that module calls next/headers' cookies() and
@@ -86,6 +87,8 @@ export async function middleware(request: NextRequest) {
 
   const isPublic =
     PUBLIC_PATHS.some((p) => request.nextUrl.pathname.startsWith(p)) ||
+    // NewQuip dedicated sign-in: EXACT matches only ("/newquip-grower" must stay protected).
+    isNewquipPublicPath(request.nextUrl.pathname) ||
     // UAT-only presenter sign-in: public ONLY while its own gate is open (Preview + switch + dedicated UAT database); closed everywhere else.
     (request.nextUrl.pathname === "/presenter" && presenterGate(process.env as Record<string, string | undefined>).allowed);
   // The root path is public too, but can't just join PUBLIC_PATHS — that
@@ -94,6 +97,16 @@ export async function middleware(request: NextRequest) {
   // src/app/page.tsx itself decides marketing-page vs dashboard based on
   // whether a session exists.
   const isRoot = request.nextUrl.pathname === "/";
+
+  // An unauthenticated request to a NewQuip route (or "/" from a browser that signs in through NewQuip) goes to the NewQuip sign-in; everything else is unchanged.
+  if (!userId && (!isPublic || isRoot) && isNewquipSignInRoute(request.nextUrl.pathname, request.cookies.get(NEWQUIP_ENTRY_COOKIE)?.value === "1")) {
+    const nqUrl = request.nextUrl.clone();
+    const next = safeNewquipNext(request.nextUrl.pathname + request.nextUrl.search);
+    nqUrl.pathname = NEWQUIP_LOGIN_PATH;
+    nqUrl.search = "";
+    if (next) nqUrl.searchParams.set("next", next);
+    return NextResponse.redirect(nqUrl);
+  }
 
   if (!userId && !isPublic && !isRoot) {
     const loginUrl = request.nextUrl.clone();
@@ -279,7 +292,7 @@ export async function middleware(request: NextRequest) {
   // a revoked session the JWT still verifies for up to its lifetime, so trusting it alone sent the user from /login to a home page that (rightly) saw no user and
   // showed the marketing page, leaving no way to reach the form. This is a redirect-convenience check on public pages, not an authorisation gate (protected routes
   // are unchanged), and any failure to confirm (revoked, error, rate limit) simply shows the form.
-  if (userId && (request.nextUrl.pathname.startsWith("/login") || request.nextUrl.pathname.startsWith("/signup"))) {
+  if (userId && (request.nextUrl.pathname.startsWith("/login") || request.nextUrl.pathname.startsWith("/signup") || request.nextUrl.pathname === NEWQUIP_LOGIN_PATH)) {
     let confirmed = false;
     try {
       const { data, error } = await supabase.auth.getUser();
@@ -290,8 +303,14 @@ export async function middleware(request: NextRequest) {
     if (confirmed) {
       const homeUrl = request.nextUrl.clone();
       homeUrl.pathname = "/";
+      if (request.nextUrl.pathname === NEWQUIP_LOGIN_PATH) homeUrl.search = "";
       return NextResponse.redirect(homeUrl);
     }
+  }
+
+  // The NewQuip sign-in page marks this browser as a NewQuip entry point (no secrets; lets "/" and the sign-out path route here).
+  if (request.nextUrl.pathname === NEWQUIP_LOGIN_PATH) {
+    response.cookies.set(NEWQUIP_ENTRY_COOKIE, "1", { path: "/", maxAge: NEWQUIP_ENTRY_COOKIE_MAX_AGE, sameSite: "lax", secure: process.env.NODE_ENV === "production" });
   }
 
   return response;

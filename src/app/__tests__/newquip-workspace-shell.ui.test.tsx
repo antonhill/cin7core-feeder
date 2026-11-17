@@ -8,7 +8,7 @@ import { NEWQUIP_POC_ORG_IDS } from "@/newquip/access";
 
 const h = vi.hoisted(() => ({ pathname: "/projects" }));
 vi.mock("next/navigation", () => ({ usePathname: () => h.pathname, useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }));
-vi.mock("@/actions/auth", () => ({ signOutAction: vi.fn() }));
+vi.mock("@/actions/auth", () => ({ signOutAction: vi.fn(), signOutNewquipAction: vi.fn() }));
 vi.mock("@/actions/org-logo", () => ({ uploadCurrentOrgLogo: vi.fn() }));
 vi.mock("@/app/reports/actions", () => ({ triggerSalesSyncAction: vi.fn() }));
 vi.mock("@/app/OrgSwitcher", () => ({ OrgSwitcher: () => null }));
