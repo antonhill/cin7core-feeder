@@ -144,7 +144,7 @@ async function autoPriceRepDraft(db: ReturnType<typeof createServiceRoleClient>,
   try {
     // runAutoPricing gates itself (NEWQUIP_AUTO_PRICING + NEWQUIP_AUTO_PRICING_FROM, non-demo, Rep): every entry point is gated identically there.
     const o = await runAutoPricing(db, { orgId: a.orgId, userId: a.userId, roles: a.roles, demo: !!a.demo }, quoteId);
-    console.info(`[newquip-auto-pricing] ${quoteId} status=${o.status} added=${o.added ?? 0} pending=${o.pendingCount}`); // status only: never a cost, rate or margin
+    console.info(`[newquip-auto-pricing] ${quoteId} status=${o.status} added=${o.added ?? 0} pending=${o.pendingCount} flags=${o.internal.map((i) => `${i.sku}:${i.code}`).join(",").slice(0, 400)}`); // status and flag codes only: never a cost, rate or margin
     if (o.status === "applied") await audit(db, a, { action: "newquip.auto_pricing", summary: "Priced a Rep draft automatically from Cin7 supplier costs (local only; Cin7 read only)", detail: { quoteId, added: o.added, stillPending: o.pendingCount } });
     return o.pendingCount > 0 || o.pending.length > 0 ? { pending: o.pending, pendingCount: o.pendingCount } : undefined;
   } catch (e) { console.error(`[newquip-auto-pricing] ${quoteId} failed: ${e instanceof Error ? e.message.slice(0, 200) : "unknown"}`); return undefined; }
