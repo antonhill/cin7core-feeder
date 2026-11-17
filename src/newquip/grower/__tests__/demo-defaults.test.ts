@@ -31,14 +31,14 @@ describe("Load Demo Defaults", () => {
     expect(sheet.reportingBasis).toMatch(/PROVISIONAL/);
   });
   it("reproduces yesterday's demonstration quote NQ-Q-0001: R10,000,000.00 ex VAT, the amount the customer confirmed and the manager approved", () => {
-    const b = ev(applyDemoDefaults(emptyDraft()).draft).budget!;
+    const b = ev({ ...applyDemoDefaults(emptyDraft()).draft, quoteType: "day_to_day" }).budget!; // golden total is the historical standard basis
     expect(Math.round(b.totals.subtotalExTax * 100)).toBe(1_000_000_000);
   });
   it("uses the recovered inputs verbatim (spot checks); the demonstration's own customer name is kept as a constant but never loaded", () => {
     const d = applyDemoDefaults(emptyDraft()).draft;
     expect(DEMO_DEFAULTS.customerName).toBe("Test Customer");
     expect(d.siteName).toBe("Test Farm 1");
-    expect(d.quoteType).toBe("day_to_day");
+    expect(d.quoteType).toBe("project"); // never the standard price-list basis
     expect(d.config).toMatchObject({ lengthM: 49.5, widthM: 14.43, rooms: 12, totalPens: 20, hospitalPens: 2, pigsPerRoom: 600, slattedFloorAreaM2: 120, penningPigSize: "SMALL", penningRunningMetresPerRoom: 20 });
     expect(d.config.estimatorQuantities).toMatchObject({ feeder: 18, concrete_slat: 1320, cup_drinker: 54, cone_fans: 4, pad_cooling: 3 });
     expect(d.estimator.charges).toEqual({ delivery: 979_992, installation: 1_200_000, concrete_slat_delivery: 250_000 });
@@ -47,7 +47,7 @@ describe("Load Demo Defaults", () => {
     expect(Object.keys(d.estimator.priceResolutions).sort()).toEqual(["concrete_slat", "cup_drinker", "feed_saver_mat", "led_light", "pvc_door"]);
   });
   it("estimator price resolutions stay LABELLED as POC manual overrides, and nothing is left supplier-quote-required or unmapped", () => {
-    const b = ev(applyDemoDefaults(emptyDraft()).draft).budget!;
+    const b = ev({ ...applyDemoDefaults(emptyDraft()).draft, quoteType: "day_to_day" }).budget!; // golden total is the historical standard basis
     const overridden = b.lines.filter((l) => l.pricedBy === "estimator_resolution").map((l) => l.itemKey).sort();
     expect(overridden).toEqual(["concrete_slat", "cup_drinker", "feed_saver_mat", "led_light", "pvc_door"]);
     for (const l of b.lines.filter((x) => x.status !== "not_selected")) expect(["priced"]).toContain(l.status);
@@ -97,7 +97,7 @@ describe("Load Demo Defaults", () => {
   it("produces a draft that the existing approval-time rules accept (no field is silently zero)", () => {
     const d = applyDemoDefaults(emptyDraft()).draft;
     for (const k of ["lengthM", "widthM", "rooms", "totalPens", "pigsPerRoom"] as const) expect(d.config[k]).toBeGreaterThan(0);
-    const e = ev(d, true); // a non-manager's view: cost withheld, same prices
+    const e = ev({ ...d, quoteType: "day_to_day" }, true); // a non-manager's view: cost withheld, same prices (golden total is the historical standard basis)
     expect(Math.round(e.budget!.totals.subtotalExTax * 100)).toBe(1_000_000_000);
     expect(e.budget!.lines.every((l) => l.estimatedCost === null)).toBe(true);
   });
@@ -125,11 +125,11 @@ describe("the selected customer is kept", () => {
 describe("against yesterday's actual demonstration data", () => {
   it("the loaded draft equals NQ-Q-0001's saved draft field for field (customer name trimmed)", () => {
     const loaded = applyDemoDefaults(emptyDraft()).draft;
-    expect(loaded).toEqual({ ...YESTERDAYS_SAVED_DRAFT, customerName: "" }); // the customer is the one selected on the quotation (blank here), never the demo's
+    expect(loaded).toEqual({ ...YESTERDAYS_SAVED_DRAFT, customerName: "", quoteType: "project" }); // the customer is the one selected on the quotation (blank here), never the demo's
   });
   it("and evaluates to the same R10,000,000.00 ex VAT that was confirmed and approved", () => {
     const fromSaved = ev(YESTERDAYS_SAVED_DRAFT).budget!;
-    const fromDemo = ev(applyDemoDefaults(emptyDraft()).draft).budget!;
+    const fromDemo = ev({ ...applyDemoDefaults(emptyDraft()).draft, quoteType: "day_to_day" }).budget!; // golden total is the historical standard basis
     expect(fromDemo.totals).toEqual(fromSaved.totals);
     expect(Math.round(fromDemo.totals.subtotalExTax * 100)).toBe(1_000_000_000);
   });

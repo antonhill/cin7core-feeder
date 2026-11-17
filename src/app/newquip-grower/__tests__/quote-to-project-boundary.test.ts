@@ -29,7 +29,7 @@ import { createProjectFromGrowerQuoteAction } from "../actions";
 const R = (n: number) => n * 100;
 const APPROVALS = { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "r", handoffBy: "r", estimatorSignoffBy: "e", estimatorSignoffAt: "t", managerApprovedBy: "m", managerApprovedAt: "t" };
 const ctx = (withholdCost: boolean) => ({ priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost });
-const draft = withAcceptedIncompleteCosting(applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft);
+const draft = withAcceptedIncompleteCosting({ ...applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft, quoteType: "day_to_day" as const }); // golden R10m fixture is the historical standard basis
 const approvedFor = (ref: string) => buildAcceptedBaseline({ mappingLibrary: GOLDEN_LIBRARY as never, quoteRef: ref, revision: 1, draft, evaluation: evaluateDraft(draft, ctx(true)), marginEvaluation: evaluateDraft(draft, ctx(false)), approvals: APPROVALS });
 const approved = approvedFor("NQ-Q-0005");
 
