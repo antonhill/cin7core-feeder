@@ -9,7 +9,8 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { missingProfileFields, type CompanyProfile } from "@/lib/newquip-quotes/company-profile";
 import { defaultDeps, documentsAvailable, issueQuotationDocument, latestProfile, previewQuotationDocument, saveProfile } from "@/lib/newquip-quotes/document-store";
 import { sendEmail } from "@/lib/email/resend";
-import { buildTestPdfEmail, testPdfEmailEnabled } from "@/lib/newquip-quotes/test-pdf-email";
+import { amountConsistent, buildTestPdfEmail, recipientAllowed, testPdfEmailEnabled } from "@/lib/newquip-quotes/test-pdf-email";
+import { latestRequestFor } from "@/lib/approvals/approval-store";
 import { resolveProjectSchedule } from "@/lib/newquip-quotes/schedule-resolve";
 import type { ScheduleChoice } from "@/newquip/quote/billing-schedule";
 
@@ -70,7 +71,14 @@ export async function sendTestPdfToRepAction(quoteId: string): Promise<DocumentA
     const applied = await resolveProjectSchedule(db, a.orgId);
     const r = await previewQuotationDocument(db, a.orgId, quoteId, applied.schedule, { today: () => new Date().toISOString().slice(0, 10) }, applied.source);
     if (!r.repEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.repEmail)) throw new Error("This quotation has no Sales Rep email address.");
-    const sent = await sendEmail(buildTestPdfEmail({ to: r.repEmail, quoteRef: r.quoteRef, revision: r.revision, bytes: r.bytes }));
+    if (!recipientAllowed(r.repEmail)) throw new Error("The assigned Rep's address is not on the authorised test-email list; nothing was sent.");
+    // The existing approval request for THIS quotation (its content drives the original notification). It must be the APPROVED Manager-stage request; the preview above already
+    // proved the quotation is Manager-approved with a sealed baseline. The approval request's own counter is not the quotation revision, so the email shows the quotation revision the PDF carries.
+    const req = await latestRequestFor(db, a.orgId, "QUOTE", quoteId);
+    if (!req || req.status !== "APPROVED" || (req.stage ?? "MANAGER") !== "MANAGER" || req.doc_id !== quoteId) throw new Error("There is no approved Manager decision for this quotation; nothing was sent.");
+    // Consistency: the amount the approval recorded must equal the sealed contract amount the PDF shows. If the quotation changed since approval, block rather than email inconsistent figures.
+    if (!amountConsistent(req.amount_cents, r.contractCents)) throw new Error("The approved amount no longer matches the quotation's sealed amount (it changed since approval); nothing was sent.");
+    const sent = await sendEmail(buildTestPdfEmail({ to: r.repEmail, request: { ...req, revision: r.revision }, bytes: r.bytes }));
     await auditActor(db, a, { action: "newquip.quote_test_pdf_emailed", summary: `Emailed the TEST-ONLY quotation PDF to the assigned Rep (not issued, not sent to a customer)`, detail: { quoteId, accepted: sent.ok, to: r.repEmail, ...(sent.ok ? {} : { error: (sent.error ?? "").slice(0, 120) }) } }).catch(() => undefined);
     if (!sent.ok) throw new Error(`The email provider did not accept the message: ${(sent.error ?? "unknown error").slice(0, 120)}`);
     return { ok: true, data: { sentTo: r.repEmail } };
