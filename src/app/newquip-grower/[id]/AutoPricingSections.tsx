@@ -53,7 +53,9 @@ export function PricingExceptions({ auto, canEdit, busy, onOpen, onPrice }: { au
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2.5 sm:px-5">
         <h2 id="ws-exceptions" className="text-base font-bold">Pricing exceptions <span className="text-amber-900">· {auto.exceptions.length} product{auto.exceptions.length === 1 ? "" : "s"}</span></h2>
         {auto.canPrice && auto.retryable > 0 && <Button type="button" className="min-h-11" data-testid="price-from-cin7" loading={busy} disabled={busy || !canEdit} onClick={onPrice}>Price {auto.retryable} from Cin7</Button>}
+        {auto.unavailableReason && <Button type="button" className="min-h-11" data-testid="price-from-cin7-disabled" disabled aria-describedby="price-from-cin7-why">Price from Cin7 unavailable</Button>}
       </div>
+      {auto.unavailableReason && <p id="price-from-cin7-why" role="note" className="border-b border-amber-200 bg-amber-50/60 px-4 py-2 text-[13px] text-slate-900 sm:px-5" data-testid="price-from-cin7-why">Why: {auto.unavailableReason}</p>}
       <ul>
         {auto.exceptions.map((e) => (
           <li key={e.sku} className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-slate-100 px-4 py-2.5 last:border-0 sm:px-5" data-testid={`exception-${e.sku}`}>

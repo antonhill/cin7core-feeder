@@ -15,10 +15,10 @@ const autoRow = (o: Over): SkuRow => ({
 const missingRow = (sku: string, autoFlag: SkuRow["autoFlag"]): SkuRow => ({ sku, usedBy: ["x"], quantity: 1, status: "no_input", costState: "missing", costKind: null, supplier: null, currency: null, nativeUnitCostE7: null, costDate: null, costSource: null, rate: null, autoFlag, issues: [] } as unknown as SkuRow);
 const flag = (code: string, text: string): NonNullable<SkuRow["autoFlag"]> => ({ code, text, action: autoFlagAction(code), at: "2026-11-17T09:00:00Z" });
 
-function build(o: { rows: SkuRow[]; lines: BridgeLine[]; autoOwned?: boolean; canEdit?: boolean; confirmedPackages?: string[] }) {
+function build(o: { rows: SkuRow[]; lines: BridgeLine[]; autoOwned?: boolean; canEdit?: boolean; confirmedPackages?: string[]; cin7?: { available: boolean; reason: string | null } }) {
   const budget = { lines: o.lines, totals: { subtotalExTax: 1000 }, incomplete: true, charges: [] } as unknown as BudgetQuote;
   const view = { rows: o.rows, costs: { required: o.rows.length, verified: 0 }, totals: { margin: null }, manualEvidence: [], autoOwned: o.autoOwned ?? true } as unknown as PricingWorkspaceView;
-  const facts: WorkspaceFacts = { state: "ESTIMATOR_REVIEW", confirmedCents: null, signedOff: false, canEdit: o.canEdit ?? true, canReview: false, confirmedPackages: o.confirmedPackages ?? [], confirmedMappings: {} };
+  const facts: WorkspaceFacts = { state: "ESTIMATOR_REVIEW", confirmedCents: null, signedOff: false, canEdit: o.canEdit ?? true, canReview: false, confirmedPackages: o.confirmedPackages ?? [], confirmedMappings: {}, ...(o.cin7 ? { cin7Pricing: o.cin7 } : {}) };
   return buildWorkspace({ budget, view, facts });
 }
 const priced = (itemKey: BridgeLine["itemKey"], label: string, sku: string) => line({ itemKey, label, status: "priced", sku, quantity: 10, unitPrice: 287.5, revenueExTax: 2875 });
@@ -93,5 +93,17 @@ describe("decisions come first and cost-bearing components are never asked for a
     expect(w.auto.exceptions[0]).toMatchObject({ sku: "NQ3444", retryable: true });
     expect(w.auto.exceptions[0].reason).toBe("No supplier cost has been recorded for this product.");
     expect(w.next.kind).toBe("price_from_cin7");
+  });
+  const srvRows = [autoRow({ sku: "NQ1161" }), autoRow({ sku: "PNQ082" }), missingRow("SYSH-2750-3", flag("not_read", "Not read from Cin7 in this run (out of time): it will be retried."))];
+  const srvLines = [priced("concrete_slat", "Concrete slats", "NQ1161"), priced("feeder", "CCM feeder", "PNQ082"), costNeeded("bulk_tank", "Bulk tank", "SYSH-2750-3")];
+  it("the SERVER decides: where it says Price from Cin7 can run (even on a quotation a person has edited, flag or no flag) the action is offered; where it cannot, no action is offered and the plain-words reason is shown instead", () => {
+    const on = build({ rows: srvRows, lines: srvLines, autoOwned: false, cin7: { available: true, reason: null } });
+    expect(on.next.kind).toBe("price_from_cin7"); expect(on.auto.canPrice).toBe(true); expect(on.auto.unavailableReason).toBeNull();
+    const why = "A Manager must complete the commercial settings (freight policy and exchange rates) before costs can be priced from Cin7.";
+    const off = build({ rows: srvRows, lines: srvLines, autoOwned: true, cin7: { available: false, reason: why } });
+    expect(off.next.kind).not.toBe("price_from_cin7"); expect(off.auto.canPrice).toBe(false); expect(off.auto.retryable).toBe(0);
+    expect(off.auto.unavailableReason).toBe(why);
+    const none = build({ rows: [missingRow("SYSH-2750-3", undefined as never)], lines: [costNeeded("bulk_tank", "Bulk tank", "SYSH-2750-3")], autoOwned: false, cin7: { available: false, reason: why } });
+    expect(none.auto.exceptions[0].action).toBe("Enter the supplier cost yourself."); // never "Use Price from Cin7" where it cannot run
   });
 });

@@ -93,8 +93,10 @@ export interface AutoView {
   exceptions: PricingException[];
   /** How many exceptions "Price from Cin7" may resolve. */
   retryable: number;
-  /** The viewer is an Estimator and the pricing is entirely automatic, so the top-up applies. */
+  /** The viewer is an Estimator and "Price from Cin7" can run on this quotation (the server says so; see top-up-availability.ts). */
   canPrice: boolean;
+  /** When some exceptions could be resolved by Price from Cin7 but it cannot run, the plain-words reason (the button is then shown disabled with this text). null otherwise. */
+  unavailableReason?: string | null;
 }
 export type TotalKind = "partial" | "calculated" | "confirmed";
 export interface Summary {
@@ -135,6 +137,8 @@ export interface WorkspaceFacts {
   canEdit: boolean;
   /** The viewer may verify supplier costs (a reviewer). */
   canReview: boolean;
+  /** Server-derived: can "Price from Cin7" run here, and if not why (absent for callers that predate it). */
+  cin7Pricing?: { available: boolean; reason: string | null };
   /** Unconfirmed packages' confirmations and the Estimator's chosen mappings, from the draft. */
   confirmedPackages: readonly string[];
   confirmedMappings: Readonly<Record<string, string | undefined>>;
@@ -323,6 +327,8 @@ export function buildWorkspace(i: { budget: BudgetQuote; view: PricingWorkspaceV
 
   // ── automatic pricing: three clearly separated groups, counting only what genuinely needs a person ──
   // A product that has a stored cost (automatic or entered) is NEVER an exception and never asked for again; an exception is a product of an open task that has no cost, with the SPECIFIC stored reason.
+  // The server states whether Price from Cin7 can run (independently of the Rep-pricing flag); callers that predate it fall back to "the pricing is entirely automatic".
+  const cin7Ok = facts.cin7Pricing ? facts.cin7Pricing.available : view.autoOwned;
   const exMap = new Map<string, PricingException>();
   for (const t of ordered) {
     if (t.kind === "m75" || t.kind === "product" || t.kind === "manual") continue;
@@ -335,14 +341,16 @@ export function buildWorkspace(i: { budget: BudgetQuote; view: PricingWorkspaceV
       const stored = r && r.status === "not_priced"
         ? { reason: `Cannot be priced yet (${r.issues[0] ?? "check the rate and the cost"}).`, action: "Open it and check the cost and the rate.", retryable: false }
         : f ? { reason: f.text, action: f.action, retryable: RETRYABLE_CODES.has(f.code) }
-        : { reason: "No supplier cost has been recorded for this product.", action: view.autoOwned ? "Use Price from Cin7, or enter the supplier cost yourself." : "Enter the supplier cost.", retryable: view.autoOwned };
+        : { reason: "No supplier cost has been recorded for this product.", action: cin7Ok ? "Use Price from Cin7, or enter the supplier cost yourself." : "Enter the supplier cost yourself.", retryable: facts.cin7Pricing ? true : view.autoOwned };
       exMap.set(sku, { sku, usedBy: [t.label], reason: stored.reason, action: stored.action, taskId: t.id, retryable: stored.retryable });
     }
   }
   const exceptions = [...exMap.values()].sort((a, b) => a.sku.localeCompare(b.sku));
   const autoPricedN = view.rows.filter((r) => r.usedBy.length > 0 && r.costKind === "cin7_auto" && r.status !== "no_input" && r.costState !== "verified").length;
-  const retryable = facts.canEdit && view.autoOwned ? exceptions.filter((e) => e.retryable).length : 0;
-  const auto: AutoView = { active: view.rows.some((r) => r.costKind === "cin7_auto" || !!r.autoFlag), ready, autoPriced: autoPricedN, needConfirmation: ordered.filter((t) => t.kind !== "cost").length, exceptions, retryable, canPrice: facts.canEdit && view.autoOwned };
+  const wantsRetry = exceptions.filter((e) => e.retryable).length;
+  const retryable = facts.canEdit && cin7Ok ? wantsRetry : 0;
+  const unavailableReason = facts.canEdit && !cin7Ok && wantsRetry > 0 ? (facts.cin7Pricing?.reason ?? "Price from Cin7 is not available for this quotation.") : null;
+  const auto: AutoView = { active: view.rows.some((r) => r.costKind === "cin7_auto" || !!r.autoFlag), ready, autoPriced: autoPricedN, needConfirmation: ordered.filter((t) => t.kind !== "cost").length, exceptions, retryable, canPrice: facts.canEdit && cin7Ok, unavailableReason };
 
   // ── the one next action: the first unmet gate (Rep reconfirmation, then Manager verification, then Estimator sign-off, then Manager approval) ──
   let next: NextAction;

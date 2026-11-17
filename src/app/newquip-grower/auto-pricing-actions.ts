@@ -8,6 +8,8 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { documentsAvailable, latestCommercialSettings, saveCommercialSettings } from "@/lib/newquip-quotes/document-store";
 import { emptyCommercialSettings, parseCommercialSettings, unresolvedItems, type CommercialSettings, type UnresolvedItem } from "@/newquip/pricing/commercial-settings";
+import { activationFacts } from "@/lib/newquip-quotes/auto-pricing-service";
+import { activationStatus, type ActivationStatus } from "@/newquip/pricing/activation-status";
 import { auditActor, authoriseActor, errText as rawErrText, ownerEmailOf, type Actor } from "./actor";
 
 const errText = (e: unknown): string => (e instanceof TypeError || e instanceof RangeError || e instanceof SyntaxError ? "The request was not valid." : rawErrText(e));
@@ -22,6 +24,8 @@ export interface CommercialSettingsView {
   enteredAt: string | null;
   unresolved: UnresolvedItem[];
   canEdit: boolean;
+  /** Server-derived activation state of automatic Rep pricing: a Manager only (null for everyone else). */
+  activation?: ActivationStatus | null;
 }
 
 const needManager = (a: Actor) => { if (!a.roles.has("manager")) throw new Error("Only a Manager can change the commercial settings."); };
@@ -36,7 +40,7 @@ export async function getCommercialSettingsAction(): Promise<AutoActionResult<Co
     const now = new Date().toISOString();
     const v = await latestCommercialSettings(db, a.orgId, now);
     const manager = a.roles.has("manager");
-    return { ok: true, data: { available: true, settings: manager ? (v?.settings ?? emptyCommercialSettings()) : null, revision: v?.revision ?? null, enteredBy: manager ? (v?.enteredBy ?? null) : null, enteredAt: manager ? (v?.enteredAt ?? null) : null, unresolved: unresolvedItems(v?.settings ?? null, now), canEdit: manager } };
+    return { ok: true, data: { available: true, settings: manager ? (v?.settings ?? emptyCommercialSettings()) : null, revision: v?.revision ?? null, enteredBy: manager ? (v?.enteredBy ?? null) : null, enteredAt: manager ? (v?.enteredAt ?? null) : null, unresolved: unresolvedItems(v?.settings ?? null, now), canEdit: manager, activation: manager ? activationStatus(activationFacts(process.env), v?.settings ?? null, Date.parse(now)) : null } };
   } catch (e) { return { ok: false, error: errText(e) }; }
 }
 
@@ -55,6 +59,6 @@ export async function saveCommercialSettingsAction(input: unknown, expectedRevis
     const saved = await saveCommercialSettings(db, a.orgId, parsed.value, a.email, now);
     // The audit detail names what changed by field, never the figures themselves.
     await auditActor(db, a, { action: "newquip.commercial_settings_saved", summary: "Saved NewQuip commercial settings (new version; earlier versions kept)", detail: { revision: saved.revision, byOwner: ownerEmailOf(a), freightSet: saved.settings.freight !== null, currencies: Object.keys(saved.settings.fx).sort(), markupSet: saved.settings.markupBps !== null } });
-    return { ok: true, data: { available: true, settings: saved.settings, revision: saved.revision, enteredBy: saved.enteredBy, enteredAt: saved.enteredAt, unresolved: unresolvedItems(saved.settings, now), canEdit: true } };
+    return { ok: true, data: { available: true, settings: saved.settings, revision: saved.revision, enteredBy: saved.enteredBy, enteredAt: saved.enteredAt, unresolved: unresolvedItems(saved.settings, now), canEdit: true, activation: activationStatus(activationFacts(process.env), saved.settings, Date.parse(now)) } };
   } catch (e) { return { ok: false, error: errText(e) }; }
 }
