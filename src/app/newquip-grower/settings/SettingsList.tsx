@@ -24,7 +24,7 @@ export function SettingsList({ entries }: { entries: readonly SettingsEntry[] })
               <span className="block text-base font-semibold text-slate-900 group-hover:text-indigo-800">{e.label}</span>
               <span className="mt-1 block text-sm text-slate-700">{e.description}</span>
             </span>
-            <NqIcon name="chevron" className="mt-1 h-4 w-4 shrink-0 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-indigo-700" />
+            <NqIcon name="chevron" className="mt-1 h-4 w-4 shrink-0 text-slate-600 transition group-hover:translate-x-0.5 group-hover:text-indigo-700" />
           </Link>
         </li>
       ))}

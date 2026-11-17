@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { SOLUTION_BUILDER_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
-import { Badge, type BadgeTone } from "@/components/ui/Badge";
+type BadgeTone = "neutral" | "success" | "warning" | "danger";
 import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { getCommercialSettingsAction, saveCommercialSettingsAction, type CommercialSettingsView } from "../auto-pricing-actions";
@@ -22,13 +22,17 @@ interface BandRow { to: string; rate: string }
 const isTestOnly = (t: string | undefined | null): boolean => !!t && t.includes("TEST-ONLY");
 const BAND_COLOURS = ["bg-emerald-700", "bg-sky-700", "bg-amber-700", "bg-rose-700", "bg-violet-700", "bg-slate-700"];
 
+const PILL: Record<BadgeTone, string> = { neutral: "bg-slate-100 text-slate-700", success: "bg-emerald-50 text-emerald-800", warning: "bg-amber-50 text-amber-800", danger: "bg-rose-50 text-rose-800" };
+function StatusPill({ tone = "neutral", children }: { tone?: BadgeTone; dot?: boolean; children: React.ReactNode }) {
+  return <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-md px-2 py-0.5 text-xs font-semibold ${PILL[tone]}`}><span aria-hidden className="h-1.5 w-1.5 rounded-full bg-current" />{children}</span>;
+}
 function Help({ children }: { children: React.ReactNode }) { return <p className="text-xs text-slate-600">{children}</p>; }
 function Section({ title, status, tone, intro, children }: { title: string; status: string; tone: BadgeTone; intro: string; children: React.ReactNode }) {
   return (
     <section className="space-y-3 rounded-lg border border-slate-200 p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div><h3 className="text-sm font-semibold text-slate-900">{title}</h3><p className="mt-0.5 max-w-2xl text-xs text-slate-600">{intro}</p></div>
-        <Badge tone={tone} dot>{status}</Badge>
+        <StatusPill tone={tone} dot>{status}</StatusPill>
       </div>
       {children}
     </section>
@@ -126,7 +130,7 @@ export default function CommercialSettingsPage() {
         ];
         return (
           <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4" aria-label="Saved settings status" data-testid="commercial-status-summary">
-            {items.map((i) => <li key={i.label} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"><span className="font-medium text-slate-800">{i.label}</span><Badge tone={i.tone} dot>{i.status}</Badge></li>)}
+            {items.map((i) => <li key={i.label} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"><span className="font-medium text-slate-800">{i.label}</span><StatusPill tone={i.tone} dot>{i.status}</StatusPill></li>)}
           </ul>
         );
       })()}
