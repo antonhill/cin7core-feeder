@@ -9,7 +9,7 @@ import { EVIDENCE_STATE_TEXT, evidenceStateOf, skuLessManualItems, type Evidence
 import { COST_STATE_TEXT, costInputHash, costStateOf, type CostState } from "./verification";
 import { LEGACY_RULE_VERSION, selectRuleVersion } from "../model";
 import type { EstimatorPricing } from "./types";
-import { autoFlagAction, isAutoOwned } from "../auto-costing";
+import { autoFlagAction, isAutoOwned } from "./auto-owned";
 
 // THE ESTIMATOR PRICING WORKSPACE, as data (NQ-008B Phase 2). Pure: a quotation's evaluation (cost visible) + its pricing inputs + the original indicative price in, a view-model
 // out. INTERNAL ONLY: it carries supplier costs, rates, freight, markup and margin, so the server builds it for a cost-entitled Estimator/Manager and for nobody else. The screen
