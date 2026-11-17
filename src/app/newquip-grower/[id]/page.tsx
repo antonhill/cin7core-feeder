@@ -432,6 +432,7 @@ export default function QuoteEditorPage() {
   // One-click demonstration quotation: replaces the inputs of THIS editable draft only (not saved, nothing created, approved or sent).
   function loadDemo() {
     const r = applyDemoDefaults(draft!);
+    r.draft = { ...r.draft, quoteType: draft!.quoteType }; // the demonstration never changes a quotation's pricing basis: new quotations are Project priced, saved ones keep theirs
     setDraft(r.draft); setDirty(true); setConfirmDemo(false); setDemoLoaded(r.replaced); setError(null);
   }
   // Contextual samples fill ONE step of this draft (unsaved) and never call a server action but the page's own live preview. The active step is untouched (nothing here changes `reqStep`).
