@@ -4,8 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createBrowserSupabaseClient } from "@/supabase/browser";
 import { Spinner } from "@/app/Spinner";
-import { completeNewquipSignInAction } from "@/actions/newquip-access";
-import { NEWQUIP_ENTRY_COOKIE, NEWQUIP_ENTRY_COOKIE_MAX_AGE, NEWQUIP_NO_ACCESS_MESSAGE, safeNewquipNext } from "@/newquip/entry";
+import { NEWQUIP_ENTRY_COOKIE, NEWQUIP_ENTRY_COOKIE_MAX_AGE, safeNewquipNext } from "@/newquip/entry";
 
 type Step = "email" | "code";
 
@@ -49,18 +48,13 @@ function NewquipLoginForm() {
       setError(verifyError.message);
       return;
     }
-    // Server decides NewQuip access (member of the NewQuip organisation, or super-admin) and selects the NewQuip organisation for multi-org users.
-    const access = await completeNewquipSignInAction().catch(() => ({ ok: false as const, error: "We could not confirm your access. Please try again." }));
-    if (!access.ok) {
-      const refused = access.error === NEWQUIP_NO_ACCESS_MESSAGE;
-      if (refused) await supabase.auth.signOut().catch(() => undefined);
-      setIsSubmitting(false);
-      setError(refused ? NEWQUIP_NO_ACCESS_MESSAGE : (access.error ?? "We could not confirm your access. Please try again."));
-      if (refused) { setStep("email"); setCode(""); }
-      return;
-    }
-    // Hard navigation (fresh session cookie must go through middleware), same-origin NewQuip-only `next`, else the NewQuip dashboard.
-    window.location.href = safeNewquipNext(searchParams.get("next")) ?? "/";
+    // The OTP is now consumed. Do not call a Server Action in the SAME browser tick:
+    // Supabase SSR cookies might not yet be visible to that request. A full document
+    // navigation forces the new session through middleware before organisation selection.
+    const target = safeNewquipNext(searchParams.get("next"));
+    const finish = new URL("/newquip/login/complete", window.location.origin);
+    if (target) finish.searchParams.set("next", target);
+    window.location.assign(finish.pathname + finish.search);
   }
 
   const cardClass = "mt-8 flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm";
