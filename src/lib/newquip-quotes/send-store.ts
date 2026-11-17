@@ -14,7 +14,7 @@ import { messageLeaksInternal } from "./customer-document";
 import { isValidEmail } from "./customer-snapshot";
 import { latestSnapshot } from "./customer-store";
 import { listDocuments, readDocumentBytes, type DocumentDeps, type StoredDocument } from "./document-store";
-import { portalAvailable } from "./acceptance";
+import { portalAvailable, testDocumentBlockedHere } from "./acceptance";
 import { issueResponseLink, type LinkEnv } from "./response-links";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
@@ -147,6 +147,7 @@ export async function sendQuotationToCustomer(
   if (!doc) throw new Error("That document does not belong to this quotation.");
   if (docs[0].id !== doc.id) throw new Error("A newer version of this quotation has been issued; send the latest one.");
   if (doc.revision !== q.revision || doc.baseline_hash !== q.baseline_hash) throw new Error("The quotation changed after this document was issued; issue it again before sending.");
+  if (testDocumentBlockedHere(doc.content, env as Record<string, string | undefined>)) throw new Error("This is a UAT TEST document; it can be sent only from the UAT deployment.");
   if (message && messageLeaksInternal(message, q.accepted_baseline)) throw new Error("Your message appears to contain internal information (costs, margins, SKUs or internal notes). Remove it before sending.");
 
   if (productionEmailBlocked(env)) throw new Error(PRODUCTION_EMAIL_OFF);   // refused up front: nothing is recorded, issued or sent
@@ -225,6 +226,7 @@ export async function retryFailedSend(db: Db, orgId: string, sendId: string, dep
   const docs = await listDocuments(db, orgId, row.quote_id);
   const doc = docs.find((d) => d.id === row.document_id);
   if (!q || !doc || docs[0].id !== doc.id || doc.revision !== q.revision || doc.baseline_hash !== q.baseline_hash || q.state !== "MANAGER_APPROVED_FINAL") throw new Error("The quotation changed after this send; issue and send the current document instead.");
+  if (testDocumentBlockedHere(doc.content, env as Record<string, string | undefined>)) throw new Error("This is a UAT TEST document; it can be sent only from the UAT deployment.");
   await assertRetryAllowedHere(db, orgId, row, env);   // before the claim: a refusal changes nothing
   const claim = await db.from("newquip_quote_sends").update({ status: "QUEUED", last_error: null }).eq("org_id", orgId).eq("id", sendId).eq("status", "FAILED").select("*");
   if (claim.error) throw new Error(claim.error.message);

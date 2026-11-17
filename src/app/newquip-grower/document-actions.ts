@@ -7,7 +7,7 @@ import { authoriseActor, auditActor, errText, ownerEmailOf, type Actor } from ".
 import { documentsViewOf } from "./page-reads";
 import { createServiceRoleClient } from "@/supabase/server";
 import { missingProfileFields, type CompanyProfile } from "@/lib/newquip-quotes/company-profile";
-import { defaultDeps, documentsAvailable, issueQuotationDocument, latestProfile, previewQuotationDocument, saveProfile } from "@/lib/newquip-quotes/document-store";
+import { defaultDeps, documentsAvailable, issueQuotationDocument, listDocuments, latestProfile, previewQuotationDocument, saveProfile } from "@/lib/newquip-quotes/document-store";
 import { sendEmail } from "@/lib/email/resend";
 import { sendQuotationToCustomer } from "@/lib/newquip-quotes/send-store";
 import { amountConsistent, buildTestPdfEmail, recipientAllowed, testPdfEmailEnabled } from "@/lib/newquip-quotes/test-pdf-email";
@@ -103,9 +103,11 @@ export async function sendTestQuotationToCustomerAction(quoteId: string): Promis
     const to = (process.env.NEWQUIP_UAT_TEST_CUSTOMER_EMAIL?.trim() || UAT_TEST_CUSTOMER_DEFAULT).toLowerCase();
     if (!recipientAllowed(to)) throw new Error("The test customer mailbox is not on the authorised test-email list; nothing was sent.");
     const db = createServiceRoleClient();
+    // Never supersede a REAL issued document: the shared database holds real and test quotations alike. Only a quotation with no document, or whose latest document is already a TEST one, may be used.
+    const existing = await listDocuments(db, a.orgId, quoteId);
+    if (existing[0] && existing[0].content.testOnly !== true) throw new Error("This quotation already has a real issued document; the UAT test send will not replace it. Use a different test quotation.");
     const applied = await resolveProjectSchedule(db, a.orgId);
     const issued = await issueQuotationDocument(db, a.orgId, quoteId, { email: a.email, ownerEmail: ownerEmailOf(a) }, applied.schedule, defaultDeps(db), applied.source, { uatTest: true });
-    if (issued.document.content.testOnly !== true) throw new Error("This quotation already has a real issued document; the test send is only for a TEST document.");
     const sent = await sendQuotationToCustomer(db, a.orgId, quoteId, { email: a.email, ownerEmail: ownerEmailOf(a) },
       { documentId: issued.document.id, to: [to], message: "TEST ONLY: UAT walkthrough of the customer acceptance flow.", idempotencyKey: `uat-test-${issued.document.id}-${Date.now()}`, resendOfId: undefined },
       { storage: defaultDeps(db).storage }, process.env);
