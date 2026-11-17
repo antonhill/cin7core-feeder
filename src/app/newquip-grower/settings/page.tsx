@@ -12,7 +12,7 @@ export default async function NewquipSettingsPage() {
   let error: string | null = null;
   try {
     const a = await authoriseActor();
-    entries = settingsEntries({ isOrgAdmin: a.tier === "admin", canSeeCost: a.canSeeCost, demo: !!a.demo });
+    entries = settingsEntries({ isOrgAdmin: a.tier === "admin", canSeeCost: a.canSeeCost, demo: !!a.demo, isManager: a.roles.has("manager") });
   } catch {
     // Fail closed to what needs no NewQuip role: sign-in security and notifications.
     entries = settingsEntries({ isOrgAdmin: false, canSeeCost: false, demo: false }).filter((e) => e.href.startsWith("/settings/"));
