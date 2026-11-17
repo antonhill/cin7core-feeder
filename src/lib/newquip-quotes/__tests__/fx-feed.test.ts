@@ -68,4 +68,11 @@ describe("settings epoch: only a pricing-relevant change moves it", () => {
     const changed = nextProfileWithCommercial({}, { ...v1, revision: 2, epoch: 1 }, base({ markupBps: 3000 }), "m", NOW) as { commercial: { revision: number; epoch: number } };
     expect(changed.commercial).toMatchObject({ revision: 3, epoch: 3 });
   });
+  it("the order of the freight categories (form order versus stored order) never looks like a pricing change", () => {
+    const f = (factor: number) => ({ factorMicro: factor, addOnCents: 0, source: "TEST-ONLY" });
+    const a = base({ freightByCategory: { feeder: f(1_250_000), bulk_tank: f(1_300_000) } });
+    const b = base({ freightByCategory: { bulk_tank: f(1_300_000), feeder: f(1_250_000) } });
+    const v1 = { revision: 1, epoch: 1, enteredBy: "m", enteredAt: NOW, settings: a };
+    expect((nextProfileWithCommercial({}, v1, { ...b, fx: { USD: manual } }, "m", NOW) as { commercial: { epoch: number } }).commercial.epoch).toBe(1);
+  });
 });

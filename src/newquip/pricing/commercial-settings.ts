@@ -174,10 +174,15 @@ export const canPriceAnything = (s: CommercialSettings | null): boolean => !!s &
  *  Two categories with DIFFERENT policies for one product is a conflict a person must resolve. */
 export type FreightResolution = { ok: true; policy: FreightPolicy; category: string | null } | { ok: false; reason: "not_set" | "conflict"; categories: string[] };
 export function resolveFreight(s: CommercialSettings, categories: readonly string[]): FreightResolution {
-  const hits = [...new Set(categories)].filter((c) => Object.prototype.hasOwnProperty.call(s.freightByCategory ?? {}, c)).sort();
+  const all = [...new Set(categories)];
+  const hits = all.filter((c) => Object.prototype.hasOwnProperty.call(s.freightByCategory ?? {}, c)).sort();
   if (hits.length > 0) {
     const first = s.freightByCategory[hits[0]];
-    if (hits.some((c) => { const f = s.freightByCategory[c]; return f.factorMicro !== first.factorMicro || f.addOnCents !== first.addOnCents; })) return { ok: false, reason: "conflict", categories: hits };
+    const differs = (f: FreightPolicy) => f.factorMicro !== first.factorMicro || f.addOnCents !== first.addOnCents;
+    if (hits.some((c) => differs(s.freightByCategory[c]))) return { ok: false, reason: "conflict", categories: hits };
+    // The product is ALSO used by an item with no category policy of its own: that use would fall back to the default (or to nothing), so unless the default is the same policy a person must decide.
+    const unlisted = all.filter((c) => !hits.includes(c));
+    if (unlisted.length > 0 && (s.freight === null || differs(s.freight))) return { ok: false, reason: "conflict", categories: [...hits, ...unlisted.sort()] };
     return { ok: true, policy: first, category: hits[0] };
   }
   if (s.freight !== null) return { ok: true, policy: s.freight, category: null };

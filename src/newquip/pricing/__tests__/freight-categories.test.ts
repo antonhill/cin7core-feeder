@@ -50,4 +50,10 @@ describe("freight by product category (TEST-ONLY assumptions; never a silent 1.0
     expect(validateCommercialSettings(S({ freightByCategory: { feeder: { factorMicro: 0, addOnCents: 0, source: "xxx" } } }), NOW).join()).toMatch(/feeder freight factor/);
     expect(parseCommercialSettings({ ...JSON.parse(JSON.stringify(emptyCommercialSettings())) }, NOW).ok).toBe(true); // older blocks without categories still parse
   });
+  it("a product also used by an item with NO category policy is a conflict unless the default is the same policy (never silently the category factor)", () => {
+    expect(resolveFreight(S(), ["bulk_tank", "led_light"])).toMatchObject({ ok: false, reason: "conflict", categories: ["bulk_tank", "led_light"] });
+    const withDefault = S({ freight: { factorMicro: 1_300_000, addOnCents: 0, source: "TEST-ONLY default same as tank" } });
+    expect(resolveFreight(withDefault, ["bulk_tank", "led_light"])).toMatchObject({ ok: true, category: "bulk_tank" });
+    expect(resolveFreight(S({ freight: { factorMicro: 1_150_000, addOnCents: 0, source: "TEST-ONLY default" } }), ["bulk_tank", "led_light"]).ok).toBe(false);
+  });
 });

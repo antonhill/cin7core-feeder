@@ -25,7 +25,9 @@ export interface CommercialVersion { revision: number; /** see CommercialBlock.e
 
 /** True when two settings differ ONLY in their exchange rates (and the rates' maximum age is the same). */
 export function sameExceptFx(a: CommercialSettings, b: CommercialSettings): boolean {
-  const strip = (s: CommercialSettings) => JSON.stringify({ ...s, fx: {} });
+  // Stable: object keys are sorted so the order a form or the database returns them in can never look like a change.
+  const canon = (v: unknown): unknown => (Array.isArray(v) ? v.map(canon) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([x], [y]) => x.localeCompare(y)).map(([k, x]) => [k, canon(x)])) : v);
+  const strip = (s: CommercialSettings) => JSON.stringify(canon({ ...s, fx: {} }));
   return strip(a) === strip(b);
 }
 
