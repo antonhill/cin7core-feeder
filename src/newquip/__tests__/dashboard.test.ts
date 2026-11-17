@@ -66,7 +66,11 @@ describe("settingsEntries", () => {
     expect(hrefs({ isOrgAdmin: true, canSeeCost: true, demo: true })).not.toContain("/newquip-grower/cost-survey");
     expect(hrefs({ isOrgAdmin: false, canSeeCost: true, demo: false })).not.toContain("/settings/members");
   });
-  it("has no entry for the not-yet-built Commercial settings page", () => {
-    expect(settingsEntries({ isOrgAdmin: true, canSeeCost: true, demo: false }).some((e) => /commercial/i.test(e.label + e.href))).toBe(false);
+  it("Commercial settings is offered to a Manager only, not to admin tier alone, Estimator or Rep", () => {
+    const c = "/newquip-grower/commercial-settings";
+    expect(hrefs({ isOrgAdmin: true, canSeeCost: true, demo: false, isManager: true })).toContain(c);
+    expect(hrefs({ isOrgAdmin: true, canSeeCost: true, demo: false, isManager: false })).not.toContain(c);
+    expect(hrefs({ isOrgAdmin: false, canSeeCost: true, demo: false })).not.toContain(c);
+    expect(hrefs({ isOrgAdmin: false, canSeeCost: false, demo: false })).not.toContain(c);
   });
 });
