@@ -31,7 +31,7 @@ describe("Estimator workspace: automatic pricing is three clear groups with hone
 
   it("an automatically priced product is under 'Ready for verification' with its supplier, cost, date, FX, freight, landed and selling price, and is NEVER a task", () => {
     expect(w.auto.ready.map((r) => r.id)).toEqual(["concrete_slat", "feeder"]);
-    expect(w.auto.ready[0].skus[0]).toEqual({ sku: "NQ1161", supplier: "Fixture Supplier", currency: "EUR", cost: "EUR 10.00", costDate: "2026-06-16", fx: "EUR 20.0000 as of 2026-11-16", freight: "× 1.15", landed: money(230), selling: money(287.5), provenance: "Auto from Cin7: 10.00 EUR last supplied 2026-06-16" });
+    expect(w.auto.ready[0].skus[0]).toEqual({ sku: "NQ1161", supplier: "Fixture Supplier", currency: "EUR", cost: "EUR 10.00", costDate: "2026-06-16", fx: "EUR 20.0000 as of 2026-11-16", freight: "× 1.15", landed: money(230), selling: money(287.5), provenance: "Auto from Cin7: 10.00 EUR last supplied 2026-06-16 Exchange rate: fix." });
     expect(w.complete.filter((c) => c.autoReady).map((c) => c.id)).toEqual(["concrete_slat", "feeder"]);
     expect(w.complete[0].how).toContain("Automatically priced — awaiting Manager verification");
     expect(w.tasks.map((t) => t.id)).toEqual(["bulk_tank"]); // not 'supplier cost needed' for NQ1161 / PNQ082

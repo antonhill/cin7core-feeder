@@ -178,11 +178,11 @@ function autoFact(r: SkuRow): AutoSkuFact {
     sku: r.sku, supplier: r.supplier, currency: r.currency, cost: r.nativeUnitCostE7 == null || !r.currency ? null : `${r.currency} ${costText(r.nativeUnitCostE7)}`, costDate: r.costDate,
     fx: r.currency === "ZAR" || !r.rate ? null : `${r.currency} ${(r.rate.rateMicro / 1e6).toFixed(4)}${r.rate.asOf ? ` as of ${r.rate.asOf.slice(0, 10)}` : ""}`,
     freight: r.freightFactorMicro == null ? null : `× ${(r.freightFactorMicro / 1e6).toFixed(2)}${r.freightAddOnCents ? ` + ${money(r.freightAddOnCents / 100)}` : ""}`,
-    landed: r.unitLandedCostCents == null ? null : money(r.unitLandedCostCents / 100), selling: r.unitPriceCents == null ? null : money(r.unitPriceCents / 100), provenance: r.costSource,
+    landed: r.unitLandedCostCents == null ? null : money(r.unitLandedCostCents / 100), selling: r.unitPriceCents == null ? null : money(r.unitPriceCents / 100), provenance: [r.costSource, r.freightSource ? `Freight: ${r.freightSource}.` : null, r.currency !== "ZAR" && r.rate?.source ? `Exchange rate: ${r.rate.source}.` : null].filter(Boolean).join(" ") || null,
   };
 }
 /** Codes for which reading Cin7 again may produce a price (nothing about the product itself was wrong). */
-const RETRYABLE_CODES: ReadonlySet<string> = new Set(["not_read", "settings_incomplete", "fx_missing", "fx_stale"]);
+const RETRYABLE_CODES: ReadonlySet<string> = new Set(["not_read", "settings_incomplete", "fx_missing", "fx_stale", "freight_not_set", "freight_conflict"]);
 
 function costIndicators(skus: readonly string[], rows: readonly SkuRow[]): { cost: IndicatorState; verified: IndicatorState } {
   if (skus.length === 0) return { cost: "open", verified: "wait" };

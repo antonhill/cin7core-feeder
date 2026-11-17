@@ -9,14 +9,16 @@ import { Alert } from "@/components/ui/Alert";
 type BadgeTone = "neutral" | "success" | "warning" | "danger";
 import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
-import { getCommercialSettingsAction, saveCommercialSettingsAction, type CommercialSettingsView } from "../auto-pricing-actions";
+import { getCommercialSettingsAction, refreshFxFromFeedAction, saveCommercialSettingsAction, type CommercialSettingsView } from "../auto-pricing-actions";
+import { FREIGHT_CATEGORY_OPTIONS, freightCategoryLabel } from "@/newquip/pricing/freight-categories";
 import { MARKUP_DEFAULT_LABEL, emptyCommercialSettings, type AgeBand, type CommercialSettings } from "@/newquip/pricing/commercial-settings";
 import { bpsToPct, centsToRand, decimalToMicro, microToDecimal, pctToBps, randToCents } from "@/newquip/pricing/commercial-form";
 
 // MANAGER-ONLY commercial settings for automatic supplier pricing. Server-checked: the action refuses anyone but a Manager to change them and returns the VALUES to a Manager only (an Estimator
 // sees the list of unresolved items alone; a Rep gets nothing). Nothing here is invented: a freight policy and an exchange rate stay empty until a Manager enters them, and every save is a new version.
 const inputCls = "h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm";
-interface FxRow { cur: string; rate: string; source: string; asOf: string }
+interface FxRow { cur: string; rate: string; source: string; asOf: string; origin?: "oxr" | "manual"; retrievedAt?: string; orig?: { rate: string; source: string; asOf: string } }
+interface CatRow { key: string; factor: string; addOn: string; source: string }
 interface BandRow { to: string; rate: string }
 
 const isTestOnly = (t: string | undefined | null): boolean => !!t && t.includes("TEST-ONLY");
@@ -81,6 +83,9 @@ export default function CommercialSettingsPage() {
   const [addOn, setAddOn] = useState("0");
   const [freightSource, setFreightSource] = useState("");
   const [fx, setFx] = useState<FxRow[]>([]);
+  const [cats, setCats] = useState<CatRow[]>([]);
+  const [replaceManual, setReplaceManual] = useState(false);
+  const [feedBusy, setFeedBusy] = useState(false);
   const [fxMax, setFxMax] = useState("1");
   const [bands, setBands] = useState<BandRow[]>([]);
   const [maxAge, setMaxAge] = useState("5");
@@ -88,7 +93,8 @@ export default function CommercialSettingsPage() {
   const load = (s: CommercialSettings) => {
     setUseDefaultMarkup(s.markupBps === null); setMarkup(s.markupBps === null ? "" : bpsToPct(s.markupBps));
     setFreightOn(s.freight !== null); setFactor(s.freight ? microToDecimal(s.freight.factorMicro) : ""); setAddOn(s.freight ? centsToRand(s.freight.addOnCents) : "0"); setFreightSource(s.freight?.source ?? "");
-    setFx(Object.entries(s.fx).map(([cur, q]) => ({ cur, rate: microToDecimal(q.rateMicro), source: q.source, asOf: toLocalInput(q.asOf) })));
+    setFx(Object.entries(s.fx).map(([cur, q]) => ({ cur, rate: microToDecimal(q.rateMicro), source: q.source, asOf: toLocalInput(q.asOf), origin: q.origin, retrievedAt: q.retrievedAt, orig: { rate: microToDecimal(q.rateMicro), source: q.source, asOf: toLocalInput(q.asOf) } })));
+    setCats(Object.entries(s.freightByCategory ?? {}).map(([key, f]) => ({ key, factor: microToDecimal(f.factorMicro), addOn: centsToRand(f.addOnCents), source: f.source })));
     setFxMax(String(s.fxMaxAgeDays)); setMaxAge(String(s.maxAgeYears));
     setBands(s.ageBands.map((b) => ({ to: b.toYears === null ? "" : String(b.toYears), rate: bpsToPct(b.rateBps) })));
   };
@@ -113,7 +119,17 @@ export default function CommercialSettingsPage() {
       const m = decimalToMicro(r.rate); const cur = r.cur.trim().toUpperCase();
       if (m === null) return `The ${cur || "currency"} rate must be a number with at most 6 decimals.`;
       if (fxOut[cur]) return `${cur} appears twice.`;
-      fxOut[cur] = { rateMicro: m, source: r.source.trim(), asOf: fromLocalInput(r.asOf) };
+      // A rate the feed wrote stays a feed rate only while it is untouched; any edit makes it the Manager's own (manual) figure.
+      const untouched = !!r.orig && r.orig.rate === r.rate && r.orig.source === r.source && r.orig.asOf === r.asOf;
+      fxOut[cur] = { rateMicro: m, source: r.source.trim(), asOf: fromLocalInput(r.asOf), ...(untouched && r.origin ? { origin: r.origin } : { origin: "manual" as const }), ...(untouched && r.retrievedAt ? { retrievedAt: r.retrievedAt } : {}) };
+    }
+    const catOut: CommercialSettings["freightByCategory"] = {};
+    for (const c of cats) {
+      if (!c.key) return "Choose a product category for each category freight row.";
+      if (catOut[c.key]) return `${freightCategoryLabel(c.key)} appears twice.`;
+      const f = decimalToMicro(c.factor), a = randToCents(c.addOn);
+      if (f === null) return `${freightCategoryLabel(c.key)}: the freight factor must be a number with at most 6 decimals.`; if (a === null) return `${freightCategoryLabel(c.key)}: the add-on must be an amount in rand with at most 2 decimals.`;
+      catOut[c.key] = { factorMicro: f, addOnCents: a, source: c.source.trim() };
     }
     const ab: AgeBand[] = []; let from = 0;
     for (let i = 0; i < bands.length; i++) {
@@ -123,7 +139,7 @@ export default function CommercialSettingsPage() {
       if (!last && !Number.isInteger(to)) return `Age band ${i + 1}: give the end year as a whole number.`;
       ab.push({ fromYears: from, toYears: to, rateBps: r }); if (to !== null) from = to;
     }
-    return { ...base, markupBps, freight, fx: fxOut, fxMaxAgeDays: Number(fxMax), ageBands: ab, maxAgeYears: Number(maxAge) };
+    return { ...base, markupBps, freight, freightByCategory: catOut, fx: fxOut, fxMaxAgeDays: Number(fxMax), ageBands: ab, maxAgeYears: Number(maxAge) };
   };
   const save = async () => {
     setErr(null); setOk(null);
@@ -135,6 +151,16 @@ export default function CommercialSettingsPage() {
     if (r.ok && r.data) { setView(r.data); if (r.data.settings) load(r.data.settings); setOk(`Saved as version ${r.data.revision}.`); } else setErr(r.error ?? "Could not save.");
   };
 
+  const refreshFeed = async () => {
+    setErr(null); setOk(null); setFeedBusy(true);
+    const r = await refreshFxFromFeedAction(replaceManual);
+    setFeedBusy(false);
+    if (r.data?.view) { setView(r.data.view); if (r.data.view.settings) load(r.data.view.settings); }
+    if (r.ok && r.data) {
+      const d = r.data;
+      setOk([d.updated.length > 0 ? `Saved version ${d.revision} with fresh ${d.updated.join(" and ")} rates (provider time ${d.providerTimestamp?.replace("T", " ").slice(0, 16)} UTC).` : "Nothing needed updating.", d.keptManual.length > 0 ? `Kept your manual ${d.keptManual.join(" and ")} override${d.keptManual.length === 1 ? "" : "s"}; tick "Replace my manual rates" to use the feed for ${d.keptManual.length === 1 ? "it" : "them"}.` : ""].filter(Boolean).join(" "));
+    } else setErr(`Exchange rates were not refreshed and nothing was saved: ${r.error ?? "the feed failed"}`);
+  };
   const blocking = view?.unresolved.filter((u) => u.severity === "blocking") ?? [];
   const notices = view?.unresolved.filter((u) => u.severity === "notice") ?? [];
   return (
@@ -172,15 +198,41 @@ export default function CommercialSettingsPage() {
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={useDefaultMarkup} onChange={(e) => setUseDefaultMarkup(e.target.checked)} /> Use the default. {MARKUP_DEFAULT_LABEL}.</label>
               {!useDefaultMarkup && <div className="max-w-xs"><Field label="Markup (%)" help="Percentage with at most 2 decimals, for example 25 or 27.5."><input className={inputCls} inputMode="decimal" value={markup} onChange={(e) => setMarkup(e.target.value)} /></Field></div>}
             </Section>
-            <Section title="Freight policy" intro="Freight is applied to each supplier cost before markup. Until a policy is set, no automatic price is produced." status={!freightOn ? "Missing" : isTestOnly(freightSource) ? "TEST-ONLY" : "Configured"} tone={!freightOn ? "danger" : isTestOnly(freightSource) ? "warning" : "success"}>
+            <Section title="Freight policy" intro="Freight is applied to each supplier cost before markup. Until a policy is set, no automatic price is produced." status={!freightOn && cats.length === 0 ? "Missing" : !freightOn ? "Categories only" : isTestOnly(freightSource) || cats.some((c) => isTestOnly(c.source)) ? "TEST-ONLY" : "Configured"} tone={!freightOn && cats.length === 0 ? "danger" : !freightOn ? "warning" : isTestOnly(freightSource) || cats.some((c) => isTestOnly(c.source)) ? "warning" : "success"}>
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={freightOn} onChange={(e) => setFreightOn(e.target.checked)} /> A freight policy is set. Leave off to keep it unset (no automatic prices).</label>
               {freightOn && <div className="grid gap-3 md:grid-cols-3">
                 <Field label="Factor (1 = no uplift)" help="Multiplier on the rand cost, up to 6 decimals. 1.08 adds 8%."><input className={inputCls} inputMode="decimal" value={factor} onChange={(e) => setFactor(e.target.value)} /></Field>
                 <Field label="Fixed add-on per unit (rand)" help="Flat rand amount added per unit after the factor. 0 for none."><input className={inputCls} inputMode="decimal" value={addOn} onChange={(e) => setAddOn(e.target.value)} /></Field>
                 <Field label="Source" help="Where this policy comes from, for the audit trail. A source containing TEST-ONLY marks it as test data."><input className={inputCls} value={freightSource} onChange={(e) => setFreightSource(e.target.value)} /></Field>
               </div>}
+              <div className="space-y-2 border-t border-slate-200 pt-3" data-testid="freight-categories">
+                <h4 className="text-sm font-semibold text-slate-900">Freight by product category</h4>
+                <Help>A category policy replaces the default for products used by that category. A product in no listed category uses the default above; with no default it gets a clear exception, never a silent 1.0.</Help>
+                {cats.map((c, i) => (
+                  <div key={i} className="grid gap-2 md:grid-cols-[12rem_7rem_8rem_1fr_auto]" data-testid={`freight-category-${c.key || i}`}>
+                    <select aria-label="Product category" className={inputCls} value={c.key} onChange={(e) => setCats((x) => x.map((y, j) => (j === i ? { ...y, key: e.target.value } : y)))}>
+                      <option value="">Choose category…</option>
+                      {FREIGHT_CATEGORY_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+                    </select>
+                    <input aria-label="Category freight factor" placeholder="Factor" className={inputCls} inputMode="decimal" value={c.factor} onChange={(e) => setCats((x) => x.map((y, j) => (j === i ? { ...y, factor: e.target.value } : y)))} />
+                    <input aria-label="Category fixed add-on (rand)" placeholder="Add-on R" className={inputCls} inputMode="decimal" value={c.addOn} onChange={(e) => setCats((x) => x.map((y, j) => (j === i ? { ...y, addOn: e.target.value } : y)))} />
+                    <input aria-label="Category freight source" placeholder="Source (TEST-ONLY marks test data)" className={inputCls} value={c.source} onChange={(e) => setCats((x) => x.map((y, j) => (j === i ? { ...y, source: e.target.value } : y)))} />
+                    <Button type="button" variant="secondary" onClick={() => setCats((x) => x.filter((_, j) => j !== i))}>Remove</Button>
+                  </div>
+                ))}
+                <Button type="button" variant="secondary" onClick={() => setCats((x) => [...x, { key: "", factor: "", addOn: "0", source: "" }])}>Add a category</Button>
+              </div>
             </Section>
             <Section title="Exchange rates (rand per 1 unit)" intro="Used to convert foreign-currency supplier costs to rand. A rate older than the limit below is not used and its products are flagged." status={fx.length === 0 ? "Missing" : fx.some((r) => isTestOnly(r.source)) ? "TEST-ONLY" : "Configured"} tone={fx.length === 0 ? "danger" : fx.some((r) => isTestOnly(r.source)) ? "warning" : "success"}>
+              <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3" data-testid="fx-feed">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div><h4 className="text-sm font-semibold text-slate-900">Open Exchange Rates feed</h4><Help>Fetches fresh USD/ZAR and EUR/ZAR (EUR derived from the USD base) and saves them as a new version, with the provider&apos;s timestamp and our retrieval time. A rate you entered by hand is an override and is kept unless you tick the box.</Help></div>
+                  {view?.feedConfigured
+                    ? <Button type="button" variant="secondary" loading={feedBusy} disabled={feedBusy || busy} onClick={() => void refreshFeed()} data-testid="fx-feed-refresh">Refresh from Open Exchange Rates</Button>
+                    : <StatusPill tone="warning" dot>Feed not configured for this deployment</StatusPill>}
+                </div>
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={replaceManual} onChange={(e) => setReplaceManual(e.target.checked)} /> Replace my manual USD/EUR rates with the feed</label>
+              </div>
               {fx.map((r, i) => (
                 <div key={i} className="grid gap-2 md:grid-cols-[6rem_1fr_1fr_14rem_auto]">
                   <input aria-label="Currency" placeholder="EUR" className={inputCls} value={r.cur} onChange={(e) => setFx((x) => x.map((y, j) => (j === i ? { ...y, cur: e.target.value } : y)))} />
@@ -188,6 +240,7 @@ export default function CommercialSettingsPage() {
                   <input aria-label="Source" placeholder="Source" className={inputCls} value={r.source} onChange={(e) => setFx((x) => x.map((y, j) => (j === i ? { ...y, source: e.target.value } : y)))} />
                   <input aria-label="As of (UTC)" type="datetime-local" className={inputCls} value={r.asOf} onChange={(e) => setFx((x) => x.map((y, j) => (j === i ? { ...y, asOf: e.target.value } : y)))} />
                   <Button type="button" variant="secondary" onClick={() => setFx((x) => x.filter((_, j) => j !== i))}>Remove</Button>
+                  <p className="text-xs text-slate-600 md:col-span-5" data-testid={`fx-origin-${r.cur}`}>{r.origin === "oxr" && r.orig?.rate === r.rate ? `Open Exchange Rates feed · provider time ${r.asOf.replace("T", " ")} UTC${r.retrievedAt ? ` · retrieved ${r.retrievedAt.slice(0, 16).replace("T", " ")} UTC` : ""}` : "Manual rate (a Manager's own figure; the feed will not replace it unless asked)"}</p>
                 </div>
               ))}
               <Button type="button" variant="secondary" onClick={() => setFx((x) => [...x, { cur: "", rate: "", source: "", asOf: "" }])}>Add a currency</Button>

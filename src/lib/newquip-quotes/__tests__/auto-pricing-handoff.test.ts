@@ -190,4 +190,25 @@ describe("hand-off: every product is read, the reason is stored, the retry price
     expect(reason(await topOff(id, { ...EST, canSeeCost: false }))).toMatch(/Only an Estimator who can see costs/);
     expect((await topOff(id, { ...EST, demo: true })).status).toBe("not_applicable");
   });
+
+  it("freight by category: the tank and feeder take their own factors; every other product (no default set) is an exception that names the missing freight policy, never 1.0", async () => {
+    await saveCommercialSettings(db as never, ORG, SETTINGS({ markupBps: 2500, freight: null, freightByCategory: { bulk_tank: { factorMicro: 1_300_000, addOnCents: 0, source: "TEST-ONLY tank" }, feeder: { factorMicro: 1_250_000, addOnCents: 0, source: "TEST-ONLY feeder" } } }), "mgr@nq", NOW);
+    const id = await newQuote();
+    const o = await run(id);
+    expect(o.status).toBe("applied");
+    const p = (await priceOf(id)).draft.estimator.pricing!;
+    expect(p.skus["SYSH-2750-3"]?.freight).toMatchObject({ factorMicro: 1_300_000 });
+    expect(p.skus.PNQ082?.freight).toMatchObject({ factorMicro: 1_250_000 });
+    expect(Object.keys(p.skus).sort()).toEqual(["PNQ082", "SYSH-2750-3"]);
+    const others = needOf().filter((k) => k !== "PNQ082" && k !== "SYSH-2750-3");
+    expect(others.length).toBeGreaterThan(0);
+    for (const k of others) expect(p.autoFlags![k]).toMatchObject({ code: "freight_not_set" });
+  });
+  it("a refresh of the exchange rates alone does not block the Estimator's top-up (only a pricing-relevant settings change does)", async () => {
+    const id = await newQuote();
+    await run(id, deps(unreadFor(needOf().slice(-1))));
+    inReview(id);
+    await saveCommercialSettings(db as never, ORG, SETTINGS({ markupBps: 2500, fx: { EUR: { rateMicro: 21_000_000, source: "test fixing 2", asOf: "2026-11-16T08:00:00Z", origin: "oxr" } } }), "mgr@nq", NOW); // FX only
+    expect(await topOff(id)).toMatchObject({ status: "applied", added: 1 });
+  });
 });

@@ -22,7 +22,7 @@ export interface ForwardCoverView {
 }
 export interface ManualEvidenceRow { itemKey: string; label: string; pricedBy: string; state: EvidenceState; stateText: string; note: string | null; reference: string | null; by: string | null; at: string | null }
 
-export interface SkuNeed { sku: string; quantity: number; usedBy: string[]; /** The SKU's line carries a MANUAL selling price: its supplier cost still has to be recorded and verified. */ manual: boolean }
+export interface SkuNeed { sku: string; quantity: number; usedBy: string[]; /** The quotation item keys that use this SKU (the freight CATEGORIES). */ itemKeys: string[]; /** The SKU's line carries a MANUAL selling price: its supplier cost still has to be recorded and verified. */ manual: boolean }
 export interface SkuRow {
   sku: string; usedBy: string[]; quantity: number;
   /** "priced" | "no_input" (no supplier cost entered: the line is NOT priced) | "not_priced" (an input exists but cannot be priced, e.g. a rate is missing). */
@@ -38,7 +38,7 @@ export interface SkuRow {
   priceBasis: "supplier_pricing" | "price_override" | "manual_price" | "none";
   /** Identifies the EXACT cost shown. A reviewer submits it with their verification so a cost that changed since they opened it can never be covered by mistake. */
   costHash: string | null;
-  rate: RateUsed | null; freightFactorMicro: number | null; freightAddOnCents: number | null;
+  rate: RateUsed | null; freightFactorMicro: number | null; freightAddOnCents: number | null; freightSource?: string | null;
   unitLandedCostCents: number | null; calculatedUnitPriceCents: number | null; unitPriceCents: number | null; priceOrigin: CalculatedLine["priceOrigin"];
   priceOverride: { unitPriceCents: number; reason: string; by: string; at: string } | null;
   lineRevenueCents: number | null; lineCostCents: number | null; margin: MarginFigures | null;
@@ -85,12 +85,12 @@ export function manualEvidenceRows(p: EstimatorPricing | undefined, budget: Budg
 
 export function skuNeedsOf(budget: BudgetQuote | null): SkuNeed[] {
   const m = new Map<string, SkuNeed>();
-  const add = (sku: string | null, qty: number | null, label: string, manual: boolean) => { if (!sku) return; const n = m.get(sku) ?? { sku, quantity: 0, usedBy: [], manual }; n.quantity += qty ?? 0; n.manual = n.manual || manual; if (!n.usedBy.includes(label)) n.usedBy.push(label); m.set(sku, n); };
+  const add = (sku: string | null, qty: number | null, label: string, manual: boolean, itemKey: string) => { if (!sku) return; const n = m.get(sku) ?? { sku, quantity: 0, usedBy: [], itemKeys: [], manual }; n.quantity += qty ?? 0; n.manual = n.manual || manual; if (!n.usedBy.includes(label)) n.usedBy.push(label); if (!n.itemKeys.includes(itemKey)) n.itemKeys.push(itemKey); m.set(sku, n); };
   for (const l of budget?.lines ?? []) {
     // Lines the Estimator prices by design (penning rate, M75) carry no supplier cost. A line with a MANUAL resolution price is different: it still needs its supplier cost.
     if (l.status === "not_selected" || l.pricedBy === "penning_rate" || l.pricedBy === "estimator_input") continue;
     const manual = l.pricedBy === "estimator_resolution";
-    if (l.components) for (const c of l.components) { if (c.status !== "reference_only") add(c.sku, c.quantity, l.label, manual); } else add(l.sku, l.quantity, l.label, manual);
+    if (l.components) for (const c of l.components) { if (c.status !== "reference_only") add(c.sku, c.quantity, l.label, manual, l.itemKey); } else add(l.sku, l.quantity, l.label, manual, l.itemKey);
   }
   return [...m.values()].sort((a, b) => a.sku.localeCompare(b.sku));
 }
@@ -128,7 +128,7 @@ export function buildPricingWorkspace(i: {
       costHash: input ? costInputHash(input) : null, costState, costStateText: COST_STATE_TEXT[costState], enteredBy: input?.by ?? null, enteredAt: input?.at ?? null,
       review: input?.review ? { by: input.review.by, at: input.review.at, evidence: input.review.evidence } : null,
       priceBasis: priced ? (ov ? "price_override" : "supplier_pricing") : need?.manual ? "manual_price" : "none",
-      rate: l?.rate ?? null, freightFactorMicro: input?.freight?.factorMicro ?? null, freightAddOnCents: input?.freight?.addOnCents ?? null,
+      rate: l?.rate ?? null, freightFactorMicro: input?.freight?.factorMicro ?? null, freightAddOnCents: input?.freight?.addOnCents ?? null, freightSource: input?.freight?.source ?? null,
       unitLandedCostCents: zero ? null : (l?.unitLandedCostCents ?? null), calculatedUnitPriceCents: zero ? null : (l?.calculatedUnitPriceCents ?? null), unitPriceCents: unit, priceOrigin: zero ? null : (l?.priceOrigin ?? null),
       priceOverride: ov ? { unitPriceCents: ov.unitPriceCents, reason: ov.reason, by: ov.by, at: ov.at } : null,
       lineRevenueCents: rev, lineCostCents: cost, margin: rev !== null ? figures(rev, cost) : null,

@@ -1,5 +1,5 @@
 import { classifySku, type MasterSupplier, type SurveyInput } from "./cost-survey";
-import { fxFresh, type CommercialSettings } from "./commercial-settings";
+import { canPriceAnything, fxFresh, resolveFreight, type CommercialSettings } from "./commercial-settings";
 import { escalateCostE7, escalationFor } from "./cost-escalation";
 import { cost7, formatCost7 } from "./model/money";
 import type { PricingSubmission, SkuSubmission } from "./estimator/apply";
@@ -11,7 +11,7 @@ export { AUTO_ACTOR, autoFlagAction, isAutoOwned };
 // OR a flag saying exactly why no price is produced. It never invents a value: a missing exchange rate, a missing freight policy, a missing / undated / future-dated / over-age / ambiguous
 // cost each give NO price and a flag. The result is marked costKind "cin7_auto" (distinct from an Estimator-entered cost) and is ALWAYS unverified: a Manager still verifies it independently.
 
-export type AutoFlagCode = "settings_incomplete" | "not_read" | "no_cost" | "cost_needs_review" | "cost_too_old" | "currency_unknown" | "fx_missing" | "fx_stale" | "cost_precision";
+export type AutoFlagCode = "settings_incomplete" | "not_read" | "no_cost" | "cost_needs_review" | "cost_too_old" | "currency_unknown" | "fx_missing" | "fx_stale" | "cost_precision" | "freight_not_set" | "freight_conflict";
 /** Text that is safe for ANY viewer, including a Rep: it never carries a cost, rate, freight or margin. */
 export const NEUTRAL_FLAG_TEXT: Record<AutoFlagCode, string> = {
   settings_incomplete: "Price pending: commercial settings incomplete",
@@ -23,6 +23,8 @@ export const NEUTRAL_FLAG_TEXT: Record<AutoFlagCode, string> = {
   fx_missing: "Price pending: commercial settings incomplete",
   fx_stale: "Price pending: commercial settings incomplete",
   cost_precision: "Price pending: the supplier cost needs review",
+  freight_not_set: "Price pending: commercial settings incomplete",
+  freight_conflict: "Price pending: commercial settings incomplete",
 };
 export interface AutoFlag { sku: string; code: AutoFlagCode; /** Internal detail for the Estimator / Manager (may name a currency or reason; never a cost value). */ internal: string }
 
@@ -42,10 +44,15 @@ export function toCostE7(x: number | null | undefined): number | null {
 }
 
 /** One SKU's Cin7 raw facts -> an auto cost entry, or the reason there is no price. */
-export function autoCostFor(input: SurveyInput, master: ReadonlyMap<string, MasterSupplier>, settings: CommercialSettings | null, ref: SettingsRef, nowIso: string): AutoCostEntry | AutoFlag {
+export function autoCostFor(input: SurveyInput, master: ReadonlyMap<string, MasterSupplier>, settings: CommercialSettings | null, ref: SettingsRef, nowIso: string, categories: readonly string[] = []): AutoCostEntry | AutoFlag {
   const sku = input.sku;
   const flag = (code: AutoFlagCode, internal: string): AutoFlag => ({ sku, code, internal });
-  if (!settings || settings.freight === null) return flag("settings_incomplete", "The freight policy is not set in the commercial settings.");
+  if (!settings || !canPriceAnything(settings)) return flag("settings_incomplete", "No freight policy is set in the commercial settings.");
+  // Freight: the product's CATEGORY policy, else the Manager's default, else an exception. It is never silently 1.0.
+  const fr = resolveFreight(settings, categories);
+  if (!fr.ok) return fr.reason === "conflict"
+    ? flag("freight_conflict", `This product is used by more than one freight category (${fr.categories.join(", ")}) with different policies: a Manager must resolve it.`)
+    : flag("freight_not_set", `No freight policy is configured for this product's category (${fr.categories.join(", ") || "none"}) and no default freight policy is set.`);
   const today = nowIso.slice(0, 10);
   const r = classifySku(input, master, today);
   if (r.tier === "missing") return flag("no_cost", `Cin7 has no usable supplier cost (${r.reasons.join(", ")}).`);
@@ -75,7 +82,7 @@ export function autoCostFor(input: SurveyInput, master: ReadonlyMap<string, Mast
     sku,
     input: {
       supplierId: r.selected.supplierId, supplierName: r.selected.supplierName, currency, nativeUnitCostE7: escalated, source: src.slice(0, 200),
-      freight: { factorMicro: settings.freight.factorMicro, addOnCents: settings.freight.addOnCents, source: `Commercial settings v${ref.version}: ${settings.freight.source}`.slice(0, 200) },
+      freight: { factorMicro: fr.policy.factorMicro, addOnCents: fr.policy.addOnCents, source: `Commercial settings v${ref.version}${fr.category ? ` (${fr.category})` : ""}: ${fr.policy.source}`.slice(0, 200) },
       currencySource: "cin7_supplier", costKind: "cin7_auto", costDate: lastSupplied,
     },
     provenance: { origin: "auto_cin7", settingsVersion: ref.version, rawCostE7: raw, escalatedCostE7: escalated, escalationBps: esc.escalationBps, ageDays: esc.ageDays, lastSupplied, currency, supplierId: r.selected.supplierId },
