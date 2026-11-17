@@ -69,7 +69,7 @@ export function CustomerQuotationDocument({ m, testOnly = false }: { m: Customer
         {testOnly && (
           <>
             <View fixed style={{ position: "absolute", top: 8, left: 40, right: 40, backgroundColor: "#B91C1C", paddingVertical: 3 }}><Text style={{ color: "#FFFFFF", fontSize: 9, fontFamily: "Helvetica-Bold", textAlign: "center" }}>{TEST_ONLY_WATERMARK}</Text></View>
-            <View fixed style={{ position: "absolute", top: 330, left: 0, right: 0, alignItems: "center" }}><Text style={{ fontSize: 44, fontFamily: "Helvetica-Bold", color: "#DC2626", opacity: 0.22, transform: "rotate(-30deg)", textAlign: "center" }}>{"TEST ONLY\nNOT FOR CUSTOMER ISSUE"}</Text></View>
+            <View fixed style={{ position: "absolute", top: 330, left: 0, right: 0, alignItems: "center" }}><Text style={{ fontSize: 30, fontFamily: "Helvetica-Bold", color: "#DC2626", opacity: 0.22, transform: "rotate(-30deg)", textAlign: "center" }}>{TEST_ONLY_WATERMARK}</Text></View>
           </>
         )}
         <View style={st.head} fixed>
