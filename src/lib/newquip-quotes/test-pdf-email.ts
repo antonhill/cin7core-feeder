@@ -24,6 +24,8 @@ export const UAT_BANNER = "UAT TEST EMAIL. NOT FOR CUSTOMER ISSUE. This is not a
 /** Recipient must be on the existing authorised test-email allowlist. */
 export const recipientAllowed = (email: string): boolean => isAllowlisted(email);
 
+const esc = (v: string | number): string => String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
 export function buildTestPdfEmail(i: { to: string; request: ApprovalRequestRow; bytes: Uint8Array }): SendEmailInput {
   const n = buildNotification("APPROVED_FOR_REP", i.request, i.to, { baseUrl: UAT_ORIGIN, by: i.request.decided_by_email, at: i.request.decided_at });
   const text = [
@@ -34,6 +36,6 @@ export function buildTestPdfEmail(i: { to: string; request: ApprovalRequestRow; 
     `Attached: the TEST-ONLY PDF for ${i.request.doc_ref} (revision ${i.request.revision}), watermarked "TEST ONLY – NOT FOR CUSTOMER ISSUE", using placeholder company details.`,
     "The quotation has not been issued or sent to a customer. Decisions are made only after signing in at the links above.",
   ].join("\n");
-  const html = `<p><strong>${UAT_BANNER}</strong></p><pre style="font-family:inherit;white-space:pre-wrap">${n.body.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</pre><p>Attached: the TEST-ONLY PDF for ${i.request.doc_ref} (revision ${i.request.revision}), watermarked &ldquo;TEST ONLY &ndash; NOT FOR CUSTOMER ISSUE&rdquo;, using placeholder company details.</p><p>The quotation has not been issued or sent to a customer. Decisions are made only after signing in at the links above.</p>`;
+  const html = `<p><strong>${UAT_BANNER}</strong></p><pre style="font-family:inherit;white-space:pre-wrap">${esc(n.body)}</pre><p>Attached: the TEST-ONLY PDF for ${esc(i.request.doc_ref)} (revision ${esc(i.request.revision)}), watermarked &ldquo;TEST ONLY &ndash; NOT FOR CUSTOMER ISSUE&rdquo;, using placeholder company details.</p><p>The quotation has not been issued or sent to a customer. Decisions are made only after signing in at the links above.</p>`;
   return { to: [i.to.trim()], subject: testPdfSubject(i.request.doc_ref), text, html, attachments: [{ filename: `TEST-ONLY-${i.request.doc_ref}-r${i.request.revision}.pdf`, content: Buffer.from(i.bytes) }] };
 }
