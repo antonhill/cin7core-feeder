@@ -6,6 +6,7 @@ import { evaluationContext } from "@/lib/newquip-quotes/context";
 import { buildPricingWorkspace, canEnterPricingInputs, mayAttestRate, mayAttestRates, mayReviewCosts, mayVerifySku, selectRuleVersion, submissionFrom, type PricingConflict, type PricingSubmission, type PricingWorkspaceView, type AttestItem, type EvidenceItem, type VerifyItem, type Viewer } from "@/newquip/pricing/estimator";
 import type { AutoPriceFlag } from "@/newquip/pricing/estimator/types";
 import { returnByOf } from "./return-store";
+import { cin7TopUpAvailability, type TopUpAvailability } from "./top-up-availability";
 import { reconcileConfirmationAmount, resyncApprovalsLogged, type AmountInvalidation } from "./confirmation-reconcile";
 import { latestIndicativeSnapshot } from "./indicative-store";
 import { loadQuote, type QuoteRecord } from "./quote-store";
@@ -13,7 +14,7 @@ import { applyEstimatorPricing, attestEstimatorRates, listPricingRevisions, reco
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 export interface PricingActor { orgId: string; userId: string; email: string; roles: ReadonlySet<"rep" | "estimator" | "manager">; canSeeCost: boolean }
-export interface WorkspaceBundle { view: PricingWorkspaceView; /** What THIS viewer may do about cost verification: the SKUs they may independently verify now (never ones they entered themselves). */ verification: { canReview: boolean; reviewerRoles: string[]; verifiableSkus: string[] }; /** What THIS viewer may do about forward-cover rate attestation: the currencies they may independently attest now (never rates they entered themselves). */ rateAttestation: { canReview: boolean; reviewerRoles: string[]; attestableCurrencies: string[] }; /** The stored inputs as the form edits them (null while the model is off). */ current: PricingSubmission | null; revisions: PricingRevisionRow[]; state: string; revision: number; canEdit: boolean }
+export interface WorkspaceBundle { view: PricingWorkspaceView; /** Whether the Estimator's "Price from Cin7" can run on this quotation, and if not the plain-words reason (independent of the automatic Rep-pricing flag). */ cin7Pricing?: TopUpAvailability; /** What THIS viewer may do about cost verification: the SKUs they may independently verify now (never ones they entered themselves). */ verification: { canReview: boolean; reviewerRoles: string[]; verifiableSkus: string[] }; /** What THIS viewer may do about forward-cover rate attestation: the currencies they may independently attest now (never rates they entered themselves). */ rateAttestation: { canReview: boolean; reviewerRoles: string[]; attestableCurrencies: string[] }; /** The stored inputs as the form edits them (null while the model is off). */ current: PricingSubmission | null; revisions: PricingRevisionRow[]; state: string; revision: number; canEdit: boolean }
 
 const viewerOf = (a: PricingActor): Viewer => ({ roles: a.roles, canSeeCost: a.canSeeCost });
 
@@ -34,7 +35,8 @@ export async function loadPricingWorkspace(db: Db, a: PricingActor, quoteId: str
   const rateAttestation = sel.ok
     ? { canReview: mayAttestRates(viewerOf(a), sel.rules), reviewerRoles: [...sel.rules.rateReview.reviewerRoles], attestableCurrencies: Object.keys(q.draft.estimator.pricing?.forwardCover ?? {}).filter((c) => mayAttestRate(viewerOf(a), a.email, c, q.draft.estimator.pricing!.forwardCover[c], sel.rules)).sort() }
     : { canReview: false, reviewerRoles: [], attestableCurrencies: [] };
-  return { view, verification, rateAttestation, current: q.draft.estimator.pricing ? submissionFrom(q.draft.estimator.pricing) : null, revisions, state: q.state, revision: q.revision, canEdit: canEnterPricingInputs(viewerOf(a)) && q.state !== "MANAGER_APPROVED_FINAL" };
+  const cin7Pricing = await cin7TopUpAvailability(db, a.orgId, q, ev.budget).catch((): TopUpAvailability => ({ available: false, reason: "Price from Cin7 could not be checked just now." }));
+  return { view, cin7Pricing, verification, rateAttestation, current: q.draft.estimator.pricing ? submissionFrom(q.draft.estimator.pricing) : null, revisions, state: q.state, revision: q.revision, canEdit: canEnterPricingInputs(viewerOf(a)) && q.state !== "MANAGER_APPROVED_FINAL" };
 }
 
 /** An independent forward-cover rate attestation: one immutable revision, no price moves; the Estimator's sign-off is withdrawn by the write itself. */

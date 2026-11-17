@@ -20,6 +20,7 @@ import { loadQuote, type QuoteRecord } from "./quote-store";
 import { listPricingRevisions } from "./pricing-store";
 import { applyPricingChange } from "./pricing-service";
 import { latestCommercialSettings } from "./document-store";
+import { settingsRevisionOf, topUpIneligibleReason } from "./top-up-availability";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 /** Products are read from Cin7 in successive chunks of this size. EVERY product the quotation still needs is read (alphabetical order) until the ONE overall time budget for the run (suppliers + products) is spent; what is unread then is flagged "will be retried". */
@@ -43,11 +44,7 @@ const flagsOutcome = (status: AutoPricingStatus, flags: readonly AutoFlag[], add
   out(status, { added, pending: [...new Set(flags.map((f) => NEUTRAL_FLAG_TEXT[f.code]))], pendingCount: flags.length, internal: flags.map((f) => ({ sku: f.sku, code: f.code, text: f.internal })) });
 
 export { isAutoOwned };
-/** The commercial-settings revision an automatic entry was built from (it is written into the entry's source text). */
-export function settingsRevisionOf(p: EstimatorPricing): number | null {
-  for (const s of Object.values(p.skus)) { const m = s ? /commercial settings v(\d+)/.exec(s.source) : null; if (m) return Number(m[1]); }
-  return null;
-}
+export { settingsRevisionOf };
 
 export interface AutoPricingDeps {
   readRaw: (skus: readonly string[], deadline: number) => Promise<Record<string, { raw: Record<string, unknown> | null } | { error: string }>>;
@@ -68,6 +65,11 @@ export function autoPricingCutoff(env: AutoEnv): number | null {
   const t = typeof f === "string" && /^\d{4}-\d{2}-\d{2}T[\d:.]+(Z|[+-]\d{2}:\d{2})$/.test(f) ? Date.parse(f) : NaN; // a timezone (Z or an offset) is REQUIRED: no server-local interpretation
   return Number.isFinite(t) ? t : null;
 }
+/** The deployment's activation facts for the Manager's status display: is the switch on, and is the effective time valid. */
+export function activationFacts(env: AutoEnv): { flagOn: boolean; cutoffMs: number | null } {
+  const flagOn = env.NEWQUIP_AUTO_PRICING === "on";
+  return { flagOn, cutoffMs: flagOn ? autoPricingCutoff(env) : null };
+}
 export interface AutoActor { orgId: string; userId: string; roles: ReadonlySet<string>; demo: boolean; /** Required for the Estimator top-up (runAutoPricingTopUp): the caller may see cost. */ canSeeCost?: boolean }
 
 /** Every product in `skus` is read, in successive chunks, until `deadline`. A product not reached is simply absent from the result (the caller flags it "will be retried"). Read-only (the adapter's GET-only gate). */
@@ -87,23 +89,32 @@ const sameFlags = (a: EstimatorPricing["autoFlags"], b: Record<string, AutoPrice
 type Mode = "rep" | "estimator";
 /** The shared job. `mode` only decides WHO may run it and in which states; every other rule (flag, cutoff, current template, human edits end it, idempotent add-only, fresh re-check inside the write) is identical. */
 async function priceQuote(mode: Mode, db: Db, actor: AutoActor, quoteId: string, deps: AutoPricingDeps, env: AutoEnv): Promise<AutoPricingOutcome> {
+  const estimator = mode === "estimator";
   const cutoff = autoPricingCutoff(env);
-  if (cutoff === null || actor.demo) return out("not_applicable");
-  if (mode === "rep" ? !actor.roles.has("rep") : !(actor.roles.has("estimator") && actor.canSeeCost === true)) return out("not_applicable");
+  // The Rep's automatic pricing needs the activation flag and cutoff. The ESTIMATOR's "Price from Cin7" does not: an authorised Estimator may always read the missing supplier costs (see top-up-availability.ts); it says plainly when it cannot.
+  const unavailable = (reason: string) => (estimator ? out("not_applicable", { internal: [{ sku: "*", code: "unavailable", text: reason }] }) : out("not_applicable"));
+  if (actor.demo || (!estimator && cutoff === null)) return out("not_applicable");
+  if (mode === "rep" ? !actor.roles.has("rep") : !(actor.roles.has("estimator") && actor.canSeeCost === true)) return unavailable("Only an Estimator who can see costs can price from Cin7.");
   const started = Date.now();
   const deadline = started + RUN_BUDGET_MS;
   const states = mode === "rep" ? ["REP_DRAFT"] : ["REP_DRAFT", "ESTIMATOR_REVIEW"];
   const q = await loadQuote(db, actor.orgId, quoteId);
-  if (!q || !states.includes(q.state) || q.draft.quoteType !== "project" || templateRevisionOf(q.draft) !== TEMPLATE_REVISION_CURRENT || hasPocFlag(q.draft)) return out("not_applicable");
-  if (!(Date.parse(q.created_at) >= cutoff)) return out("not_applicable");
+  if (!q || !states.includes(q.state) || q.draft.quoteType !== "project" || templateRevisionOf(q.draft) !== TEMPLATE_REVISION_CURRENT || hasPocFlag(q.draft)) return unavailable(q && !states.includes(q.state) ? "The quotation is no longer with the Rep or the Estimator, so its pricing cannot change." : "Cin7 supplier pricing applies only to project quotations on the current template.");
   const prior = q.draft.estimator.pricing;
-  const revisions = await listPricingRevisions(db, actor.orgId, quoteId);
-  if (prior ? !isAutoOwned(prior) || revisions.some((r) => r.changedBy !== AUTO_ACTOR) : revisions.length > 0) return out("not_applicable");
+  if (!estimator) {
+    if (!(Date.parse(q.created_at) >= (cutoff as number))) return out("not_applicable");
+    const revisions = await listPricingRevisions(db, actor.orgId, quoteId);
+    if (prior ? !isAutoOwned(prior) || revisions.some((r) => r.changedBy !== AUTO_ACTOR) : revisions.length > 0) return out("not_applicable");
+  }
   const startHash = q.draft_hash;
 
   const nowIso = deps.now();
   const stored = await latestCommercialSettings(db, actor.orgId, nowIso);
   const settings: CommercialSettings | null = stored?.settings ?? null;
+  if (estimator) {
+    const why = topUpIneligibleReason(q, stored ? { revision: stored.revision, enteredBy: stored.enteredBy, settings: stored.settings } : null, evaluateDraft(q.draft, evaluationContext(true)).budget);
+    if (why) return unavailable(why);
+  }
   if (!stored || !canPriceAnything(settings)) return flagsOutcome("settings_incomplete", [{ sku: "*", code: "settings_incomplete", internal: "The commercial settings are not complete (freight policy not set)." }]);
   // The revision the existing entries were priced under is read back from their source text ("commercial settings vN"). A structured field would need a stored-shape change; this is deliberately left as text.
   if (prior && settingsRevisionOf(prior) !== null && settingsRevisionOf(prior) !== stored.revision) {
@@ -133,7 +144,7 @@ async function priceQuote(mode: Mode, db: Db, actor: AutoActor, quoteId: string,
     : `Automatic pricing: recorded why ${flags.length} product${flags.length === 1 ? " has" : "s have"} no automatic price`;
   // STORED FX: the rate written into the pricing is the settings' rate AS OF its own date, judged fresh against fxMaxAgeDays NOW. It is then frozen with the pricing (the rule version has no age limit and the pricing date is fixed),
   // so a later day does not un-price the quotation; a newer rate only reaches a quotation through a Manager/Estimator change.
-  const guard = (cur: QuoteRecord): string | null => (states.includes(cur.state) && cur.draft_hash === startHash && (!cur.draft.estimator.pricing || isAutoOwned(cur.draft.estimator.pricing)) ? null : GUARD_MSG);
+  const guard = (cur: QuoteRecord): string | null => (states.includes(cur.state) && cur.draft_hash === startHash && (estimator ? !!cur.draft.estimator.pricing?.enabled && cur.draft.estimator.pricing.ruleVersionId === SUPPLIER_AUTO_RULE_VERSION.id : (!cur.draft.estimator.pricing || isAutoOwned(cur.draft.estimator.pricing))) ? null : GUARD_MSG);
   const r = await applyPricingChange(db, { orgId: actor.orgId, userId: actor.userId, email: AUTO_ACTOR, roles: new Set(["estimator"]), canSeeCost: true }, quoteId, sub, reason, undefined, guard, autoFlags);
   if (!r.ok) {
     if (r.errors[0] === GUARD_MSG) return out("skipped", { internal: [{ sku: "*", code: "skipped", text: GUARD_MSG }] });
@@ -155,9 +166,9 @@ export function runAutoPricing(db: Db, actor: AutoActor, quoteId: string, deps: 
 }
 
 /**
- * The ESTIMATOR's "Price from Cin7": the same job, same gates (flag, cutoff, non-demo, project, current template, created after the cutoff, pricing entirely automatic, no human pricing change), but for an Estimator who may see
- * cost, while the quotation is with the Rep or in Estimator review. It exists so that after the Estimator confirms a package or chooses a product (new SKUs the Rep-time run could not know), the existing automatic costing prices
- * the chosen SKU; it is add-only, so every stored entry is preserved. The total change it causes goes through the normal pricing path, which withdraws the Rep's confirmation exactly as any pricing change does.
+ * The ESTIMATOR's "Price from Cin7": reads the missing supplier costs from Cin7 (GET only) and prices them through the same calculator, ADD-ONLY (every stored entry, review and evidence is kept). It does NOT depend on the automatic Rep-pricing
+ * activation flag or cutoff. It runs only while the quotation is with the Rep or in Estimator review, already carries supplier pricing under the supplier rule set, and the Manager's commercial settings are complete and unchanged since
+ * (see top-up-availability.ts, which also tells the workspace WHY it is unavailable). The total change goes through the normal pricing path, which withdraws the Rep's confirmation exactly as any pricing change does.
  */
 export function runAutoPricingTopUp(db: Db, actor: AutoActor, quoteId: string, deps: AutoPricingDeps = liveDeps(db, actor.orgId), env: AutoEnv = process.env as AutoEnv): Promise<AutoPricingOutcome> {
   return priceQuote("estimator", db, actor, quoteId, deps, env);

@@ -131,12 +131,63 @@ describe("hand-off: every product is read, the reason is stored, the retry price
     expect(p.autoFlags).toBeUndefined();
   });
 
-  it("the Estimator top-up is refused once a person has changed the pricing (human edits end automatic pricing)", async () => {
+  const OFF: AutoEnv = {};
+  const topOff = (id: string, actor: AutoActor = EST, d = deps()) => runAutoPricingTopUp(db as never, actor, id, d, OFF);
+  const inReview = (id: string) => { (db.rows("newquip_quotes").find((r) => r.id === id) as Record<string, unknown>).state = "ESTIMATOR_REVIEW"; };
+
+  it("Price from Cin7 works with automatic Rep pricing switched OFF (no flag, no cutoff): it adds only the missing cost; a Rep run with the flag off still does nothing", async () => {
     const id = await newQuote();
-    await run(id);
-    const rows = db.rows("newquip_pricing_revisions") as Array<Record<string, unknown>>;
-    rows[rows.length - 1].changed_by_email = "estimator@nq";
-    (db.rows("newquip_quotes").find((r) => r.id === id) as Record<string, unknown>).state = "ESTIMATOR_REVIEW";
-    expect((await top(id)).status).toBe("not_applicable");
+    const lastOne = needOf().slice(-1);
+    await run(id, deps(unreadFor(lastOne))); // priced while the flag was on; one product unread
+    inReview(id);
+    const keep = (p: NonNullable<Awaited<ReturnType<typeof priceOf>>["draft"]["estimator"]["pricing"]>) => JSON.stringify(Object.entries(p.skus).filter(([k]) => !lastOne.includes(k)).sort());
+    const stored = keep((await priceOf(id)).draft.estimator.pricing!);
+    expect((await runAutoPricing(db as never, REP, id, deps(), OFF)).status).toBe("not_applicable");
+    calls.length = 0;
+    const o = await topOff(id);
+    expect(o).toMatchObject({ status: "applied", added: 1 });
+    expect(calls.flat()).toEqual(lastOne);
+    const p = (await priceOf(id)).draft.estimator.pricing!;
+    expect(keep(p)).toBe(stored);
+    expect(p.skus[lastOne[0]]).toMatchObject({ costKind: "cin7_auto" });
+  });
+
+  it("a person's entry and a Manager's verification are PRESERVED byte for byte; the top-up still adds the missing cost (a person's edit no longer blocks it)", async () => {
+    const id = await newQuote();
+    const need = needOf();
+    const missing = need.slice(-1), [mine, reviewed] = need;
+    await run(id, deps(unreadFor(missing)));
+    inReview(id);
+    const row = db.rows("newquip_quotes").find((r) => r.id === id) as { draft: { estimator: { pricing: { skus: Record<string, Record<string, unknown>> } } } };
+    row.draft.estimator.pricing.skus[mine].by = "estimator@nq"; row.draft.estimator.pricing.skus[mine].costKind = "supplier_quotation";
+    row.draft.estimator.pricing.skus[reviewed].review = { by: "mgr@nq", at: NOW, evidence: "Checked against the supplier quote reference QA-1" };
+    expect(isAutoOwned((await priceOf(id)).draft.estimator.pricing!)).toBe(false);
+    const before = JSON.stringify([mine, reviewed].map((k) => (row.draft.estimator.pricing.skus[k])));
+    const o = await topOff(id);
+    expect(JSON.stringify(o.internal)).toBe("[]");
+    expect(o).toMatchObject({ status: "applied", added: 1 });
+    const p = (await priceOf(id)).draft.estimator.pricing!;
+    expect(JSON.stringify([mine, reviewed].map((k) => p.skus[k]))).toBe(before);
+    expect(p.skus[missing[0]]).toMatchObject({ costKind: "cin7_auto" });
+  });
+
+  it("when it cannot run it says exactly why (never a silent no-op): no pricing yet, no freight policy, settings changed, nothing missing, wrong state, no cost visibility, demo", async () => {
+    const reason = (o: Awaited<ReturnType<typeof topOff>>) => (o.status === "not_applicable" ? o.internal.find((i) => i.sku === "*")?.text ?? "" : o.status);
+    const bare = await newQuote(); // no supplier pricing started
+    expect(reason(await topOff(bare))).toMatch(/has not been started/);
+    const id = await newQuote();
+    await run(id, deps(unreadFor(needOf().slice(-1))));
+    inReview(id);
+    await saveCommercialSettings(db as never, ORG, SETTINGS({ markupBps: 2500, freight: null }), "mgr@nq", NOW);
+    expect(reason(await topOff(id))).toMatch(/freight policy/);
+    await saveCommercialSettings(db as never, ORG, SETTINGS({ markupBps: 2500 }), "mgr@nq", NOW); // a new version: the pricing was built under an earlier one
+    expect(reason(await topOff(id))).toMatch(/commercial settings changed/i);
+    const done = await newQuote(); await run(done); inReview(done);
+    expect(reason(await topOff(done))).toMatch(/already has one/);
+    const rep = await newQuote(); await run(rep, deps(unreadFor(needOf().slice(-1))));
+    (db.rows("newquip_quotes").find((r) => r.id === rep) as Record<string, unknown>).state = "MANAGER_APPROVED_FINAL";
+    expect(reason(await topOff(rep))).toMatch(/no longer with the Rep or the Estimator/);
+    expect(reason(await topOff(id, { ...EST, canSeeCost: false }))).toMatch(/Only an Estimator who can see costs/);
+    expect((await topOff(id, { ...EST, demo: true })).status).toBe("not_applicable");
   });
 });

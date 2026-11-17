@@ -29,6 +29,15 @@ describe("automatic-pricing sections (Estimator)", () => {
     for (const t of ["Fixture Supplier", "EUR 10.00", "2026-06-16", "EUR 20.0000 as of 2026-11-16", "× 1.15", "R 230,00", "R 287,50", "Auto from Cin7: 10.00 EUR"]) expect(sec.textContent).toContain(t);
     expect(screen.queryByText(/supplier cost needed/i)).toBeNull();
   });
+  it("when Price from Cin7 cannot run the button is shown DISABLED with the plain-words reason (never an action that silently does nothing)", () => {
+    const onPrice = vi.fn();
+    render(<PricingExceptions auto={auto({ canPrice: false, retryable: 0, unavailableReason: "A Manager must complete the commercial settings (freight policy and exchange rates) before costs can be priced from Cin7." })} canEdit busy={false} onOpen={vi.fn()} onPrice={onPrice} />);
+    expect(screen.queryByTestId("price-from-cin7")).toBeNull();
+    const b = screen.getByTestId("price-from-cin7-disabled") as HTMLButtonElement;
+    expect(b.disabled).toBe(true);
+    expect(screen.getByTestId("price-from-cin7-why").textContent).toContain("A Manager must complete the commercial settings");
+    fireEvent.click(b); expect(onPrice).not.toHaveBeenCalled();
+  });
   it("each pricing exception shows its specific reason and corrective action; Price from Cin7 only where it can help; Open opens the task", () => {
     const onOpen = vi.fn(), onPrice = vi.fn();
     render(<PricingExceptions auto={auto()} canEdit busy={false} onOpen={onOpen} onPrice={onPrice} />);

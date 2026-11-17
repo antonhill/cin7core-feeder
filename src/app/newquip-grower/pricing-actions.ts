@@ -129,14 +129,18 @@ export async function priceFromCin7Action(quoteId: string): Promise<PricingActio
     const o = await runAutoPricingTopUp(db, { orgId: a.orgId, userId: a.userId, roles: a.roles, demo: false, canSeeCost: a.canSeeCost }, quoteId);
     console.info(`[newquip-auto-pricing] ${quoteId} at=estimator status=${o.status} added=${o.added} pending=${o.pendingCount} flags=${o.internal.map((i) => `${i.sku}:${i.code}`).join(",").slice(0, 400)}`);
     if (o.status === "applied") await auditActor(db, a, { action: "newquip.auto_pricing", summary: "Estimator priced newly needed products from Cin7 supplier costs (local only; Cin7 read only)", detail: { quoteId, added: o.added, stillPending: o.pendingCount, at: "estimator" } });
-    const message = o.status === "applied" ? `Priced ${o.added} product${o.added === 1 ? "" : "s"} from Cin7${o.pendingCount > 0 ? `; ${o.pendingCount} still need${o.pendingCount === 1 ? "s" : ""} your attention` : ""}. The costs await Manager verification.${o.added > 0 ? " If the Rep had already confirmed an amount and the total has changed, the quotation returns to the Rep to reconfirm it." : ""}`
-      : o.status === "nothing_to_add" ? "Every product already has a cost."
-      : o.status === "no_prices" ? "Cin7 could not price the remaining products; the reason for each is shown with it."
-      : o.status === "not_applicable" ? "Price from Cin7 is not available for this quotation (automatic pricing is off for it, or a person has already entered or changed its pricing)."
-      : o.status === "settings_incomplete" ? "The commercial settings are not complete (freight policy), so nothing was priced."
+    // Estimator-only text (the action is refused to anyone else): which products were priced, which are still missing and the specific reason for each. No cost, rate or margin is in it.
+    const stillMissing = o.internal.filter((i) => i.sku !== "*");
+    const missingText = stillMissing.length > 0 ? ` Still without a cost: ${stillMissing.slice(0, 6).map((i) => `${i.sku} (${i.text.replace(/\.$/, "")})`).join("; ")}${stillMissing.length > 6 ? `; and ${stillMissing.length - 6} more` : ""}.` : "";
+    const why = o.internal.find((i) => i.sku === "*")?.text;
+    const message = o.status === "applied" ? `Priced ${o.added} product${o.added === 1 ? "" : "s"} from Cin7. The costs await Manager verification, and every cost already on the quotation was kept.${o.added > 0 ? " If the Rep had already confirmed an amount and the total has changed, the quotation returns to the Rep to reconfirm it." : ""}${missingText}`
+      : o.status === "nothing_to_add" ? "Every product that needs a supplier cost already has one."
+      : o.status === "no_prices" ? `Nothing could be priced from Cin7.${missingText || " The reason for each product is shown with it."}`
+      : o.status === "not_applicable" ? `Price from Cin7 is not available here. ${why ?? "The quotation is not eligible."}`
+      : o.status === "settings_incomplete" ? "A Manager must complete the commercial settings (freight policy and exchange rates) before costs can be priced from Cin7."
       : o.status === "settings_changed" ? "The commercial settings changed since this quotation was priced, so nothing was added automatically."
       : o.status === "skipped" ? "The quotation changed while its costs were being read, so nothing was priced. Try again."
-      : "The automatic pricing could not be recorded. Nothing was changed.";
+      : "The costs could not be recorded. Nothing was changed.";
     const workspace = await loadPricingWorkspace(db, asPricingActor(a), quoteId).catch(() => undefined);
     return { ok: true, data: { status: o.status, message, added: o.added, stillUnpriced: o.pendingCount, ...(workspace ? { workspace } : {}) } };
   } catch (e) { return { ok: false, error: errText(e) }; }

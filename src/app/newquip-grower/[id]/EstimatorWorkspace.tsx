@@ -100,7 +100,7 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
 
   const ws = useMemo(() => (bundle ? buildWorkspace({
     budget: p.budget, view: bundle.view,
-    facts: { state: p.state, revision: p.revision, confirmedCents: p.confirmedCents, signedOff: p.signedOff, canEdit: p.canEdit && bundle.canEdit, canReview: bundle.verification.canReview, confirmedPackages: p.draft.estimator.confirmedPackages, reference: p.comparison ?? null, confirmedMappings: p.draft.estimator.confirmedMappings, priceResolutionReasons: Object.fromEntries(Object.entries(p.draft.estimator.priceResolutions).map(([k, v]) => [k, v?.reason])) },
+    facts: { state: p.state, revision: p.revision, confirmedCents: p.confirmedCents, signedOff: p.signedOff, canEdit: p.canEdit && bundle.canEdit, canReview: bundle.verification.canReview, cin7Pricing: bundle.cin7Pricing, confirmedPackages: p.draft.estimator.confirmedPackages, reference: p.comparison ?? null, confirmedMappings: p.draft.estimator.confirmedMappings, priceResolutionReasons: Object.fromEntries(Object.entries(p.draft.estimator.priceResolutions).map(([k, v]) => [k, v?.reason])) },
   }) : null), [bundle, p.budget, p.state, p.revision, p.confirmedCents, p.signedOff, p.canEdit, p.draft, p.comparison]);
 
   if (loadError && !bundle) return <div className="mt-4"><Alert tone="warning"><span data-testid="workspace-error">{loadError}</span></Alert><Button className="mt-2 min-h-11" variant="secondary" onClick={() => void load()}>Try again</Button></div>;

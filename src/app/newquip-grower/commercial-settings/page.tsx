@@ -26,6 +26,30 @@ const PILL: Record<BadgeTone, string> = { neutral: "bg-slate-100 text-slate-700"
 function StatusPill({ tone = "neutral", children }: { tone?: BadgeTone; dot?: boolean; children: React.ReactNode }) {
   return <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-md px-2 py-0.5 text-xs font-semibold ${PILL[tone]}`}><span aria-hidden className="h-1.5 w-1.5 rounded-full bg-current" />{children}</span>;
 }
+function ActivationCard({ a }: { a: NonNullable<CommercialSettingsView["activation"]> | null }) {
+  if (!a) return <section className="rounded-lg border border-slate-200 bg-slate-50 p-4" data-testid="activation-status"><h3 className="text-sm font-semibold text-slate-900">Automatic pricing status</h3><p className="mt-1 text-sm text-slate-700">The status could not be read just now.</p></section>;
+  const tone: BadgeTone = a.state === "enabled" ? "success" : a.state === "incomplete" ? "warning" : "neutral";
+  return (
+    <section className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4" data-testid="activation-status" data-state={a.state}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-slate-900">Automatic pricing status</h3>
+        <StatusPill tone={tone} dot>{a.label}</StatusPill>
+      </div>
+      <p className="text-sm text-slate-900" data-testid="activation-summary">{a.summary}</p>
+      {a.issues.length > 0 && <ul className="list-disc space-y-1 pl-5 text-sm text-slate-900" data-testid="activation-issues">{a.issues.map((t) => <li key={t}>{t}</li>)}</ul>}
+      <div className="flex flex-wrap items-center gap-2" data-testid="activation-policy">
+        <StatusPill tone={a.testOnly ? "warning" : "neutral"} dot>{a.testOnly ? "TEST-ONLY settings" : "Manager-entered settings"}</StatusPill>
+        <span className="text-xs text-slate-700">{a.policyNote}</span>
+      </div>
+      {a.fx.length > 0 && (
+        <ul className="flex flex-wrap gap-2" data-testid="activation-fx">
+          {a.fx.map((x) => <li key={x.currency}><StatusPill tone={x.status === "current" ? "success" : "danger"} dot>{x.currency} rate {x.status === "current" ? "current" : "expired"}{x.ageDays >= 0 ? ` (${x.ageDays} day${x.ageDays === 1 ? "" : "s"} old)` : ""}</StatusPill></li>)}
+        </ul>
+      )}
+      <p className="text-xs text-slate-700">Saving these settings does not switch automatic pricing on or off; that is a deployment decision. The Estimator&apos;s Price from Cin7 does not depend on it.</p>
+    </section>
+  );
+}
 function Help({ children }: { children: React.ReactNode }) { return <p className="text-xs text-slate-600">{children}</p>; }
 function Section({ title, status, tone, intro, children }: { title: string; status: string; tone: BadgeTone; intro: string; children: React.ReactNode }) {
   return (
@@ -205,10 +229,7 @@ export default function CommercialSettingsPage() {
               <Button type="button" variant="secondary" onClick={() => setBands((x) => [...x.slice(0, -1), { to: String(Number(x.length > 1 ? x[x.length - 2].to : 0) + 1), rate: x[x.length - 1]?.rate ?? "0" }, x[x.length - 1] ?? { to: "", rate: "0" }])}>Add a band</Button>
               <div className="max-w-xs"><Field label="No automatic price for a cost older than (years)" help="Whole years. This is the maximum historical cost age."><input className={inputCls} inputMode="numeric" value={maxAge} onChange={(e) => setMaxAge(e.target.value)} /></Field></div>
             </Section>
-            <section className="rounded-lg border border-slate-200 bg-slate-50 p-4" data-testid="activation-help">
-              <h3 className="text-sm font-semibold text-slate-900">Activation status</h3>
-              <p className="mt-1 text-sm text-slate-700">Activation is controlled by the deployment (NEWQUIP_AUTO_PRICING and NEWQUIP_AUTO_PRICING_FROM). It cannot be switched on or off from this page, and saving these settings does not activate automatic pricing.</p>
-            </section>
+            <ActivationCard a={view.activation ?? null} />
             <Button type="button" onClick={() => void save()} loading={busy}>Save as a new version</Button>
           </div>
         </Panel>
