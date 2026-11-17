@@ -9,6 +9,7 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { missingProfileFields, type CompanyProfile } from "@/lib/newquip-quotes/company-profile";
 import { defaultDeps, documentsAvailable, issueQuotationDocument, latestProfile, previewQuotationDocument, saveProfile } from "@/lib/newquip-quotes/document-store";
 import { sendEmail } from "@/lib/email/resend";
+import { sendQuotationToCustomer } from "@/lib/newquip-quotes/send-store";
 import { amountConsistent, buildTestPdfEmail, recipientAllowed, testPdfEmailEnabled } from "@/lib/newquip-quotes/test-pdf-email";
 import { latestRequestFor } from "@/lib/approvals/approval-store";
 import { resolveProjectSchedule } from "@/lib/newquip-quotes/schedule-resolve";
@@ -82,5 +83,34 @@ export async function sendTestPdfToRepAction(quoteId: string): Promise<DocumentA
     await auditActor(db, a, { action: "newquip.quote_test_pdf_emailed", summary: `Emailed the TEST-ONLY quotation PDF to the assigned Rep (not issued, not sent to a customer)`, detail: { quoteId, accepted: sent.ok, to: r.repEmail, ...(sent.ok ? {} : { error: (sent.error ?? "").slice(0, 120) }) } }).catch(() => undefined);
     if (!sent.ok) throw new Error(`The email provider did not accept the message: ${(sent.error ?? "unknown error").slice(0, 120)}`);
     return { ok: true, data: { sentTo: r.repEmail } };
+  } catch (e) { return { ok: false, error: errText(e) }; }
+}
+
+/** The one mailbox that acts as "the customer" in UAT. Must be on the existing authorised test-email allowlist; the restricted-environment email policy enforces it again at send. */
+const UAT_TEST_CUSTOMER_DEFAULT = "anton@sparkconsulting.co.za";
+
+/**
+ * UAT only: issue the quotation as a TEST document (watermarked, content.testOnly, lenient company-details rule) and send it through the EXISTING customer send path to the test
+ * mailbox acting as the customer. The email carries the existing personal Accept / Decline / Request-changes links to the public customer portal; nothing is recorded until the
+ * customer confirms on that page. The strict customer-issue gate is untouched for every other caller. No Project, Sales Order, Claim, invoice or Cin7 record is created.
+ */
+export async function sendTestQuotationToCustomerAction(quoteId: string): Promise<DocumentActionResult<{ sentTo: string; status: string }>> {
+  try {
+    if (!testPdfEmailEnabled(process.env)) throw new Error("The test customer email is available only on the UAT deployment.");
+    const a = await authoriseActor();
+    if (!a.roles.has("rep")) throw new Error("Only a Rep sends the quotation to the customer.");
+    if (!/^[0-9a-f-]{36}$/i.test(quoteId)) throw new Error("Quotation not found.");
+    const to = (process.env.NEWQUIP_UAT_TEST_CUSTOMER_EMAIL?.trim() || UAT_TEST_CUSTOMER_DEFAULT).toLowerCase();
+    if (!recipientAllowed(to)) throw new Error("The test customer mailbox is not on the authorised test-email list; nothing was sent.");
+    const db = createServiceRoleClient();
+    const applied = await resolveProjectSchedule(db, a.orgId);
+    const issued = await issueQuotationDocument(db, a.orgId, quoteId, { email: a.email, ownerEmail: ownerEmailOf(a) }, applied.schedule, defaultDeps(db), applied.source, { uatTest: true });
+    if (issued.document.content.testOnly !== true) throw new Error("This quotation already has a real issued document; the test send is only for a TEST document.");
+    const sent = await sendQuotationToCustomer(db, a.orgId, quoteId, { email: a.email, ownerEmail: ownerEmailOf(a) },
+      { documentId: issued.document.id, to: [to], message: "TEST ONLY: UAT walkthrough of the customer acceptance flow.", idempotencyKey: `uat-test-${issued.document.id}-${Date.now()}`, resendOfId: undefined },
+      { storage: defaultDeps(db).storage }, process.env);
+    await auditActor(db, a, { action: "newquip.uat_test_quotation_sent", summary: "UAT: sent the TEST quotation (watermarked) to the test customer mailbox with the customer response links (not a commercial quotation)", detail: { quoteId, documentId: issued.document.id, sendId: sent.send.id, to, status: sent.send.status } }).catch(() => undefined);
+    if (sent.send.status !== "ACCEPTED") throw new Error(`The test email was not accepted by the provider (status ${sent.send.status}${sent.send.last_error ? `: ${sent.send.last_error.slice(0, 120)}` : ""}).`);
+    return { ok: true, data: { sentTo: to, status: sent.send.status } };
   } catch (e) { return { ok: false, error: errText(e) }; }
 }

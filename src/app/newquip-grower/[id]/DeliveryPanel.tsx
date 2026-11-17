@@ -9,7 +9,7 @@ import { Status, statusText } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { formatSast } from "@/lib/approvals/time";
-import { getQuoteDocumentsAction, issueQuoteDocumentAction, sendTestPdfToRepAction, type QuoteDocumentsView } from "../document-actions";
+import { getQuoteDocumentsAction, issueQuoteDocumentAction, sendTestPdfToRepAction, sendTestQuotationToCustomerAction, type QuoteDocumentsView } from "../document-actions";
 import { seedFresh, type BundleSeed } from "./bundle-seed";
 import { getQuoteDeliveryAction, retryQuoteSendAction, sendQuoteToCustomerAction, type DeliveryView } from "../delivery-actions";
 import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/billing-schedule";
@@ -103,6 +103,10 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section, steps, 
               <Button type="button" variant="secondary" data-testid="send-test-pdf-to-rep" loading={busy === "Sending the test PDF"} disabled={busy !== null}
                 onClick={() => void run(() => sendTestPdfToRepAction(quoteId), "TEST-ONLY PDF emailed to the assigned Rep. It was not issued or sent to a customer.", "Sending the test PDF")}>
                 Send test PDF to Rep
+              </Button>
+              <Button type="button" variant="secondary" className="ml-2" data-testid="send-test-quotation-to-customer" loading={busy === "Sending the TEST quotation to the test customer"} disabled={busy !== null}
+                onClick={() => void run(() => sendTestQuotationToCustomerAction(quoteId), "TEST quotation sent to the test customer mailbox with Accept / Decline links. It is a UAT test document, not a commercial quotation.", "Sending the TEST quotation to the test customer")}>
+                Send TEST quotation to customer
               </Button>
               <span className="ml-2 text-xs text-slate-600">UAT only. Emails the watermarked PDF to the quotation&apos;s Rep; nothing is issued or sent to a customer.</span>
             </div>
