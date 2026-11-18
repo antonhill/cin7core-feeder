@@ -143,3 +143,14 @@ describe("pageContainerClass", () => {
     expect(pageContainerClass("data")).toContain("py-8");
   });
 });
+
+describe("NewQuip official logo", () => {
+  it("shows the supplied logo file in the header with its proportions", () => {
+    renderAt("/approvals", { isSuperAdmin: true });
+    const img = screen.getByTestId("newquip-logo") as HTMLImageElement;
+    expect(img.getAttribute("src")).toBe("/marketing/newquip/newquip-logo.png");
+    expect(img.getAttribute("alt")).toBe("NewQuip");
+    expect(img.getAttribute("width")).toBe("365");
+    expect(img.getAttribute("height")).toBe("78");
+  });
+});

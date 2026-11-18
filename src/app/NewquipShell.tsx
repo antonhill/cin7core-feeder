@@ -53,7 +53,10 @@ export function NewquipShell({
               <span aria-hidden className="h-5 w-px bg-slate-200" />
             </>
           )}
-          <span className="text-sm font-semibold tracking-tight text-slate-900">NewQuip</span>
+          <Link href={links[0]?.href ?? "/newquip-grower"} aria-label="NewQuip home" className="inline-flex shrink-0 items-center">
+            {/* eslint-disable-next-line @next/next/no-img-element -- the supplied logo file, shown as-is (365x78) with its proportions preserved */}
+            <img src="/marketing/newquip/newquip-logo.png" alt="NewQuip" width={365} height={78} className="h-8 w-auto md:h-9" data-testid="newquip-logo" />
+          </Link>
           <nav aria-label="NewQuip" className="order-last -mx-2 flex w-full items-center gap-1 overflow-x-auto md:order-none md:mx-0 md:w-auto">
             {links.map((l) => {
               const active = isWorkspaceLinkActive(pathname, l);
