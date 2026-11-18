@@ -1086,10 +1086,10 @@ export default function QuoteEditorPage() {
           <StepPanel railId="s1" stepId="equipment" number={3} title={STAGE1_STEP_LABEL.equipment} current={stepId === "equipment"} showAll={showAllSteps} locked={lockedFor("equipment")} className={stepPanelCls}>
             <div className="col-span-full flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
               <p className="text-sm text-slate-700 max-sm:hidden">Choose the system and options, then enter the quantities and charges.</p>
-              {stage1Edit && view.viewer.previewTools && (
+              {stage1Edit && view.viewer.demoPreset && (
                 <div className="flex flex-wrap items-center gap-2">
                   <details className="text-xs text-slate-600"><summary className="inline-flex min-h-11 cursor-pointer items-center font-medium text-indigo-700 underline">What does this fill?</summary>
-                    <p className="max-w-xl">“Load UAT demonstration preset” fills {RECOMMENDED_CONFIG_FILLS} These are test values, not approved engineering quantities. Nothing is saved until you press Save draft.</p></details>
+                    <p className="max-w-xl">“Load UAT demonstration preset” fills {RECOMMENDED_CONFIG_FILLS}. These are test values, not approved engineering quantities. Nothing is saved until you press Save draft.</p></details>
                   <span className="rounded bg-amber-100 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-amber-900" data-testid="uat-demo-badge">UAT DEMONSTRATION</span>
                   <Button variant="secondary" size="sm" className="min-h-11" onClick={() => askSample("recommended")}>Load UAT demonstration preset</Button>
                 </div>

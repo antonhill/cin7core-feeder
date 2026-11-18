@@ -51,7 +51,7 @@ export async function prepareBudget(db: Db, orgId: string, quoteId: string, env:
   const hard = profileProblems(profile?.profile, { lenient: true });
   if (!profile || hard.length) throw new Error(`The budget quotation cannot be built: ${profile ? describeProfileProblems(hard).join("; ") : "no company details have been saved"}.`);
   // BUDGET evaluation: cost withheld (selling prices only) and evidence-complete packages priced PROVISIONALLY. Nothing is confirmed and no other flow uses this option.
-  const ev = evaluateDraft(q.draft, { ...evaluationContext(true), provisionalPackages: true });
+  const ev = evaluateDraft(q.draft, { ...evaluationContext(true), provisionalPackages: true, budgetAsOf: today() });
   if (!ev.budget) throw new Error("The quotation has no valid configuration yet (check the room measurements); there is nothing to put in a budget quotation.");
   const snap = (await latestSnapshot(db, orgId, quoteId))?.snapshot ?? null;
   const contact = snap?.chosenContact ? { name: snap.chosenContact.name, email: snap.chosenContact.email } : null;
@@ -155,7 +155,7 @@ export async function sendBudgetQuotation(
   // INTERNAL snapshot (the saved draft WITH its pricing, the cost-visible evaluation and the provisional explanations) goes to the private, service-role-only store. The audit row holds only its path and hash:
   // no supplier cost, rate, freight or markup is ever put in the audit log. It lets the budget be compared line by line with the final approved quotation (see budget-variance.ts).
   if (!deps.storage) throw new Error("The internal budget snapshot store is unavailable; nothing was sent.");
-  const internalEval = evaluateDraft(prep.draft, { ...evaluationContext(false), provisionalPackages: true }).budget;
+  const internalEval = evaluateDraft(prep.draft, { ...evaluationContext(false), provisionalPackages: true, budgetAsOf: deps.today() }).budget;
   const provisionalKeys = prep.model.equipment.filter((l) => l.status === "provisional").map((l) => internalEval?.lines.find((x) => x.label === l.label)?.itemKey).filter((k): k is NonNullable<typeof k> => !!k);
   const internal = { schema: 1, quoteId, quoteRef: prep.quoteRef, draftHash: prep.draftHash, savedAt: deps.now(), draft: prep.draft, lines: (internalEval?.lines ?? []).filter((l) => l.status !== "not_selected").map((l) => ({ itemKey: l.itemKey, status: l.status, quantity: l.quantity, unitPrice: l.unitPrice, revenueExTax: l.revenueExTax, provisional: !!l.provisional })), subtotalExTax: internalEval?.totals.subtotalExTax ?? null, provisional: provisionalInternalOf(prep.draft, provisionalKeys) };
   const internalBytes = new TextEncoder().encode(JSON.stringify(internal));

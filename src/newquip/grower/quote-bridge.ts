@@ -324,7 +324,7 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
     const explicit = opts.confirmedMappings?.[g.itemKey] ?? null;
     const defaulted = !explicit && isCatalogueDefaultItem(g.itemKey) ? expected : null;
     // BUDGET only: with no Estimator confirmation, the door / an optional item may use a NewQuip-APPROVED default product or dated rate (never confirms anything; the line is provisional).
-    const basis = !explicit && !defaulted && opts.budgetBasis && (g.itemKey === "pvc_door" || isOptionalItemKey(g.itemKey)) ? usableBudgetBasis(opts.budgetBasis, g.itemKey, opts.budgetAsOf ?? new Date().toISOString().slice(0, 10)) : null;
+    const basis = !explicit && !defaulted && !validResolution(resolution) && opts.budgetBasis ? usableBudgetBasis(opts.budgetBasis, g.itemKey, opts.budgetAsOf ?? new Date().toISOString().slice(0, 10)) : null;
     if (basis?.kind === "rate") {
       const priced = budgetRateSellingPrice(basis, opts.budgetMarkupBps ?? null, opts.budgetAsOf ?? new Date().toISOString().slice(0, 10));
       if (priced) {
@@ -334,6 +334,7 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
     }
     const basisSku = basis?.kind === "default_sku" ? basis.sku : null;
     const confirmed = explicit ?? defaulted ?? basisSku;
+    const mapSource = defaulted ? "catalogue_default" : basisSku ? "budget_default" : "estimator";
     // pvc_door and the optional additional elements have no recommended SKU: the estimator's confirmed Cin7 choice IS the SKU. Everything else must be the expected one.
     // An item's expected product, or one of the alternatives NewQuip said are included for that SAME item (an Estimator choice: it replaces the item's product, it is never an extra line).
     const isAlternative = !!confirmed && alternativesFor(g.itemKey).some((a) => a.sku === confirmed);
@@ -344,11 +345,11 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
     }
     const r = opts.priceSource.priceFor(sku, opts.quoteType);
     if (r.status === "supplier_quote_required") {
-      fail({ ...emptyLine(g), sku, status: "supplier_quote_required", reason: r.reason, mappingSource: defaulted ? "catalogue_default" : "estimator" }, `${g.label}: ${sku} supplier quote required`);
+      fail({ ...emptyLine(g), sku, status: "supplier_quote_required", reason: r.reason, mappingSource: mapSource }, `${g.label}: ${sku} supplier quote required`);
       continue;
     }
     if (r.status === "not_in_source") {
-      fail({ ...emptyLine(g), sku, status: "not_in_price_source", reason: r.reason, mappingSource: defaulted ? "catalogue_default" : "estimator" }, `${g.label}: ${sku} has no price in the price source`);
+      fail({ ...emptyLine(g), sku, status: "not_in_price_source", reason: r.reason, mappingSource: mapSource }, `${g.label}: ${sku} has no price in the price source`);
       continue;
     }
     const input: QuoteLineInput = { quantity: g.projectQuantity, unitPrice: r.unitPriceExVat, taxRatePct: sellRate, averageCost: r.landedCostExVat };
@@ -356,7 +357,7 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
     pricedOutputs += 1;
     const line = computeLine(input, { taxInclusive: opts.taxInclusive });
     bridge.push({
-      ...emptyLine(g), sku, status: "priced", reason: basisSku ? "Priced provisionally from the approved Budget default product (not confirmed by the Estimator)." : "Priced from the price source.", pricedBy: "price_source", mappingSource: defaulted ? "catalogue_default" : basisSku ? "budget_default" : "estimator",
+      ...emptyLine(g), sku, status: "priced", reason: basisSku ? "Priced provisionally from the approved Budget default product (not confirmed by the Estimator)." : "Priced from the price source.", pricedBy: "price_source", mappingSource: mapSource,
       ...(basisSku ? { provisional: { plain: BUDGET_BASIS_PLAIN } } : {}),
       unitPrice: r.unitPriceExVat, revenueExTax: line.revenueExTax,
       estimatedCost: withhold ? null : line.estimatedCost, estimatedGP: withhold ? null : line.estimatedGP, marginPct: withhold ? null : line.marginPct,
@@ -366,7 +367,7 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
   // A resolution that was not needed is surfaced, never silently applied.
   for (const [k, r] of Object.entries(opts.priceResolutions ?? {})) {
     const b = bridge.find((l) => l.itemKey === k);
-    if (r && b && b.pricedBy !== "estimator_resolution") warnings.push(`${b.label}: an estimator price resolution was entered but is not needed — the price source prices this line.`);
+    if (r && b && b.pricedBy !== "estimator_resolution" && b.pricedBy !== "budget_rate") warnings.push(`${b.label}: an estimator price resolution was entered but is not needed — the price source prices this line.`);
   }
 
   // Estimator-entered commercial charges (separate lines; uncosted, so they never touch the margin).

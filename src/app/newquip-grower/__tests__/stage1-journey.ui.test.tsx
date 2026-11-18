@@ -398,12 +398,17 @@ describe("server-derived previewTools flag", () => {
       const r = await actions.getGrowerQuoteAction(id);
       expect(r.data?.viewer.previewTools, env).toBe(want);
     }
-    // newquip-uat is a Production deployment that opts in with BOTH explicit settings; one alone does nothing
+    // the whole-quote utility stays Preview-only even on newquip-uat; the PRESET (demoPreset) is a separate flag
+    for (const [env, want] of [["preview", true], ["production", false], ["development", false], ["", false]] as const) {
+      vi.stubEnv("VERCEL_ENV", env);
+      expect((await actions.getGrowerQuoteAction(id)).data?.viewer.demoPreset, `demoPreset ${env}`).toBe(want);
+    }
     vi.stubEnv("VERCEL_ENV", "production");
     vi.stubEnv("NEWQUIP_UAT_DEMO_TOOLS", "true");
-    expect((await actions.getGrowerQuoteAction(id)).data?.viewer.previewTools).toBe(false);
+    expect((await actions.getGrowerQuoteAction(id)).data?.viewer.demoPreset).toBe(false); // one setting alone is not enough
     vi.stubEnv("CIN7_CREDENTIAL_STORE", "uat");
-    expect((await actions.getGrowerQuoteAction(id)).data?.viewer.previewTools).toBe(true);
+    const uat = (await actions.getGrowerQuoteAction(id)).data!.viewer;
+    expect(uat.demoPreset).toBe(true); expect(uat.previewTools).toBe(false); // newquip-uat gets the preset but NOT the whole-quote testing utility
   }, 30000);
 });
 

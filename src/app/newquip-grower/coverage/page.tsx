@@ -6,7 +6,7 @@ import { coverageCounts, FACTS_VALIDATED, type CoverageState, type PriceEvidence
 export const dynamic = "force-dynamic";
 
 const LABEL: Record<CoverageState, string> = { READY: "Ready", PROVISIONAL: "Provisional", RATE_APPROVAL_REQUIRED: "Rate approval required", SPECIFICATION_REQUIRED: "Specification required", NO_PRICE_SOURCE: "No price source" };
-const EVIDENCE: Record<PriceEvidence, string> = { current_cin7: "Current Cin7 cost", approved_rate: "Approved NewQuip rate", historical_only: "Historical ERP only (unverified)", none: "None" };
+const EVIDENCE: Record<PriceEvidence, string> = { current_cin7: "Current Cin7 cost", approved_rate: "Approved NewQuip rate", approved_record: "Approved record (quote or owner confirmation)", historical_only: "Historical ERP only (unverified)", none: "None" };
 const TONE: Record<CoverageState, string> = { READY: "text-emerald-800", PROVISIONAL: "text-amber-800", RATE_APPROVAL_REQUIRED: "text-amber-900", SPECIFICATION_REQUIRED: "text-amber-900", NO_PRICE_SOURCE: "text-slate-700" };
 
 export default async function BudgetCoveragePage() {

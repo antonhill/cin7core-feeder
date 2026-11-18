@@ -9,7 +9,7 @@
 //     and the person who entered the record; the approver may not be the person who entered it. A developer editing the register is therefore never sufficient: the approval reference must point to a
 //     record outside the code, and the pull request that adds the entry needs the named approver's own review (docs/newquip-budget-pricing-coverage.md).
 // Budget evaluations only; a Budget line priced from here is always PROVISIONAL and never confirms a mapping.
-import type { GrowerItemKey } from "./types";
+import { isOptionalItemKey, type GrowerItemKey } from "./types";
 import { escalationFor } from "../pricing/cost-escalation";
 import { OWNER_APPROVED_BANDS, OWNER_APPROVED_MAX_AGE_YEARS } from "../pricing/commercial-settings";
 
@@ -65,9 +65,16 @@ const nonEmpty = (s: unknown): s is string => typeof s === "string" && s.trim().
 const EVIDENCE_KINDS: readonly EvidenceKind[] = ["cin7_supplier_cost", "supplier_quote", "product_owner_confirmation", "erp_historical"];
 const ROLES: readonly ApproverRole[] = ["NewQuip Manager", "Designated commercial approver"];
 
+/** The ONLY items a Budget basis can apply to: the door and the optional equipment (the items that have no recommended product). Core items, the M75 and the packages are never priced from the register. */
+export const budgetBasisEligible = (k: GrowerItemKey): boolean => k === "pvc_door" || isOptionalItemKey(k);
+
+/** Collapse a person's name / email to a comparable form: lower case, no punctuation, single spaces, the part before "@" for an email. */
+const person = (s: string) => s.trim().toLowerCase().split("@")[0].replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+
 /** The reasons an entry cannot be used today. Empty = usable. Pure. */
 export function budgetBasisProblems(e: BudgetBasisEntry, today: string): string[] {
   const p: string[] = [];
+  if (!budgetBasisEligible(e.itemKey)) p.push("this item cannot be priced from the Budget register (only the door and the optional equipment can)");
   if (!nonEmpty(e.specification)) p.push("specification missing");
   if (!nonEmpty(e.unit)) p.push("unit of measure missing");
   if (!DAY.test(e.effectiveFrom) || !DAY.test(e.expiresOn)) p.push("effective / expiry dates missing");
@@ -90,9 +97,10 @@ export function budgetBasisProblems(e: BudgetBasisEntry, today: string): string[
     if (!nonEmpty(ap.approvedBy)) p.push("approver missing");
     if (!ROLES.includes(ap.role)) p.push("approver must be a NewQuip Manager or a designated commercial approver");
     if (!nonEmpty(ap.approvedAt) || Number.isNaN(Date.parse(ap.approvedAt))) p.push("approval time missing");
+    else if (DAY.test(today) && Date.parse(ap.approvedAt) > Date.parse(`${today}T23:59:59Z`)) p.push("approval time is in the future");
     if (!nonEmpty(ap.reference)) p.push("approval reference missing (the approval must be recorded outside the code)");
     if (!nonEmpty(ap.enteredBy)) p.push("the person who entered the record is missing");
-    else if (nonEmpty(ap.approvedBy) && ap.approvedBy.trim().toLowerCase() === ap.enteredBy.trim().toLowerCase()) p.push("the approver cannot be the person who entered the record");
+    else if (nonEmpty(ap.approvedBy) && person(ap.approvedBy) === person(ap.enteredBy)) p.push("the approver cannot be the person who entered the record");
   }
 
   if (e.kind === "default_sku") { if (!nonEmpty(e.sku)) p.push("product code missing"); }
@@ -108,6 +116,7 @@ export function budgetBasisProblems(e: BudgetBasisEntry, today: string): string[
 
 /** The usable entry for an item (the latest approved when several are usable), or null. A default product wins over a rate: a costed product is the better evidence. Pure. */
 export function usableBudgetBasis(register: readonly BudgetBasisEntry[] | undefined, itemKey: GrowerItemKey, today: string): BudgetBasisEntry | null {
+  if (!budgetBasisEligible(itemKey)) return null;
   const ok = (register ?? []).filter((e) => e.itemKey === itemKey && budgetBasisProblems(e, today).length === 0);
   const latest = (xs: BudgetBasisEntry[]) => xs.sort((a, b) => b.approval.approvedAt.localeCompare(a.approval.approvedAt))[0] ?? null;
   return latest(ok.filter((e) => e.kind === "default_sku")) ?? latest(ok.filter((e) => e.kind === "rate"));

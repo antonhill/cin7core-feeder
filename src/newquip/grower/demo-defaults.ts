@@ -145,7 +145,9 @@ export function demoPresetQuantityKeys(draft: QuoteDraft): string[] {
   const demo = (DEMO_DEFAULTS.config.estimatorQuantities ?? {}) as Record<string, number>;
   const cur = (draft.config.estimatorQuantities ?? {}) as Record<string, number>;
   const same = Object.keys(demo).filter((k) => cur[k] === demo[k]);
-  return same.length >= 8 ? same : [];
+  // Most preset values are 1 or 2 (a genuine small order can match those). Only the DISTINCTIVE values (3 or more: feeder, cone fans, cup drinker, pad cooling, slats) show the preset was loaded.
+  const distinctive = same.filter((k) => demo[k] >= 3);
+  return same.length >= 8 && distinctive.length >= 4 ? same : [];
 }
 
 export const DEMO_PRESET_QUANTITY_NOTICE = "Some per-room quantities match the UAT demonstration preset, which is not approved engineering data. Check each quantity before you rely on this Budget.";

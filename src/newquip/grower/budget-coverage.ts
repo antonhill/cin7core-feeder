@@ -11,8 +11,8 @@ export const FACTS_VALIDATED = "2026-11-18";
 export type CoverageState = "READY" | "PROVISIONAL" | "RATE_APPROVAL_REQUIRED" | "SPECIFICATION_REQUIRED" | "NO_PRICE_SOURCE";
 export type PriceSourceKind = "cin7_sku" | "provisional_package" | "approved_rate_table" | "approved_budget_basis" | "rep_entered_price" | "none";
 
-/** Where a price could come from today. "current_cin7" = a live Cin7 supplier cost; "approved_rate" = an approved NewQuip rate table; "historical_only" = only dated ERP data (supporting evidence, NOT a current supplier cost); "none". */
-export type PriceEvidence = "current_cin7" | "approved_rate" | "historical_only" | "none";
+/** Where a price could come from today. "current_cin7" = a live Cin7 supplier cost; "approved_rate" = an approved NewQuip rate table; "approved_record" = a supplier quote or product-owner confirmation recorded with an approval; "historical_only" = only dated ERP data (supporting evidence, NOT a current supplier cost); "none". */
+export type PriceEvidence = "current_cin7" | "approved_rate" | "approved_record" | "historical_only" | "none";
 
 export interface CoverageRow {
   itemKey: GrowerItemKey;
@@ -84,7 +84,7 @@ export function buildBudgetCoverage(register: readonly BudgetBasisEntry[] | unde
     const base = { itemKey: k, label, quantityRule: quantityRuleOf(k) };
     const approvedFlag = f.state === "READY"; // "approved and price-ready" only when priced from approved sources today; a provisional package or an empty register is NOT
     if (entry && f.state !== "READY") {
-      return { ...base, mapping: entry.kind === "default_sku" ? `Approved Budget default product ${entry.sku} (${entry.specification})` : `Approved Budget rate (${entry.specification}, per ${entry.unit})`, priceSource: "approved_budget_basis" as const, priceEvidence: (entry.evidence.kind === "erp_historical" ? "historical_only" : "current_cin7") as PriceEvidence, mechanismSupported: true, approvedPriceReady: true,
+      return { ...base, mapping: entry.kind === "default_sku" ? `Approved Budget default product ${entry.sku} (${entry.specification})` : `Approved Budget rate (${entry.specification}, per ${entry.unit})`, priceSource: "approved_budget_basis" as const, priceEvidence: (entry.evidence.kind === "erp_historical" ? "historical_only" : entry.evidence.kind === "cin7_supplier_cost" ? "current_cin7" : "approved_record") as PriceEvidence, mechanismSupported: true, approvedPriceReady: true,
         evidenceNote: `${entry.evidence.kind.replace(/_/g, " ")} dated ${entry.evidence.asOf}${entry.evidence.verified ? ", verified" : ", NOT verified"}${entry.evidence.uncertainty ? `. Uncertainty: ${entry.evidence.uncertainty}` : ""}. Approved by ${entry.approval.approvedBy} (${entry.approval.role}), reference ${entry.approval.reference}.`, state: "PROVISIONAL" as const, lastValidated: entry.approval.approvedAt.slice(0, 10),
         blocker: "Budget price rests on an approved allowance, not an Estimator-confirmed product.", owner: "Estimator", nextAction: "Confirm the product and price at Estimator review.", repSafe: { status: "provisional" as const, explanation: REP_EXPLANATION.PROVISIONAL.text } };
     }

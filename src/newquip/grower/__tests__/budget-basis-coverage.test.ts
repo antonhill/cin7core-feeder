@@ -63,6 +63,16 @@ describe("the register", () => {
     expect(e({ reference: "" })).toContain("evidence reference missing");
     expect(e({ asOf: "2019-01-01" }).join()).toMatch(/older than the 5-year maximum age/);
   });
+  it("approval time cannot be in the future; self-approval is caught despite initials, punctuation, spacing or an email form", () => {
+    expect(budgetBasisProblems(rate({ itemKey: "controller", approval: approval({ approvedAt: "2026-11-25T08:00:00Z" }) }), TODAY)).toContain("approval time is in the future");
+    for (const [by, entered] of [["Anton  Hill", "anton hill"], ["anton.hill@newquip.co.za", "Anton Hill"], ["Anton Hill", "anton-hill"], ["ANTON HILL ", "anton hill"]] as const) {
+      expect(budgetBasisProblems(rate({ itemKey: "controller", approval: approval({ approvedBy: by, enteredBy: entered }) }), TODAY), `${by} / ${entered}`).toContain("the approver cannot be the person who entered the record");
+    }
+  });
+  it("an entry for an item that is not eligible (a core item, the M75, a package) is refused", () => {
+    for (const k of ["feeder", "flex_auger", "cup_drinker", "bulk_tank"] as const) expect(budgetBasisProblems(rate({ itemKey: k }), TODAY).join(), k).toMatch(/cannot be priced from the Budget register/);
+    expect(usableBudgetBasis([rate({ itemKey: "feeder" })], "feeder", TODAY)).toBeNull();
+  });
   it("a default product wins over a rate; the latest approval wins within a kind", () => {
     const reg = [rate({ itemKey: "pvc_door" }), sku("pvc_door", "A"), { ...sku("pvc_door", "B"), approval: approval({ approvedAt: "2026-11-19T08:00:00Z" }) }];
     expect((usableBudgetBasis(reg, "pvc_door", "2026-11-19") as { sku: string }).sku).toBe("B");
@@ -101,7 +111,26 @@ describe("the existing engine, Budget evaluation only", () => {
     const d = draft(); d.estimator.confirmedMappings = { ...d.estimator.confirmedMappings, pvc_door: "NQ2161" };
     expect(line(d, "pvc_door", { provisionalPackages: true, budgetBasis: [sku("pvc_door", "OTHER")], budgetAsOf: TODAY })).toMatchObject({ sku: "NQ2161", mappingSource: "estimator" });
   });
+  it("an Estimator's valid manual price resolution beats the register (and no false 'not needed' warning appears for a budget-rate line)", () => {
+    const d = draft(); d.estimator.priceResolutions = { ...d.estimator.priceResolutions, pvc_door: { at: "t", by: "x", reason: "Estimator price", unitPriceExVat: 3000 } as never };
+    const l = line(d, "pvc_door", { provisionalPackages: true, budgetBasis: [rate({ itemKey: "pvc_door", amount: 7000 })], budgetAsOf: TODAY });
+    expect(l).toMatchObject({ pricedBy: "estimator_resolution", unitPrice: 3000 });
+    const w = evaluateDraft(draft(), ctx({ provisionalPackages: true, budgetBasis: [rate({ itemKey: "controller" })], budgetAsOf: TODAY })).budget!.warnings.join(" ");
+    expect(w).not.toMatch(/resolution was entered/);
+  });
+  it("a default product that cannot be priced is labelled as coming from the register, never as an Estimator confirmation", () => {
+    const l = line(draft(), "controller", { provisionalPackages: true, budgetBasis: [sku("controller", "HO05084000")], budgetAsOf: TODAY });
+    expect(l.status).not.toBe("priced"); expect(l.mappingSource).toBe("budget_default");
+  });
+  it("the cost-rate age follows the supplied date, not the server clock", () => {
+    const entry = rate({ itemKey: "controller", basis: "cost", evidence: evidence({ asOf: "2024-11-18" }), effectiveFrom: "2024-11-20", expiresOn: "2030-12-31", approval: approval({ approvedAt: "2024-11-20T08:00:00Z" }) });
+    expect(line(draft(), "controller", { provisionalPackages: true, budgetBasis: [entry], budgetAsOf: "2026-11-18" }).unitPrice).toBe(13198.8);
+    expect(line(draft(), "controller", { provisionalPackages: true, budgetBasis: [entry], budgetAsOf: "2025-11-18" }).unitPrice).toBe(12000); // a year old: still the 0% band
+  });
   it("a register entry cannot price a core item or any item key it was not approved for", () => {
+    const core = line(draft(), "feeder", { provisionalPackages: true, budgetBasis: [rate({ itemKey: "feeder", amount: 1 })], budgetAsOf: TODAY });
+    expect(core.pricedBy).not.toBe("budget_rate");
+    expect(line(draft(), "flex_auger", { provisionalPackages: true, budgetBasis: [rate({ itemKey: "flex_auger", amount: 1 })], budgetAsOf: TODAY }).pricedBy).not.toBe("budget_rate");
     expect(line(draft(), "pvc_door", { provisionalPackages: true, budgetBasis: [rate({ itemKey: "controller" })], budgetAsOf: TODAY }).status).toBe("unmapped");
   });
 });
@@ -133,6 +162,17 @@ describe("the coverage view: every selectable category, exact blocker, owner and
   });
   it("the Rep-safe part carries only a status and a customer-appropriate sentence: no cost, rate, product code or margin", () => {
     for (const r of rows) expect(JSON.stringify(r.repSafe), r.itemKey).not.toMatch(/R\s?\d|cost|rate\b|markup|margin|freight|\b[A-Z]{2,}\d{3,}\b/i);
+  });
+  it("coverage agrees with the engine: an entry for an item the engine will not price (M75, a package, a core item) never makes it approved-ready", () => {
+    for (const k of ["flex_auger", "cup_drinker", "led_light", "feeder"] as const) {
+      const r = buildBudgetCoverage([rate({ itemKey: k })], TODAY).find((x) => x.itemKey === k)!;
+      expect(r.approvedPriceReady, k).toBe(k === "feeder"); // the core item was already READY; the others stay as they were
+      expect(r.priceSource, k).not.toBe("approved_budget_basis");
+    }
+  });
+  it("unverified or non-Cin7 evidence is never labelled a current Cin7 cost", () => {
+    const q = buildBudgetCoverage([rate({ itemKey: "controller", evidence: evidence({ kind: "supplier_quote", verified: false, uncertainty: "verbal quote" }) })], TODAY).find((r) => r.itemKey === "controller")!;
+    expect(q.priceEvidence).toBe("approved_record"); expect(q.evidenceNote).toMatch(/NOT verified/);
   });
   it("an approved usable entry moves the category to PROVISIONAL and approved-ready, keeping its evidence date and uncertainty visible INTERNALLY; an expired or self-approved one leaves it blocked and says why", () => {
     const ok = buildBudgetCoverage([rate({ itemKey: "controller", basis: "cost", evidence: evidence({ kind: "erp_historical", verified: false, uncertainty: "ERP report of unknown origin", asOf: "2025-11-20" }) })], TODAY).find((r) => r.itemKey === "controller")!;

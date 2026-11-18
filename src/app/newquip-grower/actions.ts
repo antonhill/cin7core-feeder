@@ -124,7 +124,7 @@ export interface QuoteView {
   confirmationEffect?: ConfirmationEffectView;
   quote: QuoteRecord;
   evaluation: QuoteEvaluation;
-  viewer: { roles: QuoteRole[]; canViewCommercials: boolean; /** SERVER-derived: true only on a Vercel Preview deployment (VERCEL_ENV === "preview"); never true in Production. Gates the whole-quote testing utility. */ previewTools: boolean };
+  viewer: { roles: QuoteRole[]; canViewCommercials: boolean; /** SERVER-derived: true only on a Vercel Preview deployment (VERCEL_ENV === "preview"); never true in Production. Gates the whole-quote testing utility. */ previewTools: boolean; /** SERVER-derived: the UAT demonstration PRESET is offered (a Preview deployment, or newquip-uat with its two explicit settings; never Toolbox Production). Separate from previewTools so the whole-quote utility stays Preview-only. */ demoPreset: boolean };
   /** ESTIMATOR_COSTING_COMPLETE. Present ONLY for a caller who may see cost (Estimator / Manager / observer with cost); never in a Rep payload. `reason` is the first open reason (counts / labels / SKUs, never a value). */
   costing?: { complete: boolean; reason: string | null; /** Present when the Estimator's authorised accepted-incomplete-cost exception is what makes costing pass: a distinct state, not "complete". */ acceptedIncomplete?: { reason: string; by: string; at: string } };
   /**
@@ -190,7 +190,7 @@ async function view(db: ReturnType<typeof createServiceRoleClient>, quote: Quote
     evaluation,
     ...(budgetPricing ? { budgetPricing } : {}),
     ...(indicativeComparison ? { indicativeComparison } : {}),
-    viewer: { roles: [...a.roles], canViewCommercials, previewTools: demoToolsEnabled() },
+    viewer: { roles: [...a.roles], canViewCommercials, previewTools: process.env.VERCEL_ENV === "preview", demoPreset: demoToolsEnabled() },
     ...(isPocQuote(quote.draft, a.orgId) ? { poc: true } : {}),
     ...(costing ? { costing } : {}),
     ...(manualPriceEvidence && manualPriceEvidence.length ? { manualPriceEvidence } : {}),

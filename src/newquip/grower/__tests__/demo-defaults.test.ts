@@ -182,5 +182,7 @@ describe("demonstration quantities are recognised without being treated as rules
     expect(demoPresetQuantityKeys({ ...d, config: { ...d.config, estimatorQuantities: { cup_drinker: 54 } } })).toEqual([]);
     expect(demoPresetQuantityKeys({ ...d, config: { ...d.config, estimatorQuantities: { ...DEMO_DEFAULTS.config.estimatorQuantities } } }).length).toBeGreaterThanOrEqual(8);
     expect(demoPresetQuantityKeys({ ...d, config: { ...d.config, estimatorQuantities: { feeder: 18, pvc_door: 4, controller: 1, cone_fans: 4, pad_cooling: 1, control_panel: 1 } } })).toEqual([]); // NQ-Q-0003-like manual entries
+    // a genuine small order whose quantities happen to be 1s and 2s (8 matches) but no distinctive preset value is NOT flagged
+    expect(demoPresetQuantityKeys({ ...d, config: { ...d.config, estimatorQuantities: { bulk_tank: 1, flex_auger: 1, pvc_door: 2, controller: 2, manure_plug: 2, control_panel: 2, silo_weighing: 2, emergency_windows: 2, feeder: 30 } } })).toEqual([]);
   });
 });
