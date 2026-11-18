@@ -46,8 +46,8 @@ export function budgetPricingOf(budget: BudgetQuote): BudgetPricingView {
 }
 
 /** The note under the "Hand-off figure": it says the figure leaves lines out ONLY when provisional or unpriced lines actually remain. */
-export function handoffFigureNote(view: Pick<BudgetPricingView, "counts">): string {
-  return view.counts.provisional + view.counts.unpriced > 0
+export function handoffFigureNote(view: Pick<BudgetPricingView, "counts" | "unpricedItems" | "incomplete">): string {
+  return view.counts.provisional + view.counts.unpriced > 0 || view.unpricedItems.length > 0 || view.incomplete
     ? "Leaves out provisional and unpriced lines. This is the amount the customer confirms at hand-off."
     : "No provisional or unpriced lines remain, so this matches the budget estimate. This is the amount the customer confirms at hand-off.";
 }

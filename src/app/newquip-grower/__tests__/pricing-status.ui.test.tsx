@@ -53,11 +53,15 @@ describe("PricingStatusSummary", () => {
 import { handoffFigureNote } from "@/newquip/grower/budget-pricing";
 describe("handoffFigureNote", () => {
   it("says lines are left out only when provisional or unpriced lines remain", () => {
-    expect(handoffFigureNote({ counts: { priced: 8, provisional: 2, unpriced: 0 } })).toMatch(/^Leaves out provisional and unpriced lines/);
-    expect(handoffFigureNote({ counts: { priced: 8, provisional: 0, unpriced: 1 } })).toMatch(/^Leaves out/);
+    expect(handoffFigureNote({ counts: { priced: 8, provisional: 2, unpriced: 0 }, unpricedItems: [], incomplete: false })).toMatch(/^Leaves out provisional and unpriced lines/);
+    expect(handoffFigureNote({ counts: { priced: 8, provisional: 0, unpriced: 1 }, unpricedItems: ["x"], incomplete: true })).toMatch(/^Leaves out/);
+  });
+  it("an unpriced required charge (not an equipment line) or any other open blocker still counts as left out", () => {
+    expect(handoffFigureNote({ counts: { priced: 8, provisional: 0, unpriced: 0 }, unpricedItems: ["Installation"], incomplete: true })).toMatch(/^Leaves out/);
+    expect(handoffFigureNote({ counts: { priced: 8, provisional: 0, unpriced: 0 }, unpricedItems: [], incomplete: true })).toMatch(/^Leaves out/);
   });
   it("with none remaining it states the figure matches the budget estimate and does not claim anything is left out", () => {
-    const n = handoffFigureNote({ counts: { priced: 8, provisional: 0, unpriced: 0 } });
+    const n = handoffFigureNote({ counts: { priced: 8, provisional: 0, unpriced: 0 }, unpricedItems: [], incomplete: false });
     expect(n).toMatch(/matches the budget estimate/); expect(n).not.toMatch(/Leaves out/);
   });
 });

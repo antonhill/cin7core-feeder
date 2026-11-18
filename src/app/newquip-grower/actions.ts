@@ -428,9 +428,8 @@ export async function sendGrowerQuoteToEstimatorAction(quoteId: string, confirme
     // The estimator stage opens now: the policy's named estimator (or every estimator) is notified in the app and by email.
     if (await stagedAvailable(db)) await resyncQuoteApprovals(db, ctxOf(a), quoteId);
     // Link the acknowledgement to the Budget snapshot the customer was sent (read-only; never blocks the hand-off, never alters the confirmed amount or any baseline).
-    const handed = await loadQuote(db, a.orgId, quoteId);
     let currentBudget: import("@/newquip/grower/budget-pricing").BudgetPricingView | undefined;
-    try { const bb = handed ? evaluateDraft(handed.draft, { ...evaluationContext(true), provisionalPackages: true }).budget : null; currentBudget = bb ? budgetPricingOf(bb) : undefined; } catch { currentBudget = undefined; }
+    try { const handed = await loadQuote(db, a.orgId, quoteId); const bb = handed ? evaluateDraft(handed.draft, { ...evaluationContext(true), provisionalPackages: true }).budget : null; currentBudget = bb ? budgetPricingOf(bb) : undefined; } catch { currentBudget = undefined; }
     const budgetSnapshotLink = await budgetSnapshotLinkFor(db, a.orgId, quoteId, currentBudget);
     return { confirmationContact: { source: resolved.source, name: resolved.name, email: resolved.email, reason: resolved.reason, origin: resolved.origin }, amountCents: confirmedAmountCents, confirmedBy: a.email, deliveryContactUnchanged: snap?.snapshot.chosenContact?.email ?? null, budgetSnapshotLink };
   });

@@ -93,12 +93,10 @@ describe("the commercial summary never overstates the total or the margin", () =
     expect(s.marginLabel).toBe("none");
     expect(s.blockers).toContain("7 tasks open");
   });
-  it("incomplete for a reason other than an unpriced line (every line priced): the label says the lines are priced and review is open, never a 'partial' total", () => {
+  it("every line priced but the budget still incomplete (e.g. a required charge missing): still a PARTIAL total, never 'priced total'", () => {
     const priced = { lines: [line({ itemKey: "concrete_slat", label: "Slats", sku: "NQ1161", revenueExTax: 100 })], rows: [row("NQ1161", "unverified")], incomplete: true, subtotal: 100 };
     const s = buildWorkspace({ ...test12(priced), facts: facts({ confirmedCents: 10_000 }) }).summary;
-    expect(s.totalKind).toBe("partial");
-    expect(s.totalLabel).toBe("PRICED TOTAL, REVIEW OPEN, EX VAT");
-    expect(s.totalNote).toMatch(/Every line has a price/);
+    expect(s.totalLabel).toBe("PARTIAL TOTAL, EX VAT");
   });
   it("all lines priced but a different amount: calculated, not confirmed; equal amount: confirmed by the Rep, still not 'contract value'", () => {
     const done = { lines: [line({ itemKey: "concrete_slat", label: "Slats", sku: "NQ1161", revenueExTax: 100 })], rows: [row("NQ1161", "unverified")], incomplete: false, subtotal: 100 };
