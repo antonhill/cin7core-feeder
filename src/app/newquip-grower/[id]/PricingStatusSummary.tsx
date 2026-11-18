@@ -11,13 +11,15 @@ const ok = "rounded-md border border-emerald-300 bg-emerald-50 p-3 text-sm text-
 export function PricingStatusSummary({ view }: { view: BudgetPricingView | undefined }) {
   if (!view) return null;
   const { counts } = view;
-  const unpriced = counts.unpriced > 0 || view.unpricedItems.length > 0;
+  const unpriced = view.incomplete; // no total is available (an unpriced item, or any other open blocker)
   const allPriced = !unpriced && counts.provisional === 0;
   const headline = unpriced
-    ? `Priced subtotal ${fmtZar(view.subtotalExVat)} ex VAT. A total is not available: ${view.unpricedItems.length} item${view.unpricedItems.length === 1 ? " has" : "s have"} no price yet.`
+    ? view.unpricedItems.length > 0
+      ? `Priced subtotal ${fmtZar(view.subtotalExVat)} ex VAT. A total is not available: ${view.unpricedItems.length} item${view.unpricedItems.length === 1 ? " has" : "s have"} no price yet.`
+      : `Priced subtotal ${fmtZar(view.subtotalExVat)} ex VAT. A total is not available while pricing is still under review.`
     : counts.provisional > 0
-      ? `Provisional estimate ${fmtZar(view.estimatedTotalExVat ?? view.subtotalExVat)} ex VAT (${fmtZar(view.estimatedTotalIncVat ?? 0)} inc VAT). ${counts.provisional} line${counts.provisional === 1 ? " is" : "s are"} provisional and most likely to change.`
-      : `Estimated total ${fmtZar(view.estimatedTotalExVat ?? view.subtotalExVat)} ex VAT. Every line is priced; the Estimator still verifies it.`;
+      ? `Provisional estimate ${fmtZar(view.estimatedTotalExVat as number)} ex VAT (${fmtZar(view.estimatedTotalIncVat as number)} inc VAT). ${counts.provisional} line${counts.provisional === 1 ? " is" : "s are"} provisional and most likely to change.`
+      : `Estimated total ${fmtZar(view.estimatedTotalExVat as number)} ex VAT. Every line is priced; the Estimator still verifies it.`;
   return (
     <div className={allPriced ? ok : box} data-testid="pricing-status" data-state={unpriced ? "incomplete" : counts.provisional > 0 ? "provisional" : "priced"}>
       <p className="font-semibold" data-testid="pricing-status-headline">{headline}</p>

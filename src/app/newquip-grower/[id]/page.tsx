@@ -13,7 +13,6 @@ import { LongRunningStatus } from "@/components/ui/LongRunningStatus";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { SOLUTION_BUILDER_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
-import { IncompleteEstimateBanner } from "./IncompleteEstimateBanner";
 import { BudgetQuotationPanel } from "./BudgetQuotationPanel";
 import { PricingStatusSummary } from "./PricingStatusSummary";
 import { incompleteEstimateOf } from "@/newquip/grower/incomplete-estimate";

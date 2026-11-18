@@ -87,6 +87,11 @@ describe("NQ-Q-0002 regression fixture (read-only)", () => {
     const dr = lineOf(x, true, "cup_drinker");
     expect(dr.status).toBe("priced"); expect(dr.provisional).toBeUndefined();
   });
+  it("an incomplete budget for a non-line reason (priced line with a missing override reason) has incomplete=true and NO total", () => {
+    const x = structuredClone(d); x.config.quantityOverrideReasons = { led_light: "", feed_saver_mat: "Test" };
+    const v = budgetPricingOf(evaluateDraft(x, ctx(true)).budget!);
+    expect(v.incomplete).toBe(true); expect(v.estimatedTotalExVat).toBeNull(); expect(v.estimatedTotalIncVat).toBeNull();
+  });
   it("a COMPLETE budget (door mapped and costed) shows an estimated total, labelled provisional while provisional lines remain", () => {
     const x = structuredClone(d); x.estimator.confirmedMappings = { pvc_door: "NQ3444" } as never; (x.estimator.pricing!.skus as Record<string, unknown>).NQ3444 = S("ZAR", 90000000000);
     const v = budgetPricingOf(evaluateDraft(x, ctx(true)).budget!);
@@ -141,6 +146,13 @@ describe("variance attribution (existing engine, step by step; steps sum exactly
     expect(r.totals.byStep.other).toBeCloseTo(5000, 2);
     expect(sum(r)).toBeCloseTo(r.totals.deltaExVat, 2);
     expect(r.lines.every((l) => Math.abs(VARIANCE_STEPS.reduce((a, s) => a + l.byStep[s], 0) - l.deltaExVat) < 0.02)).toBe(true);
+  });
+  it("a Rep draft with NO pricing compared with a supplier-priced final reports the basis change as SUPPLIER COSTS, not 'other'", () => {
+    const rep = structuredClone(budget); delete rep.estimator.pricing;
+    const r = attributeVariance(rep, final(), { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: false });
+    expect(r.totals.byStep.supplier_costs).not.toBe(0);
+    expect(r.totals.byStep.other).toBeCloseTo(0, 2);
+    expect(sum(r)).toBeCloseTo(r.totals.deltaExVat, 2);
   });
   it("identical drafts have no variance", () => expect(run(structuredClone(budget)).totals.deltaExVat).toBe(0));
 });

@@ -18,6 +18,8 @@ export interface BudgetPricingView {
   estimatedTotalIncVat: number | null;
   /** "verified-basis": no provisional lines. "provisional": at least one. null while a total is not available. */
   totalBasis: "budget" | "provisional" | null;
+  /** True whenever no total is available: an unpriced line or charge, OR any other open blocker (e.g. a missing override reason). Never present a total while true. */
+  incomplete: boolean;
 }
 
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -28,14 +30,17 @@ export function budgetPricingOf(budget: BudgetQuote): BudgetPricingView {
     return { itemKey: l.itemKey, label: l.label, quantity: l.quantity, state: "unpriced", amountExVat: null, note: neutralLineReason(l.status) } as BudgetPricingLine;
   });
   const unpricedCharges = budget.charges.filter((c) => c.status === "required").map((c) => c.label);
-  const chargesTotal = budget.charges.reduce((a, c) => a + (c.amountExTax ?? 0), 0);
+  // Same rule as the Budget document: Commissioning is combined with Installation, so it is not counted while the Installation amount is still to be entered.
+  const installEntered = budget.charges.some((c) => c.key === "installation" && c.status === "entered");
+  const chargesTotal = budget.charges.filter((c) => c.key !== "commissioning" || installEntered).reduce((a, c) => a + (c.amountExTax ?? 0), 0);
   const counts = { priced: lines.filter((l) => l.state === "priced").length, provisional: lines.filter((l) => l.state === "provisional").length, unpriced: lines.filter((l) => l.state === "unpriced").length };
   const subtotal = round2(lines.reduce((a, l) => a + (l.amountExVat ?? 0), 0) + chargesTotal);
   const unpricedItems = [...lines.filter((l) => l.state === "unpriced").map((l) => `${l.label}${l.quantity != null ? ` × ${l.quantity}` : ""}`), ...unpricedCharges];
   const complete = unpricedItems.length === 0 && budget.state === "complete";
-  const ratePct = budget.totals.taxTotal > 0 && budget.totals.subtotalExTax > 0 ? (budget.totals.taxTotal / budget.totals.subtotalExTax) * 100 : 15;
+  const ratePct = round2(budget.totals.taxTotal > 0 && budget.totals.subtotalExTax > 0 ? (budget.totals.taxTotal / budget.totals.subtotalExTax) * 100 : 15);
+  const vat = round2(subtotal * (ratePct / 100));
   return {
     lines, counts, subtotalExVat: subtotal, provisionalValueExVat: round2(lines.filter((l) => l.state === "provisional").reduce((a, l) => a + (l.amountExVat ?? 0), 0)), unpricedItems,
-    estimatedTotalExVat: complete ? subtotal : null, estimatedTotalIncVat: complete ? round2(subtotal * (1 + ratePct / 100)) : null, totalBasis: complete ? (counts.provisional > 0 ? "provisional" : "budget") : null,
+    estimatedTotalExVat: complete ? subtotal : null, estimatedTotalIncVat: complete ? round2(subtotal + vat) : null, incomplete: !complete, totalBasis: complete ? (counts.provisional > 0 ? "provisional" : "budget") : null,
   };
 }

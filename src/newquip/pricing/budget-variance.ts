@@ -36,7 +36,10 @@ const withPricing = (d: QuoteDraft, f: (p: EstimatorPricing) => void): QuoteDraf
 export function varianceStates(budget: QuoteDraft, final: QuoteDraft): QuoteDraft[] {
   const fp = final.estimator.pricing;
   const s1 = structuredClone(budget); s1.config = structuredClone(final.config); s1.quoteType = final.quoteType; s1.estimator.confirmedMappings = structuredClone(final.estimator.confirmedMappings); s1.estimator.confirmedPackages = [...final.estimator.confirmedPackages]; s1.estimator.templateRevision = final.estimator.templateRevision;
-  const s2 = withPricing(s1, (p) => {
+  // A Rep draft normally has NO Estimator pricing (it was priced from the reference list). When the final has supplier pricing, the whole pricing structure arrives with the supplier-cost step, so the move
+  // from the reference list to supplier costs is reported as SUPPLIER COSTS (a change of cost basis), not buried in "other".
+  const s1p = s1.estimator.pricing || !fp ? s1 : (() => { const x = structuredClone(s1); x.estimator.pricing = structuredClone(fp); return x; })();
+  const s2 = withPricing(s1p, (p) => {
     for (const [sku, fin0] of Object.entries(fp?.skus ?? {})) {
       const fin = fin0!;
       const cur = p.skus[sku];

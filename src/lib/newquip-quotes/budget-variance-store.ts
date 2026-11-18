@@ -15,7 +15,7 @@ export interface BudgetSnapshotFile { schema: 1; quoteId: string; quoteRef: stri
 export interface BudgetVarianceResult { quoteRef: string; quoteState: string; sentAt: string; sentTo: string; draftRef: string; finalIsApproved: boolean; provisional: BudgetSnapshotFile["provisional"]; report: VarianceReport }
 
 export async function loadBudgetVariance(db: Db, orgId: string, quoteId: string, storage: Pick<DocumentStorage, "download">): Promise<BudgetVarianceResult> {
-  const sent = await db.from("activity_log").select("detail, created_at").eq("org_id", orgId).eq("action", BUDGET_SEND_ACTION).filter("detail->>quoteId", "eq", quoteId).filter("detail->>status", "eq", "ACCEPTED").order("created_at", { ascending: true }).limit(1);
+  const sent = await db.from("activity_log").select("detail, created_at").eq("org_id", orgId).eq("action", BUDGET_SEND_ACTION).filter("detail->>quoteId", "eq", quoteId).filter("detail->>status", "eq", "ACCEPTED").order("created_at", { ascending: false }).limit(1);
   if (sent.error) throw new Error(sent.error.message);
   const row = (sent.data ?? [])[0] as { detail: Record<string, unknown>; created_at: string } | undefined;
   const ref = row?.detail?.internalSnapshot as { path?: string; sha256?: string } | undefined;
