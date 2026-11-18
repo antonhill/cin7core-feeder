@@ -7,6 +7,8 @@ import { evaluateDraft } from "../evaluate";
 import { createWorkbookPriceSource } from "../workbook-price-source";
 import { NEWQUIP_MASTER_POC_SNAPSHOT } from "../snapshot";
 import { budgetBasisProblems, budgetRateSellingPrice, usableBudgetBasis, type BudgetApproval, type BudgetBasisEntry, type BudgetEvidence, type BudgetRate } from "../budget-basis";
+import { readFileSync } from "node:fs";
+import { sameApprover } from "../budget-basis";
 import { ACTIVE_BUDGET_BASIS } from "../budget-basis-register";
 import { buildBudgetCoverage, coverageCounts } from "../budget-coverage";
 import { GROWER_ITEM_KEYS } from "../types";
@@ -68,6 +70,16 @@ describe("the register", () => {
     for (const [by, entered] of [["Anton  Hill", "anton hill"], ["anton.hill@newquip.co.za", "Anton Hill"], ["Anton Hill", "anton-hill"], ["ANTON HILL ", "anton hill"]] as const) {
       expect(budgetBasisProblems(rate({ itemKey: "controller", approval: approval({ approvedBy: by, enteredBy: entered }) }), TODAY), `${by} / ${entered}`).toContain("the approver cannot be the person who entered the record");
     }
+  });
+  it("separation of duties survives name variants (word order, initials, accents, an email form) and refuses look-alike characters; different people are not flagged", () => {
+    for (const [a, b] of [["Smith, Sean", "Sean Smith"], ["A. Hill", "Anton Hill"], ["Antón Hill", "anton hill"], ["anton.hill@x.co.za", "Hill Anton"], ["S Smith", "Sean Smith"]] as const) expect(sameApprover(a, b), `${a} / ${b}`).toBe(true);
+    for (const [a, b] of [["Sean Smith", "Anton Hill"], ["Sean Hill", "Anton Hill"], ["Thandi Mbulo", "Anton Hill"]] as const) expect(sameApprover(a, b), `${a} / ${b}`).toBe(false);
+    expect(budgetBasisProblems(rate({ itemKey: "controller", approval: approval({ approvedBy: "\u0405ean Smith" }) }), TODAY)).toContain("names must use plain Latin letters (no look-alike characters)");
+    expect(budgetBasisProblems(rate({ itemKey: "controller", approval: approval({ approvedBy: "Smith, Sean", enteredBy: "Sean Smith" }) }), TODAY)).toContain("the approver cannot be the person who entered the record");
+  });
+  it("the register file and its approval rules are protected by CODEOWNERS (a code-owner review is required to change them)", () => {
+    const co = readFileSync(new URL("../../../../.github/CODEOWNERS", import.meta.url), "utf8");
+    for (const f of ["src/newquip/grower/budget-basis-register.ts", "src/newquip/grower/budget-basis.ts", "docs/newquip-budget-pricing-coverage.md"]) expect(co).toMatch(new RegExp(`^/${f.replace(/[.]/g, "\\.")}\\s+@\\S+`, "m"));
   });
   it("an entry for an item that is not eligible (a core item, the M75, a package) is refused", () => {
     for (const k of ["feeder", "flex_auger", "cup_drinker", "bulk_tank"] as const) expect(budgetBasisProblems(rate({ itemKey: k }), TODAY).join(), k).toMatch(/cannot be priced from the Budget register/);
@@ -169,6 +181,13 @@ describe("the coverage view: every selectable category, exact blocker, owner and
       expect(r.approvedPriceReady, k).toBe(k === "feeder"); // the core item was already READY; the others stay as they were
       expect(r.priceSource, k).not.toBe("approved_budget_basis");
     }
+  });
+  it("an UNVERIFIED Cin7 supplier cost is never labelled a current Cin7 cost; a verified one is", () => {
+    const e = (verified: boolean) => buildBudgetCoverage([rate({ itemKey: "controller", evidence: evidence({ kind: "cin7_supplier_cost", verified, uncertainty: verified ? null : "last-supplied date unconfirmed" }) })], TODAY).find((r) => r.itemKey === "controller")!;
+    expect(e(false).priceEvidence).toBe("approved_record"); expect(e(true).priceEvidence).toBe("current_cin7");
+  });
+  it("the M75 next action no longer points at a register rate that the engine would refuse", () => {
+    expect(buildBudgetCoverage([], TODAY).find((r) => r.itemKey === "flex_auger")!.nextAction).toMatch(/cannot price the M75/);
   });
   it("unverified or non-Cin7 evidence is never labelled a current Cin7 cost", () => {
     const q = buildBudgetCoverage([rate({ itemKey: "controller", evidence: evidence({ kind: "supplier_quote", verified: false, uncertainty: "verbal quote" }) })], TODAY).find((r) => r.itemKey === "controller")!;

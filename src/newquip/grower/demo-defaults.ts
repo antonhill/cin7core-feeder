@@ -135,7 +135,7 @@ export function hasEquipmentEntries(current: QuoteDraft): boolean {
 
 
 // ── THREE DIFFERENT THINGS, KEPT APART ──────────────────────────────────────────────────────────────────────────────────────────────────────
-// 1. EXPLICIT UAT DEMONSTRATION PRESET: DEMO_DEFAULTS (above). Test values copied from the demonstration quote NQ-Q-0001. Never a recommendation. Offered ONLY on a Preview deployment (viewer.previewTools).
+// 1. EXPLICIT UAT DEMONSTRATION PRESET: DEMO_DEFAULTS (above). Test values copied from the demonstration quote NQ-Q-0001. Never a recommendation. Offered ONLY where demoToolsEnabled() allows it (a Preview deployment, or newquip-uat with its two explicit settings; viewer.demoPreset). Never Toolbox Production.
 // 2. APPROVED ENGINEERING QUANTITY RULES: rules.ts (automatic / default rules). The engine applies them on its own; nothing is "loaded".
 // 3. MANUAL REP-ENTERED QUANTITIES: whatever the Rep types in the equipment step. Always allowed and saved.
 // The per-room estimator quantities in the preset are NOT approved rules (rules.ts marks every optional line manual / engineering review).

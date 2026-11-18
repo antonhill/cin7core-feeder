@@ -1,0 +1,5 @@
+# The Budget pricing register and its approval rules can only change with the code owner's review. A register entry is valid only with a recorded NewQuip approval (docs/newquip-budget-pricing-coverage.md).
+# "Require review from Code Owners" must be enabled in the branch protection of the UAT candidate and main branches for this to be enforced by GitHub.
+/src/newquip/grower/budget-basis-register.ts @antonhill
+/src/newquip/grower/budget-basis.ts @antonhill
+/docs/newquip-budget-pricing-coverage.md @antonhill

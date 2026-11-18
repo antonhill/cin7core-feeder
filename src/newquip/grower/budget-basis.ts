@@ -68,8 +68,27 @@ const ROLES: readonly ApproverRole[] = ["NewQuip Manager", "Designated commercia
 /** The ONLY items a Budget basis can apply to: the door and the optional equipment (the items that have no recommended product). Core items, the M75 and the packages are never priced from the register. */
 export const budgetBasisEligible = (k: GrowerItemKey): boolean => k === "pvc_door" || isOptionalItemKey(k);
 
-/** Collapse a person's name / email to a comparable form: lower case, no punctuation, single spaces, the part before "@" for an email. */
-const person = (s: string) => s.trim().toLowerCase().split("@")[0].replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+/** Tokens of a person's name / email in a comparable form: accents stripped, lower case, "Smith, Sean" reordered, the part before "@" of an email, punctuation ignored. */
+const nameTokens = (raw: string): string[] => {
+  const base = raw.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase().split("@")[0];
+  const flipped = base.includes(",") ? base.split(",").reverse().join(" ") : base;
+  return flipped.split(/[^a-z0-9]+/).filter(Boolean);
+};
+/** True when two names plausibly name the same person: the same words in any order, or one is the other with some first names reduced to initials ("A. Hill" / "Anton Hill"). Deliberately cautious: it errs towards refusing. */
+export const sameApprover = (a: string, b: string): boolean => {
+  const x = nameTokens(a), y = nameTokens(b);
+  if (x.length === 0 || y.length === 0) return false;
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+  const pool = [...long];
+  for (const t of short) {
+    const i = pool.findIndex((u) => u === t || (t.length === 1 && u.startsWith(t)) || (u.length === 1 && t.startsWith(u)));
+    if (i < 0) return false;
+    pool.splice(i, 1);
+  }
+  return true;
+};
+/** Names must be plain Latin letters so a look-alike character cannot dodge the separation-of-duties check. */
+const latinName = (s: string) => /^[\x20-\x7E]+$/.test(s.normalize("NFKD").replace(/[\u0300-\u036f]/g, ""));
 
 /** The reasons an entry cannot be used today. Empty = usable. Pure. */
 export function budgetBasisProblems(e: BudgetBasisEntry, today: string): string[] {
@@ -100,7 +119,8 @@ export function budgetBasisProblems(e: BudgetBasisEntry, today: string): string[
     else if (DAY.test(today) && Date.parse(ap.approvedAt) > Date.parse(`${today}T23:59:59Z`)) p.push("approval time is in the future");
     if (!nonEmpty(ap.reference)) p.push("approval reference missing (the approval must be recorded outside the code)");
     if (!nonEmpty(ap.enteredBy)) p.push("the person who entered the record is missing");
-    else if (nonEmpty(ap.approvedBy) && person(ap.approvedBy) === person(ap.enteredBy)) p.push("the approver cannot be the person who entered the record");
+    else if (nonEmpty(ap.approvedBy) && sameApprover(ap.approvedBy, ap.enteredBy)) p.push("the approver cannot be the person who entered the record");
+    if ((nonEmpty(ap.approvedBy) && !latinName(ap.approvedBy)) || (nonEmpty(ap.enteredBy) && !latinName(ap.enteredBy))) p.push("names must use plain Latin letters (no look-alike characters)");
   }
 
   if (e.kind === "default_sku") { if (!nonEmpty(e.sku)) p.push("product code missing"); }
