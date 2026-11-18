@@ -9,7 +9,7 @@ import type { ScheduleSource } from "./project-template";
 // NO engineering recalculation happens here — every figure is read from the frozen baseline.
 
 /** Which stage a baseline line's scope belongs to (visibility only — allocations never drive billing). */
-const STAGE_BY_ITEM: Record<string, string> = { delivery: "Delivery", installation: "Installation", concrete_slat_delivery: "Delivery" };
+const STAGE_BY_ITEM: Record<string, string> = { delivery: "Delivery", installation: "Installation", commissioning: "Installation", concrete_slat_delivery: "Delivery" };
 
 /** New NewQuip projects default to the confirmed 40/55/5 standard schedule (see billing-schedule.ts); a schedule may be supplied. */
 export function splitContractIntoStages(contractCents: number, schedule?: readonly ScheduleStageTemplate[]): SuggestedStage[] {

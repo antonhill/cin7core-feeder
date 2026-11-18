@@ -41,7 +41,7 @@ export function RepSubmittedSummary({ draft, submitted, revision, floorAreaM2, t
   const cfg = draft.config;
   const extras = Object.entries(cfg.optionalEquipment).filter(([, on]) => on).map(([k]) => OPTIONAL_NAMES[k] ?? k);
   const excluded = Object.entries(cfg.exclusions ?? {});
-  const charges = (["delivery", "installation", "concrete_slat_delivery"] as ChargeKey[]).map((c) => [CHARGE_LABEL[c], draft.estimator.charges[c]] as const).filter(([, v]) => v != null);
+  const charges = (["delivery", "installation", "commissioning", "concrete_slat_delivery"] as ChargeKey[]).map((c) => [CHARGE_LABEL[c], draft.estimator.charges[c]] as const).filter(([, v]) => v != null);
   const m75 = draft.estimator.unitPrices.flex_auger;
   const conf = confirmed.cents != null
     ? `${fmtCents(confirmed.cents)} confirmed by ${confirmed.by?.trim() || "the customer contact"}${confirmed.at ? ` on ${formatSast(confirmed.at)}` : ""}`

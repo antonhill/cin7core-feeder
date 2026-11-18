@@ -996,7 +996,7 @@ describe("S1a: the Rep submits with Estimator-owned items open (indicative total
     expect(within(sub).getByTestId("indicative-note").textContent).toBe(`This total is indicative while ${n} lines await the Estimator. If the Estimator's pricing changes it, the quotation returns to you to reconfirm the amount with the customer.`);
     const btn = (await within(sub).findByRole("button", { name: "Submit to Estimator" })) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
-    fireEvent.click(within(sub).getByLabelText(/has confirmed the indicative quotation total of R/));
+    fireEvent.click(within(sub).getByLabelText(/has confirmed the known items subtotal of R.*EXCLUDES the unpriced equipment/));
     await waitFor(() => expect(btn.disabled).toBe(false));
     fireEvent.click(btn);
     await waitFor(() => expect(send).toHaveBeenCalled());

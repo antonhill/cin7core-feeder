@@ -21,8 +21,16 @@ const GROUPS: { title: string; scope: string | ((have: ReadonlySet<string>) => s
   { title: "Lighting & doors", scope: (h) => h.has("led_light") && h.has("pvc_door") ? "LED lighting and PVC doors with frames." : h.has("pvc_door") ? "PVC doors with frames." : "LED lighting.", items: ["led_light", "pvc_door"] },
   { title: "Ventilation & controls (optional scope)", scope: "Optional ventilation, cooling and control equipment, where selected.", items: ["controller", "silo_weighing", "control_panel", "emergency_windows", "pad_cooling", "cone_fans", "manure_plug"] },
   { title: "Delivery", scope: "Delivery of the equipment to site.", items: [], charges: ["delivery"] },
-  { title: "Installation", scope: "Installation of the equipment on site.", items: [], charges: ["installation"] },
+  // Installation and Commissioning are two separate internal charges but ONE customer line, calculated once: the group sums both charge keys, so nothing is counted twice. With no commissioning amount the line keeps its original
+  // wording ("Installation"), so every quotation and document that existed before commissioning was introduced reads and totals exactly as it did.
+  { title: "Installation", scope: "Installation of the equipment on site.", items: [], charges: ["installation", "commissioning"] },
 ];
+export const INSTALL_COMMISSION_TITLE = "Installation & Commissioning";
+const INSTALL_COMMISSION_SCOPE = "Installation and commissioning of the equipment on site.";
+type Group = (typeof GROUPS)[number];
+/** The customer-facing wording of a group: the Installation group is combined only when a commissioning amount is actually part of it. */
+const wording = (g: Group, have: ReadonlySet<string>, commissioningAmount: number): { title: string; scope: string } =>
+  g.title === "Installation" && commissioningAmount > 0 ? { title: INSTALL_COMMISSION_TITLE, scope: INSTALL_COMMISSION_SCOPE } : { title: g.title, scope: typeof g.scope === "function" ? g.scope(have) : g.scope };
 
 export interface CustomerSummary {
   sections: SummarySection[];
@@ -42,7 +50,8 @@ export function buildCustomerSummary(budget: BudgetQuote): CustomerSummary | nul
     const chargeSum = budget.charges.filter((c) => g.charges?.includes(c.key)).reduce((a, c) => a + (c.amountExTax ?? 0), 0);
     const amount = round2(lineSum + chargeSum);
     const have = new Set(budget.lines.filter((l) => g.items.includes(l.itemKey) && l.status === "priced" && (l.revenueExTax ?? 0) > 0).map((l) => l.itemKey as string));
-    if (amount > 0) sections.push({ title: g.title, scope: typeof g.scope === "function" ? g.scope(have) : g.scope, amountExVat: amount });
+    const commissioning = budget.charges.filter((c) => c.key === "commissioning").reduce((a, c) => a + (c.amountExTax ?? 0), 0);
+    if (amount > 0) sections.push({ ...wording(g, have, commissioning), amountExVat: amount });
   }
   return { sections, subtotalExVat: round2(budget.totals.subtotalExTax), vat: round2(budget.totals.taxTotal), totalIncVat: round2(budget.totals.totalIncTax) };
 }
@@ -55,7 +64,8 @@ export function buildCustomerSummaryFromCommercial(c: {
   for (const g of GROUPS) {
     const cents = c.lines.filter((l) => g.items.includes(l.itemKey as GrowerItemKey)).reduce((a, l) => a + l.revenueCents, 0) + c.charges.filter((x) => g.charges?.includes(x.key)).reduce((a, x) => a + x.amountCents, 0);
     const have = new Set(c.lines.filter((l) => g.items.includes(l.itemKey as GrowerItemKey) && l.revenueCents > 0).map((l) => l.itemKey));
-    if (cents > 0) sections.push({ title: g.title, scope: typeof g.scope === "function" ? g.scope(have) : g.scope, amountExVat: cents / 100 });
+    const commissioning = c.charges.filter((x) => x.key === "commissioning").reduce((a, x) => a + x.amountCents, 0);
+    if (cents > 0) sections.push({ ...wording(g, have, commissioning), amountExVat: cents / 100 });
   }
   // Anything the groups do not cover is shown rather than silently dropped, so the sections always add up to the sub-total.
   const covered = Math.round(sections.reduce((a, x) => a + x.amountExVat * 100, 0));

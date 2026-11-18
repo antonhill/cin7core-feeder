@@ -33,10 +33,11 @@ export type BridgeComponentStatus = "priced" | "identity_unresolved" | "not_in_p
 export type PricedBy = "price_source" | "penning_rate" | "estimator_input" | "estimator_resolution";
 
 /** Commercial charges the ESTIMATOR enters by hand (no automatic freight/installation model — Sean Round 2 #12). */
-export type ChargeKey = "delivery" | "installation" | "concrete_slat_delivery";
+export type ChargeKey = "delivery" | "installation" | "commissioning" | "concrete_slat_delivery";
 export const CHARGE_LABEL: Record<ChargeKey, string> = {
   delivery: "Delivery",
   installation: "Installation",
+  commissioning: "Commissioning",
   concrete_slat_delivery: "Concrete slat delivery",
 };
 export interface BridgeCharge {
@@ -342,6 +343,8 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
   // Estimator-entered commercial charges (separate lines; uncosted, so they never touch the margin).
   const anyQuantified = generated.some((g) => g.basis !== "not_selected" && g.projectQuantity != null);
   const charges: BridgeCharge[] = (Object.keys(CHARGE_LABEL) as ChargeKey[])
+    // Commissioning is OPTIONAL: it appears only once a person has entered it (an unset value adds no line, no blocker and changes no existing quotation).
+    .filter((k) => k !== "commissioning" || isChargeEntered(opts.estimatorCharges?.commissioning))
     .filter((k) => k !== "concrete_slat_delivery" || generated.some((g) => g.itemKey === "concrete_slat" && g.basis !== "not_selected" && g.projectQuantity != null))
     .map((k) => {
       const v = opts.estimatorCharges?.[k];
@@ -352,7 +355,7 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
       // An explicit R0.00 is kept (visible, "entered") but is not a priced line: nothing is added to the total, the margin or the customer's quotation.
       if (c.amountExTax > 0) engineLines.push({ quantity: 1, unitPrice: c.amountExTax, taxRatePct: sellRate, averageCost: null, excludedFromMargin: true });
       else warnings.push(`${c.label}: R0.00 entered - no charge is quoted.`);
-    } else if (c.key !== "concrete_slat_delivery" && anyQuantified) {
+    } else if (c.key !== "concrete_slat_delivery" && c.key !== "commissioning" && anyQuantified) {
       blockers.push(`${c.label}: estimator-entered amount required`);
     }
   }
