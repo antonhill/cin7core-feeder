@@ -15,6 +15,7 @@ import { SOLUTION_BUILDER_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
 import { IncompleteEstimateBanner } from "./IncompleteEstimateBanner";
 import { BudgetQuotationPanel } from "./BudgetQuotationPanel";
+import { PricingStatusSummary } from "./PricingStatusSummary";
 import { incompleteEstimateOf } from "@/newquip/grower/incomplete-estimate";
 import { Status } from "@/components/ui/Status";
 import { PackageOwnConfirmation } from "./PackageOwnConfirmation";
@@ -774,9 +775,10 @@ export default function QuoteEditorPage() {
   const previewable: StageId[] = !final && summary ? [4] : [];
 
   const incompleteEstimate = incompleteEstimateOf(budget);
+  // The Rep's draft uses the consolidated final step ("Review, Budget Quote & Submit"); the single pricing summary and the Budget Quotation actions live there.
+  const repFinalStep = q.state === "REP_DRAFT" && roles.has("rep") && phaseUx;
   const totalsPanel = budget && (
     <Panel>
-      {incompleteEstimate && <div className="mb-3"><IncompleteEstimateBanner estimate={incompleteEstimate} mode="detail" /></div>}
       <div className="flex flex-wrap items-center gap-2">
         <PanelTitle>Totals</PanelTitle>
         {dirty && <Status tone="warning">{recalculating ? "Recalculating - figures below are not yet current" : "Unsaved - live preview"}</Status>}
@@ -840,8 +842,9 @@ export default function QuoteEditorPage() {
       {q.state !== "MANAGER_APPROVED_FINAL" && stage <= 2 && !uxChrome && !previewFailure && <PricingFeedbackNote feedback={pricingFeedback(budget, { canViewCommercials: !!view.viewer.canViewCommercials })} />}
 
       {error && <div className="mt-4"><Alert tone="danger">{error}</Alert></div>}
-      {incompleteEstimate && <div className="mt-4"><IncompleteEstimateBanner estimate={incompleteEstimate} mode="text" /></div>}
-      {(q.state === "REP_DRAFT" || q.state === "ESTIMATOR_REVIEW") && (roles.has("rep") || roles.has("estimator") || roles.has("manager")) && <div className="mt-4"><BudgetQuotationPanel quoteId={id} canAct={roles.has("rep")} dirty={dirty} refreshKey={`${q.draft_hash}:${q.updated_at}`} /></div>}
+      {/* ONE pricing-status summary, not repeated banners. For a Rep's draft it lives in the final step; for everyone else it sits here. */}
+      {!repFinalStep && view.budgetPricing && <div className="mt-4"><PricingStatusSummary view={view.budgetPricing} /></div>}
+      {!repFinalStep && (q.state === "REP_DRAFT" || q.state === "ESTIMATOR_REVIEW") && (roles.has("rep") || roles.has("estimator") || roles.has("manager")) && <div className="mt-4"><BudgetQuotationPanel quoteId={id} canAct={roles.has("rep")} dirty={dirty} refreshKey={`${q.draft_hash}:${q.updated_at}`} /></div>}
       {autoPending.length > 0 && q.state === "REP_DRAFT" && <div className="mt-4" data-testid="auto-pricing-pending"><Alert tone="info">{autoPending.join(". ")}.</Alert></div>}
       <ActionFeedback state={acts.stateOf("page")} floating />
       <LongRunningStatus label={phaseUx && acts.isPending("send") ? null : acts.currentLabel} />
@@ -1158,7 +1161,13 @@ export default function QuoteEditorPage() {
 
         <StepPanel railId="s1" stepId="submit" number={5} title={STAGE1_STEP_LABEL.submit} current={stepId === "submit"} showAll={showAllSteps} locked={lockedFor("submit")} className="mt-6 grid min-w-0 gap-6">
           <Panel>
-            <PanelTitle>Submit to Estimator</PanelTitle>
+            <PanelTitle>{STAGE1_STEP_LABEL.submit}</PanelTitle>
+            {repFinalStep && !wizard.submitted && (
+              <div className="mt-3 space-y-3" data-testid="review-budget-submit">
+                <PricingStatusSummary view={view.budgetPricing} />
+                <BudgetQuotationPanel quoteId={id} canAct={roles.has("rep")} dirty={dirty} refreshKey={`${q.draft_hash}:${q.updated_at}`} embedded />
+              </div>
+            )}
             {wizard.submitted ? (
               <div className="mt-2 space-y-3" data-testid="rep-complete">
                 <p className="text-sm font-semibold text-emerald-900"><span aria-hidden>✓ </span>Rep preparation complete - next: {wizard.nextOwner}</p>
@@ -1169,7 +1178,6 @@ export default function QuoteEditorPage() {
             ) : (
               <div className="mt-2">
                 <p className="text-sm text-slate-700 max-sm:hidden">Final step for the Rep. The Estimator reviews the costing next.</p>
-                {awaitingLines > 0 && <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950" data-testid="indicative-note">This total is indicative while {awaitingLines} line{awaitingLines === 1 ? "" : "s"} await{awaitingLines === 1 ? "s" : ""} the Estimator. If the Estimator&apos;s pricing changes it, the quotation returns to you to reconfirm the amount with the customer.</p>}
                 {unpricedHandoffAvailable ? (
                   <div className="mt-3">
                     <UnpricedHandoffPanel canAct={roles.has("rep") && q.state === "REP_DRAFT"} ready={repReady} loading={phaseUx ? false : acts.isPending("send")} otherBusy={phaseUx ? isWorking : isWorking && !acts.isPending("send")}

@@ -9,7 +9,7 @@ import type { RailStep, StepStatus } from "@/components/ui/step-rail-model";
 export type Stage1StepId = "customer" | "site" | "equipment" | "review" | "submit";
 export const STAGE1_STEP_IDS: readonly Stage1StepId[] = ["customer", "site", "equipment", "review", "submit"];
 export type Stage1ContentStepId = "customer" | "site" | "equipment";
-export const STAGE1_STEP_LABEL: Record<Stage1StepId, string> = { customer: "Customer & contact", site: "Site & measurements", equipment: "Equipment & options", review: "Review configuration", submit: "Submit to Estimator" };
+export const STAGE1_STEP_LABEL: Record<Stage1StepId, string> = { customer: "Customer & contact", site: "Site & measurements", equipment: "Equipment & options", review: "Review configuration", submit: "Review, Budget Quote & Submit" };
 
 /** What the CustomerPanel (which already loads it) reports upward. Nothing is requested for the steps. */
 export interface Stage1CustomerFacts {

@@ -15,6 +15,7 @@
     "src/app/api/delete-expired-trials/route.ts",
     "src/app/api/newquip-quote-documents/[id]/route.ts",
     "src/app/api/newquip-budget-preview/[id]/route.ts",
+    "src/app/api/newquip-budget-variance/[id]/route.ts",
     "src/app/api/newquip-quote-preview/[id]/route.ts",
     "src/app/newquip/login/complete/route.ts",
     "src/app/api/newquip-quote-responses/route.ts",

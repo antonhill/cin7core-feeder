@@ -1,7 +1,7 @@
 import { computeLine, computeQuote, type QuoteLineInput, type QuoteResult } from "@/lib/quote-margin";
 import { isOptionalItemKey } from "./types";
 import type { FeederVariant, GeneratedLine, GrowerItemKey, PenningPigSize } from "./types";
-import { TEMPLATE_REVISION_LEGACY, type TemplateRevision, alternativesFor, estimatorPricedFor, feederSkuFor, isCatalogueDefaultItem, manualLinesFor, packageAutoConfirmable, packageFor, recommendedSkuFor, type PackageComponent } from "./commercial";
+import { TEMPLATE_REVISION_LEGACY, type TemplateRevision, alternativesFor, estimatorPricedFor, feederSkuFor, isCatalogueDefaultItem, manualLinesFor, packageAutoConfirmable, packageFor, provisionalPackageBasis, recommendedSkuFor, type PackageComponent } from "./commercial";
 import { PENNING_RATE_PER_RM } from "./workbook-price-source";
 import { QUOTE_TYPE_BASIS, type PriceSource, type PriceSourceDescriptor, type QuoteType } from "./pricing-source";
 
@@ -79,6 +79,8 @@ export interface BridgeLine {
   pricedBy: PricedBy | null;
   /** Present for package outputs. */
   components?: BridgeComponent[];
+  /** Set ONLY by a Budget evaluation (BudgetOptions.provisionalPackages) on a package priced provisionally, i.e. WITHOUT the Estimator's confirmation. Rep-safe: plain wording only, never a product code, cost or rate. */
+  provisional?: { plain: string };
   /** Where the product came from: the established catalogue default (no Estimator decision needed) or an explicit per-quotation Estimator confirmation. Absent when no product is mapped. */
   mappingSource?: "catalogue_default" | "estimator";
 }
@@ -134,6 +136,11 @@ export interface BudgetOptions {
   estimatorCharges?: Partial<Record<ChargeKey, number | null>>;
   /** Estimator's commercial UNIT price (ex VAT) for lines that are estimator-priced by design (M75: per system). */
   estimatorUnitPrices?: Partial<Record<GrowerItemKey, number | null>>;
+  /**
+   * BUDGET evaluation only (default OFF; the default engine is unchanged). A package that awaits the Estimator's confirmation but whose composition is evidence-complete (see
+   * provisionalPackageBasis) is priced through the SAME calculation and marked `provisional`. Never confirms anything; never set by readiness, hand-off, sign-off, approval or baselines.
+   */
+  provisionalPackages?: boolean;
   /** Estimator-resolved unit prices for lines the source cannot price. Used ONLY when the normal route fails; needs a reason. */
   priceResolutions?: Partial<Record<GrowerItemKey, EstimatorResolution>>;
   /**
@@ -275,7 +282,8 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
     if (pkg) {
       const evals = pkg.components.map((c) => evaluateComponent(c, g.projectQuantity!, opts));
       const comps = evals.map((e) => e.comp);
-      if (!opts.confirmedPackages?.has(g.itemKey) && !packageAutoConfirmable(pkg)) {
+      const provisional = opts.provisionalPackages === true && !opts.confirmedPackages?.has(g.itemKey) && !packageAutoConfirmable(pkg) ? provisionalPackageBasis(pkg) : null;
+      if (!opts.confirmedPackages?.has(g.itemKey) && !packageAutoConfirmable(pkg) && !provisional) {
         fail({ ...emptyLine(g), status: "package_unconfirmed", reason: "Package awaiting estimator confirmation.", components: comps }, `${g.label}: package awaiting confirmation`);
         continue;
       }
@@ -293,7 +301,7 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
       const revenue = comps.reduce((a, c) => a + (c.revenueExTax ?? 0), 0);
       const cost = comps.reduce((a, c) => a + (c.estimatedCost ?? 0), 0);
       bridge.push({
-        ...emptyLine(g), status: "priced", reason: "Package priced from its components.", pricedBy: "price_source",
+        ...emptyLine(g), status: "priced", reason: provisional ? "Package priced provisionally from its components (not confirmed by the Estimator)." : "Package priced from its components.", pricedBy: "price_source", ...(provisional ? { provisional: { plain: provisional.plain } } : {}),
         revenueExTax: revenue, estimatedCost: withhold ? null : cost, estimatedGP: withhold ? null : revenue - cost,
         marginPct: withhold || revenue <= 0 ? null : ((revenue - cost) / revenue) * 100, components: comps,
       });

@@ -29,6 +29,7 @@ import { narrowTier, resolveSwitchState } from "@/lib/approvals/role-switch-stor
 import type { SwitchRole } from "@/lib/approvals/active-role";
 import { demoAuditDetail, resolveActing, type DemoInfo } from "@/lib/demo-mode/context";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
+import { budgetPricingOf } from "@/newquip/grower/budget-pricing";
 import { confirmationLabel, resolveConfirmationContact, type ConfirmationInput } from "@/lib/newquip-quotes/confirmation-contact";
 import { returnByOf, returnInfoOf } from "@/lib/newquip-quotes/return-store";
 import { returnInfoForViewer, type ReturnInfo } from "@/newquip/quote/return-info";
@@ -135,6 +136,8 @@ export interface QuoteView {
   indicativeComparison?: IndicativeComparison;
   /** SERVER-derived: true only for a quotation created in POC Presentation Mode on the NewQuip POC deployment. The page then leaves out cost / mapping diagnostics and exception forms (the server records them with the POC reason). */
   poc?: boolean;
+  /** BUDGET PRICING summary (Rep-safe: selling prices, labels, quantities and plain wording only). Present while the quotation is a Rep draft or with the Estimator; absent when the configuration is not yet valid. */
+  budgetPricing?: import("@/newquip/grower/budget-pricing").BudgetPricingView;
   /** Set only on a save that ran the automatic pricing and left products without a price. Neutral wording only (never a cost, rate, freight or margin). */
   autoPricing?: { pending: string[]; pendingCount: number };
 }
@@ -176,9 +179,12 @@ async function view(db: ReturnType<typeof createServiceRoleClient>, quote: Quote
       });
     } catch { indicativeComparison = undefined; }
   }
+  let budgetPricing: QuoteView["budgetPricing"];
+  if (quote.state === "REP_DRAFT" || quote.state === "ESTIMATOR_REVIEW") { try { const bb = evaluateDraft(quote.draft, { ...evaluationContext(true), provisionalPackages: true }).budget; budgetPricing = bb ? budgetPricingOf(bb) : undefined; } catch { budgetPricing = undefined; } }
   return {
     quote: redactInternalFinancials(quote, canViewCommercials),
     evaluation,
+    ...(budgetPricing ? { budgetPricing } : {}),
     ...(indicativeComparison ? { indicativeComparison } : {}),
     viewer: { roles: [...a.roles], canViewCommercials, previewTools: process.env.VERCEL_ENV === "preview" },
     ...(isPocQuote(quote.draft, a.orgId) ? { poc: true } : {}),

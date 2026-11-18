@@ -373,6 +373,39 @@ export function packageAutoConfirmable(pkg: PackageMapping | undefined): boolean
   return pkg.components.length > 0 && pkg.components.every((c) => c.identity === "source_backed" && !!c.sku && c.quantityStatus === "source_fixed" && c.qtyPerUnit != null && !c.pricingException);
 }
 
+/**
+ * PROVISIONAL BUDGET PRICING (customer UAT, owner decision 2026-11-18, UAT ONLY). A package that is NOT confirmable without an Estimator (it carries an open `alternativeIdentity` or `estimatorConfirmation`)
+ * may still be PRICED PROVISIONALLY for a Rep's BUDGET quotation when its composition is otherwise evidence-complete: every component has a source-backed SKU, a fixed source quantity and no pricing
+ * exception, and it is neither layout- nor Estimator-priced. This NEVER confirms the package: the default engine is unchanged, readiness, sign-off, approval and baselines still demand the Estimator's
+ * confirmation, and the open question stays visible to Estimators (`internalReasons`). Returns null when the package is not eligible (including when it is already confirmable: nothing is provisional about it).
+ */
+export interface ProvisionalBasis {
+  /** INTERNAL (Estimator / Manager / audit): why it qualifies and what is still open. Never sent to a Rep. */
+  qualifies: string;
+  internalReasons: string[];
+  /** The composition priced: [sku, quantity per package unit]. Internal. */
+  composition: Array<{ sku: string; qtyPerUnit: number }>;
+  /** Customer- and Rep-safe: what may change. No product code, cost, rate or margin. */
+  plain: string;
+}
+const PROVISIONAL_PLAIN: Partial<Record<GrowerItemKey, string>> = {
+  cup_drinker: "Provisional: the exact drinker product and its parts are still to be confirmed, so this price may change.",
+  led_light: "Provisional: the light model, the number of parts per light and the product name are still to be confirmed, so this price may change.",
+};
+export function provisionalPackageBasis(pkg: PackageMapping | undefined): ProvisionalBasis | null {
+  if (!pkg || pkg.estimatorPriced || pkg.layoutDriven || packageAutoConfirmable(pkg)) return null;
+  const open = [pkg.alternativeIdentity ? `Open alternative: ${pkg.alternativeIdentity.sku} (${pkg.alternativeIdentity.description}). ${pkg.alternativeIdentity.note}` : null, pkg.estimatorConfirmation ?? null].filter((x): x is string => !!x);
+  if (open.length === 0) return null;
+  const complete = pkg.components.length > 0 && pkg.components.every((c) => c.identity === "source_backed" && !!c.sku && c.quantityStatus === "source_fixed" && c.qtyPerUnit != null && !c.pricingException);
+  if (!complete) return null;
+  return {
+    qualifies: `Every component has a source-backed SKU, a fixed source quantity and no pricing exception (${pkg.name}). This is a provisional budget composition, NOT a NewQuip-approved specification.`,
+    internalReasons: open,
+    composition: pkg.components.map((c) => ({ sku: c.sku as string, qtyPerUnit: c.qtyPerUnit as number })),
+    plain: PROVISIONAL_PLAIN[pkg.itemKey] ?? "Provisional: the product and its parts are still to be confirmed, so this price may change.",
+  };
+}
+
 /** The items a BULK "confirm source-backed" action may confirm: only packages that are authoritative and complete. Anything needing the Estimator's own decision (LED, cup drinker) is excluded. */
 export function bulkConfirmablePackageKeys(itemKeys: readonly GrowerItemKey[], revision: TemplateRevision): GrowerItemKey[] {
   return itemKeys.filter((k) => packageAutoConfirmable(packageFor(k, revision)));
