@@ -41,7 +41,7 @@ export default async function PipelineReportPage({ searchParams }: { searchParam
                 <TD><StageBadge c={r.category}>{r.stage}</StageBadge><span className="block text-xs text-slate-600">{r.status}</span></TD><TD>{r.nextAction}</TD>
                 <TD>{r.waitingOnLabel}<span className="block text-xs text-slate-600">{r.waitingOn === "Manager" ? (r.assignedTo ? "Assigned" : "Unassigned") : r.waitingOn === "Estimator" ? "Unassigned" : ""}</span></TD>
                 <TD className="text-xs">{r.lastActionBy ?? "Not recorded"}<span className="block text-slate-600">{fmtDate(r.lastActionAt)}</span></TD><TD className="whitespace-nowrap">{r.outstanding ? ageText(r.ageDays) : "—"}</TD>
-                <TD align="right" className="whitespace-nowrap tabular-nums">{money(r.valueCents)}{r.valueBasis === "CONFIRMED" && <span className="block text-[11px] text-slate-600">indicative</span>}</TD>
+                <TD align="right" className="whitespace-nowrap tabular-nums">{money(r.valueCents)}{r.valueBasis === "CONFIRMED" && <span className="block text-xs text-slate-600">indicative</span>}</TD>
                 <TD>{r.customerResponse}</TD><TD>{r.projectId ? <Link href={`/projects/${r.projectId}`} className="inline-flex min-h-11 items-center text-indigo-700 hover:underline">{r.projectRef ?? "Open"}</Link> : "—"}</TD></TR>))}</TBody></Table></div>
           <Pager base="/newquip-grower/reports/pipeline" query={q} page={d.page} pages={d.pages} total={d.total} />
         </>)}
