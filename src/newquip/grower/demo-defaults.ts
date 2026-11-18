@@ -132,3 +132,22 @@ export function hasEquipmentEntries(current: QuoteDraft): boolean {
   const cur = pick(current.config);
   return !same(cur, pick(emptyDraft().config)) && !same(cur, pick(DEMO_DEFAULTS.config));
 }
+
+
+// ── THREE DIFFERENT THINGS, KEPT APART ──────────────────────────────────────────────────────────────────────────────────────────────────────
+// 1. EXPLICIT UAT DEMONSTRATION PRESET: DEMO_DEFAULTS (above). Test values copied from the demonstration quote NQ-Q-0001. Never a recommendation. Offered ONLY where demoToolsEnabled() allows it (a Preview deployment, or newquip-uat with its two explicit settings; viewer.demoPreset). Never Toolbox Production.
+// 2. APPROVED ENGINEERING QUANTITY RULES: rules.ts (automatic / default rules). The engine applies them on its own; nothing is "loaded".
+// 3. MANUAL REP-ENTERED QUANTITIES: whatever the Rep types in the equipment step. Always allowed and saved.
+// The per-room estimator quantities in the preset are NOT approved rules (rules.ts marks every optional line manual / engineering review).
+
+/** The per-room quantity keys of the demonstration preset that a draft still holds unchanged. A draft holding MANY of them identical is carrying the preset, not a Rep's own entries (a coincidence on one or two is not enough). */
+export function demoPresetQuantityKeys(draft: QuoteDraft): string[] {
+  const demo = (DEMO_DEFAULTS.config.estimatorQuantities ?? {}) as Record<string, number>;
+  const cur = (draft.config.estimatorQuantities ?? {}) as Record<string, number>;
+  const same = Object.keys(demo).filter((k) => cur[k] === demo[k]);
+  // Most preset values are 1 or 2 (a genuine small order can match those). Only the DISTINCTIVE values (3 or more: feeder, cone fans, cup drinker, pad cooling, slats) show the preset was loaded.
+  const distinctive = same.filter((k) => demo[k] >= 3);
+  return same.length >= 8 && distinctive.length >= 4 ? same : [];
+}
+
+export const DEMO_PRESET_QUANTITY_NOTICE = "Some per-room quantities match the UAT demonstration preset, which is not approved engineering data. Check each quantity before you rely on this Budget.";

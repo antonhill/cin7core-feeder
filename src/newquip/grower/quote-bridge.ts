@@ -1,5 +1,6 @@
 import { computeLine, computeQuote, type QuoteLineInput, type QuoteResult } from "@/lib/quote-margin";
 import { isOptionalItemKey } from "./types";
+import { BUDGET_BASIS_PLAIN, budgetRateSellingPrice, usableBudgetBasis, type BudgetBasisEntry } from "./budget-basis";
 import type { FeederVariant, GeneratedLine, GrowerItemKey, PenningPigSize } from "./types";
 import { TEMPLATE_REVISION_LEGACY, type TemplateRevision, alternativesFor, estimatorPricedFor, feederSkuFor, isCatalogueDefaultItem, manualLinesFor, packageAutoConfirmable, packageFor, provisionalPackageBasis, recommendedSkuFor, type PackageComponent } from "./commercial";
 import { PENNING_RATE_PER_RM } from "./workbook-price-source";
@@ -30,7 +31,7 @@ export type BridgeLineStatus =
 export type BridgeComponentStatus = "priced" | "identity_unresolved" | "not_in_price_source" | "supplier_quote_required" | "reference_only";
 
 /** Who/what produced a line's price — shown on the estimator view and frozen in the baseline. */
-export type PricedBy = "price_source" | "penning_rate" | "estimator_input" | "estimator_resolution";
+export type PricedBy = "price_source" | "penning_rate" | "estimator_input" | "estimator_resolution" | "budget_rate";
 
 /** Commercial charges the ESTIMATOR enters by hand (no automatic freight/installation model — Sean Round 2 #12). */
 export type ChargeKey = "delivery" | "installation" | "commissioning" | "concrete_slat_delivery";
@@ -82,7 +83,7 @@ export interface BridgeLine {
   /** Set ONLY by a Budget evaluation (BudgetOptions.provisionalPackages) on a package priced provisionally, i.e. WITHOUT the Estimator's confirmation. Rep-safe: plain wording only, never a product code, cost or rate. */
   provisional?: { plain: string };
   /** Where the product came from: the established catalogue default (no Estimator decision needed) or an explicit per-quotation Estimator confirmation. Absent when no product is mapped. */
-  mappingSource?: "catalogue_default" | "estimator";
+  mappingSource?: "catalogue_default" | "estimator" | "budget_default";
 }
 
 /** How much of the quote can be trusted as money. Never show a zero total as a quote. */
@@ -141,6 +142,15 @@ export interface BudgetOptions {
    * provisionalPackageBasis) is priced through the SAME calculation and marked `provisional`. Never confirms anything; never set by readiness, hand-off, sign-off, approval or baselines.
    */
   provisionalPackages?: boolean;
+  /**
+   * BUDGET evaluation only. NewQuip-APPROVED default products / dated rates (budget-basis.ts) for an item that has no Estimator-confirmed product (the door and the optional equipment). Used only when the Estimator has confirmed
+   * nothing for that item; the line is PROVISIONAL, goes through the existing price-source / markup rules and confirms nothing. Default: none (every other caller is unchanged).
+   */
+  budgetBasis?: readonly BudgetBasisEntry[];
+  /** ISO date the register entries are checked against (default: today). */
+  budgetAsOf?: string;
+  /** The markup (basis points on cost) a COST-basis rate passes through: the project's attributed markup. null / absent = a cost-basis rate cannot be priced. */
+  budgetMarkupBps?: number | null;
   /** Estimator-resolved unit prices for lines the source cannot price. Used ONLY when the normal route fails; needs a reason. */
   priceResolutions?: Partial<Record<GrowerItemKey, EstimatorResolution>>;
   /**
@@ -313,7 +323,18 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
     // An explicit Estimator confirmation is authoritative and is still validated against the expected product below. Without one, an established catalogue item resolves to its catalogue product.
     const explicit = opts.confirmedMappings?.[g.itemKey] ?? null;
     const defaulted = !explicit && isCatalogueDefaultItem(g.itemKey) ? expected : null;
-    const confirmed = explicit ?? defaulted;
+    // BUDGET only: with no Estimator confirmation, the door / an optional item may use a NewQuip-APPROVED default product or dated rate (never confirms anything; the line is provisional).
+    const basis = !explicit && !defaulted && !validResolution(resolution) && opts.budgetBasis ? usableBudgetBasis(opts.budgetBasis, g.itemKey, opts.budgetAsOf ?? new Date().toISOString().slice(0, 10)) : null;
+    if (basis?.kind === "rate") {
+      const priced = budgetRateSellingPrice(basis, opts.budgetMarkupBps ?? null, opts.budgetAsOf ?? new Date().toISOString().slice(0, 10));
+      if (priced) {
+        bridge.push({ ...priceByPerson(g, priced.unitPriceExVat, "budget_rate", `Budget allowance (${basis.specification}), not an Estimator-confirmed product.`), provisional: { plain: BUDGET_BASIS_PLAIN } });
+        continue;
+      }
+    }
+    const basisSku = basis?.kind === "default_sku" ? basis.sku : null;
+    const confirmed = explicit ?? defaulted ?? basisSku;
+    const mapSource = defaulted ? "catalogue_default" : basisSku ? "budget_default" : "estimator";
     // pvc_door and the optional additional elements have no recommended SKU: the estimator's confirmed Cin7 choice IS the SKU. Everything else must be the expected one.
     // An item's expected product, or one of the alternatives NewQuip said are included for that SAME item (an Estimator choice: it replaces the item's product, it is never an extra line).
     const isAlternative = !!confirmed && alternativesFor(g.itemKey).some((a) => a.sku === confirmed);
@@ -324,11 +345,11 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
     }
     const r = opts.priceSource.priceFor(sku, opts.quoteType);
     if (r.status === "supplier_quote_required") {
-      fail({ ...emptyLine(g), sku, status: "supplier_quote_required", reason: r.reason, mappingSource: defaulted ? "catalogue_default" : "estimator" }, `${g.label}: ${sku} supplier quote required`);
+      fail({ ...emptyLine(g), sku, status: "supplier_quote_required", reason: r.reason, mappingSource: mapSource }, `${g.label}: ${sku} supplier quote required`);
       continue;
     }
     if (r.status === "not_in_source") {
-      fail({ ...emptyLine(g), sku, status: "not_in_price_source", reason: r.reason, mappingSource: defaulted ? "catalogue_default" : "estimator" }, `${g.label}: ${sku} has no price in the price source`);
+      fail({ ...emptyLine(g), sku, status: "not_in_price_source", reason: r.reason, mappingSource: mapSource }, `${g.label}: ${sku} has no price in the price source`);
       continue;
     }
     const input: QuoteLineInput = { quantity: g.projectQuantity, unitPrice: r.unitPriceExVat, taxRatePct: sellRate, averageCost: r.landedCostExVat };
@@ -336,7 +357,8 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
     pricedOutputs += 1;
     const line = computeLine(input, { taxInclusive: opts.taxInclusive });
     bridge.push({
-      ...emptyLine(g), sku, status: "priced", reason: "Priced from the price source.", pricedBy: "price_source", mappingSource: defaulted ? "catalogue_default" : "estimator",
+      ...emptyLine(g), sku, status: "priced", reason: basisSku ? "Priced provisionally from the approved Budget default product (not confirmed by the Estimator)." : "Priced from the price source.", pricedBy: "price_source", mappingSource: mapSource,
+      ...(basisSku ? { provisional: { plain: BUDGET_BASIS_PLAIN } } : {}),
       unitPrice: r.unitPriceExVat, revenueExTax: line.revenueExTax,
       estimatedCost: withhold ? null : line.estimatedCost, estimatedGP: withhold ? null : line.estimatedGP, marginPct: withhold ? null : line.marginPct,
     });
@@ -345,7 +367,7 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
   // A resolution that was not needed is surfaced, never silently applied.
   for (const [k, r] of Object.entries(opts.priceResolutions ?? {})) {
     const b = bridge.find((l) => l.itemKey === k);
-    if (r && b && b.pricedBy !== "estimator_resolution") warnings.push(`${b.label}: an estimator price resolution was entered but is not needed — the price source prices this line.`);
+    if (r && b && b.pricedBy !== "estimator_resolution" && b.pricedBy !== "budget_rate") warnings.push(`${b.label}: an estimator price resolution was entered but is not needed — the price source prices this line.`);
   }
 
   // Estimator-entered commercial charges (separate lines; uncosted, so they never touch the margin).

@@ -54,7 +54,7 @@ const ACCOUNT: Record<Who, { userId: string; email: string; tier: "owner" | "mem
 };
 const EMAILS: Record<string, string> = Object.fromEntries(Object.values(ACCOUNT).map((a) => [a.userId, a.email]));
 /** The viewer payload: roles and canViewCommercials exactly, and NO other key beyond an allowlist (a future non-sensitive flag such as previewTools is tolerated; a cost/margin-bearing key is not). */
-const VIEWER_KEYS = ["roles", "canViewCommercials", "previewTools"];
+const VIEWER_KEYS = ["roles", "canViewCommercials", "previewTools", "demoPreset"];
 function expectViewer(v: object, roles: string[], canViewCommercials: boolean) {
   const x = v as { roles: string[]; canViewCommercials: boolean; previewTools?: unknown };
   expect([...x.roles].sort()).toEqual([...roles].sort());

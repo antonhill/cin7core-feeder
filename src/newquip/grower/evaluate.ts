@@ -7,6 +7,8 @@ import type { PriceSource } from "./pricing-source";
 import type { QuoteDraft } from "./draft";
 import { createEstimatorPriceSource } from "../pricing/estimator/price-source";
 import type { GrowerCalculationResult } from "./types";
+import { ACTIVE_BUDGET_BASIS } from "./budget-basis-register";
+import type { BudgetBasisEntry } from "./budget-basis";
 
 // ONE function turns an editable draft into everything the quote screens show: engineering result, priced budget, readiness.
 // Pure and deterministic — the server runs it for display AND again at approval, so a client can never supply its own total.
@@ -24,6 +26,10 @@ export interface EvaluationContext {
   withholdCost: boolean;
   /** BUDGET evaluation only: price evidence-complete packages that still await the Estimator provisionally (see provisionalPackageBasis). Default off: every other caller is unchanged. */
   provisionalPackages?: boolean;
+  /** BUDGET evaluation only (with provisionalPackages): the approved default products / rates. Default: the active register (empty until NewQuip approves entries). Tests inject their own. */
+  budgetBasis?: readonly BudgetBasisEntry[];
+  /** ISO date the register is checked against (default today). */
+  budgetAsOf?: string;
 }
 
 export function evaluateDraft(draft: QuoteDraft, ctx: EvaluationContext): QuoteEvaluation {
@@ -44,7 +50,7 @@ export function evaluateDraft(draft: QuoteDraft, ctx: EvaluationContext): QuoteE
         estimatorUnitPrices: draft.estimator.unitPrices,
         priceResolutions: draft.estimator.priceResolutions,
         withholdCost: ctx.withholdCost,
-        ...(ctx.provisionalPackages === true ? { provisionalPackages: true } : {}),
+        ...(ctx.provisionalPackages === true ? { provisionalPackages: true, budgetBasis: ctx.budgetBasis ?? ACTIVE_BUDGET_BASIS, ...(ctx.budgetAsOf ? { budgetAsOf: ctx.budgetAsOf } : {}), budgetMarkupBps: draft.estimator.pricing?.projectMarkup?.markupBps ?? null } : {}),
       })
     : null;
   return { calc, budget, readiness: assessReadiness(draft, calc, budget) };
