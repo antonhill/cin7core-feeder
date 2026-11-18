@@ -36,7 +36,7 @@ function unmappedDraft(): QuoteDraft {
       exclusions: { feeder: "n", bulk_tank: "n", led_light: "n", flex_auger: "n", cup_drinker: "n", concrete_slat: "n", feed_saver_mat: "n", penning_package: "n" } },
     estimator: { ...d.estimator, charges: { delivery: 8000, installation: 32500, commissioning: 7500 }, templateRevision: "grower-2026-11" } };
 }
-const quoteOf = (draft: QuoteDraft, over: Record<string, unknown> = {}) => ({ id: "11111111-1111-1111-1111-111111111111", org_id: "org", quote_ref: "NQ-Q-0003", revision: 1, state: "REP_DRAFT", draft, draft_hash: "abcdef0123456789abcdef", created_by_email: "rep@x", ...over });
+const quoteOf = (draft: QuoteDraft, over: Record<string, unknown> = {}) => ({ id: "11111111-1111-1111-1111-111111111111", org_id: "org", quote_ref: "NQ-Q-0003", revision: 1, state: "REP_DRAFT", draft, draft_hash: "draft-hash-fixture-one", created_by_email: "rep@x", ...over });
 
 const reads: string[] = [];
 const fakeDb = (existing: unknown[] = []) => ({ from(t: string) {
@@ -49,7 +49,7 @@ const deps = (over: Partial<BudgetSendDeps> = {}): BudgetSendDeps & { sent: unkn
 const audits: Array<{ action: string; detail: Record<string, unknown> }> = [];
 const audit = (async (_db: unknown, i: { action: string; detail: Record<string, unknown> }) => { audits.push(i); }) as never;
 const who = { orgId: "org", userId: "u1", email: "rep@sparkconsulting.co.za", isRep: true };
-const req = { to: "anton@sparkconsulting.co.za", idempotencyKey: "key-12345678", expectedDraftHash: "abcdef0123456789abcdef", acknowledgeIncomplete: true };
+const req = { to: "anton@sparkconsulting.co.za", idempotencyKey: "send-attempt-one", expectedDraftHash: "draft-hash-fixture-one", acknowledgeIncomplete: true };
 
 beforeEach(() => { reads.length = 0; audits.length = 0; state.quote = quoteOf(unmappedDraft()); state.profile = { profile: PROFILE_PLACEHOLDER }; state.snapshot = null; });
 
@@ -161,7 +161,7 @@ describe("send rules", () => {
     expect(audits.map((a) => a.action)).toEqual(["newquip.budget_quotation_send_started", "newquip.budget_quotation_sent"]); // intent recorded BEFORE the email leaves
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rec = audits[1].detail as Record<string, any>;
-    expect(rec).toMatchObject({ quoteRef: "NQ-Q-0003", draftHash: "abcdef0123456789abcdef", complete: false, incompleteCount: 5, status: "ACCEPTED", providerMessageId: "m-1", testMode: true });
+    expect(rec).toMatchObject({ quoteRef: "NQ-Q-0003", draftHash: "draft-hash-fixture-one", complete: false, incompleteCount: 5, status: "ACCEPTED", providerMessageId: "m-1", testMode: true });
     expect(rec.pdfSha256).toMatch(/^[0-9a-f]{64}$/);
     expect(rec.snapshot.model.kind).toBe("BUDGET_QUOTATION"); // the exact document model is reproducible from the audit record
     expect(rec.snapshot.modelHash).toBe(rec.modelHash);
@@ -200,7 +200,7 @@ describe("send rules", () => {
   });
   it("a repeat of the same click returns the recorded outcome and emits nothing", async () => {
     const dp = deps();
-    const r = await sendBudgetQuotation(fakeDb([{ action: "newquip.budget_quotation_sent", created_at: "2026-11-18T09:00:00Z", detail: { status: "ACCEPTED", to: "anton@sparkconsulting.co.za", incompleteCount: 5, testMode: true, draftRef: "abcdef012345", pdfSha256: "x" } }]), who, "q", req, UAT, dp, audit);
+    const r = await sendBudgetQuotation(fakeDb([{ action: "newquip.budget_quotation_sent", created_at: "2026-11-18T09:00:00Z", detail: { status: "ACCEPTED", to: "anton@sparkconsulting.co.za", incompleteCount: 5, testMode: true, draftRef: "draft-hash-fi", pdfSha256: "x" } }]), who, "q", req, UAT, dp, audit);
     expect(r.reused).toBe(true); expect(dp.sent).toHaveLength(0); expect(audits).toHaveLength(0);
   });
   it("a FAILED earlier send is NOT reported as sent: the Rep can retry with the same key", async () => {
