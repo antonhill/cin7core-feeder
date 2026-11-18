@@ -72,7 +72,7 @@ export function BudgetQuotationDocument({ m }: { m: BudgetDocumentModel }) {
         <View style={st.th}><Text style={st.colMain}>Item</Text><Text style={{ width: 40, textAlign: "right" }}>Qty</Text><Text style={st.colAmt}>Amount (excl. VAT)</Text></View>
         {m.equipment.map((l, i) => (
           <View key={i} style={st.tr} wrap={false}>
-            <View style={st.colMain}><Text>{pdfSafe(l.label)}</Text>{l.status === "provisional" ? <Text style={{ fontSize: 7.5, color: AMBER, fontFamily: "Helvetica-Bold" }}>{pdfSafe(`PROVISIONAL - ${l.note}`)}</Text> : null}</View>
+            <View style={st.colMain}><Text>{pdfSafe(l.label)}</Text>{l.status === "provisional" ? <Text style={{ fontSize: 7.5, color: AMBER, fontFamily: "Helvetica-Bold" }}>{pdfSafe(`PROVISIONAL - ${l.note.replace(/^Provisional:\s*/i, "")}`)}</Text> : null}</View>
             <Text style={{ width: 40, textAlign: "right" }}>{l.quantity ?? ""}</Text>
             <Text style={[st.colAmt, l.status === "unpriced" ? { color: "#B91C1C", fontFamily: "Helvetica-Bold" } : l.status === "provisional" ? { color: AMBER } : {}]}>{l.status === "unpriced" ? pdfSafe(l.note) : `${formatRand(l.amountExVat as number)}${l.status === "provisional" ? "*" : ""}`}</Text>
           </View>
