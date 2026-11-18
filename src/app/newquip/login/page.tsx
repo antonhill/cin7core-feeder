@@ -68,7 +68,10 @@ function NewquipLoginForm() {
   const buttonClass = "rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50";
   return (
     <main className="mx-auto flex min-h-[80vh] w-full max-w-md flex-col justify-center px-6">
-      <h1 className="text-3xl font-bold tracking-tight text-slate-900">NewQuip</h1>
+      <h1 className="text-3xl font-bold tracking-tight text-slate-900">
+        {/* eslint-disable-next-line @next/next/no-img-element -- the supplied logo file, shown as-is (365x78) with its proportions preserved */}
+        <img src="/marketing/newquip/newquip-logo.png" alt="NewQuip" width={365} height={78} className="h-auto w-64 max-w-full sm:w-80" data-testid="newquip-login-logo" />
+      </h1>
       <p className="mt-2 text-lg text-slate-500">
         {step === "email" ? "Enter your email and we'll send you a sign-in code." : `Enter the 6-digit code we sent to ${email}.`}
       </p>
