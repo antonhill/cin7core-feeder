@@ -72,23 +72,30 @@ export const budgetBasisEligible = (k: GrowerItemKey): boolean => k === "pvc_doo
 const nameTokens = (raw: string): string[] => {
   const base = raw.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase().split("@")[0];
   const flipped = base.includes(",") ? base.split(",").reverse().join(" ") : base;
-  return flipped.split(/[^a-z0-9]+/).filter(Boolean);
+  return flipped.split(/[^a-z]+/).filter(Boolean);
 };
-/** True when two names plausibly name the same person: the same words in any order, or one is the other with some first names reduced to initials ("A. Hill" / "Anton Hill"). Deliberately cautious: it errs towards refusing. */
+/** Can every token of `short` be matched to a DIFFERENT token of `long` (equal, or one is the other's initial)? Tries every assignment, so word order never matters. */
+const covers = (short: string[], long: string[]): boolean => {
+  const ok = (t: string, u: string) => t === u || (t.length === 1 && u.startsWith(t)) || (u.length === 1 && t.startsWith(u));
+  const go = (i: number, used: boolean[]): boolean => {
+    if (i === short.length) return true;
+    for (let j = 0; j < long.length; j++) if (!used[j] && ok(short[i], long[j])) { used[j] = true; if (go(i + 1, used)) return true; used[j] = false; }
+    return false;
+  };
+  return go(0, long.map(() => false));
+};
+/** True when two names plausibly name the same person: the same words in any order, one with first names reduced to initials ("A. Hill" / "Anton Hill"), or a compact email ("ahill@x" / "Anton Hill"). Deliberately cautious: it errs towards refusing. */
 export const sameApprover = (a: string, b: string): boolean => {
   const x = nameTokens(a), y = nameTokens(b);
   if (x.length === 0 || y.length === 0) return false;
   const [short, long] = x.length <= y.length ? [x, y] : [y, x];
-  const pool = [...long];
-  for (const t of short) {
-    const i = pool.findIndex((u) => u === t || (t.length === 1 && u.startsWith(t)) || (u.length === 1 && t.startsWith(u)));
-    if (i < 0) return false;
-    pool.splice(i, 1);
-  }
-  return true;
+  if (covers(short, long)) return true;
+  // a compact single-word form (an email local part like "ahill") equals the initial of the first word plus the last word of the other name, in either order
+  const compact = (one: string[], other: string[]) => one.length === 1 && other.length >= 2 && (one[0] === other[0][0] + other[other.length - 1] || one[0] === other[other.length - 1] + other[0][0]);
+  return compact(x, y) || compact(y, x);
 };
-/** Names must be plain Latin letters so a look-alike character cannot dodge the separation-of-duties check. */
-const latinName = (s: string) => /^[\x20-\x7E]+$/.test(s.normalize("NFKD").replace(/[\u0300-\u036f]/g, ""));
+/** Names must be plain Latin letters (with spaces, full stops, hyphens, apostrophes, commas and an optional email form) so look-alike characters and digits cannot dodge the separation-of-duties check. */
+const latinName = (s: string) => /^[A-Za-z][A-Za-z .,'@_-]*$/.test(s.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").trim());
 
 /** The reasons an entry cannot be used today. Empty = usable. Pure. */
 export function budgetBasisProblems(e: BudgetBasisEntry, today: string): string[] {

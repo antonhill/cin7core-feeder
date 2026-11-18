@@ -72,9 +72,10 @@ describe("the register", () => {
     }
   });
   it("separation of duties survives name variants (word order, initials, accents, an email form) and refuses look-alike characters; different people are not flagged", () => {
-    for (const [a, b] of [["Smith, Sean", "Sean Smith"], ["A. Hill", "Anton Hill"], ["Antón Hill", "anton hill"], ["anton.hill@x.co.za", "Hill Anton"], ["S Smith", "Sean Smith"]] as const) expect(sameApprover(a, b), `${a} / ${b}`).toBe(true);
+    for (const [a, b] of [["Smith, Sean", "Sean Smith"], ["A. Hill", "Anton Hill"], ["Antón Hill", "anton hill"], ["anton.hill@x.co.za", "Hill Anton"], ["S Smith", "Sean Smith"], ["ahill@x.co.za", "Anton Hill"], ["hilla@x.co.za", "Anton Hill"], ["A. Adams", "Adams Anton"], ["Hill, A.", "Anton Hill"]] as const) expect(sameApprover(a, b), `${a} / ${b}`).toBe(true);
     for (const [a, b] of [["Sean Smith", "Anton Hill"], ["Sean Hill", "Anton Hill"], ["Thandi Mbulo", "Anton Hill"]] as const) expect(sameApprover(a, b), `${a} / ${b}`).toBe(false);
-    expect(budgetBasisProblems(rate({ itemKey: "controller", approval: approval({ approvedBy: "\u0405ean Smith" }) }), TODAY)).toContain("names must use plain Latin letters (no look-alike characters)");
+    for (const bad of ["\u0405ean Smith", "Sean Sm1th", "Sean Smith 2"]) expect(budgetBasisProblems(rate({ itemKey: "controller", approval: approval({ approvedBy: bad }) }), TODAY), bad).toContain("names must use plain Latin letters (no look-alike characters)");
+    for (const good of ["Sean O'Brien", "Thandi Mbulo-Nkosi", "Sean Smith", "sean.smith@newquip.co.za", "Fran\u00e7ois Du Plessis"]) expect(budgetBasisProblems(rate({ itemKey: "controller", approval: approval({ approvedBy: good }) }), TODAY), good).not.toContain("names must use plain Latin letters (no look-alike characters)");
     expect(budgetBasisProblems(rate({ itemKey: "controller", approval: approval({ approvedBy: "Smith, Sean", enteredBy: "Sean Smith" }) }), TODAY)).toContain("the approver cannot be the person who entered the record");
   });
   it("the register file and its approval rules are protected by CODEOWNERS (a code-owner review is required to change them)", () => {
