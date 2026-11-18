@@ -12,10 +12,25 @@ describe("NewQuip standard 40/55/5 billing schedule", () => {
   it("R100,000 -> R40,000 / R55,000 / R5,000", () => {
     expect(splitContractBySchedule(R(100_000)).map((s) => s.valueCents)).toEqual([R(40_000), R(55_000), R(5_000)]);
   });
-  it("handles cent rounding: the last stage absorbs it and the total is exact", () => {
+  it("rounds each stage half-up to the cent; the last stage takes the remainder (positive or negative) and the total is exact", () => {
     const stages = splitContractBySchedule(10_001);
     expect(stages.reduce((a, s) => a + s.valueCents, 0)).toBe(10_001);
-    expect(stages.map((s) => s.valueCents)).toEqual([4_000, 5_500, 501]);
+    expect(stages.map((s) => s.valueCents)).toEqual([4_000, 5_501, 500]); // 4000.4->4000, 5500.55->5501, remainder 500
+    expect(splitContractBySchedule(10_003).map((s) => s.valueCents)).toEqual([4_001, 5_502, 500]); // 4001.2->4001, 5501.65->5502, remainder 500
+    // trivial contract: the remainder can be NEGATIVE (5 cents on the six-stage schedule: 1+2+1+1+1 = 6 > 5)
+    const tiny = splitContractBySchedule(5, POC_SIX_STAGE_SCHEDULE);
+    expect(tiny.map((s) => s.valueCents)).toEqual([1, 2, 1, 1, 1, -1]);
+    expect(tiny.reduce((a, s) => a + s.valueCents, 0)).toBe(5);
+    // real contracts (>= R1,000) never produce a negative stage on any built-in schedule
+    for (const c of [R(1_000), 100_001, 123_457, 999_999, 12_345_67, 98_765_43]) for (const sch of [NEWQUIP_STANDARD_SCHEDULE, POC_SIX_STAGE_SCHEDULE, VARIATION_DEFAULT_SCHEDULE]) {
+      expect(splitContractBySchedule(c, sch).every((s) => s.valueCents >= 0)).toBe(true);
+    }
+    for (const c of [1, 7, 99, 10_001, 12_345_67, 98_765_43, 33_333_33]) for (const sch of [NEWQUIP_STANDARD_SCHEDULE, POC_SIX_STAGE_SCHEDULE]) {
+      const r = splitContractBySchedule(c, sch);
+      expect(r.reduce((a, s) => a + s.valueCents, 0)).toBe(c);
+      sch.forEach((s, i) => { if (i < sch.length - 1) expect(Math.abs(r[i].valueCents - (c * s.bps) / 10_000)).toBeLessThanOrEqual(0.5); });
+      const last = r[r.length - 1].valueCents; expect(Math.abs(last - (c * sch[sch.length - 1].bps) / 10_000)).toBeLessThan(sch.length);
+    }
   });
   it("supports alternative schedules, additional delivery draws and the variation default", () => {
     const draws = [{ name: "Deposit", bps: 4000, description: "", trigger: "" }, { name: "Delivery 1", bps: 3000, description: "", trigger: "" }, { name: "Delivery 2", bps: 2500, description: "", trigger: "" }, { name: "Commissioning", bps: 500, description: "", trigger: "" }];

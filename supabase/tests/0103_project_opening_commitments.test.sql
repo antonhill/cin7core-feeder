@@ -63,9 +63,9 @@ update project_claims set status = 'APPROVED', approver_email = 'm@x', approved_
 select pg_temp.expect_denied($q$update project_opening_commitments set amount_cents = 1 where id = '00000000-0000-0000-0000-0000000003e1'$q$, 'edit after a claim exists');
 select pg_temp.expect_denied($q$delete from project_opening_commitments where id = '00000000-0000-0000-0000-0000000003e1'$q$, 'delete after a claim exists');
 
--- RLS
+-- RLS (0122: client roles have NO read policy; this file re-grants SELECT above only to prove the RLS layer is default-deny on its own)
 select pg_temp.act_as('00000000-0000-0000-0000-0000000003a1');
-do $$ begin if (select count(*) from project_opening_commitments) <> 1 then raise exception 'member A should see its row'; end if; end $$;
+do $$ begin if (select count(*) from project_opening_commitments) <> 0 then raise exception 'a signed-in member must read NOTHING from project_opening_commitments (0122: no member read policy)'; end if; end $$;
 select pg_temp.expect_no_rows_changed($q$update project_opening_commitments set amount_cents = 2$q$, 'member update');
 select pg_temp.expect_denied($q$insert into project_opening_commitments (org_id, project_id, stage_id, amount_cents, reason, recorded_by_email) values ('00000000-0000-0000-0000-0000000003b1','00000000-0000-0000-0000-0000000003c1','00000000-0000-0000-0000-0000000003d1',1,'r','m@x')$q$, 'member insert');
 select pg_temp.reset_role();

@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { ProjectWorkspace } from "../[id]/ProjectWorkspace";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
 import { statusText } from "@/components/ui/Status";
+import { claimCin7Status } from "@/lib/projects/claim-cin7-status";
 
 // P2: the Commercial / Claims workspace. The REAL workspace and panels; only server actions are stubbed. What must not change: every figure, every claim, every action.
 
@@ -25,14 +26,16 @@ vi.mock("../procurement-actions", () => h.stub());
 vi.mock("../profitability-actions", () => h.stub());
 
 const gates = { orgEnabled: true, isManager: true, writesEnabled: false };
-const cin7 = (kind: string, label: string, invoiceNumber: string | null = null, reconciled = false) => ({ kind, tone: "neutral", label, invoiceNumber, reconciled, detail: null });
-const claim = (id: string, n: string, status: string, total: number, c7: ReturnType<typeof cin7>, over: Record<string, unknown> = {}) => ({
+const cin7 = (kind: string, label: string, invoiceNumber: string | null = null, reconciled = false) => ({ kind, tone: "neutral", label, invoiceNumber, reconciled, detail: null, postingState: null, recordedStatus: null, recordedAt: null, completedAt: null, reconciledAt: null });
+// A posted invoice is built by the real classifier so it carries its recorded evidence (UX-006g1).
+const posted = (n: string, claim: string, status: string) => claimCin7Status({ claim_id: claim, posting_state: "RECONCILED", cin7_invoice_number: n, cin7_status: status, reconciled_at: "2026-11-01T08:00:00Z", completed_at: "2026-11-01T07:50:00Z" });
+const claim = (id: string, n: string, status: string, total: number, c7: ReturnType<typeof cin7> | ReturnType<typeof posted>, over: Record<string, unknown> = {}) => ({
   id, claim_number: n, claim_date: "2026-11-01", supersedes_claim_id: null, total_cents: total, subtotal_cents: Math.round(total / 1.15), tax_cents: total - Math.round(total / 1.15),
   status, reserves: status !== "DRAFT", cin7Status: c7, approval: null, ...over,
 });
 const CLAIMS = [
-  claim("c1", "PRJ-X-C01", "CIN7_CREATED", 115_000_00, cin7("DRAFT_CREATED", "Draft invoice created", "INV-00034", true)),
-  claim("c2", "PRJ-X-C02", "CIN7_CREATED", 57_500_00, cin7("AUTHORISED", "Invoice authorised", "INV-00037", true)),
+  claim("c1", "PRJ-X-C01", "CIN7_CREATED", 115_000_00, posted("INV-00034", "c1", "DRAFT")),
+  claim("c2", "PRJ-X-C02", "CIN7_CREATED", 57_500_00, posted("INV-00037", "c2", "AUTHORISED")),
   claim("c3", "PRJ-X-C03", "READY_FOR_APPROVAL", 23_000_00, cin7("NOT_SENT", "Not sent to Cin7")),
   claim("c4", "PRJ-X-C04", "DRAFT", 11_500_00, cin7("NOT_SENT", "Not sent to Cin7")),
 ];
@@ -99,11 +102,12 @@ describe("Commercial / Claims workspace (P2)", () => {
       expect(a.textContent).toContain(formatCents(c.total_cents));
       expect(a.textContent).toContain(formatCents(c.subtotal_cents));
       expect(a.textContent).toContain(statusText(c.status));
-      expect(a.textContent).toContain(c.cin7Status.label);
+      if (!c.cin7Status.invoiceNumber) expect(a.textContent).toContain(c.cin7Status.label);
       if (c.cin7Status.invoiceNumber) {
         expect(a.textContent).toContain(c.cin7Status.invoiceNumber);
-        // reconciliation is its own plain-text line (not a second chip), separate from the Cin7 invoice status chip
-        const rec = within(a).queryByText(/Reconciled with Cin7/);
+        // reconciliation (Toolbox record) is its own plain-text line (not a chip), separate from the Cin7 authorisation chip, which says the status is only recorded
+        expect(a.textContent).toMatch(/recorded \(not verified\)/);
+        const rec = within(a).queryByText(/Reconciled /);
         expect(!!rec).toBe(c.cin7Status.reconciled);
         if (rec) expect(rec.closest("[data-tone]")).toBeNull(); // green and chips are not spent on a record-keeping fact
       }
@@ -166,7 +170,7 @@ describe("Commercial / Claims workspace (P2)", () => {
     await openCommercial();
     const a = document.querySelector("article") as HTMLElement;
     const captions = Array.from(a.querySelectorAll("span[aria-hidden]")).filter((e) => e.className.includes("lg:hidden")).map((e) => e.textContent);
-    expect(captions).toEqual(["Amount", "Approval", "Cin7 invoice (as last recorded)"]);
+    expect(captions).toEqual(["Amount", "Approval", "Cin7 invoice"]); // UX-006g1: the cell itself says recorded vs verified, so the caption no longer claims "as last recorded"
     for (const e of a.querySelectorAll("span[aria-hidden].mb-0\\.5")) expect(e.className).toMatch(/lg:hidden/);
   });
   it("the column headings are only shown when there are claims", async () => {
@@ -174,7 +178,7 @@ describe("Commercial / Claims workspace (P2)", () => {
     render(<ProjectWorkspace id="p1" />);
     fireEvent.click(await screen.findByRole("button", { name: /Commercial \/ Claims/ }));
     await screen.findByText("No claims yet.");
-    expect(screen.queryByText("Cin7 invoice (as last recorded)")).toBeNull();
+    expect(screen.queryByText("Cin7 invoice")).toBeNull();
   });
   it("labels each value for assistive technology", async () => {
     await openCommercial();

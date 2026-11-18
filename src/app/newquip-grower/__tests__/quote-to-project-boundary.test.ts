@@ -12,7 +12,9 @@ import { NEWQUIP_MASTER_POC_SNAPSHOT } from "@/newquip/grower/snapshot";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { emptyDraft } from "@/newquip/grower/draft";
 import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
+import { withAcceptedIncompleteCosting } from "@/newquip/grower/__tests__/golden";
 import { buildAcceptedBaseline } from "@/newquip/quote/baseline";
+import { GOLDEN_LIBRARY } from "@/newquip/grower/__tests__/golden-catalogue";
 
 const ORG = "org-nq";
 const h = vi.hoisted(() => ({ db: null as unknown, logs: [] as Array<{ action: string; detail: Record<string, unknown> }> }));
@@ -27,8 +29,8 @@ import { createProjectFromGrowerQuoteAction } from "../actions";
 const R = (n: number) => n * 100;
 const APPROVALS = { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "r", handoffBy: "r", estimatorSignoffBy: "e", estimatorSignoffAt: "t", managerApprovedBy: "m", managerApprovedAt: "t" };
 const ctx = (withholdCost: boolean) => ({ priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost });
-const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
-const approvedFor = (ref: string) => buildAcceptedBaseline({ quoteRef: ref, revision: 1, draft, evaluation: evaluateDraft(draft, ctx(true)), marginEvaluation: evaluateDraft(draft, ctx(false)), approvals: APPROVALS });
+const draft = withAcceptedIncompleteCosting(applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft);
+const approvedFor = (ref: string) => buildAcceptedBaseline({ mappingLibrary: GOLDEN_LIBRARY as never, quoteRef: ref, revision: 1, draft, evaluation: evaluateDraft(draft, ctx(true)), marginEvaluation: evaluateDraft(draft, ctx(false)), approvals: APPROVALS });
 const approved = approvedFor("NQ-Q-0005");
 
 /** A brand-new quotation that a manager has just approved (the state right before "Create Project"). */

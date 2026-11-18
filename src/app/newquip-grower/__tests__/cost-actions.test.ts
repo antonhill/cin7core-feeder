@@ -32,6 +32,7 @@ import * as grower from "../actions";
 import { managerApprove } from "@/lib/newquip-quotes/quote-store";
 import { rolesFor } from "@/newquip/quote/roles";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
+import { ledLibraryMapping, managerExceptionOpts } from "@/newquip/grower/__tests__/baseline-exception-fixture";
 
 const ORG = "org-nq";
 const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
@@ -283,6 +284,10 @@ describe("exchange-rate snapshots", () => {
 
 describe("approval: an incomplete snapshot is refused unless an authorised exception is recorded; the approved basis is frozen", () => {
   const approve = () => managerApprove(db as never, ORG, rolesFor("admin"), "mgr@a", "q1", evaluationContext(true), evaluationContext(false));
+  // UX-006 S3: the Estimator's cost exception waives COST reasons only. M75 and penning (Estimator-priced by design) need the Manager's recorded baseline exception, and the LED package
+  // (a typed price, not a design choice) must be mapped, so these fixtures map it in the library and approve with the exception. Coverage is unchanged.
+  const approveWithException = () => managerApprove(db as never, ORG, rolesFor("admin"), "mgr@a", "q1", evaluationContext(true), evaluationContext(false), managerExceptionOpts(quote() as never));
+  beforeEach(() => { db.rows("newquip_package_mappings").push(ledLibraryMapping(ORG)); });
   const signed = () => { quote().estimator_signoff_hash = quote().draft_hash; quote().estimator_signoff_by_email = "est@a"; };
 
   it("freezes the selected supplier, original price and currency, the rate and its source and time, the unit, the ZAR cost and total", async () => {
@@ -291,7 +296,7 @@ describe("approval: an incomplete snapshot is refused unless an authorised excep
     await cost.captureLatestCostsAction("q1");
     for (const sku of await scopeSkus()) await cost.selectSupplierAction("q1", sku, { supplierId: "sup-b", supplierName: "Supplier B" });
     await cost.acceptIncompleteCostsAction("q1", "Demo quotation: three packages are not yet mapped to Cin7 SKUs");
-    signed(); await approve();
+    signed(); await approveWithException();
     expect(quote().state).toBe("MANAGER_APPROVED_FINAL");
     const est = quote().accepted_baseline.physicalCostEstimate;
     expect(est.missingSkus).toEqual([]); // every mapped SKU has a selected supplier (the unmapped demo packages are covered by the recorded exception)
@@ -303,7 +308,7 @@ describe("approval: an incomplete snapshot is refused unless an authorised excep
   it("later price or rate changes never alter the approved estimate", async () => {
     await stock([A(850)]); await confirmUnits(); await cost.captureLatestCostsAction("q1");
     await cost.acceptIncompleteCostsAction("q1", "Demo quotation: three packages are not yet mapped to Cin7 SKUs");
-    signed(); await approve();
+    signed(); await approveWithException();
     const frozen = JSON.stringify(quote().accepted_baseline.physicalCostEstimate);
     for (const sku of await scopeSkus()) reads.set(sku, product(sku, [A(9999), B(1)]));
     await cost.recordFxRateAction("USD", "99", "wild fixing", hoursAgo(0.1));
@@ -328,14 +333,14 @@ describe("approval: an incomplete snapshot is refused unless an authorised excep
     await cost.captureLatestCostsAction("q1");
     expect((await cost.acceptIncompleteCostsAction("q1", "short")).error).toMatch(/written reason/);
     expect((await cost.acceptIncompleteCostsAction("q1", "Supplier choice follows the customer's PO, agreed with the director")).ok).toBe(true);
-    signed(); await approve();
+    signed(); await approveWithException();
     expect(quote().state).toBe("MANAGER_APPROVED_FINAL");
     expect(quote().accepted_baseline.physicalCostEstimate).toMatchObject({ incomplete: true, costBasis: { incompleteAccepted: { reason: expect.stringContaining("director"), by: "u@nq" } } });
   });
-  it("a quotation whose costing was never started keeps the existing behaviour (approval is not blocked)", async () => {
-    signed(); await approve();
-    expect(quote().state).toBe("MANAGER_APPROVED_FINAL");
-    expect(quote().accepted_baseline.physicalCostEstimate).toBeUndefined();
+  it("UX-006 correction: a quotation whose costing was never started is NOT approvable (supplier costs unresolved) until costed or an authorised exception is recorded", async () => {
+    signed();
+    await expect(approve()).rejects.toThrow(/Costing is incomplete/);
+    expect(quote().state).toBe("ESTIMATOR_REVIEW");
   });
 });
 

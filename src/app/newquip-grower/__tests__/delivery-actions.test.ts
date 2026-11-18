@@ -9,6 +9,7 @@ import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { readyDraft } from "@/newquip/grower/__tests__/golden";
 import { testPriceSource } from "@/newquip/grower/__tests__/test-snapshot";
 import { buildAcceptedBaseline } from "@/newquip/quote/baseline";
+import { GOLDEN_LIBRARY } from "@/newquip/grower/__tests__/golden-catalogue";
 import { buildCustomerSnapshot, withChosenContact } from "@/lib/newquip-quotes/customer-snapshot";
 
 // The REAL document / delivery server actions and the download route over an in-memory database and storage. Only session, Demo Mode, roles, storage and the provider are replaced.
@@ -31,7 +32,7 @@ import * as delivery from "../delivery-actions";
 import * as customer from "../customer-actions";
 import { GET as download } from "@/app/api/newquip-quote-documents/[id]/route";
 
-const PROFILE = { brandName: "TestBrand", legalName: "Test Company (Pty) Ltd", registrationNumber: "0000/000000/00", vatNumber: "0000000000", addressLines: ["1 Test Street", "Testville 0001"], phone: "000", email: "sales@testbrand.example", website: "", validityDays: 30, paymentTerms: "p", deliveryInstallationConditions: "d", termsAndConditions: "t", acceptanceInstructions: "a" };
+const PROFILE = { brandName: "TestBrand", legalName: "Test Company (Pty) Ltd", registrationNumber: "2012/123456/07", vatNumber: "4123456789", addressLines: ["1 Test Street", "Testville 0001"], phone: "000", email: "sales@testbrand.example", website: "", validityDays: 30, paymentTerms: "Fictitious fixture: 40% deposit, 55% on delivery, 5% on completion.", deliveryInstallationConditions: "Fictitious fixture: delivery to the site gate; installation on a cleared site.", termsAndConditions: "Fictitious fixture: terms and conditions for automated tests only.", acceptanceInstructions: "Fictitious fixture: reply to the sender to accept this quotation." };
 const as = (roles: string[], opts: { email?: string; demo?: boolean; admin?: boolean } = {}) => {
   const email = opts.email ?? "rep@x.co";
   vi.mocked(requireModuleAccess).mockResolvedValue({ orgId: "org-a", userId: "u1", email } as never);
@@ -42,7 +43,7 @@ const as = (roles: string[], opts: { email?: string; demo?: boolean; admin?: boo
 beforeEach(async () => {
   db = new FakeDb(); db.deliveryApplied = true; files.clear(); vi.mocked(sendEmail).mockClear(); vi.stubEnv("VERCEL_ENV", "preview");
   const draft = readyDraft(); draft.customerName = "Boerdery (Pty) Ltd";
-  const { baseline, hash } = buildAcceptedBaseline({ quoteRef: "NQ-Q-0009", revision: 1, draft, evaluation: evaluateDraft(draft, { priceSource: testPriceSource(), withholdCost: false }), approvals: { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "r", handoffBy: "r", estimatorSignoffBy: "e", estimatorSignoffAt: "t", managerApprovedBy: "m", managerApprovedAt: "t" } });
+  const { baseline, hash } = buildAcceptedBaseline({ mappingLibrary: GOLDEN_LIBRARY as never, quoteRef: "NQ-Q-0009", revision: 1, draft, evaluation: evaluateDraft(draft, { priceSource: testPriceSource(), withholdCost: false }), approvals: { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "r", handoffBy: "r", estimatorSignoffBy: "e", estimatorSignoffAt: "t", managerApprovedBy: "m", managerApprovedAt: "t" } });
   db.rows("newquip_quotes").push({ id: "q1", org_id: "org-a", quote_ref: "NQ-Q-0009", revision: 1, state: "MANAGER_APPROVED_FINAL", accepted_baseline: baseline, baseline_hash: hash, draft: {}, requires_customer_acceptance: true });
   db.rows("newquip_quote_customers").push({ id: "s1", org_id: "org-a", quote_id: "q1", seq: 1, cin7_customer_id: "c1", snapshot: withChosenContact(buildCustomerSnapshot({ ID: "c1", Name: "Boerdery (Pty) Ltd", Currency: "ZAR", Addresses: [{ Type: "Billing", Line1: "PO Box 1", DefaultForType: true }], Contacts: [{ Name: "Piet", Email: "piet@boerdery.example" }] }, "t"), { source: "CIN7_CONTACT", contactIndex: 0 }), snapshot_hash: "h", captured_by_email: "r" });
 });

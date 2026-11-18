@@ -14,7 +14,7 @@ import { messageLeaksInternal } from "./customer-document";
 import { isValidEmail } from "./customer-snapshot";
 import { latestSnapshot } from "./customer-store";
 import { listDocuments, readDocumentBytes, type DocumentDeps, type StoredDocument } from "./document-store";
-import { portalAvailable } from "./acceptance";
+import { portalAvailable, testDocumentBlockedHere } from "./acceptance";
 import { issueResponseLink, type LinkEnv } from "./response-links";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
@@ -51,10 +51,15 @@ export function validateRequest(req: SendRequest): { to: string[]; cc: string[];
   return { to, cc, message };
 }
 
+/** A UAT TEST document is labelled in the subject and body of every email about it. */
+export const TEST_NOTICE = "TEST ONLY – NOT A COMMERCIAL QUOTATION. This is a UAT test message: do not act on it and do not forward it.";
+const TEST_PREFIX = (doc: StoredDocument): string => (doc.content.testOnly === true ? "TEST ONLY – NOT A COMMERCIAL QUOTATION: " : "");
+
 export interface ResponseLinks { accept: string; decline: string; changes: string; expiresOn: string }
 
 function bodyOf(doc: StoredDocument, message: string, companyName: string, links?: ResponseLinks | null): string {
   return [
+    ...(doc.content.testOnly === true ? [TEST_NOTICE, ""] : []),
     message || `Please find attached our quotation ${doc.quote_ref}.`,
     "",
     `Quotation: ${doc.quote_ref} (revision ${doc.revision})`,
@@ -83,6 +88,7 @@ export function htmlOf(doc: StoredDocument, message: string, links: ResponseLink
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:24px 12px">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:8px;overflow:hidden">
 ${previewBanner ? `<tr><td style="background:#fef3c7;color:#92400e;font-size:12px;padding:8px 20px">${esc(PREVIEW_BODY_BANNER)}</td></tr>` : ""}
+${doc.content.testOnly === true ? `<tr><td style="background:#b91c1c;color:#ffffff;font-size:14px;font-weight:700;padding:10px 20px">${esc(TEST_NOTICE)}</td></tr>` : ""}
 <tr><td style="background:#1e3a5f;color:#ffffff;padding:18px 20px;font-size:20px;font-weight:700">${brand}</td></tr>
 <tr><td style="padding:22px 20px;font-size:15px;line-height:1.5">
 <p style="margin:0 0 14px">${esc(message || `Please find attached our quotation ${doc.quote_ref}.`).replace(/\n/g, "<br>")}</p>
@@ -141,6 +147,7 @@ export async function sendQuotationToCustomer(
   if (!doc) throw new Error("That document does not belong to this quotation.");
   if (docs[0].id !== doc.id) throw new Error("A newer version of this quotation has been issued; send the latest one.");
   if (doc.revision !== q.revision || doc.baseline_hash !== q.baseline_hash) throw new Error("The quotation changed after this document was issued; issue it again before sending.");
+  if (testDocumentBlockedHere(doc.content, env as Record<string, string | undefined>)) throw new Error("This is a UAT TEST document; it can be sent only from the UAT deployment.");
   if (message && messageLeaksInternal(message, q.accepted_baseline)) throw new Error("Your message appears to contain internal information (costs, margins, SKUs or internal notes). Remove it before sending.");
 
   if (productionEmailBlocked(env)) throw new Error(PRODUCTION_EMAIL_OFF);   // refused up front: nothing is recorded, issued or sent
@@ -165,7 +172,7 @@ export async function sendQuotationToCustomer(
   }
 
   const { bytes } = await readDocumentBytes(db, orgId, doc.id, deps);
-  const subjectBase = `Quotation ${doc.quote_ref} (revision ${doc.revision}) from ${doc.content.company.brandName}`;
+  const subjectBase = `${TEST_PREFIX(doc)}Quotation ${doc.quote_ref} (revision ${doc.revision}) from ${doc.content.company.brandName}`;
   const body = bodyOf(doc, message, doc.content.company.legalName);
   // Policy per recipient: outside Production only the allowlisted mailboxes are emailed; everyone else is suppressed (recorded, never redirected).
   const decide = (addr: string) => applyEmailPolicy(env, { to: addr, subject: subjectBase, text: body });
@@ -219,6 +226,7 @@ export async function retryFailedSend(db: Db, orgId: string, sendId: string, dep
   const docs = await listDocuments(db, orgId, row.quote_id);
   const doc = docs.find((d) => d.id === row.document_id);
   if (!q || !doc || docs[0].id !== doc.id || doc.revision !== q.revision || doc.baseline_hash !== q.baseline_hash || q.state !== "MANAGER_APPROVED_FINAL") throw new Error("The quotation changed after this send; issue and send the current document instead.");
+  if (testDocumentBlockedHere(doc.content, env as Record<string, string | undefined>)) throw new Error("This is a UAT TEST document; it can be sent only from the UAT deployment.");
   await assertRetryAllowedHere(db, orgId, row, env);   // before the claim: a refusal changes nothing
   const claim = await db.from("newquip_quote_sends").update({ status: "QUEUED", last_error: null }).eq("org_id", orgId).eq("id", sendId).eq("status", "FAILED").select("*");
   if (claim.error) throw new Error(claim.error.message);
@@ -226,7 +234,7 @@ export async function retryFailedSend(db: Db, orgId: string, sendId: string, dep
   if (!claimed) throw new Error("Another retry of this send is already in progress.");
   const { bytes } = await readDocumentBytes(db, orgId, doc.id, deps);
   const body = bodyOf(doc, row.message, doc.content.company.legalName);
-  const subjectBase = `Quotation ${doc.quote_ref} (revision ${doc.revision}) from ${doc.content.company.brandName}`;
+  const subjectBase = `${TEST_PREFIX(doc)}Quotation ${doc.quote_ref} (revision ${doc.revision}) from ${doc.content.company.brandName}`;
   const decide = (addr: string) => applyEmailPolicy(env, { to: addr, subject: subjectBase, text: body });
   const sendTo = row.to_emails.filter((a) => decide(a).action === "SEND"); const sendCc = row.cc_emails.filter((a) => decide(a).action === "SEND");
   if (sendTo.length === 0) { const sup = await db.from("newquip_quote_sends").update({ status: "SUPPRESSED", last_error: null }).eq("org_id", orgId).eq("id", sendId).select("*").single(); return sup.data as StoredSend; }

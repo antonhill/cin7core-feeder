@@ -7,7 +7,7 @@ const row = (o: Partial<Parameters<typeof claimCin7Status>[0] & object>) => ({ c
 describe("claim Cin7 status (UAT-022: PRJ-NQ-Q-0016-C01 showed 'Not sent' despite INV-00032)", () => {
   it("the real posting for C01 (RECONCILED, INV-00032, DRAFT) reads as a reconciled draft invoice", () => {
     const s = claimCin7Status(row({}));
-    expect(s).toMatchObject({ kind: "DRAFT_CREATED", label: "Draft invoice created", invoiceNumber: "INV-00032", reconciled: true });
+    expect(s).toMatchObject({ kind: "DRAFT_CREATED", label: "Draft recorded", invoiceNumber: "INV-00032", reconciled: true });
   });
   it("only a claim with NO posting row is 'Not posted'", () => {
     expect(claimCin7Status(null).kind).toBe("NOT_POSTED");

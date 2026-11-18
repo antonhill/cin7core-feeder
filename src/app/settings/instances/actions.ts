@@ -1,6 +1,7 @@
 "use server";
 
 import { createServiceRoleClient } from "@/supabase/server";
+import { credentialColumn, storedCiphertext, requireCiphertext } from "@/cin7/credential-store";
 import { encrypt, decrypt } from "@/cin7/crypto";
 import { testConnection } from "@/cin7/client";
 import { CIN7_API_ORIGIN } from "@/cin7/api-origin";
@@ -32,15 +33,16 @@ async function toRecord(row: {
   id: string;
   name: string;
   account_id: string;
-  application_key_encrypted: string;
+  application_key_encrypted?: string | null;
+  application_key_encrypted_uat?: string | null;
   active: boolean;
   created_at: string;
   fulfilment_view_start_date: string | null;
 }): Promise<InstanceRecord> {
   let keyLast4 = "????";
   try {
-    const plain = decrypt(row.application_key_encrypted);
-    keyLast4 = plain.slice(-4);
+    const ciphertext = storedCiphertext(row);
+    keyLast4 = ciphertext ? decrypt(ciphertext).slice(-4) : "none"; // "none": no credential stored for THIS environment
   } catch {
     keyLast4 = "????"; // ENCRYPTION_KEY mismatch or corrupt row — never surface the raw error to the UI
   }
@@ -107,7 +109,7 @@ export async function listInstances(): Promise<ActionResult> {
     // handed to the client.
     const { data, error } = await db
       .from("cin7_instances")
-      .select("id, name, account_id, application_key_encrypted, active, created_at, fulfilment_view_start_date")
+      .select(`id, name, account_id, ${credentialColumn()}, active, created_at, fulfilment_view_start_date`)
       .eq("org_id", orgId)
       .order("created_at");
     if (error) return { ok: false, error: error.message };
@@ -156,7 +158,7 @@ export async function upsertInstance(params: {
         fulfilment_view_start_date: params.fulfilmentViewStartDate?.trim() || null,
         updated_at: new Date().toISOString(),
       };
-      if (params.applicationKey) update.application_key_encrypted = encrypt(params.applicationKey);
+      if (params.applicationKey) update[credentialColumn()] = encrypt(params.applicationKey);
 
       const { error } = await db
         .from("cin7_instances")
@@ -187,6 +189,9 @@ export async function upsertInstance(params: {
         detail: { name: params.name.trim(), accountId: params.accountId.trim(), active: params.active, rotatedKey: Boolean(params.applicationKey) },
       });
     } else {
+      if (credentialColumn() !== "application_key_encrypted") {
+        return { ok: false, error: "New instances cannot be created in this environment. Edit the existing instance and enter its Application Key." };
+      }
       const [{ count }, billing] = await Promise.all([
         db.from("cin7_instances").select("id", { count: "exact", head: true }).eq("org_id", orgId),
         getBillingStatus(orgId),
@@ -265,14 +270,14 @@ async function loadInstanceCreds(instanceId: string) {
   const db = createServiceRoleClient();
   const { data, error } = await db
     .from("cin7_instances")
-    .select("account_id, application_key_encrypted")
+    .select(`account_id, ${credentialColumn()}`)
     .eq("id", instanceId)
     .eq("org_id", orgId)
     .single();
   if (error || !data) throw new Error(error?.message ?? "Instance not found.");
   return {
     accountId: data.account_id,
-    applicationKey: decrypt(data.application_key_encrypted),
+    applicationKey: decrypt(requireCiphertext(data)),
     baseUrl: CIN7_API_ORIGIN,
   };
 }

@@ -5,6 +5,7 @@
 // caller must be an organisation owner/admin, a Manager or a Procurement role holder (the target view carries unit costs but never the contract margin).
 // This file may export ONLY async functions and erased interfaces ("use server" rule in CLAUDE.md).
 import { requireModuleAccess } from "@/lib/authorization";
+import { isNewquipPocOrg } from "@/newquip/access";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { createServiceRoleClient } from "@/supabase/server";
 import { PROJECTS_MODULE } from "@/app/module-nav";
@@ -41,7 +42,9 @@ export async function getProcurementTargetsAction(projectId: string): Promise<Pr
     let adminTier = false;
     try { await requireOrgAdmin("see procurement cost targets"); adminTier = true; } catch { adminTier = false; } // fail closed
     const roles = await resolveRoles(db, orgId, userId, adminTier);
-    if (!(adminTier || roles.has("MANAGER") || roles.has("PROCUREMENT"))) throw new Error("The cost targets are for buyers and managers: ask an administrator for the Procurement role.");
+    // NewQuip: explicit functional roles are authoritative, so the owner/admin tier alone (e.g. an Administrator-only account) never opens cost targets.
+    const tierCounts = adminTier && !isNewquipPocOrg(orgId);
+    if (!(tierCounts || roles.has("MANAGER") || roles.has("PROCUREMENT"))) throw new Error("The cost targets are for buyers and managers: ask an administrator for the Procurement role.");
     await guardBillingScope(db, orgId, projectId, adminTier);
     const p = await db.from("projects").select("project_reference, baseline_snapshot, billing_scope, parent_project_id").eq("org_id", orgId).eq("id", projectId).maybeSingle();
     if (p.error) throw new Error(p.error.message);
@@ -79,7 +82,7 @@ export async function getProcurementTargetsAction(projectId: string): Promise<Pr
 
     // Recognised actual cost: only for those who may see the project costing (owner/admin); everyone else sees none rather than a guess.
     let actual: Record<string, TargetActual> | null = null;
-    if (adminTier) {
+    if (tierCounts || (isNewquipPocOrg(orgId) && roles.has("MANAGER"))) {
       const rep = await getCostingReportAction(projectId).catch(() => null);
       if (rep?.ok && rep.data) {
         actual = {};

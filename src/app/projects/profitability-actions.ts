@@ -7,6 +7,7 @@
 import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { createServiceRoleClient } from "@/supabase/server";
+import { tierHoldsManagerRole } from "@/lib/approvals/role-store";
 import { PROJECTS_MODULE } from "@/app/module-nav";
 import { buildPhysicalPort } from "@/lib/projects/physical-adapter";
 import { loadProfitability } from "@/lib/projects/profitability-store";
@@ -29,7 +30,7 @@ export interface ProfitabilityActionResult {
 export async function getProfitabilityAction(projectId: string): Promise<ProfitabilityActionResult> {
   try {
     const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
-    await requireOrgAdmin("view project profitability");
+    { const c = await requireOrgAdmin("view project profitability"); if (!(await tierHoldsManagerRole(createServiceRoleClient(), c.orgId, c.userId))) throw new Error("This needs the Manager role."); }
     const db = createServiceRoleClient();
     const base = await loadBaseCost(db, orgId, projectId);
     const report = await loadProfitability(db, (instanceId) => buildPhysicalPort(db, orgId, instanceId), { orgId, projectId, base });
@@ -47,7 +48,7 @@ const msg = (e: unknown) => (e instanceof Error ? e.message : "Unexpected error"
 async function costContext(projectId: string) {
   const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
   assertNewquipOrg(orgId);
-  await requireOrgAdmin("manage project costs");
+  { const c = await requireOrgAdmin("manage project costs"); if (!(await tierHoldsManagerRole(createServiceRoleClient(), c.orgId, c.userId))) throw new Error("This needs the Manager role."); }
   const db = createServiceRoleClient();
   await guardBillingScope(db, orgId, projectId, true);
   return { orgId, userId, email: email ?? "unknown", db };

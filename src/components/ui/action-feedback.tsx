@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { TONE_CLASSES } from "./Alert";
 import { Spinner } from "@/app/Spinner";
+import { SLOW_AFTER_MS, stillWaitingText } from "./operation-labels";
+import { useElapsedSeconds } from "./use-elapsed";
 
 // UAT-025: ONE lightweight pattern for "I clicked a button, what happened?" - so the answer appears NEXT TO the control, never in a banner at the top
 // of a long page. No dependency, no global store. Three parts:
@@ -96,7 +98,22 @@ export function useKeyedActions() {
 
   const stateOf = useCallback((key: string): FeedbackState => states[key] ?? { kind: "idle" }, [states]);
   const clear = useCallback((key: string) => set(key, { kind: "idle" }), [set]);
-  return { run, stateOf, clear, anyPending: pendingCount > 0, isPending: (key: string) => states[key]?.kind === "pending" };
+  // UX-007: the operation that has been waiting longest-registered (first pending key), for the persistent slow-operation status.
+  const current = Object.entries(states).find(([, s]) => s.kind === "pending");
+  const currentLabel = current && current[1].kind === "pending" ? current[1].label : null;
+  return { run, stateOf, clear, anyPending: pendingCount > 0, isPending: (key: string) => states[key]?.kind === "pending", currentLabel };
+}
+
+/** The pending row: the operation's own label with a spinner, plus - once it has been waiting past ~2s - an honest "still waiting" line (time waited only, no invented progress). */
+export function PendingNotice({ label, className = "" }: { label: string; className?: string }) {
+  const secs = useElapsedSeconds(true, label);
+  const slow = secs * 1000 >= SLOW_AFTER_MS;
+  return (
+    <div role="status" aria-live="polite" data-testid="action-feedback" data-kind="pending" data-slow={slow || undefined} className={`mt-2 rounded-lg border px-3 py-2 text-sm ${TONE_CLASSES.info} ${className}`}>
+      <span className="flex items-center gap-2"><Spinner /> <span>{label}</span></span>
+      {slow && <span data-testid="action-feedback-slow" className="mt-1 block text-xs">{stillWaitingText(secs)}</span>}
+    </div>
+  );
 }
 
 /** The visible feedback region. Render it directly beside the control that triggered the action. */
@@ -119,11 +136,7 @@ export function ActionFeedback({ state, errorAction, className = "", floating = 
     );
   }
   if (state.kind === "pending") {
-    return (
-      <div role="status" aria-live="polite" data-testid="action-feedback" data-kind="pending" className={`mt-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${TONE_CLASSES.info} ${className}`}>
-        <Spinner /> <span>{state.label}</span>
-      </div>
-    );
+    return <PendingNotice label={state.label} className={className} />;
   }
   if (state.kind === "success") {
     return (

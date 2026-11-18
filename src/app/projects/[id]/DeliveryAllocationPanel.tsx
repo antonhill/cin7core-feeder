@@ -11,6 +11,7 @@ import { Select } from "@/components/ui/Select";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import type { ProjectView } from "@/lib/projects/project-view";
 import { allocKey } from "@/lib/projects/delivery-allocation";
+import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
 import {
   confirmMilestoneAction, createDeliveryAction, getDeliveryRegisterAction, setAllocationAction, setDeliveryStatusAction,
   type DeliveryActionResult,
@@ -32,6 +33,9 @@ export function DeliveryAllocationPanel({ view, section = "both" }: { view: Proj
   const [label, setLabel] = useState(""); const [date, setDate] = useState("");
   const [delivery, setDelivery] = useState(""); const [sku, setSku] = useState(""); const [qty, setQty] = useState(""); const [reason, setReason] = useState("");
   const [stageId, setStageId] = useState(""); const [note, setNote] = useState(""); const [evidence, setEvidence] = useState("");
+
+  // Unsaved-work guard for the milestone form: dirty = a typed note or evidence reference not yet recorded (a successful record clears both).
+  useUnsavedGuard(section !== "deliveries" && (note.trim() !== "" || evidence.trim() !== ""));
 
   const load = useCallback(async () => {
     const r = await getDeliveryRegisterAction(projectId);
@@ -108,6 +112,7 @@ export function DeliveryAllocationPanel({ view, section = "both" }: { view: Proj
         <PanelTitle>Commercial milestone confirmation</PanelTitle>
         {section === "milestones" && msg && <div className="mt-2"><Alert tone={msg.tone}>{msg.text}</Alert></div>}
         <p className="mt-1 text-xs text-slate-600">A manager records that a commercial milestone has been met (for example &quot;about 90% delivered&quot; or &quot;installation accepted&quot;) with its supporting evidence. This is independent of reported physical progress.</p>
+        <p className="mt-1 text-xs text-slate-600">A confirmation is evidence only: it changes no approved percentage and no claimable amount. Only an owner or admin recording <span className="font-medium">Approve commercial progress</span> (Stages tab) makes value claimable.</p>
         {data?.confirmations.length ? <ul className="mt-2 text-sm">{data.confirmations.map((c) => <li key={c.id}>{view.stages.find((s) => s.id === c.stage_id)?.name ?? "Stage"}: {c.note}{c.evidence_ref ? ` [${c.evidence_ref}]` : ""} - {c.confirmed_by_email}, {new Date(c.confirmed_at).toLocaleDateString()}</li>)}</ul> : null}
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
           <Select label="Milestone" value={stageId} onChange={(e) => setStageId(e.target.value)}><option value="">Select…</option>{view.stages.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select>

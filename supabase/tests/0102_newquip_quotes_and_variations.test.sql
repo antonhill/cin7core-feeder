@@ -92,8 +92,8 @@ end $$;
 -- ── RLS ──────────────────────────────────────────────────────────────────────
 select pg_temp.act_as('00000000-0000-0000-0000-0000000001a1');
 do $$ begin
-  if (select count(*) from newquip_quotes) <> 1 then raise exception 'member A should see its own quote'; end if;
-  if (select count(*) from project_variations) <> 1 then raise exception 'member A should see its variation'; end if;
+  if (select count(*) from newquip_quotes) <> 0 then raise exception 'a signed-in member must read NOTHING from newquip_quotes (0122: no member read policy)'; end if;
+  if (select count(*) from project_variations) <> 0 then raise exception 'a signed-in member must read NOTHING from project_variations (0122: no member read policy)'; end if;
 end $$;
 select pg_temp.expect_denied($q$insert into newquip_quotes (org_id, quote_ref) values ('00000000-0000-0000-0000-0000000001b1', 'Q-X')$q$, 'member insert quote');
 select pg_temp.expect_no_rows_changed($q$update project_variations set title = 'y'$q$, 'member update variation');

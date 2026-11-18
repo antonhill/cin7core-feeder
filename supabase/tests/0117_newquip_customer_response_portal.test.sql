@@ -136,8 +136,8 @@ do $$ declare t text; p text; r text; begin
     if has_table_privilege('anon', t, 'SELECT') then raise exception 'anon must not read %', t; end if;
   end loop;
   if has_column_privilege('authenticated', 'newquip_response_links', 'token_hash', 'SELECT') then raise exception 'members must not read the token hash'; end if;
-  if not has_column_privilege('authenticated', 'newquip_response_links', 'expires_at', 'SELECT') then raise exception 'members read link metadata'; end if;
-  if not has_table_privilege('authenticated', 'newquip_response_reviews', 'SELECT') then raise exception 'members read reviews'; end if;
+  if has_column_privilege('authenticated', 'newquip_response_links', 'expires_at', 'SELECT') then raise exception '0122: members hold no column read on links'; end if;
+  if has_table_privilege('authenticated', 'newquip_response_reviews', 'SELECT') or has_table_privilege('authenticated', 'newquip_response_evidence', 'SELECT') then raise exception '0122: members hold no read on reviews/evidence'; end if;
   if not has_table_privilege('service_role', 'newquip_response_links', 'INSERT') then raise exception 'service role writes links'; end if;
   foreach t in array array['newquip_response_links_guard()', 'newquip_response_reviews_guard()', 'newquip_response_evidence_guard()', 'newquip_quote_responses_guard()'] loop
     foreach r in array array['anon', 'authenticated'] loop
@@ -146,25 +146,21 @@ do $$ declare t text; p text; r text; begin
   end loop;
 end $$;
 
--- ── RLS: members read their own organisation only; no client writes ──
+-- ── RLS/privileges: since 0122 members have no direct read; no client writes ──
 select pg_temp.act_as('00000000-0000-0000-0000-0000000017a1');
-do $$ begin
-  if (select count(*) from newquip_response_links) < 2 then raise exception 'org A member must see its links'; end if;
-  if (select count(*) from newquip_response_reviews) <> 1 then raise exception 'org A member must see its review'; end if;
-  if (select count(*) from newquip_response_evidence) <> 1 then raise exception 'org A member must see its evidence'; end if;
-end $$;
+select pg_temp.expect_denied($q$select count(*) from newquip_response_links$q$, '0122: org A member has no direct read of links');
+select pg_temp.expect_denied($q$select count(*) from newquip_response_reviews$q$, '0122: org A member has no direct read of reviews');
+select pg_temp.expect_denied($q$select count(*) from newquip_response_evidence$q$, '0122: org A member has no direct read of evidence');
 select pg_temp.expect_denied($q$select token_hash from newquip_response_links$q$, 'a member reading the token hash');
 select pg_temp.expect_denied($q$insert into newquip_response_evidence (org_id, quote_id, document_id, response_id, storage_path, file_name, content_type, byte_size, sha256, uploaded_by_email) values ('00000000-0000-0000-0000-0000000017b1', '00000000-0000-0000-0000-0000000017c1', '00000000-0000-0000-0000-0000000017d1', '00000000-0000-0000-0000-0000000017f1', '00000000-0000-0000-0000-0000000017b1/evidence/q1/r1/client.pdf', 'c.pdf', 'application/pdf', 10, repeat('b', 64), 'x@x')$q$, 'client write to evidence');
 select pg_temp.expect_denied($q$update newquip_response_links set revoked_at = now(), revoked_reason = 'client'$q$, 'client revoking a link');
 select pg_temp.expect_denied($q$truncate newquip_response_links$q$, 'client TRUNCATE');
 select pg_temp.reset_role();
 select pg_temp.act_as('00000000-0000-0000-0000-0000000017a2');
-do $$ begin
-  if (select count(*) from newquip_response_links) <> 0 then raise exception 'org B must not see org A links'; end if;
-  if (select count(*) from newquip_response_reviews) <> 0 then raise exception 'org B must not see org A reviews'; end if;
-  if (select count(*) from newquip_response_evidence) <> 0 then raise exception 'org B must not see org A evidence'; end if;
-  if (select count(*) from newquip_quote_responses where origin = 'CUSTOMER_LINK') <> 0 then raise exception 'org B must not see org A link responses'; end if;
-end $$;
+select pg_temp.expect_denied($q$select count(*) from newquip_response_links$q$, 'a signed-in member has no read access to newquip_response_links (0122)');
+select pg_temp.expect_denied($q$select count(*) from newquip_response_reviews$q$, 'a signed-in member has no read access to newquip_response_reviews (0122)');
+select pg_temp.expect_denied($q$select count(*) from newquip_response_evidence$q$, 'a signed-in member has no read access to newquip_response_evidence (0122)');
+select pg_temp.expect_denied($q$select count(*) from newquip_quote_responses$q$, 'a signed-in member has no read access to newquip_quote_responses (0122)');
 select pg_temp.reset_role();
 
 -- ── notifications anchored on the quotation (no approval request needed) ──

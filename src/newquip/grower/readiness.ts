@@ -31,8 +31,12 @@ export interface ReadinessItem {
 
 export interface Readiness {
   state: ReadinessState;
-  /** Why the state is DRAFT / BLOCKED (empty when READY). */
+  /** Why the state is DRAFT / BLOCKED (empty when READY). Always `repReasons` + `estimatorReasons` (de-duplicated). */
   reasons: string[];
+  /** The subset of `reasons` the REP can clear: customer/site, engineering validity, override reasons, quantities, charges, M75 price, pig size. */
+  repReasons: string[];
+  /** The subset of `reasons` only an ESTIMATOR / MANAGER can clear: product mappings, package confirmation, supplier quotes, missing source prices. */
+  estimatorReasons: string[];
   counts: Record<ReadinessCategory, number>;
   items: Record<ReadinessCategory, ReadinessItem[]>;
 }
@@ -45,6 +49,8 @@ const empty = (): Record<ReadinessCategory, ReadinessItem[]> => ({
 export function assessReadiness(draft: QuoteDraft, calc: GrowerCalculationResult, budget: BudgetQuote | null): Readiness {
   const items = empty();
   const reasons: string[] = [];
+  // Ownership of each reason (additive: `reasons` and `state` are exactly what they always were).
+  const estimatorOwned = new Set<string>(budget?.estimatorBlockers ?? []);
 
   if (!draft.customerName.trim()) reasons.push("Customer name is required.");
   if (!draft.siteName.trim()) reasons.push("Site / project name is required.");
@@ -101,10 +107,10 @@ export function assessReadiness(draft: QuoteDraft, calc: GrowerCalculationResult
   }
 
   const state: ReadinessState = reasons.length > 0 ? (reasons.every((r) => /customer name|site/i.test(r)) ? "DRAFT" : "BLOCKED") : "READY";
-  return finish(state, [...new Set(reasons)], items);
+  return finish(state, [...new Set(reasons)], items, estimatorOwned);
 }
 
-function finish(state: ReadinessState, reasons: string[], items: Record<ReadinessCategory, ReadinessItem[]>): Readiness {
+function finish(state: ReadinessState, reasons: string[], items: Record<ReadinessCategory, ReadinessItem[]>, estimatorOwned: ReadonlySet<string> = new Set()): Readiness {
   const counts = Object.fromEntries((Object.keys(items) as ReadinessCategory[]).map((k) => [k, items[k].length])) as Record<ReadinessCategory, number>;
-  return { state, reasons, counts, items };
+  return { state, reasons, repReasons: reasons.filter((r) => !estimatorOwned.has(r)), estimatorReasons: reasons.filter((r) => estimatorOwned.has(r)), counts, items };
 }

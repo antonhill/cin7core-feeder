@@ -10,11 +10,15 @@ import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
 import { type OrgTier, type QuoteRole } from "@/newquip/quote/roles";
 import { toQuoteRoles } from "@/lib/approvals/roles";
 import { canSeeCosts, resolveRoles } from "@/lib/approvals/role-store";
+import { narrowTier, resolveSwitchState } from "@/lib/approvals/role-switch-store";
+import type { SwitchRole } from "@/lib/approvals/active-role";
 import { demoAuditDetail, resolveActing, type DemoInfo } from "@/lib/demo-mode/context";
 
 export interface Actor {
   /** The EFFECTIVE user (under Demo Mode, the allowlisted test account). Permissions evaluate this one. */
   orgId: string; userId: string; email: string; tier: OrgTier; roles: ReadonlySet<QuoteRole>; canSeeCost: boolean;
+  /** Set only for a role-switch user: the ONE process role they are acting as (their real identity is still userId / email). */
+  activeRole: SwitchRole | null;
   /** Set only while the owner is impersonating a demo identity. */
   demo: DemoInfo | null;
 }
@@ -31,8 +35,10 @@ export async function authoriseActor(): Promise<Actor> {
     try { await requireOrgAdmin("act as a NewQuip manager"); tier = "admin"; } catch { tier = "member"; } // fail closed
   }
   const db = createServiceRoleClient();
+  if (tier === "admin" && !(await narrowTier(db, orgId, acting.userId, true))) tier = "member";
+  const switchState = await resolveSwitchState(db, orgId, acting.userId);
   const functional = await resolveRoles(db, orgId, acting.userId, tier === "admin");
-  return { orgId, userId: acting.userId, email: acting.email, tier, roles: toQuoteRoles(functional), canSeeCost: await canSeeCosts(db, orgId, acting.userId, tier === "admin"), demo: acting.demo };
+  return { orgId, userId: acting.userId, email: acting.email, tier, roles: toQuoteRoles(functional), canSeeCost: await canSeeCosts(db, orgId, acting.userId, tier === "admin"), demo: acting.demo, activeRole: switchState?.active ?? null };
 }
 
 /** The authenticated OWNER email when a Demo identity is active, else null. Recorded next to the effective user on every audited write. */
@@ -41,8 +47,13 @@ export const ownerEmailOf = (a: Actor): string | null => a.demo?.ownerEmail ?? n
 /** Audit record: the REAL owner is the actor; the effective user and the DEMO marker are in the detail. */
 export async function auditActor(db: Db, a: Actor, i: { action: string; summary: string; detail: Record<string, unknown> }): Promise<void> {
   await logActivity(db, a.demo
-    ? { orgId: a.orgId, actor: { userId: a.demo.ownerUserId, email: a.demo.ownerEmail }, action: i.action, summary: `[DEMO] ${i.summary}`, detail: demoAuditDetail(a.demo, i.detail) }
-    : { orgId: a.orgId, actor: { userId: a.userId, email: a.email }, action: i.action, summary: i.summary, detail: i.detail });
+    ? { orgId: a.orgId, actor: { userId: a.demo.ownerUserId, email: a.demo.ownerEmail }, action: i.action, summary: `[DEMO] ${i.summary}`, detail: { ...demoAuditDetail(a.demo, i.detail), ...(a.activeRole ? { effectiveRole: a.activeRole } : {}) } }
+    : { orgId: a.orgId, actor: { userId: a.userId, email: a.email }, action: i.action, summary: i.summary, detail: { ...i.detail, ...(a.activeRole ? { effectiveRole: a.activeRole } : {}) } });
+}
+
+/** For the NewQuip layout: the role-switch state of the signed-in person (null for everyone who has no switch). Kept here so no new file needs service-role access. */
+export async function currentSwitchState(orgId: string, userId: string) {
+  return resolveSwitchState(createServiceRoleClient(), orgId, userId).catch(() => null);
 }
 
 export const errText = (e: unknown): string => (e instanceof Error ? e.message : "Unexpected error");

@@ -1,5 +1,6 @@
 import type { QuoteDraft } from "./draft";
 import { emptyDraft } from "./draft";
+import { TOPIGS_GROWER_INPUT } from "./fixture";
 
 // DEMO DEFAULTS - the NewQuip demonstration quotation, loadable into the CURRENT editable draft with one click.
 //
@@ -92,7 +93,61 @@ export function applyDemoDefaults(current: QuoteDraft): DemoLoad {
     ...demo,
     // The customer the Rep selected is NOT part of the demonstration: it is kept exactly as it is (blank stays blank).
     customerName: current.customerName,
-    estimator: { ...demo.estimator, ...(current.estimator.costOverrides ? { costOverrides: structuredClone(current.estimator.costOverrides) } : {}) },
+    // The template revision belongs to the QUOTATION, not to the demonstration values: it is carried over (a demonstration load must not move a quotation between templates).
+    estimator: { ...demo.estimator, ...(current.estimator.templateRevision ? { templateRevision: current.estimator.templateRevision } : {}), ...(current.estimator.costOverrides ? { costOverrides: structuredClone(current.estimator.costOverrides) } : {}) },
   };
   return { draft, replaced };
 }
+
+// ── CONTEXTUAL SAMPLES (UX-006i1) ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// The global whole-quote loader is now a Preview-only testing utility. These two fill ONE step of the draft held in the editor and nothing else: they never save, submit, approve, sign off or
+// call any server action (the page's live recalculation previews the result as for any edit). Pure; the input is not modified; applying twice equals applying once.
+
+const ROOM_KEYS = ["lengthM", "widthM", "rooms", "totalPens", "hospitalPens", "pigsPerRoom"] as const;
+/** What "Load sample measurements" fills: the six room measurements of the Topigs sample. The site name, pricing basis, equipment, quantities and prices are untouched. */
+export const SAMPLE_MEASUREMENTS_FILLS = "length, width, number of rooms, total and hospital pens and pigs per room (Topigs sample)";
+export function applyMeasurementsSample(current: QuoteDraft): { draft: QuoteDraft; replaced: boolean } {
+  const config = { ...current.config };
+  for (const k of ROOM_KEYS) (config as Record<string, unknown>)[k] = TOPIGS_GROWER_INPUT[k];
+  return { draft: { ...current, config }, replaced: ROOM_KEYS.some((k) => !same(current.config[k], TOPIGS_GROWER_INPUT[k])) };
+}
+/** True when any room measurement already holds a value that the sample would replace. */
+export function hasMeasurementEntries(current: QuoteDraft): boolean {
+  const blank = emptyDraft().config;
+  return ROOM_KEYS.some((k) => !same(current.config[k], blank[k]) && !same(current.config[k], TOPIGS_GROWER_INPUT[k]));
+}
+
+const EQUIPMENT_KEYS = ["selectedFeederType", "selectedDrinkerType", "selectedFlooringType", "selectedPenningType", "selectedLightingType", "slattedFloorAreaM2", "penningPigSize", "penningRunningMetresPerRoom", "feederVariant", "optionalEquipment", "estimatorQuantities", "quantityOverrides", "quantityOverrideReasons", "exclusions"] as const;
+/** What "Load recommended configuration" fills: the CONFIG part of the demonstration quote. Charges, the M75 price, assumptions, product mappings and manual prices (Estimator-owned) are NOT touched. */
+export const RECOMMENDED_CONFIG_FILLS = "the system selections (including the penning pig size) and optional equipment, and REPLACES every quantity you entered, the quantity overrides and their reasons (the customer exclusions are cleared). It keeps the site, room measurements, charges, M75 price, assumptions, product choices and manual prices";
+export function applyRecommendedConfiguration(current: QuoteDraft): { draft: QuoteDraft; replaced: boolean } {
+  const config = { ...current.config };
+  for (const k of EQUIPMENT_KEYS) (config as Record<string, unknown>)[k] = structuredClone((DEMO_DEFAULTS.config as unknown as Record<string, unknown>)[k]);
+  return { draft: { ...current, config }, replaced: EQUIPMENT_KEYS.some((k) => !same((current.config as unknown as Record<string, unknown>)[k], (DEMO_DEFAULTS.config as unknown as Record<string, unknown>)[k])) };
+}
+/** True when the equipment part of the draft already holds entries that the recommended configuration would replace (a confirmation is needed). */
+export function hasEquipmentEntries(current: QuoteDraft): boolean {
+  // The WHOLE equipment section is compared: it differs from blank (something is entered) AND from the recommendation (so something would be replaced, including values edited or cleared since the load).
+  const pick = (c: unknown) => Object.fromEntries(EQUIPMENT_KEYS.map((k) => [k, (c as Record<string, unknown>)[k]]));
+  const cur = pick(current.config);
+  return !same(cur, pick(emptyDraft().config)) && !same(cur, pick(DEMO_DEFAULTS.config));
+}
+
+
+// ── THREE DIFFERENT THINGS, KEPT APART ──────────────────────────────────────────────────────────────────────────────────────────────────────
+// 1. EXPLICIT UAT DEMONSTRATION PRESET: DEMO_DEFAULTS (above). Test values copied from the demonstration quote NQ-Q-0001. Never a recommendation. Offered ONLY where demoToolsEnabled() allows it (a Preview deployment, or newquip-uat with its two explicit settings; viewer.demoPreset). Never Toolbox Production.
+// 2. APPROVED ENGINEERING QUANTITY RULES: rules.ts (automatic / default rules). The engine applies them on its own; nothing is "loaded".
+// 3. MANUAL REP-ENTERED QUANTITIES: whatever the Rep types in the equipment step. Always allowed and saved.
+// The per-room estimator quantities in the preset are NOT approved rules (rules.ts marks every optional line manual / engineering review).
+
+/** The per-room quantity keys of the demonstration preset that a draft still holds unchanged. A draft holding MANY of them identical is carrying the preset, not a Rep's own entries (a coincidence on one or two is not enough). */
+export function demoPresetQuantityKeys(draft: QuoteDraft): string[] {
+  const demo = (DEMO_DEFAULTS.config.estimatorQuantities ?? {}) as Record<string, number>;
+  const cur = (draft.config.estimatorQuantities ?? {}) as Record<string, number>;
+  const same = Object.keys(demo).filter((k) => cur[k] === demo[k]);
+  // Most preset values are 1 or 2 (a genuine small order can match those). Only the DISTINCTIVE values (3 or more: feeder, cone fans, cup drinker, pad cooling, slats) show the preset was loaded.
+  const distinctive = same.filter((k) => demo[k] >= 3);
+  return same.length >= 8 && distinctive.length >= 4 ? same : [];
+}
+
+export const DEMO_PRESET_QUANTITY_NOTICE = "Some per-room quantities match the UAT demonstration preset, which is not approved engineering data. Check each quantity before you rely on this Budget.";

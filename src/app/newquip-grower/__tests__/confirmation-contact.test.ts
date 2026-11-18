@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeDb } from "@/lib/projects/__tests__/fake-db";
 import { seedGoldenCatalogue } from "@/newquip/grower/__tests__/golden-catalogue";
 import { installStaged } from "@/lib/approvals/__tests__/staged-emulator";
 import { emptyDraft } from "@/newquip/grower/draft";
 import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
+import { withAcceptedIncompleteCosting } from "@/newquip/grower/__tests__/golden";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { createWorkbookPriceSource } from "@/newquip/grower/workbook-price-source";
 import { NEWQUIP_MASTER_POC_SNAPSHOT } from "@/newquip/grower/snapshot";
@@ -14,6 +15,8 @@ import { DEMO_OWNER_EMAIL } from "@/lib/demo-mode/config";
 let db: FakeDb;
 const jar = new Map<string, string>();
 let session: { userId: string; orgId: string; email: string | null } = { userId: "u-owner", orgId: "e1aea782-d095-47ad-90fb-4fa65c9bf855", email: DEMO_OWNER_EMAIL };
+const boom = vi.hoisted(() => ({ on: false }));
+vi.mock("@/newquip/grower/budget-pricing", async (orig) => { const m = await orig<typeof import("@/newquip/grower/budget-pricing")>(); return { ...m, budgetPricingOf: ((...a: Parameters<typeof m.budgetPricingOf>) => { if (boom.on) throw new Error("post-handoff reload failed"); return m.budgetPricingOf(...a); }) as typeof m.budgetPricingOf }; });
 vi.mock("server-only", () => ({}));
 vi.mock("next/headers", () => ({ cookies: async () => ({ get: (n: string) => (jar.has(n) ? { name: n, value: jar.get(n) } : undefined), set: (n: string, v: string) => { jar.set(n, v); }, delete: (n: string) => { jar.delete(n); } }) }));
 vi.mock("@/lib/current-org", () => ({ requireCurrentOrg: async () => session }));
@@ -36,7 +39,7 @@ import { readCin7Customer } from "@/lib/newquip-customers/cin7-customer-read";
 const NQ = "e1aea782-d095-47ad-90fb-4fa65c9bf855";
 const U = { owner: "u-owner", rep: "u-rep", est: "u-est", mgr: "u-mgr" };
 const EMAIL: Record<string, string> = { "u-owner": DEMO_OWNER_EMAIL, "u-rep": "rep@sparkconsulting.co.za", "u-est": "estimator@sparkconsulting.co.za", "u-mgr": "manager@sparkconsulting.co.za" };
-const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
+const draft = withAcceptedIncompleteCosting(applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft);
 const total = Math.round(evaluateDraft(draft, { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: true }).budget!.totals.subtotalExTax * 100);
 const quote = () => db.rows("newquip_quotes")[0] as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 const acts = () => (db.rows("activity_log") as Array<Record<string, any>>); // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -161,20 +164,25 @@ describe("pre-approval price confirmation contact", () => {
     expect(quote()).toMatchObject({ state: "REP_DRAFT", estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null, customer_confirmed_cents: null });
   });
 
-  it("changing the commercial amount requires reconfirmation: the Manager cannot approve a total the customer did not confirm", async () => {
+  it("changing the commercial amount WITHDRAWS the confirmation at the save (back to the Rep, new revision); the old record is not presented as current, and a stale confirmation still cannot be approved", async () => {
     await as("rep"); await send({ source: "QUOTATION_CONTACT" });
     await as("estimator");
     const d = structuredClone(quote().draft) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
     d.estimator.charges.delivery += 100_000;
-    expect((await grower.saveGrowerDraftAction("q1", d as never)).error).toBeUndefined();
-    expect((await grower.signOffGrowerQuoteAction("q1")).error).toBeUndefined();
-    await as("manager");
-    expect((await grower.approveGrowerQuoteAction("q1")).error).toMatch(/total changed since the customer confirmed/);
-    expect(quote().state).toBe("ESTIMATOR_REVIEW");
-    // the Rep must reconfirm: the Manager returns it -> new revision with no confirmation -> confirm again at the new amount
-    expect((await grower.returnGrowerQuoteToRepAction("q1", "amount changed")).error).toBeUndefined();
+    const saved = await grower.saveGrowerDraftAction("q1", d as never);
+    expect(saved.error).toBeUndefined();
+    expect(saved.data!.confirmationEffect).toMatchObject({ confirmationCleared: true, returnedToRep: true, previousCents: total });
     expect(quote()).toMatchObject({ state: "REP_DRAFT", customer_confirmed_cents: null, revision: 2 });
-    expect((await customer.getQuoteCustomerAction("q1")).data!.confirmationContact).toBeNull(); // the old record is not presented as current
+    expect((await customer.getQuoteCustomerAction("q1")).data!.confirmationContact).toBeNull();
+    // defence in depth: if a stale confirmation were somehow still on an in-review quote, the Manager still cannot approve it
+    Object.assign(quote(), { state: "ESTIMATOR_REVIEW", customer_confirmed_cents: total });
+    // Integration of S1a + S1b: S1a's sign-off also refuses a stale amount (a second line of defence), so the sign-off is refused here ...
+    await as("estimator"); expect((await grower.signOffGrowerQuoteAction("q1")).error).toBe("The amount changed since the customer confirmed it. Return it to the Rep to reconfirm.");
+    // ... and approval stays refused even if a sign-off were somehow present on a stale confirmation.
+    Object.assign(quote(), { estimator_signoff_hash: quote().draft_hash, estimator_signoff_by_email: "e@nq" });
+    await as("manager");
+    expect((await grower.approveGrowerQuoteAction("q1")).error).toMatch(/total changed since the customer confirmed|Costing is incomplete/);
+    expect(quote().state).toBe("ESTIMATOR_REVIEW");
   });
 
   it("role and organisation isolation: only a Rep records it; another organisation's snapshot is never used", async () => {
@@ -214,5 +222,39 @@ describe("pre-approval price confirmation contact", () => {
     const r = await grower.createProjectFromGrowerQuoteAction("q1");
     expect(r.ok).toBe(false); expect(r.error).toMatch(/customer must accept|has not accepted/i);
     expect(db.rows("projects")).toHaveLength(0);
+  });
+});
+
+describe("hand-off audit links the Budget snapshot (PR #296)", () => {
+  const budgetRow = () => ({ org_id: NQ, action: "newquip.budget_quotation_sent", created_at: "2026-11-18T10:07:35Z", detail: { quoteId: "q1", status: "ACCEPTED", draftRef: "6842501d27a8", internalSnapshot: { path: `${NQ}/budget-snapshots/q1/x.json`, sha256: "abc" }, knownSubtotalExVat: 123, unpricedItems: ["PVC SST door × 24"], snapshot: { model: { provisional: { items: ["Grower cup drinker × 648"] } } } } });
+  afterEach(() => { boom.on = false; });
+
+  it("records the linked Budget snapshot, its provisional and unpriced lines; the confirmed amount and state are unchanged by the link", async () => {
+    await as("rep"); db.rows("activity_log").push(budgetRow() as never);
+    expect((await send({ source: "QUOTATION_CONTACT" })).error).toBeUndefined();
+    expect(quote()).toMatchObject({ state: "ESTIMATOR_REVIEW", customer_confirmed_cents: total });
+    const link = acts().find((x) => x.action === "newquip.quote_sent_to_estimator")!.detail.budgetSnapshotLink;
+    expect(link).toMatchObject({ linked: true, budgetDraftRef: "6842501d27a8", budgetSnapshot: { sha256: "abc" }, budgetProvisionalItems: ["Grower cup drinker × 648"], budgetUnpricedItems: ["PVC SST door × 24"] });
+    expect(acts().filter((x) => x.action === "newquip.budget_quotation_sent")).toHaveLength(1); // the original Budget audit is untouched
+  });
+  it("another quote's Budget send is never linked", async () => {
+    await as("rep"); const o = budgetRow(); o.detail.quoteId = "other"; db.rows("activity_log").push(o as never);
+    await send({ source: "QUOTATION_CONTACT" });
+    expect(acts().find((x) => x.action === "newquip.quote_sent_to_estimator")!.detail.budgetSnapshotLink).toMatchObject({ linked: false });
+  });
+  it("if the post-handoff reload/evaluation fails, the hand-off still succeeds and the audit row still records the snapshot link (without the at-acknowledgement lines)", async () => {
+    await as("rep"); db.rows("activity_log").push(budgetRow() as never); boom.on = true;
+    const r = await send({ source: "QUOTATION_CONTACT" });
+    expect(r.error).toBeUndefined();
+    expect(quote().state).toBe("ESTIMATOR_REVIEW");
+    const link = acts().find((x) => x.action === "newquip.quote_sent_to_estimator")!.detail.budgetSnapshotLink;
+    expect(link).toMatchObject({ linked: true, budgetDraftRef: "6842501d27a8" }); expect(link.atAcknowledgement).toBeUndefined();
+  });
+  it("a REAL pre-handoff failure is not concealed: a wrong confirmed amount is refused, the quote stays with the Rep and no hand-off audit row is written", async () => {
+    await as("rep"); db.rows("activity_log").push(budgetRow() as never);
+    const r = await grower.sendGrowerQuoteToEstimatorAction("q1", total + 100, { source: "QUOTATION_CONTACT" });
+    expect(r.error ?? (r as { ok?: boolean }).ok === false).toBeTruthy();
+    expect(quote().state).toBe("REP_DRAFT");
+    expect(acts().find((x) => x.action === "newquip.quote_sent_to_estimator")).toBeUndefined();
   });
 });

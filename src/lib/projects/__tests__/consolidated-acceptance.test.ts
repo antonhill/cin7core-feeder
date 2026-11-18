@@ -7,7 +7,10 @@ import { NEWQUIP_MASTER_POC_SNAPSHOT } from "@/newquip/grower/snapshot";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { emptyDraft } from "@/newquip/grower/draft";
 import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
-import { buildAcceptedBaseline, baselineMatchesHash, type AcceptedBaseline } from "@/newquip/quote/baseline";
+import { withAcceptedIncompleteCosting } from "@/newquip/grower/__tests__/golden";
+import { onCurrentTemplate } from "@/newquip/grower/__tests__/current-template";
+import { sealWithUnresolvedScope } from "@/newquip/grower/__tests__/baseline-exception-fixture";
+import { baselineMatchesHash } from "@/newquip/quote/baseline";
 import { buildMarginSheet, redactInternalFinancials } from "@/newquip/quote/margin";
 import { POC_SIX_STAGE_SCHEDULE } from "@/newquip/quote/billing-schedule";
 import { quoteToProjectBaseline } from "@/newquip/quote/to-project";
@@ -33,10 +36,10 @@ const APPROVALS = { customerConfirmedAt: "t", customerConfirmedCents: 1, custome
 const R = (n: number) => n * 100;
 
 describe("release-candidate chain", () => {
-  const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
+  const draft = withAcceptedIncompleteCosting(applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft);
   const manager = evaluateDraft(draft, ctx(false));
   const rep = evaluateDraft(draft, ctx(true));
-  const approved = buildAcceptedBaseline({ quoteRef: "NQ-Q-0001", revision: 1, draft, evaluation: rep, marginEvaluation: manager, approvals: APPROVALS });
+  const approved = sealWithUnresolvedScope({ quoteRef: "NQ-Q-0001", revision: 1, draft, evaluation: rep, marginEvaluation: manager, approvals: APPROVALS });
 
   it("Load Demo Defaults reproduces the R10m quote, READY, with no open items", () => {
     expect(Math.round(manager.budget!.totals.subtotalExTax * 100)).toBe(R(10_000_000));
@@ -50,6 +53,13 @@ describe("release-candidate chain", () => {
     expect(rep.budget!.lines.every((l) => l.estimatedCost === null && l.estimatedGP === null && l.marginPct === null)).toBe(true);
     expect(approved.baseline.internalMargin).toBeDefined();
     expect(JSON.stringify(redactInternalFinancials({ draft, accepted_baseline: approved.baseline }, false))).not.toMatch(/internalMargin/);
+  });
+  it("legacy vs current template, same demo quotation: the original LED is unresolved scope (3); a quotation on the current template seals the LED as mapped SKUs (2 unresolved)", () => {
+    expect(effectiveScope(approved.baseline.physicalScope!).blockers.length).toBe(3);
+    const d = onCurrentTemplate(draft);
+    const cur = sealWithUnresolvedScope({ quoteRef: "NQ-Q-0001", revision: 1, draft: d, evaluation: evaluateDraft(d, ctx(true)), marginEvaluation: evaluateDraft(d, ctx(false)), approvals: APPROVALS });
+    expect(effectiveScope(cur.baseline.physicalScope!).blockers.length).toBe(2);
+    expect(cur.baseline.contractCents).toBe(R(10_000_000)); // the price is the same: only the product identity changed
   });
   it("an existing sealed quote is never changed by any of this", () => {
     const sealed = JSON.stringify(approved.baseline);

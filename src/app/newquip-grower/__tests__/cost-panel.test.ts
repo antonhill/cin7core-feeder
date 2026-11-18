@@ -58,7 +58,7 @@ describe("the Capture latest costs action on an editable draft quotation", () =>
   });
   it("shows the margin only when the estimate is complete", () => {
     const out = html({ v: draftView({ estimate: { lines: [line("A-1", 1500)], totalCostCents: 3000, missingSkus: [], unresolvedPackages: [], incomplete: false }, complete: true, marginPct: 97, gpCents: 97_000 }) });
-    expect(out).toContain("Margin on physical cost");
+    expect(out).toContain("Margin on whole contract");
     expect(out).not.toContain("Margin is incomplete");
   });
 });

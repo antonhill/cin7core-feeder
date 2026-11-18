@@ -25,7 +25,7 @@ begin
       if has_table_privilege('anon', 'public.' || t, p) then raise exception 'anon must not have % on %', p, t; end if;
       if p <> 'SELECT' and has_table_privilege('authenticated', 'public.' || t, p) then raise exception 'authenticated must not have % on %', p, t; end if;
     end loop;
-    if not has_table_privilege('authenticated', 'public.' || t, 'SELECT') then raise exception 'authenticated must keep SELECT on %', t; end if;
+    if has_table_privilege('authenticated', 'public.' || t, 'SELECT') then raise exception '0122: authenticated must hold NO read privilege on %', t; end if;
     foreach p in array array['SELECT','INSERT','UPDATE','DELETE'] loop
       if not has_table_privilege('service_role', 'public.' || t, p) then raise exception 'service_role must have % on %', p, t; end if;
     end loop;
@@ -35,7 +35,7 @@ begin
     -- no sequence is owned by these tables (uuid defaults only), so there is nothing to expose
     if exists (select 1 from pg_depend d join pg_class s on s.oid = d.objid and s.relkind = 'S' where d.refobjid = ('public.' || t)::regclass) then raise exception 'unexpected sequence owned by %', t; end if;
     if not (select relrowsecurity from pg_class where oid = ('public.' || t)::regclass) then raise exception 'RLS must stay enabled on %', t; end if;
-    if (select count(*) from pg_policies where tablename = t) <> 1 or exists (select 1 from pg_policies where tablename = t and cmd <> 'SELECT') then raise exception 'exactly one SELECT policy expected on %', t; end if;
+    if exists (select 1 from pg_policies where tablename = t) then raise exception '0122: no policy expected on % (default-deny RLS)', t; end if;
   end loop;
 end $$;
 
@@ -81,12 +81,10 @@ select pg_temp.expect_denied($q$truncate newquip_quote_customers$q$, 'anon trunc
 select pg_temp.expect_denied($q$select newquip_quote_customers_guard()$q$, 'anon calling a trigger function');
 select pg_temp.as_role('postgres');
 
--- AUTHENTICATED: SELECT only, organisation-scoped
+-- AUTHENTICATED: since 0122 NOTHING at all (no read privilege, no policy)
 select pg_temp.act_as('00000000-0000-0000-0000-0000000016a1');
-do $$ begin
-  if (select count(*) from newquip_quote_customers) <> 1 then raise exception 'a member must still read their own organisation''s snapshot'; end if;
-  if (select count(*) from newquip_company_profiles) <> 1 then raise exception 'a member must still read their own organisation''s profile'; end if;
-end $$;
+select pg_temp.expect_denied($q$select count(*) from newquip_quote_customers$q$, '0122: a member has no direct read of snapshots');
+select pg_temp.expect_denied($q$select count(*) from newquip_company_profiles$q$, '0122: a member has no direct read of profiles');
 select pg_temp.expect_denied($q$insert into newquip_quote_responses (org_id, quote_id, document_id, response, contact_name, responded_on, evidence_ref, recorded_by_email) values ('00000000-0000-0000-0000-0000000016b1', '00000000-0000-0000-0000-0000000016c1', gen_random_uuid(), 'ACCEPTED', 'J', current_date, 'client write', 'x')$q$, 'authenticated insert');
 select pg_temp.expect_denied($q$update newquip_quote_customers set reason = 'x'$q$, 'authenticated update');
 select pg_temp.expect_denied($q$delete from newquip_quote_customers$q$, 'authenticated delete');
@@ -96,10 +94,8 @@ select pg_temp.expect_denied($q$select newquip_quote_sends_guard()$q$, 'authenti
 select pg_temp.expect_denied($q$select newquip_company_profiles_version()$q$, 'authenticated calling the versioning function');
 select pg_temp.as_role('postgres');
 select pg_temp.act_as('00000000-0000-0000-0000-0000000016a2');
-do $$ begin
-  if (select count(*) from newquip_quote_customers) <> 0 then raise exception 'org B must not read org A snapshots'; end if;
-  if (select count(*) from newquip_company_profiles) <> 0 then raise exception 'org B must not read org A profiles'; end if;
-end $$;
+select pg_temp.expect_denied($q$select count(*) from newquip_quote_customers$q$, '0122: org B has no direct read of snapshots');
+select pg_temp.expect_denied($q$select count(*) from newquip_company_profiles$q$, '0122: org B has no direct read of profiles');
 select pg_temp.as_role('postgres');
 
 -- existing objects were not touched: the quotation the new rows hang off is unchanged and still frozen/guarded

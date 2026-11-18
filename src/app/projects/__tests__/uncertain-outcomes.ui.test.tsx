@@ -9,6 +9,7 @@ import type { ProjectView } from "@/lib/projects/project-view";
 // getProjectAction returns the viewer's display permissions together with the project (one round trip); the Commercial tab reads its Sale + posting state in one call.
 let viewer = { canApprove: true, newquip: false };
 beforeEach(() => {
+  vi.stubGlobal("localStorage", { getItem: (k: string) => (k === "nq-sale-show-all" ? "1" : null), setItem: () => {} }); // UX-006e: these tests drive the whole Sale form at once; the guided default shows one step at a time
   viewer = { canApprove: true, newquip: false };
   vi.mocked(c7.getCommercialBootAction).mockImplementation((async (id: string) => ({ ok: true, data: { creation: (await c7.getCin7SaleCreationStatusAction(id)).data ?? null, posting: (await c7.getCin7PostingStatusAction(id)).data ?? null } })) as never);
 });
@@ -58,6 +59,7 @@ const btn = (name: RegExp | string) => screen.getByRole("button", { name }) as H
 const feedback = (kind: string) => document.querySelector(`[data-testid="action-feedback"][data-kind="${kind}"]`) as HTMLElement | null;
 
 beforeEach(() => {
+  vi.stubGlobal("localStorage", { getItem: (k: string) => (k === "nq-sale-show-all" ? "1" : null), setItem: () => {} }); // UX-006e: these tests drive the whole Sale form at once; the guided default shows one step at a time
   viewer = { canApprove: true, newquip: false };
   vi.mocked(c7.getCin7ReferenceOptionsAction).mockResolvedValue({ ok: false, error: "n/a" } as never);
   vi.mocked(c7.getCin7PostingStatusAction).mockResolvedValue({ ok: false, error: "n/a" } as never);

@@ -55,8 +55,8 @@ select pg_temp.expect_denied($q$insert into project_stages (org_id, project_id, 
 -- ── RLS: member reads own org only; cross-org denied; members cannot write ───
 do $$ begin
   perform pg_temp.act_as('00000000-0000-0000-0000-0000000000a1');
-  if (select count(*) from projects) <> 1 or (select count(*) from project_stages) <> 4 then
-    raise exception 'org A member should see exactly its own project + 4 stages';
+  if (select count(*) from projects) <> 0 or (select count(*) from project_stages) <> 0 then
+    raise exception 'a signed-in member must read NOTHING (0122: no member read policy)';
   end if;
   if exists (select 1 from projects where org_id = '00000000-0000-0000-0000-0000000000b2') then
     raise exception 'cross-org read leaked';

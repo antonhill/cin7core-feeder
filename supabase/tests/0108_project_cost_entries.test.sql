@@ -72,15 +72,15 @@ do $$ begin
 end $$;
 -- RLS: org ADMIN reads; a plain member and another org's admin see nothing; nobody writes through the client
 select pg_temp.act_as('00000000-0000-0000-0000-0000000008a1');
-do $$ begin if (select count(*) from project_cost_entries) <> 2 then raise exception 'org admin should see both entries'; end if; end $$;
+select pg_temp.expect_denied($q$select count(*) from project_cost_entries$q$, 'a signed-in member has no read access to project_cost_entries (0122)');
 select pg_temp.expect_denied($q$insert into project_cost_entries (org_id, project_id, category, description, amount_cents, recorded_by_email) values ('00000000-0000-0000-0000-0000000008b1','00000000-0000-0000-0000-0000000008c1','SUBCONTRACTOR','admin made',5,'m@x')$q$, 'admin insert through the client');
-select pg_temp.expect_no_rows_changed($q$update project_cost_entries set void_reason = 'x'$q$, 'admin update through the client');
+select pg_temp.expect_denied($q$update project_cost_entries set void_reason = 'x'$q$, 'admin update through the client');
 select pg_temp.reset_role();
 select pg_temp.act_as('00000000-0000-0000-0000-0000000008a3');
-do $$ begin if (select count(*) from project_cost_entries) <> 0 then raise exception 'a plain member must not read internal costs'; end if; end $$;
+select pg_temp.expect_denied($q$select count(*) from project_cost_entries$q$, 'a signed-in member has no read access to project_cost_entries (0122)');
 select pg_temp.reset_role();
 select pg_temp.act_as('00000000-0000-0000-0000-0000000008a2');
-do $$ begin if (select count(*) from project_cost_entries) <> 0 then raise exception 'org B must not see org A costs'; end if; end $$;
+select pg_temp.expect_denied($q$select count(*) from project_cost_entries$q$, 'a signed-in member has no read access to project_cost_entries (0122)');
 select pg_temp.reset_role();
 
 -- cascade

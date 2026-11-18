@@ -12,8 +12,12 @@ import { loadQuote } from "./quote-store";
 import { latestSnapshot } from "./customer-store";
 import { fieldValue, snapshotIssues } from "./customer-snapshot";
 import { assertNoInternalLeak, buildCustomerDocumentModel, type CustomerDocumentModel } from "./customer-document";
-import { cleanProfile, missingProfileFields, type CompanyProfile } from "./company-profile";
+import { cleanProfile, describeProfileProblems, missingProfileFields, profileProblems, type CompanyProfile } from "./company-profile";
 import { renderCustomerPdf } from "./customer-pdf";
+import { applyDemoTerms } from "./demo-terms";
+import { pocDocumentMarked } from "./poc-presentation";
+import { commercialOf, nextProfileWithCommercial, nextProfileWithDetails, withoutCommercial, type CommercialVersion } from "./commercial-block";
+import type { CommercialSettings } from "@/newquip/pricing/commercial-settings";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 export const DOCUMENT_BUCKET = "newquip-quote-documents";
@@ -48,16 +52,62 @@ export async function documentsAvailable(db: Db): Promise<boolean> {
 }
 
 // ── company profile ─────────────────────────────────────────────────────────
-export async function latestProfile(db: Db, orgId: string): Promise<StoredProfile | null> {
+export const SIMULTANEOUS_SAVE_MSG = "Someone else saved at the same time, so your change was not kept. Reload and try again.";
+/**
+ * Appends one profile version built on `built` (the latest row the caller read). There is no database guard for a read-modify-write across two writers (no migration), so after the insert the row
+ * directly beneath ours is checked: if it is not the one we built on, another writer got in between and OUR row would silently drop their change. Then a CORRECTIVE version is appended that restores
+ * the other writer's profile verbatim (so the latest row is exactly what they saved), and this call fails loudly. Append-only: nothing is updated or deleted.
+ */
+async function appendProfileRow(db: Db, orgId: string, built: StoredProfile | null, profile: Record<string, unknown>, email: string, what: string): Promise<StoredProfile> {
+  const ins = await db.from("newquip_company_profiles").insert({ org_id: orgId, profile, entered_by_email: email }).select("*").single();
+  if (ins.error || !ins.data) throw new Error(`Could not save the ${what}: ${ins.error?.message ?? "no row"}`);
+  const mine = ins.data as StoredProfile;
+  const recent = await db.from("newquip_company_profiles").select("*").eq("org_id", orgId).order("version", { ascending: false }).limit(5);
+  if (recent.error) throw new Error(`Could not verify the ${what} save: ${recent.error.message}`);
+  const rows = (recent.data ?? []) as StoredProfile[];
+  const at = rows.findIndex((r) => r.id === mine.id);
+  const beneath = at >= 0 ? rows[at + 1] ?? null : null;
+  if ((beneath?.id ?? null) === (built?.id ?? null)) return mine;
+  // beneath is the intervening writer's row (the one directly under ours); restore it as the latest version unless something newer than ours already supersedes us.
+  if (at === 0 && beneath) {
+    const fix = await db.from("newquip_company_profiles").insert({ org_id: orgId, profile: beneath.profile, entered_by_email: beneath.entered_by_email });
+    if (fix.error) throw new Error(`${SIMULTANEOUS_SAVE_MSG} The other person's earlier change could not be restored automatically (${fix.error.message}): check Company details and Commercial settings before saving again.`);
+  }
+  throw new Error(SIMULTANEOUS_SAVE_MSG);
+}
+
+/** The RAW latest row, commercial block included. INTERNAL to this file's commercial functions: customer-facing code must use latestProfile(), which strips the block. */
+async function latestProfileRow(db: Db, orgId: string): Promise<StoredProfile | null> {
   const r = await db.from("newquip_company_profiles").select("*").eq("org_id", orgId).order("version", { ascending: false }).limit(1);
   if (r.error) { if (missing(r.error.message)) return null; throw new Error(r.error.message); }
   return ((r.data ?? []) as StoredProfile[])[0] ?? null;
 }
+/** The company details for customer-facing use. The Manager-only `commercial` block is REMOVED here, so the customer-document builder can never read it. */
+export async function latestProfile(db: Db, orgId: string): Promise<StoredProfile | null> {
+  const row = await latestProfileRow(db, orgId);
+  return row ? { ...row, profile: withoutCommercial(row.profile) } : null;
+}
 export async function saveProfile(db: Db, orgId: string, input: Partial<CompanyProfile>, email: string): Promise<StoredProfile> {
   const profile = cleanProfile(input);
-  const ins = await db.from("newquip_company_profiles").insert({ org_id: orgId, profile, entered_by_email: email }).select("*").single();
-  if (ins.error || !ins.data) throw new Error(`Could not save the company details: ${ins.error?.message ?? "no row"}`);
-  return ins.data as StoredProfile;
+  const stored = await latestProfileRow(db, orgId); // the Manager's commercial settings are carried forward untouched
+  const row = await appendProfileRow(db, orgId, stored, nextProfileWithDetails(profile, stored?.profile), email, "company details");
+  return { ...row, profile: withoutCommercial(row.profile) };
+}
+
+// ── commercial settings (interim store: see commercial-block.ts) ────────────
+/** The current commercial settings and their revision, or null when none have been entered (or the stored block does not validate). Cost-bearing: Manager / cost-entitled server code only. */
+export async function latestCommercialSettings(db: Db, orgId: string, nowIso: string = new Date().toISOString()): Promise<CommercialVersion | null> {
+  const row = await latestProfileRow(db, orgId);
+  return row ? commercialOf(row.profile, nowIso) : null;
+}
+/** Appends a NEW profile version carrying the settings (customer-facing fields untouched). Append-only: nothing earlier is changed. */
+export async function saveCommercialSettings(db: Db, orgId: string, settings: CommercialSettings, email: string, nowIso: string = new Date().toISOString()): Promise<CommercialVersion> {
+  const stored = await latestProfileRow(db, orgId);
+  const profile = nextProfileWithCommercial(stored?.profile, stored ? commercialOf(stored.profile, nowIso) : null, settings, email, nowIso);
+  const row = await appendProfileRow(db, orgId, stored, profile, email, "commercial settings");
+  const v = commercialOf(row.profile, nowIso);
+  if (!v) throw new Error("The saved commercial settings could not be read back.");
+  return v;
 }
 
 // ── documents ───────────────────────────────────────────────────────────────
@@ -77,7 +127,7 @@ const stableOf = (m: CustomerDocumentModel) => hashOf({ ...m, quote: { ...m.quot
 const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
 
 export async function issueQuotationDocument(
-  db: Db, orgId: string, quoteId: string, who: { email: string; ownerEmail?: string | null }, schedule: readonly ScheduleStageTemplate[], deps: DocumentDeps, scheduleSource?: ScheduleSource,
+  db: Db, orgId: string, quoteId: string, who: { email: string; ownerEmail?: string | null }, schedule: readonly ScheduleStageTemplate[], deps: DocumentDeps, scheduleSource?: ScheduleSource, opts: { uatTest?: boolean } = {},
 ): Promise<{ document: StoredDocument; created: boolean }> {
   const q = await loadQuote(db, orgId, quoteId);
   if (!q) throw new Error("Quote not found.");
@@ -89,14 +139,23 @@ export async function issueQuotationDocument(
   if (issues.length) throw new Error(`The customer details are incomplete: ${issues.join(" ")}`);
   if (norm(fieldValue(snap.snapshot.name) ?? "") !== norm(q.accepted_baseline.quote.customerName)) throw new Error("The selected Cin7 customer does not match the customer on the approved quotation.");
   const prof = await latestProfile(db, orgId);
-  const lacking = missingProfileFields(prof?.profile);
-  if (!prof || lacking.length) throw new Error(`NewQuip's company details are incomplete, so the quotation cannot be issued. Missing: ${lacking.join(", ") || "all company details"}.`);
+  // The placeholder guard runs on the STORED profile, before any demo override, so a demo override can never mask a bad profile for a non-demo quote.
+  // Only the designated demonstration quotes (whose terms are replaced in the PDF) keep the pre-guard behaviour.
+  const marked = pocDocumentMarked(q, orgId);
+  const isDemo = !!prof && applyDemoTerms(prof.profile, orgId, q.quote_ref, marked) !== prof.profile;
+  // UAT TEST document (explicitly requested by the UAT-only action): the same lenient profile rule as the TEST-ONLY preview, and the stored model is marked testOnly. The strict rule below is untouched for every other caller.
+  const lacking = opts.uatTest ? (prof ? profileProblems(prof.profile, { lenient: true }).map((x) => x.label) : ["no company details"]) : missingProfileFields(prof?.profile, { allowPlaceholderTerms: isDemo });
+  if (!prof || lacking.length) {
+    const why = prof ? describeProfileProblems(profileProblems(prof.profile, opts.uatTest ? { lenient: true } : { allowPlaceholderTerms: isDemo })).join("; ") : "no company details have been saved";
+    throw new Error(`The company details cannot be used on a customer document (Manager > Company details): ${why}.`);
+  }
 
   const accepted = await db.from("newquip_quote_responses").select("id").eq("org_id", orgId).eq("quote_id", quoteId).eq("response", "ACCEPTED").limit(1);
   if (accepted.error && !missing(accepted.error.message)) throw new Error(accepted.error.message);
   if ((accepted.data ?? []).length > 0) throw new Error("The customer has accepted this quotation; the accepted document is final and cannot be replaced.");
   const existing = await listDocuments(db, orgId, quoteId);
-  const model = buildCustomerDocumentModel({ baseline: q.accepted_baseline, quoteRef: q.quote_ref, revision: q.revision, snapshot: snap.snapshot, profile: prof.profile, schedule, scheduleSource, issuedOn: deps.today() });
+  const built = buildCustomerDocumentModel({ baseline: q.accepted_baseline, quoteRef: q.quote_ref, revision: q.revision, snapshot: snap.snapshot, profile: opts.uatTest ? prof.profile : applyDemoTerms(prof.profile, orgId, q.quote_ref, marked), schedule, scheduleSource, issuedOn: deps.today() });
+  const model: CustomerDocumentModel = opts.uatTest ? { ...built, testOnly: true } : built;
   assertNoInternalLeak(model, q.accepted_baseline);
   const last = existing[0];
   if (last && last.baseline_hash === q.baseline_hash && stableOf(last.content) === stableOf(model) && last.customer_snapshot_id === snap.id && last.company_profile_id === prof.id) return { document: last, created: false };
@@ -115,6 +174,30 @@ export async function issueQuotationDocument(
     throw new Error(`Could not record the issued quotation: ${ins.error?.message ?? "no row"}`);
   }
   return { document: ins.data as StoredDocument, created: true };
+}
+
+/**
+ * TEST-ONLY preview of the customer PDF for an approved quotation. It exists so a demonstration can show the document while the company details still hold placeholder wording.
+ * It is NEVER issued: nothing is stored, no newquip_quote_documents row is written, so there is no document that can be sent, accepted or handed over. The strict issue gate
+ * (issueQuotationDocument) is unchanged and does not call this. The render is watermarked on every page. Everything except placeholder TEXT is still validated.
+ */
+export async function previewQuotationDocument(
+  db: Db, orgId: string, quoteId: string, schedule: readonly ScheduleStageTemplate[], deps: Pick<DocumentDeps, "today">, scheduleSource?: ScheduleSource,
+): Promise<{ bytes: Uint8Array; quoteRef: string; revision: number; repEmail: string | null; contractCents: number | null }> {
+  const q = await loadQuote(db, orgId, quoteId);
+  if (!q) throw new Error("Quote not found.");
+  if (q.state !== "MANAGER_APPROVED_FINAL" || !q.accepted_baseline || !q.baseline_hash) throw new Error("A preview is available only after Manager approval.");
+  if (!baselineMatchesHash(q.accepted_baseline, q.baseline_hash)) throw new Error("The approved baseline does not match its seal; no preview was produced.");
+  const snap = await latestSnapshot(db, orgId, quoteId);
+  if (!snap) throw new Error("Select the customer from Cin7 before previewing the quotation.");
+  const issues = snapshotIssues(snap.snapshot);
+  if (issues.length) throw new Error(`The customer details are incomplete: ${issues.join(" ")}`);
+  const prof = await latestProfile(db, orgId);
+  const hard = profileProblems(prof?.profile, { lenient: true });
+  if (!prof || hard.length) throw new Error(`The preview cannot be built: ${prof ? describeProfileProblems(hard).join("; ") : "no company details have been saved"}.`);
+  const model = buildCustomerDocumentModel({ baseline: q.accepted_baseline, quoteRef: q.quote_ref, revision: q.revision, snapshot: snap.snapshot, profile: prof.profile, schedule, scheduleSource, issuedOn: deps.today() });
+  assertNoInternalLeak(model, q.accepted_baseline);
+  return { bytes: await renderCustomerPdf(model, { testOnly: true }), quoteRef: q.quote_ref, revision: q.revision, repEmail: q.created_by_email ?? null, contractCents: q.contract_cents };
 }
 
 /** The bytes of an issued document of THIS organisation, re-verified against the SHA-256 recorded at issue. A tampered or substituted file is refused. */

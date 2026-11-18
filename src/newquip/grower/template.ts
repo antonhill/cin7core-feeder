@@ -1,6 +1,6 @@
 import { GROWER_TEMPLATE } from "./final-feedback";
 import { DERIVED_RULES, GROWER_RULES, type RuleTreatment } from "./rules";
-import { commercialMappingFor, MANUAL_COMMERCIAL_LINES } from "./commercial";
+import { commercialMappingFor, MANUAL_COMMERCIAL_LINES, TEMPLATE_REVISION_CURRENT } from "./commercial";
 import type { GrowerItemKey } from "./types";
 
 // GROWER HOUSE TEMPLATE v1 — the read-only Template Detail model. Derived from the live rule table and mapping definitions so
@@ -33,12 +33,12 @@ export interface TemplateSection {
 
 const rule = (k: GrowerItemKey) => GROWER_RULES.find((r) => r.itemKey === k)!;
 const mapRef = (k: GrowerItemKey): string => {
-  const m = commercialMappingFor(k);
+  const m = commercialMappingFor(k, TEMPLATE_REVISION_CURRENT);
   if (!m) return "No product mapping";
   switch (m.kind) {
     case "single": return k === "feeder" ? "PNQ082 (standard) · PNQ082-WINDOW (window option)" : m.recommendedSku;
     case "package": return m.estimatorPriced ? `${m.name} — reference package, priced by the estimator` : `${m.name} package (${m.components.length} components)`;
-    case "estimator_priced": return `Priced per ${m.unit} by pig size — SKU mapping is a future production concern`;
+    case "estimator_priced": return `Priced per ${m.unit} by pig size. The 50 mm-panel components (posts, caps, gate kit) are listed for estimating with no calculated quantity; panels are custom sizes, not SKUs`;
     case "unresolved": return `Estimator selects: ${(m.manualSelectionSkus ?? []).join(" / ")}`;
     default: return "—";
   }

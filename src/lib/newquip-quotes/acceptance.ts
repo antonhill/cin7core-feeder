@@ -119,6 +119,9 @@ export async function recordCustomerResponse(
   return { response: ins.data as StoredResponse, created: true };
 }
 
+/** A UAT TEST document may be used to demonstrate the Project stage only on the dedicated UAT deployment. */
+export const testDocumentBlockedHere = (content: { testOnly?: boolean }, env: Readonly<Record<string, string | undefined>>): boolean => content.testOnly === true && env.CIN7_CREDENTIAL_STORE !== "uat";
+
 export interface AcceptedTerms { document: StoredDocument; response: StoredResponse; schedule: ScheduleStageTemplate[]; scheduleSource: ScheduleSource | null }
 
 /**
@@ -130,6 +133,8 @@ export async function requireAcceptance(db: Db, orgId: string, q: QuoteRecord & 
   const docs = await listDocuments(db, orgId, q.id);
   const doc = docs[0];
   if (!doc || doc.revision !== q.revision || doc.baseline_hash !== q.baseline_hash) throw new Error("The customer must accept the issued quotation before a Project can be created. Issue the quotation, send it, and record the customer's acceptance of that exact version.");
+  // A UAT TEST document (content.testOnly) is never a commercial quotation: its acceptance may only be used on the dedicated UAT deployment, never to start a Project anywhere else.
+  if (testDocumentBlockedHere(doc.content, process.env)) throw new Error("This quotation was issued as a UAT test document; its acceptance cannot start a Project in this environment.");
   const [responses, reviews, evidence] = await Promise.all([listResponses(db, orgId, q.id), listReviews(db, orgId, q.id), evidenceCounts(db, orgId, q.id)]);
   const mine = responses.filter((r) => r.document_id === doc.id && r.response === "ACCEPTED");
   const res = mine.find((r) => countsAsAcceptance(r, reviews, evidence));

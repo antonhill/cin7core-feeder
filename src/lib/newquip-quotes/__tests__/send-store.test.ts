@@ -4,13 +4,14 @@ import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { readyDraft } from "@/newquip/grower/__tests__/golden";
 import { testPriceSource } from "@/newquip/grower/__tests__/test-snapshot";
 import { buildAcceptedBaseline } from "@/newquip/quote/baseline";
+import { GOLDEN_LIBRARY } from "@/newquip/grower/__tests__/golden-catalogue";
 import { NEWQUIP_STANDARD_SCHEDULE } from "@/newquip/quote/billing-schedule";
 import { buildCustomerSnapshot, withChosenContact } from "../customer-snapshot";
 import { issueQuotationDocument, saveProfile, type DocumentDeps } from "../document-store";
 import { renderCustomerPdf } from "../customer-pdf";
 import { retryFailedSend, sendQuotationToCustomer, validateRequest, type SendFn } from "../send-store";
 
-const PROFILE = { brandName: "TestBrand", legalName: "Test Company (Pty) Ltd", registrationNumber: "0000/000000/00", vatNumber: "0000000000", addressLines: ["1 Test Street", "Testville 0001"], phone: "000", email: "sales@testbrand.example", website: "", validityDays: 30, paymentTerms: "p", deliveryInstallationConditions: "d", termsAndConditions: "t", acceptanceInstructions: "a" };
+const PROFILE = { brandName: "TestBrand", legalName: "Test Company (Pty) Ltd", registrationNumber: "2012/123456/07", vatNumber: "4123456789", addressLines: ["1 Test Street", "Testville 0001"], phone: "000", email: "sales@testbrand.example", website: "", validityDays: 30, paymentTerms: "Fictitious fixture: 40% deposit, 55% on delivery, 5% on completion.", deliveryInstallationConditions: "Fictitious fixture: delivery to the site gate; installation on a cleared site.", termsAndConditions: "Fictitious fixture: terms and conditions for automated tests only.", acceptanceInstructions: "Fictitious fixture: reply to the sender to accept this quotation." };
 const PREVIEW: Record<string, string> = { VERCEL_ENV: "preview" }; const PROD: Record<string, string> = { VERCEL_ENV: "production", NEWQUIP_PRODUCTION_EMAIL_ENABLED: "true" };   // Production only sends after the explicit opt-in; PROD_OFF = no opt-in
 const PROD_OFF: Record<string, string> = { VERCEL_ENV: "production" };
 const approvals = { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "rep.person@nq.example", handoffBy: "rep.person@nq.example", estimatorSignoffBy: "est.person@nq.example", estimatorSignoffAt: "t", managerApprovedBy: "mgr.person@nq.example", managerApprovedAt: "t" };
@@ -18,7 +19,7 @@ const approvals = { customerConfirmedAt: "t", customerConfirmedCents: 1, custome
 async function world() {
   const db = new FakeDb(); db.deliveryApplied = true;
   const draft = readyDraft(); draft.customerName = "Boerdery (Pty) Ltd"; draft.siteName = "Paarl";
-  const { baseline, hash } = buildAcceptedBaseline({ quoteRef: "NQ-Q-0009", revision: 1, draft, evaluation: evaluateDraft(draft, { priceSource: testPriceSource(), withholdCost: false }), approvals });
+  const { baseline, hash } = buildAcceptedBaseline({ mappingLibrary: GOLDEN_LIBRARY as never, quoteRef: "NQ-Q-0009", revision: 1, draft, evaluation: evaluateDraft(draft, { priceSource: testPriceSource(), withholdCost: false }), approvals });
   const quote = { id: "q1", org_id: "org-a", quote_ref: "NQ-Q-0009", revision: 1, state: "MANAGER_APPROVED_FINAL", accepted_baseline: baseline, baseline_hash: hash, draft: {}, requires_customer_acceptance: true };
   db.rows("newquip_quotes").push(quote);
   const files = new Map<string, Uint8Array>();

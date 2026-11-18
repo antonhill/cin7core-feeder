@@ -10,11 +10,14 @@ import { NEWQUIP_MASTER_POC_SNAPSHOT } from "@/newquip/grower/snapshot";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { emptyDraft } from "@/newquip/grower/draft";
 import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
-import { buildAcceptedBaseline, baselineMatchesHash, commercialLinesOf } from "@/newquip/quote/baseline";
+import { withAcceptedIncompleteCosting } from "@/newquip/grower/__tests__/golden";
+import { onCurrentTemplate } from "@/newquip/grower/__tests__/current-template";
+import { sealWithUnresolvedScope } from "@/newquip/grower/__tests__/baseline-exception-fixture";
+import { baselineMatchesHash, commercialLinesOf } from "@/newquip/quote/baseline";
 import { buildPhysicalScope } from "@/newquip/quote/physical-scope";
 import { applyMappingLibrary, effectiveScope, scopeFromSnapshot, type LibraryMapping, type ScopeItem } from "../product-scope";
 import { libraryOf, listActiveMappings, saveMappingVersion } from "../package-mapping-store";
-import { describeScope, quoteScopeView } from "@/lib/newquip-quotes/scope-preview";
+import { quoteScopeView } from "@/lib/newquip-quotes/scope-preview";
 import { recoverLinkExistingSale } from "../cin7-sale-recovery-store";
 import { buildCreationPlan, externalIdFor, type SaleReadBack } from "../cin7-sale-creation";
 import { createSaleForProject } from "../cin7-sale-creation-store";
@@ -22,11 +25,11 @@ import { createSaleForProject } from "../cin7-sale-creation-store";
 vi.mock("server-only", () => ({}));
 
 const ctx = (withholdCost: boolean) => ({ priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost });
-const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
+const draft = withAcceptedIncompleteCosting(applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft);
 const ev = evaluateDraft(draft, ctx(true));
 const AT = "2026-10-29T08:00:00Z";
 const APPROVALS = { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "r", handoffBy: "r", estimatorSignoffBy: "e", estimatorSignoffAt: "t", managerApprovedBy: "m", managerApprovedAt: AT };
-const seal = (mappingLibrary?: ReadonlyMap<string, LibraryMapping>) => buildAcceptedBaseline({ quoteRef: "NQ-Q-0007", revision: 1, draft, evaluation: ev, marginEvaluation: evaluateDraft(draft, ctx(false)), approvals: APPROVALS, mappingLibrary });
+const seal = (mappingLibrary?: ReadonlyMap<string, LibraryMapping>) => sealWithUnresolvedScope({ quoteRef: "NQ-Q-0007", revision: 1, draft, evaluation: ev, marginEvaluation: evaluateDraft(draft, ctx(false)), approvals: APPROVALS }, mappingLibrary);
 
 /** A register as an OLD baseline would hold it: one M75 item resolved by a legacy mapping that marks a BOM component. */
 const describeScopeSource = (m: LibraryMapping): ScopeItem[] => [{ id: "flex_auger:UNMAPPED", sku: null, description: "M75", quantity: 1, unit: "each", productType: "FINISHED_GOOD", origin: { lineRef: "flex_auger:UNMAPPED", label: "M75", packageKey: null, section: null, source: "QUOTE" }, scope: "BASE", sellingUnitCents: null, mapping: { status: "UNMAPPED", reason: "x" },
@@ -44,6 +47,15 @@ describe("reusable mappings are applied while the solution is configured (Soluti
     const qty = Object.fromEntries(v.saleLines.filter((l) => l.sku.startsWith("TEST-")).map((l) => [l.sku, l.quantity]));
     expect(qty).toEqual({ "TEST-M75-SYSTEM": 12, "TEST-M75-AUGER": 36, "TEST-M75-MOTOR": 24, "TEST-PEN-ROLL": 12, "TEST-PEN-POST": 120, "TEST-FORTIS-LED": 456, "TEST-FORTIS-MOUNT": 456, "TEST-FORTIS-CABLE": 912 });
     expect(v.items.find((i) => i.id === "penning_package:UNMAPPED")).toMatchObject({ state: "FROM_LIBRARY", mappingRef: { packageKey: "penning_package", version: 1 } });
+  });
+  it("legacy vs current template, same quotation: the ORIGINAL LED is a third unresolved package (3); the current SKU-backed LED expands to HNQ7046 / HNQ7093 / HNQ7088 and only M75 + penning are unresolved (2)", () => {
+    const legacy = quoteScopeView({ finalBaseline: null, evaluation: ev, library: null, now: AT });
+    expect(legacy.unresolvedCount).toBe(3);
+    expect(legacy.items.filter((i) => i.state === "UNRESOLVED").map((i) => i.id).sort()).toEqual(["flex_auger:UNMAPPED", "led_light:UNMAPPED", "penning_package:UNMAPPED"]);
+    const cur = quoteScopeView({ finalBaseline: null, evaluation: evaluateDraft(onCurrentTemplate(draft), ctx(true)), library: null, now: AT });
+    expect(cur.unresolvedCount).toBe(2);
+    expect(cur.items.filter((i) => i.state === "UNRESOLVED").map((i) => i.id).sort()).toEqual(["flex_auger:UNMAPPED", "penning_package:UNMAPPED"]);
+    expect(Object.fromEntries(cur.saleLines.filter((l) => l.sku.startsWith("HNQ")).map((l) => [l.sku, l.quantity]))).toEqual({ HNQ7046: 456, HNQ7093: 1368, HNQ7088: 456 });
   });
   it("4+5: a Cin7 assembly is ONE Sales Order line (never expanded); a separately supplied accessory is its own valid line; both quantities are exact", () => {
     const v = quoteScopeView({ finalBaseline: null, evaluation: ev, library: FULL, now: AT });

@@ -1,0 +1,193 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { FakeDb } from "@/lib/projects/__tests__/fake-db";
+import { seedGoldenCatalogue } from "@/newquip/grower/__tests__/golden-catalogue";
+import { readyDraft } from "@/newquip/grower/__tests__/golden";
+import { testPriceSource } from "@/newquip/grower/__tests__/test-snapshot";
+import { evaluateDraft } from "@/newquip/grower/evaluate";
+import { rolesFor } from "@/newquip/quote/roles";
+import { micro } from "@/newquip/pricing/model";
+import type { PricingSubmission } from "@/newquip/pricing/estimator/apply";
+import { equivalentInputs, evidenceItemsFor, itemsOf } from "@/newquip/pricing/estimator/__tests__/helpers";
+import { createQuote, loadQuote, saveDraft, sendToEstimator } from "@/lib/newquip-quotes/quote-store";
+import { listPricingRevisions } from "@/lib/newquip-quotes/pricing-store";
+import type { Actor } from "../actor";
+import * as actions from "../pricing-actions";
+
+// The Server Actions themselves (not the UI): authorisation is re-established inside each one, so a hand-crafted call from a Manager-only session is refused and writes nothing,
+// while the Manager's independent cost verification and an Estimator's own pricing operations keep working.
+vi.mock("server-only", () => ({}));
+// The supplier-identity rule (a Cin7 supplier id, currency from Cin7) has its own tests (supplier-identity.test.ts and pricing-actions-supplier-identity.test.ts); these tests are about authorisation and the revision workflow.
+vi.mock("@/newquip/pricing/estimator/supplier-identity", async (orig) => ({ ...(await orig<typeof import("@/newquip/pricing/estimator/supplier-identity")>()), validateSupplierIdentities: vi.fn(async () => []) }));
+let db: FakeDb;
+let actor: Actor;
+vi.mock("@/supabase/server", () => ({ createServiceRoleClient: () => db }));
+vi.mock("@/lib/activity-log", () => ({ logActivity: vi.fn(() => Promise.resolve()) }));
+vi.mock("../actor", async (orig) => ({ ...(await orig<typeof import("../actor")>()), authoriseActor: vi.fn(async () => actor), auditActor: vi.fn(async () => undefined) }));
+vi.mock("@/lib/newquip-quotes/context", async () => {
+  const { testPriceSource: src } = await import("@/newquip/grower/__tests__/test-snapshot");
+  return { evaluationContext: (withholdCost: boolean) => ({ priceSource: src(), withholdCost }) };
+});
+
+const ORG = "org-nq";
+const ctx = { priceSource: testPriceSource(), withholdCost: true };
+const member = rolesFor("member");
+const repOnly = new Set(["rep"] as const) as ReadonlySet<"rep">;
+const asActor = (email: string, roles: Array<"rep" | "estimator" | "manager">, over: Partial<Actor> = {}): Actor => ({ orgId: ORG, userId: `u-${email}`, email, tier: roles.includes("manager") ? "admin" : "member", roles: new Set(roles), canSeeCost: true, activeRole: null, demo: null, ...over });
+const EST = () => asActor("est@nq", ["rep", "estimator"]);
+const MGR_ONLY = () => asActor("mgr@nq", ["manager"]);
+const loaded = async (id: string) => (await loadQuote(db as never, ORG, id))!;
+const submissionOf = (over: Partial<PricingSubmission> = {}): PricingSubmission => {
+  const s = structuredClone(equivalentInputs({}, "unverified"));
+  return { ruleVersionId: s.ruleVersionId, skus: Object.fromEntries(Object.entries(s.skus).map(([k, v]) => { const { by: _b, at: _a, ...rest } = v!; void _b; void _a; return [k, rest as never]; })), fxQuotes: s.fxQuotes as never, forwardCover: {}, skuPriceOverrides: {}, projectMarkup: null, targetAdjustment: null, ...over };
+};
+async function inReview(): Promise<string> {
+  const d = readyDraft();
+  const { id } = await createQuote(db as never, ORG, "rep@nq");
+  await saveDraft(db as never, ORG, member, id, d);
+  await sendToEstimator(db as never, ORG, repOnly as never, "rep@nq", id, ctx, { confirmedAmountCents: Math.round(evaluateDraft(d, ctx).budget!.totals.subtotalExTax * 100), confirmedBy: "Farmer Joe" });
+  return id;
+}
+const state = async (id: string) => ({ hash: (await loaded(id)).draft_hash, pricing: JSON.stringify((await loaded(id)).draft.estimator.pricing ?? null), revisions: (await listPricingRevisions(db as never, ORG, id)).length });
+
+beforeEach(() => { db = new FakeDb(); db.indicativeApplied = true; db.pricingApplied = true; seedGoldenCatalogue(db as never, ORG); actor = EST(); });
+
+describe("direct server-action calls from a Manager-only session", () => {
+  it("applyEstimatorPricingAction cannot enable, change cost / freight / FX / markup, and writes nothing", async () => {
+    const id = await inReview();
+    actor = MGR_ONLY();
+    const empty = await state(id);
+    expect(await actions.applyEstimatorPricingAction(id, submissionOf(), "Manager enables", null)).toMatchObject({ ok: false, error: expect.stringMatching(/Only an Estimator/) });
+    expect(await state(id)).toEqual(empty);
+    actor = EST();
+    expect((await actions.applyEstimatorPricingAction(id, submissionOf(), "Initial supplier pricing", null)).ok).toBe(true);
+    const base = submissionOf(), sku = Object.keys(base.skus)[0], cur = Object.keys(base.fxQuotes)[0];
+    const before = await state(id);
+    actor = MGR_ONLY();
+    for (const sub of [
+      { ...base, skus: { ...base.skus, [sku]: { ...base.skus[sku], nativeUnitCostE7: base.skus[sku].nativeUnitCostE7 * 2 } } },
+      { ...base, skus: { ...base.skus, [sku]: { ...base.skus[sku], freight: { factorMicro: micro("3"), source: "Manager" } } } },
+      { ...base, fxQuotes: { ...base.fxQuotes, [cur]: { ...base.fxQuotes[cur], rateMicro: micro("30") } } },
+      { ...base, projectMarkup: { markupBps: 4000, reason: "Manager" } },
+    ] as PricingSubmission[]) expect(await actions.applyEstimatorPricingAction(id, sub, "Manager edit", submissionOf())).toMatchObject({ ok: false, error: expect.stringMatching(/Only an Estimator/) });
+    expect(await state(id)).toEqual(before);
+  });
+  it("disableEstimatorPricingAction cannot switch pricing off", async () => {
+    const id = await inReview();
+    actor = EST();
+    await actions.applyEstimatorPricingAction(id, submissionOf(), "Initial supplier pricing", null);
+    const before = await state(id);
+    actor = MGR_ONLY();
+    expect(await actions.disableEstimatorPricingAction(id, "Manager disables", submissionOf())).toMatchObject({ ok: false, error: expect.stringMatching(/Only an Estimator/) });
+    expect(await state(id)).toEqual(before);
+    expect((await loaded(id)).draft.estimator.pricing).toMatchObject({ enabled: true });
+  });
+  it("recordManualPriceEvidenceAction cannot record evidence", async () => {
+    const id = await inReview();
+    actor = EST();
+    await actions.applyEstimatorPricingAction(id, submissionOf(), "Initial supplier pricing", null);
+    const before = await state(id);
+    actor = MGR_ONLY();
+    const items = evidenceItemsFor((await loaded(id)).draft).map((i) => ({ itemKey: i.itemKey, note: "Manager note" }));
+    expect(await actions.recordManualPriceEvidenceAction(id, items)).toMatchObject({ ok: false, error: expect.stringMatching(/Only an Estimator/) });
+    expect(await state(id)).toEqual(before);
+  });
+  it("a Rep, or a cost-blind account of any role, is refused every pricing action", async () => {
+    const id = await inReview();
+    for (const a of [asActor("rep@nq", ["rep"], { canSeeCost: false }), asActor("mgr@nq", ["manager"], { canSeeCost: false }), asActor("est@nq", ["rep", "estimator"], { canSeeCost: false })]) {
+      actor = a;
+      expect((await actions.applyEstimatorPricingAction(id, submissionOf(), "x", null)).ok).toBe(false);
+      expect((await actions.getEstimatorPricingAction(id)).ok).toBe(false);
+    }
+    expect((await loaded(id)).draft.estimator.pricing).toBeUndefined();
+  });
+});
+
+describe("a baseless call can never be last-write-wins (base is required)", () => {
+  it("applyEstimatorPricingAction without a base is refused with a plain message and writes nothing; an explicit null still means 'pricing was off'", async () => {
+    const id = await inReview();
+    actor = EST();
+    const before = await state(id);
+    const r = await (actions.applyEstimatorPricingAction as unknown as (...a: unknown[]) => Promise<{ ok: boolean; error?: string }>)(id, submissionOf(), "No base");
+    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/did not say which saved pricing/) });
+    expect(await state(id)).toEqual(before);
+    expect((await actions.applyEstimatorPricingAction(id, submissionOf(), "Explicit null base", null)).ok).toBe(true);
+  });
+  it("disableEstimatorPricingAction needs a base and is refused when the stored pricing changed since it", async () => {
+    const id = await inReview();
+    actor = EST();
+    await actions.applyEstimatorPricingAction(id, submissionOf(), "Initial supplier pricing", null);
+    const before = await state(id);
+    expect(await (actions.disableEstimatorPricingAction as unknown as (...a: unknown[]) => Promise<{ ok: boolean; error?: string }>)(id, "Off")).toMatchObject({ ok: false, error: expect.stringMatching(/did not say which saved pricing/) });
+    const sku = Object.keys(submissionOf().skus)[0];
+    const seen = submissionOf();
+    const other = submissionOf(); other.skus[sku].nativeUnitCostE7 += 1;
+    expect((await actions.applyEstimatorPricingAction(id, other, "Someone else", seen)).ok).toBe(true); // another estimator changes a cost after `seen` was loaded
+    const mid = await state(id);
+    expect(mid).not.toEqual(before);
+    expect(await actions.disableEstimatorPricingAction(id, "Off", seen)).toMatchObject({ ok: false, error: expect.stringMatching(/changed since you loaded it, so it was not switched off/) });
+    expect(await state(id)).toEqual(mid);
+    expect((await actions.disableEstimatorPricingAction(id, "Off", other)).ok).toBe(true);
+  });
+});
+
+describe("a switch-off is conflict-aware: null base means 'pricing was off when loaded'", () => {
+  it("null base + pricing ON now: refused with a plain message that says what a switch-off discards, nothing written; null base + pricing off: not a conflict; an unchanged non-null base: allowed", async () => {
+    const id = await inReview();
+    actor = EST();
+    const offBefore = await state(id);
+    const noop = await actions.disableEstimatorPricingAction(id, "Off", null);
+    expect(noop.ok).toBe(false);
+    expect(noop.error).not.toMatch(/switched on or changed/); // pricing is off: the usual "not switched on" answer, not a conflict
+    expect(await state(id)).toEqual(offBefore);
+    await actions.applyEstimatorPricingAction(id, submissionOf(), "Initial supplier pricing", null);
+    const on = await state(id);
+    const r = await actions.disableEstimatorPricingAction(id, "Off", null);
+    expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/switched on or changed since you loaded it.*discards the verifications, attestations and evidence/), conflicts: [expect.objectContaining({ key: "pricing" })] });
+    expect(await state(id)).toEqual(on);
+    expect((await actions.disableEstimatorPricingAction(id, "Off", submissionOf())).ok).toBe(true);
+  });
+});
+
+describe("preserved through the same server actions", () => {
+  it("the Estimator enters; the Manager-only session reads the workspace (canEdit false) and independently verifies; the Estimator cannot verify their own cost", async () => {
+    const id = await inReview();
+    actor = EST();
+    expect(await actions.applyEstimatorPricingAction(id, submissionOf(), "Initial supplier pricing", null)).toMatchObject({ ok: true });
+    const p = (await loaded(id)).draft.estimator.pricing!;
+    const items = itemsOf(p, Object.keys(p.skus));
+    expect(await actions.verifyEstimatorCostsAction(id, items, "Supplier quote SQ-1")).toMatchObject({ ok: false });
+    actor = MGR_ONLY();
+    const ws = await actions.getEstimatorPricingAction(id);
+    expect(ws).toMatchObject({ ok: true, data: { canEdit: false } });
+    expect(await actions.verifyEstimatorCostsAction(id, items, "Supplier quote SQ-1")).toMatchObject({ ok: true, data: { seq: 2 } });
+    const after = (await loaded(id)).draft.estimator.pricing!;
+    expect(Object.values(after.skus).every((s) => s!.review?.by === "mgr@nq")).toBe(true);
+    expect(after.fxQuotes).toEqual(p.fxQuotes);
+  });
+});
+
+describe("a successful pricing write returns the workspace as it is after the write (one round trip for the page)", () => {
+  it("applyEstimatorPricingAction: the result carries the post-write workspace (same shape as getEstimatorPricingAction), and a refusal carries none", async () => {
+    const id = await inReview();
+    const r = await actions.applyEstimatorPricingAction(id, submissionOf(), "Initial supplier pricing", null);
+    expect(r.ok).toBe(true);
+    const fresh = await actions.getEstimatorPricingAction(id);
+    expect(r.data!.workspace).toBeTruthy();
+    expect(r.data!.workspace!.current).toEqual(fresh.data!.current);
+    expect(r.data!.workspace!.revisions.length).toBe(fresh.data!.revisions.length);
+    expect(r.data!.workspace!.view.rows.map((x) => x.sku)).toEqual(fresh.data!.view.rows.map((x) => x.sku));
+    expect(r.data!.seq).toBe(1);
+    actor = MGR_ONLY();
+    const refused = await actions.applyEstimatorPricingAction(id, submissionOf(), "Manager edit", submissionOf());
+    expect(refused.ok).toBe(false);
+    expect((refused as { data?: unknown }).data).toBeUndefined();
+  });
+  it("disableEstimatorPricingAction also returns the refreshed workspace", async () => {
+    const id = await inReview();
+    expect((await actions.applyEstimatorPricingAction(id, submissionOf(), "Initial supplier pricing", null)).ok).toBe(true);
+    const base = (await actions.getEstimatorPricingAction(id)).data!.current;
+    const off = await actions.disableEstimatorPricingAction(id, "Back to the POC source", base);
+    expect(off.ok).toBe(true);
+    expect(off.data!.workspace!.current).toBeNull();
+  });
+});

@@ -5,6 +5,7 @@
 import { requireModuleAccess } from "@/lib/authorization";
 import { resolveActing } from "@/lib/demo-mode/context";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
+import { narrowTier } from "@/lib/approvals/role-switch-store";
 import { logActivity } from "@/lib/activity-log";
 import { createServiceRoleClient } from "@/supabase/server";
 import { QUOTES_MODULE } from "@/app/module-nav";
@@ -26,6 +27,7 @@ async function actor() {
   const access = await requireModuleAccess(QUOTES_MODULE.href);
   let manager = false;
   try { await requireOrgAdmin("manage NewQuip product mappings"); manager = true; } catch { manager = false; } // fail closed
+  if (manager) manager = await narrowTier(createServiceRoleClient(), orgId, access.userId, true);
   return { orgId, userId: access.userId, email: access.email ?? "unknown", manager };
 }
 

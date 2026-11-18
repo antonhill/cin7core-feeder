@@ -5,6 +5,9 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { writeAllowedFor } from "@/lib/billing-status";
 import type { SubscriptionStatus } from "@/lib/billing";
 import { ACTIVE_ORG_COOKIE, resolveActiveOrgId } from "@/lib/active-org-resolution";
+import { presenterGate } from "@/lib/demo-mode/presenter";
+import { newquipGuardRedirects } from "@/newquip/route-guard";
+import { NEWQUIP_ENTRY_COOKIE, NEWQUIP_ENTRY_COOKIE_MAX_AGE, NEWQUIP_LOGIN_PATH, isNewquipPublicPath, isNewquipSignInRoute, safeNewquipNext } from "@/newquip/entry";
 
 // Must match src/lib/org-switch.ts's IMPERSONATED_ORG_COOKIE — duplicated
 // rather than imported, since that module calls next/headers' cookies() and
@@ -82,13 +85,28 @@ export async function middleware(request: NextRequest) {
     userId = null;
   }
 
-  const isPublic = PUBLIC_PATHS.some((p) => request.nextUrl.pathname.startsWith(p));
+  const isPublic =
+    PUBLIC_PATHS.some((p) => request.nextUrl.pathname.startsWith(p)) ||
+    // NewQuip dedicated sign-in: EXACT matches only ("/newquip-grower" must stay protected).
+    isNewquipPublicPath(request.nextUrl.pathname) ||
+    // UAT-only presenter sign-in: public ONLY while its own gate is open (Preview + switch + dedicated UAT database); closed everywhere else.
+    (request.nextUrl.pathname === "/presenter" && presenterGate(process.env as Record<string, string | undefined>).allowed);
   // The root path is public too, but can't just join PUBLIC_PATHS — that
   // array is prefix-matched (startsWith), and "/" prefixes every path, which
   // would make the whole app public. An exact-match check keeps this narrow:
   // src/app/page.tsx itself decides marketing-page vs dashboard based on
   // whether a session exists.
   const isRoot = request.nextUrl.pathname === "/";
+
+  // An unauthenticated request to a NewQuip route (or "/" from a browser that signs in through NewQuip) goes to the NewQuip sign-in; everything else is unchanged.
+  if (!userId && (!isPublic || isRoot) && isNewquipSignInRoute(request.nextUrl.pathname, request.cookies.get(NEWQUIP_ENTRY_COOKIE)?.value === "1")) {
+    const nqUrl = request.nextUrl.clone();
+    const next = safeNewquipNext(request.nextUrl.pathname + request.nextUrl.search);
+    nqUrl.pathname = NEWQUIP_LOGIN_PATH;
+    nqUrl.search = "";
+    if (next) nqUrl.searchParams.set("next", next);
+    return NextResponse.redirect(nqUrl);
+  }
 
   if (!userId && !isPublic && !isRoot) {
     const loginUrl = request.nextUrl.clone();
@@ -165,6 +183,8 @@ export async function middleware(request: NextRequest) {
     const { data: superAdminRow, error: superAdminError } = await db.from("super_admins").select("user_id").eq("user_id", userId).maybeSingle();
     if (superAdminError) console.error("middleware: super_admins read failed", superAdminError);
     const isSuperAdmin = Boolean(superAdminRow);
+    // NewQuip-only guard input: true when who-this-user-is could not be read, so the guard (and only the guard) fails closed.
+    let guardUncertain = Boolean(superAdminError);
     if (isSuperAdmin) {
       const impersonatedOrgId = request.cookies.get(IMPERSONATED_ORG_COOKIE)?.value;
       if (impersonatedOrgId) {
@@ -189,7 +209,7 @@ export async function middleware(request: NextRequest) {
       // Server Actions use makes middleware structurally incapable of
       // disagreeing with them.
       const { data: memberships, error: membershipsError } = await supabase.from("org_members").select("org_id, allowed_modules, role").eq("user_id", userId);
-      if (membershipsError) console.error("middleware: org_members read failed", membershipsError);
+      if (membershipsError) { console.error("middleware: org_members read failed", membershipsError); guardUncertain = true; }
       const membershipRows = memberships ?? [];
       const cookieOrgId = request.cookies.get(ACTIVE_ORG_COOKIE)?.value ?? null;
       orgId = resolveActiveOrgId(
@@ -232,6 +252,15 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(enrolUrl);
     }
 
+    // NewQuip-only interface: a NewQuip-organisation member who is not a super-admin may reach only the NewQuip allowlist (src/newquip/route-guard.ts); every other
+    // path goes to "/", the NewQuip dashboard. Super-admins bypass it. Placed after the MFA-enrolment redirect above so that flow is unaffected, and it adds no database read.
+    if (newquipGuardRedirects({ pathname: request.nextUrl.pathname, orgId, isSuperAdmin, uncertain: guardUncertain })) {
+      const homeUrl = request.nextUrl.clone();
+      homeUrl.pathname = "/";
+      homeUrl.search = "";
+      return NextResponse.redirect(homeUrl);
+    }
+
     if (orgRow) {
       const disabledModules = computeEffectiveDisabledModules(orgRow.disabled_modules ?? [], allowedModules);
       const blockedModule = findBlockedModule(request.nextUrl.pathname, disabledModules);
@@ -257,10 +286,31 @@ export async function middleware(request: NextRequest) {
   // silently discard the org name they typed and reuse their existing
   // membership instead — confusing either way. You can't have two accounts
   // in one session; sign out first to genuinely start a second trial.
-  if (userId && (request.nextUrl.pathname.startsWith("/login") || request.nextUrl.pathname.startsWith("/signup"))) {
-    const homeUrl = request.nextUrl.clone();
-    homeUrl.pathname = "/";
-    return NextResponse.redirect(homeUrl);
+  //
+  // getClaims() above only proves the access-token JWT is correctly signed and unexpired; it cannot see a session the Auth server has since REVOKED (a global sign-out
+  // from another browser, a password reset, an admin revoke). For these two public pages we therefore confirm the session with the Auth server before bouncing: with
+  // a revoked session the JWT still verifies for up to its lifetime, so trusting it alone sent the user from /login to a home page that (rightly) saw no user and
+  // showed the marketing page, leaving no way to reach the form. This is a redirect-convenience check on public pages, not an authorisation gate (protected routes
+  // are unchanged), and any failure to confirm (revoked, error, rate limit) simply shows the form.
+  if (userId && (request.nextUrl.pathname.startsWith("/login") || request.nextUrl.pathname.startsWith("/signup") || request.nextUrl.pathname === NEWQUIP_LOGIN_PATH)) {
+    let confirmed = false;
+    try {
+      const { data, error } = await supabase.auth.getUser();
+      confirmed = !error && Boolean(data?.user);
+    } catch {
+      confirmed = false;
+    }
+    if (confirmed) {
+      const homeUrl = request.nextUrl.clone();
+      homeUrl.pathname = "/";
+      if (request.nextUrl.pathname === NEWQUIP_LOGIN_PATH) homeUrl.search = "";
+      return NextResponse.redirect(homeUrl);
+    }
+  }
+
+  // The NewQuip sign-in page marks this browser as a NewQuip entry point (no secrets; lets "/" and the sign-out path route here).
+  if (request.nextUrl.pathname === NEWQUIP_LOGIN_PATH) {
+    response.cookies.set(NEWQUIP_ENTRY_COOKIE, "1", { path: "/", maxAge: NEWQUIP_ENTRY_COOKIE_MAX_AGE, sameSite: "lax", secure: process.env.NODE_ENV === "production" });
   }
 
   return response;

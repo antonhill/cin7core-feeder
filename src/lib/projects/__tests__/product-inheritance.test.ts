@@ -4,7 +4,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createWorkbookPriceSource } from "@/newquip/grower/workbook-price-source";
 import { NEWQUIP_MASTER_POC_SNAPSHOT } from "@/newquip/grower/snapshot";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
-import { buildAcceptedBaseline, baselineMatchesHash, hashOf, type AcceptedBaseline } from "@/newquip/quote/baseline";
+import { sealWithUnresolvedScope } from "@/newquip/grower/__tests__/baseline-exception-fixture";
+import { onCurrentTemplate } from "@/newquip/grower/__tests__/current-template";
+import { baselineMatchesHash, hashOf, type AcceptedBaseline } from "@/newquip/quote/baseline";
 import { redactInternalFinancials } from "@/newquip/quote/margin";
 import { POC_SIX_STAGE_SCHEDULE } from "@/newquip/quote/billing-schedule";
 import { quoteToProjectBaseline } from "@/newquip/quote/to-project";
@@ -36,7 +38,7 @@ const APPROVALS = { customerConfirmedAt: "t", customerConfirmedCents: 1, custome
 
 function approvedDemo(): { baseline: AcceptedBaseline; hash: string } {
   const ctx = (withholdCost: boolean) => ({ priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost });
-  return buildAcceptedBaseline({ quoteRef: "NQ-Q-0001", revision: 1, draft: NQ_Q_0001_DRAFT, evaluation: evaluateDraft(NQ_Q_0001_DRAFT, ctx(true)), marginEvaluation: evaluateDraft(NQ_Q_0001_DRAFT, ctx(false)), approvals: APPROVALS });
+  return sealWithUnresolvedScope({ quoteRef: "NQ-Q-0001", revision: 1, draft: NQ_Q_0001_DRAFT, evaluation: evaluateDraft(NQ_Q_0001_DRAFT, ctx(true)), marginEvaluation: evaluateDraft(NQ_Q_0001_DRAFT, ctx(false)), approvals: APPROVALS });
 }
 
 describe("1-3. the approved quotation's products carry into the project unchanged, packages expand once, BOM/reference components are not products", () => {
@@ -77,6 +79,14 @@ describe("1-3. the approved quotation's products carry into the project unchange
     expect(un.every((i) => i.sku === null && i.mapping.status === "UNMAPPED" && i.mapping.reason.length > 10)).toBe(true);
     const all = JSON.stringify(baseline.physicalScope);
     for (const histo of ["NQ1163", "NQ1223", "NQ1764", "NQ1942", "T3750001", "HNQ7046", "HNQ7088", "HNQ7093"]) expect(all).not.toContain(histo);
+  });
+  it("legacy vs current template, same quotation: the ORIGINAL LED is UNMAPPED (3 unresolved); on the current template its HNQ7046 / HNQ7093 / HNQ7088 are MAPPED products and only M75 + penning are unresolved", () => {
+    const ctx = (withholdCost: boolean) => ({ priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost });
+    const d = onCurrentTemplate(NQ_Q_0001_DRAFT);
+    const cur = sealWithUnresolvedScope({ quoteRef: "NQ-Q-0001", revision: 1, draft: d, evaluation: evaluateDraft(d, ctx(true)), marginEvaluation: evaluateDraft(d, ctx(false)), approvals: APPROVALS }).baseline;
+    expect(cur.physicalScope!.filter((i) => i.mapping.status === "UNMAPPED").map((i) => i.id).sort()).toEqual(["flex_auger:UNMAPPED", "penning_package:UNMAPPED"]);
+    expect(cur.physicalScope!.filter((i) => i.origin.packageKey === "led_light").map((i) => [i.sku, i.quantity, i.mapping.status])).toEqual([["HNQ7046", 456, "MAPPED"], ["HNQ7093", 1368, "MAPPED"], ["HNQ7088", 456, "MAPPED"]]);
+    expect(baseline.physicalScope!.filter((i) => i.mapping.status === "UNMAPPED").map((i) => i.id)).toContain("led_light:UNMAPPED");
   });
   it("a Cin7 BOM sub-component is not scope: only what the quotation sells appears (an assembled finished good is one SKU line)", () => {
     const items = buildPhysicalScope([{ itemKey: "bulk_tank", label: "Silo", sku: "ASM-1", quantity: 2, unitPriceExVat: 100, revenueCents: 20000, pricedBy: "price_source", note: "" }]);

@@ -61,7 +61,7 @@ export default function ProjectsPage() {
       <P0ProjectPanel />
 
       <div className="mt-6 flex items-center justify-between">
-        <p className="text-sm text-slate-600">{projects ? `${projects.length} project${projects.length === 1 ? "" : "s"}` : isLoading ? "Loading…" : ""}</p>
+        <p className="text-sm text-slate-600">{projects ? `${projects.length} project${projects.length === 1 ? "" : "s"}` : isLoading ? "Loading projects…" : ""}</p>
         {canAdmin === true && (
           <Button variant="secondary" size="sm" onClick={seed} loading={isSeeding}>
             Create golden fixture project

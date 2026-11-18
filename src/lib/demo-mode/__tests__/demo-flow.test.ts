@@ -4,6 +4,7 @@ import { seedGoldenCatalogue } from "@/newquip/grower/__tests__/golden-catalogue
 import { installStaged } from "@/lib/approvals/__tests__/staged-emulator";
 import { emptyDraft } from "@/newquip/grower/draft";
 import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
+import { withAcceptedIncompleteCosting } from "@/newquip/grower/__tests__/golden";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { createWorkbookPriceSource } from "@/newquip/grower/workbook-price-source";
 import { NEWQUIP_MASTER_POC_SNAPSHOT } from "@/newquip/grower/snapshot";
@@ -42,7 +43,7 @@ import { docHistory } from "@/lib/approvals/approval-store";
 const NQ = "e1aea782-d095-47ad-90fb-4fa65c9bf855";
 const U = { owner: "u-owner", rep: "u-rep", est: "u-est", mgr: "u-mgr" };
 const EMAIL: Record<string, string> = { "u-owner": DEMO_OWNER_EMAIL, "u-rep": "rep@sparkconsulting.co.za", "u-est": "estimator@sparkconsulting.co.za", "u-mgr": "manager@sparkconsulting.co.za" };
-const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
+const draft = withAcceptedIncompleteCosting(applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft);
 const total = Math.round(evaluateDraft(draft, { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: true }).budget!.totals.subtotalExTax * 100);
 const quote = () => db.rows("newquip_quotes")[0] as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 const acts = () => (db.rows("activity_log") as Array<Record<string, any>>); // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -55,7 +56,7 @@ beforeEach(() => {
   (db as any).auth = { admin: { getUserById: async (id: string) => ({ data: { user: { email: EMAIL[id] } } }) } }; // eslint-disable-line @typescript-eslint/no-explicit-any
   db.rows("org_members").push({ org_id: NQ, user_id: U.owner, role: "owner" }, { org_id: NQ, user_id: U.rep, role: "member" }, { org_id: NQ, user_id: U.est, role: "member" }, { org_id: NQ, user_id: U.mgr, role: "member" });
   const grant = (u: string, role: string) => db.rows("org_functional_roles").push({ id: `r-${u}-${role}`, org_id: NQ, user_id: u, user_email: EMAIL[u], role, assigned_by_email: DEMO_OWNER_EMAIL, assigned_at: "t" });
-  grant(U.rep, "REP"); grant(U.est, "ESTIMATOR"); grant(U.mgr, "MANAGER");
+  grant(U.rep, "REP"); grant(U.est, "ESTIMATOR"); grant(U.mgr, "MANAGER"); grant(U.owner, "ADMINISTRATOR"); // as in the real organisation: the owner is Administrator only
   db.rows("approval_settings").push({ org_id: NQ, roles_enforced: true }); // strict: only the explicit roles count for the three test users
   db.rows("newquip_quotes").push({ id: "q1", org_id: NQ, quote_ref: "NQ-Q-0100", revision: 1, customer_name: "Demo Customer", site_name: "Farm", quote_type: "project", state: "REP_DRAFT", draft: structuredClone(draft), draft_hash: "h1",
     customer_confirmed_cents: null, customer_confirmed_by: null, customer_confirmed_at: null, handoff_by_email: null, created_by_email: EMAIL[U.rep], estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null,
@@ -198,8 +199,8 @@ describe("the cost panel under Demo Mode explains itself", () => {
   it("while a test identity is active the cost read refuses with a message naming Demo Mode (shown in the panel), and works again as Owner", async () => {
     await as("manager");
     expect((await costActions.getQuoteCostEstimateAction("q1")).error).toMatch(/Demo Mode/);
-    await as("owner");
-    expect((await costActions.getQuoteCostEstimateAction("q1")).error).toBeUndefined();
+    await as("owner"); // an Administrator-only owner is NOT an Estimator or Manager: explicit assignments are authoritative, so the owner tier no longer reveals cost
+    expect((await costActions.getQuoteCostEstimateAction("q1")).error).toMatch(/Costs are internal/);
   });
 });
 
@@ -207,8 +208,8 @@ describe("switching, exiting, expiry, tampering and Production", () => {
   it("switching identities changes the effective user immediately and nothing persists between them", async () => {
     const roles: string[][] = []; const sees: boolean[] = [];
     for (const slot of ["rep", "estimator", "manager", "owner", "rep"]) { await as(slot); const v = (await grower.getGrowerViewerAction()).data!; roles.push(v.roles.slice().sort()); sees.push(v.canViewCommercials); }
-    // cost and margin visibility follows each identity's OWN permission (a plain-member Rep sees none; the owner tier does)
-    expect(sees).toEqual([false, true, true, true, false]);
+    // cost and margin visibility follows each identity's OWN permission (a Rep sees none; the Administrator-only owner sees none either)
+    expect(sees).toEqual([false, true, true, false, false]);
     expect(roles[0]).toEqual(["rep"]);
     expect(roles[1]).toEqual(["estimator"]);
     expect(roles[2]).toEqual(["manager"]);

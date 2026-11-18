@@ -9,7 +9,7 @@ import type { ScheduleSource } from "./project-template";
 // NO engineering recalculation happens here — every figure is read from the frozen baseline.
 
 /** Which stage a baseline line's scope belongs to (visibility only — allocations never drive billing). */
-const STAGE_BY_ITEM: Record<string, string> = { delivery: "Delivery", installation: "Installation", concrete_slat_delivery: "Delivery" };
+const STAGE_BY_ITEM: Record<string, string> = { delivery: "Delivery", installation: "Installation", commissioning: "Installation", concrete_slat_delivery: "Delivery" };
 
 /** New NewQuip projects default to the confirmed 40/55/5 standard schedule (see billing-schedule.ts); a schedule may be supplied. */
 export function splitContractIntoStages(contractCents: number, schedule?: readonly ScheduleStageTemplate[]): SuggestedStage[] {
@@ -52,6 +52,8 @@ export function quoteToProjectBaseline(b: AcceptedBaseline, baselineHash: string
       priceSource: b.pricing.source.label,
       approvedBy: b.approvals.managerApprovedBy,
       approvedAt: b.approvals.managerApprovedAt,
+      // A Manager-recorded baseline exception (Estimator-priced systems with no Cin7 SKU) travels with the project: what was accepted, why, by whom, on which quotation version. The full record stays in the sealed baseline (baselineHash).
+      ...(b.exceptions?.length ? { baselineExceptions: b.exceptions.map((e) => ({ kind: e.kind, unresolved: e.unresolved.map((u) => ({ itemKey: u.itemKey, label: u.label, pricing: u.pricing })), reason: e.reason, approvedBy: e.approvedBy, approvedAt: e.approvedAt, version: e.version })) } : {}),
       // Where the stages came from (a template version is recorded by id + version; the stages themselves are the project's own frozen copy).
       ...(scheduleSource ? { billingSchedule: scheduleSource } : {}),
     },

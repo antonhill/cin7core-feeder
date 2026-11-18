@@ -3,11 +3,17 @@
 import { useCallback, useEffect, useId, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import type { Reconciled } from "@/components/ui/action-feedback";
-import { Feedback, type RunFn } from "./feedback-context";
+import { Feedback, useIsPending, type RunFn } from "./feedback-context";
+import { OP } from "@/components/ui/operation-labels";
 import { DisabledReason } from "./DisabledReason";
 import { Status, statusText } from "@/components/ui/Status";
 import type { BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { StepRail, StepPanel } from "@/components/ui/StepRail";
+import { nextIncompleteStepId } from "@/components/ui/step-rail-model";
+import { useShowAllSteps } from "@/components/ui/use-show-all-steps";
+import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
+import { SALE_STEP_IDS, SALE_STEP_LABEL, guidedSteps, referencesKey, requiredStepsComplete, saleRequirements, saleSteps, type SaleStepId } from "@/lib/projects/cin7-sale-steps";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
@@ -27,6 +33,7 @@ import { getCin7ReferenceOptionsAction, type Cin7ReferenceOptions, createCin7Sal
 const TONE: Record<string, BadgeTone> = { PENDING: "warning", CREATED: "warning", RECONCILED: "success", FAILED_CONFIRMED_NO_WRITE: "warning", FAILED_UNCERTAIN: "danger" };
 
 export function Cin7SaleCreationPanel({ view, run, working, boot }: { view: ProjectView; run: RunFn; working: boolean; boot: Cin7SaleCreationStatus | null }) {
+  const creating = useIsPending("sale:create"), reconciling = useIsPending("sale:reconcile"); // UX-007: each button shows ITS OWN spinner
   const uid = useId(); // ids are unique per mounted workspace: several can be on one page (embedded per variation, hidden-but-mounted)
   const projectId = view.project.id;
   const [st, setSt] = useState<Cin7SaleCreationStatus | null>(boot); // the initial record arrives with the tab (one round trip for the whole Commercial tab)
@@ -51,6 +58,17 @@ export function Cin7SaleCreationPanel({ view, run, working, boot }: { view: Proj
   const [saveReuse, setSaveReuse] = useState<Record<string, boolean>>({});
   const [multi, setMulti] = useState<Record<string, PickedProduct[]>>({});
   const [res, setRes] = useState<Record<string, { sku: string; quantity: string; reason: string }>>({});
+  // Guided steps (navigation only; no action is ever called by moving between them). Start on the last step when a creation record already exists.
+  const [stepId, setStepId] = useState<SaleStepId>(boot?.creation ? "confirm" : "scope");
+  const [showAll, setShowAll] = useShowAllSteps("nq-sale-show-all");
+  const [p0Key, setP0Key] = useState<string | null>(null); // the references the shown pre-flight result was run with
+  // Typed-but-uncreated work: references that differ from where the form started, an unsaved per-item reason or an unsaved product pick. Gone once the Sale is requested.
+  const startCustomer = useState(view.project.customer_name ?? "")[0];
+  const startLocation = useState(isP0Project ? "MSTR" : "")[0];
+  const pending = st?.scopeItems.filter((i) => i.mapping.status === "UNMAPPED" && !i.resolution) ?? [];
+  const typedRefs = customer !== startCustomer || location !== startLocation || account !== "" || taxRule !== "Standard Rate Sales";
+  const typedItems = pending.some((i) => (res[i.id]?.reason ?? "").trim() !== "" || (multi[i.id] ?? []).length > 0);
+  useUnsavedGuard(!!st && !st.creation && st.gates.isManager && st.gates.writesEnabled && (typedRefs || typedItems)); // a viewer who cannot create has nothing to lose
 
   // The Cin7 location / account lists are a LIVE Cin7 read (credentials + paged requests). They are only the options of the Create form, so they are fetched only when
   // that form is actually shown: a manager, on a project that has no Sale yet. They were read on every open of the tab, for every project and every variation.
@@ -82,6 +100,7 @@ export function Cin7SaleCreationPanel({ view, run, working, boot }: { view: Proj
       setChecking(false);
       return r;
     }, undefined, key, {
+      pending: key === "sale:create" ? OP.createSalesOrder : key === "sale:reconcile" ? OP.readBackCin7 : "Saving the scope decision…",
       success: (_v, res) => (res.data as { message?: string } | undefined)?.message ?? "Done.",
       exclusive: true, cin7: true,
       doneAfterReconcile: key === "sale:create" ? "The Sales Order request was recorded (its response was lost). Its state is shown below: reconcile to verify and link it." : undefined,
@@ -111,7 +130,19 @@ export function Cin7SaleCreationPanel({ view, run, working, boot }: { view: Proj
     if (missing.length > 0) createReasons.push(`Enter the Cin7 ${missing.join(", ")}.`);
     if (!confirmed) createReasons.push("Tick the confirmation above.");
   }
-  const unresolved = st.scopeItems.filter((i) => i.mapping.status === "UNMAPPED" && !i.resolution);
+  const unresolved = pending;
+  const refsNow = { customer, location, account, taxRule };
+  const steps = saleSteps({
+    blockerCount: st.blockers.length, unresolvedCount: unresolved.length, ...refsNow,
+    preflight: p0 ? { verdictReady: p0.verdict === "READY_PENDING_MANUAL", inputsKey: p0Key ?? "" } : null,
+    confirmed, creationState: creation?.creation_state ?? null,
+  });
+  const railId = `${uid}-sale`;
+  const stepNo = SALE_STEP_IDS.indexOf(stepId) + 1;
+  const nextOpen = nextIncompleteStepId(guidedSteps(steps), stepId);
+  const allDone = requiredStepsComplete(steps);
+  const requirements = saleRequirements({ blockerCount: st.blockers.length, unresolvedCount: unresolved.length, ...refsNow, confirmed });
+  const panel = (id: SaleStepId, children: React.ReactNode) => <StepPanel railId={railId} stepId={id} number={SALE_STEP_IDS.indexOf(id) + 1} title={SALE_STEP_LABEL[id]} current={stepId === id} showAll={showAll} className="mt-4">{children}</StepPanel>;
 
   return (
     <Panel>
@@ -121,6 +152,17 @@ export function Cin7SaleCreationPanel({ view, run, working, boot }: { view: Proj
       </div>
       <p className="mt-1 text-sm text-slate-600">Creates ONE Advanced Sale from this project&apos;s approved product scope: the products below at R0, and the approved contract value as Additional Charges (one per billing stage). It is read back and verified before it is linked. No customer, invoice, fulfilment or stock movement is created.</p>
 
+      <StepRail id={railId} ariaLabel="Sales Order steps" steps={steps} currentId={stepId} onSelect={(id) => setStepId(id as SaleStepId)}
+        actions={(
+          <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+            <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-800"><input type="checkbox" className="size-6" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} /> Show all steps</label>
+            {nextOpen
+              ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => setStepId(nextOpen as SaleStepId)}>Next incomplete step</Button>
+              : allDone ? <span className="text-sm text-slate-700" data-testid="all-steps-complete">Every step is complete.</span> : null}
+          </div>
+        )} />
+
+      {panel("scope", <>
       <div className="mt-4">
         <p className="text-sm font-medium text-slate-800">Products on the Sales Order (inherited from the approved scope - not typed)</p>
         {st.saleLines.length === 0 ? <p className="mt-1 text-sm text-slate-600">No physical products: a commercial-only Sale.</p> : (
@@ -177,21 +219,26 @@ export function Cin7SaleCreationPanel({ view, run, working, boot }: { view: Proj
           })}
         </div>
       )}
+      </>)}
 
-      {creation ? (
+      {creation ? (<>
+      {panel("refs", <p className="mt-2 text-sm text-slate-600">A Sales Order request already exists for this project, so the references can no longer be entered.</p>)}
+      {panel("preflight", <p className="mt-2 text-sm text-slate-600">A Sales Order request already exists for this project, so the pre-flight check is no longer offered.</p>)}
+      {panel("confirm",
         <div className="mt-4 space-y-2 rounded-lg border border-slate-200 p-4 text-sm">
           <div className="flex flex-wrap items-center gap-2"><Status tone={TONE[creation.creation_state] ?? "neutral"}>{statusText(creation.creation_state)}</Status>
             {creation.cin7_sale_number && <span>Cin7 {creation.cin7_sale_number}</span>}</div>
           {creation.last_error_message && <Alert tone={creation.creation_state === "FAILED_UNCERTAIN" ? "danger" : "warning"}>{creation.last_error_message}</Alert>}
           {creation.creation_state !== "RECONCILED" && creation.creation_state !== "FAILED_CONFIRMED_NO_WRITE" && (
-            <Button size="sm" variant="secondary" disabled={working || !gates.isManager} aria-describedby={working || !gates.isManager ? `${uid}-sale-reconcile-reason` : undefined} onClick={() => after(() => reconcileCin7SaleCreationAction(projectId), "sale:reconcile")}>Reconcile with Cin7 (read-only)</Button>
+            <Button size="sm" variant="secondary" loading={reconciling} disabled={working || !gates.isManager} aria-describedby={working || !gates.isManager ? `${uid}-sale-reconcile-reason` : undefined} onClick={() => after(() => reconcileCin7SaleCreationAction(projectId), "sale:reconcile")}>Reconcile with Cin7 (read-only)</Button>
           )}
           {creation.creation_state !== "RECONCILED" && creation.creation_state !== "FAILED_CONFIRMED_NO_WRITE" && (working || !gates.isManager) && <DisabledReason id={`${uid}-sale-reconcile-reason`}>{!gates.isManager ? "Only a manager can reconcile the Sales Order with Cin7." : "Reconcile is disabled while another action is in progress."}</DisabledReason>}
           <Feedback k="sale:reconcile" />
           <Feedback k="sale:create" />{/* the Create form is gone once a record exists, so a "recorded" message about it must show here */}
           {creation.creation_state === "FAILED_UNCERTAIN" && <p className="text-xs text-slate-600">Do not retry. Reconcile first; if a Sale exists but is incomplete, complete or void it in Cin7. An administrator can use the recovery option on the Cin7 Core panel only if the existing Sale is verifiably this project&apos;s.</p>}
-        </div>
-      ) : (
+        </div>)}
+      </>) : (<>
+      {panel("refs",
         <div className="mt-4 space-y-3">
           <div className="grid gap-3 md:grid-cols-4">
             <Input label="Cin7 customer name (must already exist)" value={customer} onChange={(e) => setCustomer(e.target.value)} />
@@ -211,13 +258,16 @@ export function Cin7SaleCreationPanel({ view, run, working, boot }: { view: Proj
           </div>
           {refsError && <p className="text-xs text-amber-700">The Cin7 lists could not be loaded ({refsError}). Type the location and account code instead; they are still checked before anything is created.</p>}
           {refs && <label className="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={typedAccounts} onChange={(e) => setTypedAccounts(e.target.checked)} /> Type the location and account manually instead</label>}
-          <details className="rounded-lg border border-slate-200 p-3">
+        </div>)}
+      {panel("preflight",
+        <div className="mt-4 space-y-3">
+          <details open className="rounded-lg border border-slate-200 p-3">
             <summary className="cursor-pointer py-1.5 text-sm text-slate-700">Optional: run the read-only pre-flight check</summary>
             <div className="mt-2 flex flex-wrap items-center gap-3">
               <Button size="sm" variant="secondary" disabled={p0Busy || working || !gates.isManager} onClick={async () => {
                 setP0Busy(true); setP0Error(null);
                 const r = await runP0ChecklistAction(projectId, { customerName: customer, location, taxRule, revenueAccount: account, skus: st.saleLines.map((l) => ({ sku: l.sku, quantity: l.quantity })) });
-                setP0(r.ok && r.data ? r.data : null); setP0Error(r.ok ? null : r.error ?? "P0 failed to run"); setP0Busy(false);
+                setP0(r.ok && r.data ? r.data : null); setP0Key(referencesKey(refsNow)); setP0Error(r.ok ? null : r.error ?? "P0 failed to run"); setP0Busy(false);
               }}>{p0Busy ? "Reading Cin7…" : "Run P0 checklist (read-only)"}</Button>
               <span className="text-xs text-slate-600">Reads only. Fails explicitly; never picks a customer, instance or database for you. The VAT rate comes from the project ({(view.project.tax_rate_bps / 100).toFixed(2)}%); the tax rule name is the Cin7 one entered above.</span>
             </div>
@@ -233,11 +283,31 @@ export function Cin7SaleCreationPanel({ view, run, working, boot }: { view: Proj
               </div>
             )}
           </details>
-          <label className="flex items-start gap-2 text-sm text-slate-800"><input type="checkbox" className="mt-1" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} /> <span>I confirm I want to create one Cin7 Sales Order for this project. This creates a real order in the connected Cin7 instance, and only one can ever be created for a project.</span></label>
+        </div>)}
+      {panel("confirm",
+        <div className="mt-4 space-y-3">
+          <label className="flex items-start gap-2 text-sm text-slate-800"><input type="checkbox" className="mt-1 size-6 shrink-0" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} /> <span>I confirm I want to create one Cin7 Sales Order for this project. This creates a real order in the connected Cin7 instance, and only one can ever be created for a project.</span></label>
           {rereading && <Alert tone="warning">{checking ? "Checking the current Cin7 status. Create stays disabled until the record has been re-read." : "The outcome of the last request could not be confirmed and the status could not be re-read. Reload the page. Create stays disabled until the status has been read."}</Alert>}
-          <Button disabled={!canCreate} aria-describedby={!canCreate && createReasons.length > 0 ? `${uid}-sale-create-reason` : undefined} onClick={() => after(() => createCin7SaleAction(projectId, { confirmation: CREATE_CONFIRMATION_TEXT, customerName: customer, location, revenueAccount: account, cin7TaxRule: taxRule }), "sale:create")}>Create Sales Order in Cin7</Button>
-          {!canCreate && createReasons.length > 0 && <DisabledReason id={`${uid}-sale-create-reason`}>Create is disabled: {createReasons.join(" ")}</DisabledReason>}
+          {gates.isManager && (
+            <ul className="space-y-1 text-base font-medium" aria-label="What Create needs" data-testid="sale-requirements">
+              {requirements.map((q) => (
+                <li key={q.id} data-met={q.met ? "true" : "false"} className={`flex flex-wrap items-center gap-x-3 ${q.met ? "text-emerald-800" : "text-slate-900"}`}>
+                  <span><span aria-hidden>{q.met ? "✓ " : "○ "}</span>{q.label}: {q.met ? "done" : "still to do"}</span>
+                  {!q.met && q.id !== "confirm" && <Button type="button" size="sm" variant="secondary" className="min-h-11" onClick={() => setStepId(q.id as SaleStepId)}>Go to step {SALE_STEP_IDS.indexOf(q.id as SaleStepId) + 1}</Button>}
+                </li>
+              ))}
+            </ul>
+          )}
+          <Button className="min-h-11" loading={creating} disabled={!canCreate} aria-describedby={!canCreate && createReasons.length > 0 ? `${uid}-sale-create-reason` : undefined} onClick={() => after(() => createCin7SaleAction(projectId, { confirmation: CREATE_CONFIRMATION_TEXT, customerName: customer, location, revenueAccount: account, cin7TaxRule: taxRule }), "sale:create")}>Create Sales Order in Cin7</Button>
+          {!canCreate && createReasons.length > 0 && <p id={`${uid}-sale-create-reason`} data-testid="disabled-reason" className="text-sm leading-snug text-slate-700">Create is disabled: {createReasons.join(" ")}</p>}
           <Feedback k="sale:create" />
+        </div>)}
+      </>)}
+
+      {!showAll && (
+        <div className="mt-4 flex items-center justify-between gap-3" data-testid="sale-step-nav">
+          {stepNo > 1 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => setStepId(SALE_STEP_IDS[stepNo - 2])}>Back</Button> : <span />}
+          {stepNo < SALE_STEP_IDS.length ? <Button type="button" className="min-h-11" onClick={() => setStepId(SALE_STEP_IDS[stepNo])}>Next</Button> : <span />}
         </div>
       )}
     </Panel>

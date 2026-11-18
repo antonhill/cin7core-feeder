@@ -3,12 +3,13 @@ import { evaluateDraft } from "../../grower/evaluate";
 import { readyDraft } from "../../grower/__tests__/golden";
 import { testPriceSource } from "../../grower/__tests__/test-snapshot";
 import { buildAcceptedBaseline, baselineMatchesHash } from "../baseline";
+import { GOLDEN_LIBRARY } from "@/newquip/grower/__tests__/golden-catalogue";
 import { quoteToProjectBaseline } from "../to-project";
 import { stagesFromInput, type ScheduleSource } from "../project-template";
 import { NEWQUIP_STANDARD_SCHEDULE } from "../billing-schedule";
 
 const approvals = { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "r", handoffBy: "r", estimatorSignoffBy: "e", estimatorSignoffAt: "t", managerApprovedBy: "m", managerApprovedAt: "t" };
-const freeze = () => { const draft = readyDraft(); return buildAcceptedBaseline({ quoteRef: "NQ-Q-0011", revision: 1, draft, evaluation: evaluateDraft(draft, { priceSource: testPriceSource(), withholdCost: false }), approvals }); };
+const freeze = () => { const draft = readyDraft(); return buildAcceptedBaseline({ mappingLibrary: GOLDEN_LIBRARY as never, quoteRef: "NQ-Q-0011", revision: 1, draft, evaluation: evaluateDraft(draft, { priceSource: testPriceSource(), withholdCost: false }), approvals }); };
 const fourStages = (() => { const r = stagesFromInput([{ name: "Deposit", percent: "25" }, { name: "Manufacture", percent: "30" }, { name: "Delivery", percent: "30" }, { name: "Install", percent: "15" }]); if (!r.ok) throw new Error("fixture"); return r.stages; })();
 const source: ScheduleSource = { kind: "TEMPLATE", templateId: "tpl-1", templateName: "Four stage", templateVersion: 2, customised: false };
 

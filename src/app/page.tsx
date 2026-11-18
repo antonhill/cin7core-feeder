@@ -6,11 +6,18 @@ import { getShipTodayCounts, getStockHealthReport, getProductAvailabilitySyncSta
 import { StaleBadge, hoursSince, SNAPSHOT_STALE_HOURS } from "@/app/reports/sync-staleness";
 import { formatCount } from "@/lib/format-count";
 import LocalTimestamp from "@/app/local-timestamp";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import MarketingHome from "@/app/marketing-home";
+import { NEWQUIP_ENTRY_COOKIE, NEWQUIP_LOGIN_PATH } from "@/newquip/entry";
 import OnboardingChecklist from "@/app/onboarding-checklist";
 import { Panel } from "@/components/ui/Panel";
 import { Badge } from "@/components/ui/Badge";
 import { Alert } from "@/components/ui/Alert";
+import { NewquipDashboard } from "@/app/NewquipDashboard";
+import { loadNewquipDashboard } from "@/app/newquip-dashboard-data";
+import { isNewquipOnlyUser } from "@/newquip/route-guard";
+import { isNewquipPocOrg } from "@/newquip/access";
 
 interface HomeStats {
   activeInstances: number;
@@ -204,10 +211,18 @@ function StockHealthCard({ summary, activeInstances }: { summary: StockHealthSum
 }
 
 export default async function Home({ searchParams }: { searchParams: Promise<{ blocked?: string; teamAccessDenied?: string }> }) {
-  const { email, orgId, disabledModules } = await getCurrentUserInfo();
-  if (!email) return <MarketingHome />;
+  const { email, orgId, orgName, isSuperAdmin, disabledModules } = await getCurrentUserInfo();
+  if (!email) {
+    // A browser that signs in through NewQuip never sees the Toolbox marketing page.
+    if ((await cookies()).get(NEWQUIP_ENTRY_COOKIE)?.value === "1") redirect(NEWQUIP_LOGIN_PATH);
+    return <MarketingHome />;
+  }
 
   const { blocked, teamAccessDenied } = await searchParams;
+  // NewQuip users (the NewQuip organisation, not a Spark super-admin) land on the NewQuip dashboard, never the Toolbox home.
+  if (orgId && isNewquipOnlyUser(orgId, isSuperAdmin)) {
+    return <NewquipDashboard data={await loadNewquipDashboard(orgId)} orgName={orgName} notice={teamAccessDenied ? "Only your organization’s owner or admin can manage team access." : blocked ? "That area isn’t available for your organization." : null} />;
+  }
   const visibleModules = MODULES.filter((m) => !disabledModules.includes(m.href));
   const blockedModule = blocked ? MODULES.find((m) => m.href === blocked) : undefined;
   const [stats, shipToday, stockHealth] = await Promise.all([getHomeStats(orgId), getShipTodayCount(orgId), getStockHealthSummary(orgId)]);
@@ -221,6 +236,12 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ b
           <p className="mt-1 max-w-2xl text-base text-slate-500">Do amazing things that you cannot do in Cin7 Core.</p>
         </div>
       </div>
+
+      {isSuperAdmin && orgId && isNewquipPocOrg(orgId) && (
+        <div className="mt-6">
+          <Link href="/newquip-grower" className="inline-flex min-h-11 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-indigo-800 hover:bg-slate-50">Open NewQuip workspace</Link>
+        </div>
+      )}
 
       {blockedModule && (
         <div className="mt-6">

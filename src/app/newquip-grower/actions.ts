@@ -1,31 +1,55 @@
 "use server";
 
+import { runAutoPricing } from "@/lib/newquip-quotes/auto-pricing-service";
 import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { logActivity } from "@/lib/activity-log";
+import { deliveryViewOf, documentsViewOf } from "./page-reads";
 import { createServiceRoleClient } from "@/supabase/server";
 import { QUOTES_MODULE } from "@/app/module-nav";
 import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
 import { evaluateDraft, type QuoteEvaluation } from "@/newquip/grower/evaluate";
 import { blankExclusions, previewDraftOf } from "@/newquip/grower/preview-draft";
-import type { QuoteDraft } from "@/newquip/grower/draft";
+import { emptyDraft, type QuoteDraft } from "@/newquip/grower/draft";
 import { stampPriceResolutions } from "@/newquip/quote/price-resolution";
+import { stampChanges } from "@/newquip/pricing/change-stamps";
+import { keepServerOwnedPricing } from "@/newquip/pricing/estimator/ownership";
+import { manualEvidenceRows } from "@/newquip/pricing/estimator/workspace-view";
+import { compareToIndicative, type IndicativeComparison } from "@/newquip/pricing/comparison";
+import { allIndicativeSnapshots } from "@/lib/newquip-quotes/indicative-store";
+import { keepEstimatorOwnedFields } from "@/newquip/quote/draft-ownership";
+import { costingSaveRefusal } from "@/newquip/quote/cost-authority";
 import { changedMappings, mappingsChanged, normaliseMappings } from "@/newquip/grower/mapping-integrity";
 import { verifyMappings } from "@/lib/newquip-quotes/mapping-check";
 import { searchCatalogue, type CatalogueResult } from "@/lib/projects/catalogue-search";
 import { hasAny, PROJECT_CREATE_ROLES, type OrgTier, type QuoteRole } from "@/newquip/quote/roles";
 import { toQuoteRoles } from "@/lib/approvals/roles";
 import { canSeeCosts, resolveRoles } from "@/lib/approvals/role-store";
+import { narrowTier, resolveSwitchState } from "@/lib/approvals/role-switch-store";
+import type { SwitchRole } from "@/lib/approvals/active-role";
 import { demoAuditDetail, resolveActing, type DemoInfo } from "@/lib/demo-mode/context";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
+import { budgetPricingOf } from "@/newquip/grower/budget-pricing";
+import { budgetSnapshotLinkFor } from "@/lib/newquip-quotes/handoff-budget-link";
+import { buildBudgetCoverage, type CoverageRow } from "@/newquip/grower/budget-coverage";
+import { demoToolsEnabled } from "@/newquip/grower/demo-gate";
+import { ACTIVE_BUDGET_BASIS } from "@/newquip/grower/budget-basis-register";
 import { confirmationLabel, resolveConfirmationContact, type ConfirmationInput } from "@/lib/newquip-quotes/confirmation-contact";
+import { returnByOf, returnInfoOf } from "@/lib/newquip-quotes/return-store";
+import { returnInfoForViewer, type ReturnInfo } from "@/newquip/quote/return-info";
 import { appendSnapshot, customerFeaturesAvailable, latestSnapshot } from "@/lib/newquip-quotes/customer-store";
-import { keepServerOwnedCostBasis, keepServerOwnedCosts, redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
+import { fieldValue } from "@/lib/newquip-quotes/customer-snapshot";
+import { reconcileConfirmationAmount, resyncApprovalsLogged } from "@/lib/newquip-quotes/confirmation-reconcile";
+import { keepServerOwnedTemplateRevision, staleTemplateRefusal } from "@/lib/newquip-quotes/template-revision";
+import { assertConfirmationCurrent, assertNameMatchesSnapshot } from "@/lib/newquip-quotes/confirmation-guard";
+import { keepServerOwnedCostBasis, keepServerOwnedCosts, redactEvaluationFinancials, redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
+import { isPocQuote, keepServerOwnedPocFlag, pocPresentationEnabled, seedPocEstimator, POC_BASELINE_REASON } from "@/lib/newquip-quotes/poc-presentation";
 import { approvalsAvailable, decideDocument, legacyCtx, resyncQuoteApprovals, stagedAvailable, submitForApproval, withdrawPendingFor } from "@/lib/approvals/approval-store";
+import { BASELINE_EXCEPTION_TITLE, exceptionDecisionText, validateExceptionReason, type BaselineExceptionItem, type BaselineExceptionRequest, type BaselineExceptionView } from "@/newquip/quote/baseline-exception";
 import type { ScheduleChoice } from "@/newquip/quote/billing-schedule";
 import { resolveProjectSchedule } from "@/lib/newquip-quotes/schedule-resolve";
 import {
-  createProjectFromAcceptedQuote, createQuote, estimatorSignOff, listQuotes, loadQuote, managerApprove, returnToRep, saveDraft, sendToEstimator,
+  baselineExceptionOf, createProjectFromAcceptedQuote, costingOf, createQuote, estimatorSignOff, listQuotes, loadQuote, managerApprove, returnToRep, saveDraft, sendToEstimator, sendToEstimatorUnpriced,
   type QuoteRecord,
 } from "@/lib/newquip-quotes/quote-store";
 
@@ -45,7 +69,7 @@ export interface GrowerActionResult<T> {
 /** `canSeeCost`: owner/admin, or explicitly given the Estimator / Manager role. Cost, ROE, freight, margins and cost overrides are withheld from everyone else, server-side. */
 interface Actor {
   /** The EFFECTIVE user (under Demo Mode, the allowlisted test account). Every permission and separation-of-duties check evaluates this one. */
-  orgId: string; userId: string; email: string; tier: OrgTier; roles: ReadonlySet<QuoteRole>; canSeeCost: boolean;
+  orgId: string; userId: string; email: string; tier: OrgTier; roles: ReadonlySet<QuoteRole>; canSeeCost: boolean; activeRole: SwitchRole | null;
   /** Set only while the owner is impersonating a demo identity; the real owner is then in demo.ownerEmail / demo.ownerUserId. */
   demo: DemoInfo | null;
 }
@@ -67,9 +91,11 @@ async function authorise(): Promise<Actor> {
     }
   }
   const db = createServiceRoleClient();
+  if (tier === "admin" && !(await narrowTier(db, orgId, acting.userId, true))) tier = "member"; // a role-switch user's admin tier counts only as Manager
+  const switchState = await resolveSwitchState(db, orgId, acting.userId);
   // Functional roles (migration 0112) when assigned; otherwise exactly the tier-based roles of Phase H.
   const functional = await resolveRoles(db, orgId, acting.userId, tier === "admin");
-  return { orgId, userId: acting.userId, email: acting.email, tier, roles: toQuoteRoles(functional), canSeeCost: await canSeeCosts(db, orgId, acting.userId, tier === "admin"), demo: acting.demo };
+  return { orgId, userId: acting.userId, email: acting.email, tier, roles: toQuoteRoles(functional), canSeeCost: await canSeeCosts(db, orgId, acting.userId, tier === "admin"), demo: acting.demo, activeRole: switchState?.active ?? null };
 }
 
 /** The approval context of the effective user. Under Demo Mode it carries the DEMO actor name and the real owner. */
@@ -77,30 +103,99 @@ function ctxOf(a: Actor, isManager: boolean = a.tier === "admin") {
   return legacyCtx(a.orgId, a.userId, a.email, isManager, a.demo ? { name: a.demo.actorName, demo: a.demo } : undefined);
 }
 
+const whoOf = (a: Actor) => ({ orgId: a.orgId, userId: a.userId, email: a.email, isAdmin: a.tier === "admin", demo: a.demo });
+
 /** The audit record of any action: the REAL owner is the actor, the effective user and the DEMO marker are in the detail. */
 async function audit(db: ReturnType<typeof createServiceRoleClient>, a: Actor, i: { action: string; summary: string; detail: Record<string, unknown> }) {
   await logActivity(db, a.demo
-    ? { orgId: a.orgId, actor: { userId: a.demo.ownerUserId, email: a.demo.ownerEmail }, action: i.action, summary: `[DEMO] ${i.summary}`, detail: demoAuditDetail(a.demo, i.detail) }
-    : { orgId: a.orgId, actor: { userId: a.userId, email: a.email }, action: i.action, summary: i.summary, detail: i.detail });
+    ? { orgId: a.orgId, actor: { userId: a.demo.ownerUserId, email: a.demo.ownerEmail }, action: i.action, summary: `[DEMO] ${i.summary}`, detail: { ...demoAuditDetail(a.demo, i.detail), ...(a.activeRole ? { effectiveRole: a.activeRole } : {}) } }
+    : { orgId: a.orgId, actor: { userId: a.userId, email: a.email }, action: i.action, summary: i.summary, detail: { ...i.detail, ...(a.activeRole ? { effectiveRole: a.activeRole } : {}) } });
 }
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : "Unknown error";
 }
 
+type ConfirmationEffectView = import("@/lib/newquip-quotes/confirmation-reconcile").InvalidationEffect & { previousCents?: number; newCents?: number };
+
 /** A quote as the browser sees it: the record plus the viewer's roles. No cost ever travels in `evaluation` for non-admins. */
 export interface QuoteView {
+  /** Set only on a save that withdrew the customer's confirmation because the commercial total changed (previousCents -> newCents), or whose approval re-sync failed. */
+  confirmationEffect?: ConfirmationEffectView;
   quote: QuoteRecord;
   evaluation: QuoteEvaluation;
-  viewer: { roles: QuoteRole[]; canViewCommercials: boolean };
+  viewer: { roles: QuoteRole[]; canViewCommercials: boolean; /** SERVER-derived: true only on a Vercel Preview deployment (VERCEL_ENV === "preview"); never true in Production. Gates the whole-quote testing utility. */ previewTools: boolean; /** SERVER-derived: the UAT demonstration PRESET is offered (a Preview deployment, or newquip-uat with its two explicit settings; never Toolbox Production). Separate from previewTools so the whole-quote utility stays Preview-only. */ demoPreset: boolean };
+  /** ESTIMATOR_COSTING_COMPLETE. Present ONLY for a caller who may see cost (Estimator / Manager / observer with cost); never in a Rep payload. `reason` is the first open reason (counts / labels / SKUs, never a value). */
+  costing?: { complete: boolean; reason: string | null; /** Present when the Estimator's authorised accepted-incomplete-cost exception is what makes costing pass: a distinct state, not "complete". */ acceptedIncomplete?: { reason: string; by: string; at: string } };
+  /**
+   * WHY THE QUOTATION IS BACK (D5). Non-null only while the quotation is in the place a return/withdrawal sent it to (Rep draft revision >= 2, or Estimator review after a
+   * Manager return): { kind, reason, byEmail, byRole, at, destination, previousCents?, newCents?, source }. Totals are ex VAT; no cost data. A viewer WITHOUT commercial visibility (a Rep) gets a neutral line (reason "With the Estimator for review.", no actor) for destination ESTIMATOR: Manager->Estimator reasons are internal. Always present (null = nothing to show).
+   */
+  returnInfo: ReturnInfo | null;
+  /** Whether the Manager must accept a baseline exception to approve (Estimator-priced systems with no Cin7 SKU), and which items. Cost-entitled callers only (labels and pricing route, never a value). */
+  baselineException?: BaselineExceptionView;
+  /** NQ-008B P2-E. Pricing evidence for SKU-less manual items (M75, LED, penning...): who recorded what, and whether it still covers the current price. Cost-entitled viewers only (a Manager sees it at approval); NEVER in a Rep payload. Absent while supplier pricing is off. */
+  manualPriceEvidence?: import("@/newquip/pricing/estimator").ManualEvidenceRow[];
+  /** NQ-008A. The indicative price handed off versus the price now. Cost-entitled viewers only (never in a Rep payload); null when not applicable. */
+  indicativeComparison?: IndicativeComparison;
+  /** SERVER-derived: true only for a quotation created in POC Presentation Mode on the NewQuip POC deployment. The page then leaves out cost / mapping diagnostics and exception forms (the server records them with the POC reason). */
+  poc?: boolean;
+  /** BUDGET PRICING summary (Rep-safe: selling prices, labels, quantities and plain wording only). Present while the quotation is a Rep draft or with the Estimator; absent when the configuration is not yet valid. */
+  budgetPricing?: import("@/newquip/grower/budget-pricing").BudgetPricingView;
+  /** Set only on a save that ran the automatic pricing and left products without a price. Neutral wording only (never a cost, rate, freight or margin). */
+  autoPricing?: { pending: string[]; pendingCount: number };
 }
 
-function view(quote: QuoteRecord, a: Actor): QuoteView {
+/** Automatic initial pricing of a Rep draft (NEWQUIP_AUTO_PRICING=on only). NEVER fails the caller: any problem simply leaves the quotation as it was. */
+async function autoPriceRepDraft(db: ReturnType<typeof createServiceRoleClient>, a: Actor, quoteId: string, where = "save"): Promise<{ view: QuoteView["autoPricing"] | undefined; added: number }> {
+  try {
+    // runAutoPricing gates itself (NEWQUIP_AUTO_PRICING + NEWQUIP_AUTO_PRICING_FROM, non-demo, Rep): every entry point (a draft save AND the hand-off retry) is gated identically there.
+    const o = await runAutoPricing(db, { orgId: a.orgId, userId: a.userId, roles: a.roles, demo: !!a.demo }, quoteId);
+    console.info(`[newquip-auto-pricing] ${quoteId} at=${where} status=${o.status} added=${o.added ?? 0} pending=${o.pendingCount} flags=${o.internal.map((i) => `${i.sku}:${i.code}`).join(",").slice(0, 400)}`); // status and flag codes only: never a cost, rate or margin
+    if (o.status === "applied") await audit(db, a, { action: "newquip.auto_pricing", summary: "Priced a Rep draft automatically from Cin7 supplier costs (local only; Cin7 read only)", detail: { quoteId, added: o.added, stillPending: o.pendingCount, at: where } });
+    return { view: o.pendingCount > 0 || o.pending.length > 0 ? { pending: o.pending, pendingCount: o.pendingCount } : undefined, added: o.added ?? 0 };
+  } catch (e) { console.error(`[newquip-auto-pricing] ${quoteId} failed: ${e instanceof Error ? e.message.slice(0, 200) : "unknown"}`); return { view: undefined, added: 0 }; }
+}
+
+async function view(db: ReturnType<typeof createServiceRoleClient>, quote: QuoteRecord, a: Actor): Promise<QuoteView> {
   const canViewCommercials = a.canSeeCost;
+  const open = quote.state !== "MANAGER_APPROVED_FINAL";
+  // The reads below are INDEPENDENT of each other (each needs only the stored quote), so they run together: one round-trip wait instead of four in a row. Each keeps its own fallback exactly as before.
+  const baselineP: Promise<QuoteView["baselineException"]> = canViewCommercials && quote.state === "ESTIMATOR_REVIEW" // Only an open quotation can need one; once approved the exception (if any) is read from the sealed baseline.
+    ? baselineExceptionOf(db, a.orgId, quote.draft, evaluationContext(true)).catch(() => undefined) : Promise.resolve(undefined);
+  const costingP: Promise<QuoteView["costing"]> = canViewCommercials
+    ? costingOf(db, a.orgId, quote.draft, evaluationContext(true)).then((c) => ({ complete: c.complete, reason: c.reasons[0] ?? null, ...(c.acceptedIncomplete ? { acceptedIncomplete: c.acceptedIncomplete } : {}) }), () => undefined) : Promise.resolve(undefined);
+  const snapsP = canViewCommercials && open && (quote.customer_confirmed_cents != null || quote.revision > 1) ? allIndicativeSnapshots(db, a.orgId, quote.id).then((x) => x, () => null) : Promise.resolve(null);
+  const returnP = returnInfoOf(db, quote.org_id, quote);
+  let manualPriceEvidence: QuoteView["manualPriceEvidence"];
+  if (canViewCommercials && quote.draft.estimator.pricing?.enabled) { try { manualPriceEvidence = manualEvidenceRows(quote.draft.estimator.pricing, evaluateDraft(quote.draft, evaluationContext(false)).budget); } catch { manualPriceEvidence = undefined; } }
+  const evaluation = redactEvaluationFinancials(evaluateDraft(quote.draft, evaluationContext(!canViewCommercials)), canViewCommercials);
+  const [baselineException, costing, snaps, returnRaw] = await Promise.all([baselineP, costingP, snapsP, returnP]);
+  let indicativeComparison: IndicativeComparison | undefined;
+  if (snaps) {
+    try {
+      const last = snaps[snaps.length - 1] ?? null;
+      indicativeComparison = compareToIndicative({
+        snapshot: last?.snapshot ?? null, snapshotCapturedAt: last?.created_at ?? null, snapshotCapturedBy: last?.captured_by_email ?? null,
+        confirmedCents: quote.customer_confirmed_cents, confirmedAt: quote.customer_confirmed_at, confirmedBy: quote.handoff_by_email,
+        revision: last?.revision ?? quote.revision, draft: quote.draft, currentEvaluation: evaluation,
+        history: snaps.map((s) => ({ seq: s.seq, revision: s.revision, capturedAt: s.created_at, capturedBy: s.captured_by_email, totalCents: s.total_ex_vat_cents, completeness: s.completeness })),
+      });
+    } catch { indicativeComparison = undefined; }
+  }
+  let budgetPricing: QuoteView["budgetPricing"];
+  if (quote.state === "REP_DRAFT" || quote.state === "ESTIMATOR_REVIEW") { try { const bb = evaluateDraft(quote.draft, { ...evaluationContext(true), provisionalPackages: true }).budget; budgetPricing = bb ? budgetPricingOf(bb) : undefined; } catch { budgetPricing = undefined; } }
   return {
     quote: redactInternalFinancials(quote, canViewCommercials),
-    evaluation: evaluateDraft(quote.draft, evaluationContext(!canViewCommercials)),
-    viewer: { roles: [...a.roles], canViewCommercials },
+    evaluation,
+    ...(budgetPricing ? { budgetPricing } : {}),
+    ...(indicativeComparison ? { indicativeComparison } : {}),
+    viewer: { roles: [...a.roles], canViewCommercials, previewTools: process.env.VERCEL_ENV === "preview", demoPreset: demoToolsEnabled() },
+    ...(isPocQuote(quote.draft, a.orgId) ? { poc: true } : {}),
+    ...(costing ? { costing } : {}),
+    ...(manualPriceEvidence && manualPriceEvidence.length ? { manualPriceEvidence } : {}),
+    returnInfo: returnInfoForViewer(returnRaw, canViewCommercials),
+    ...(baselineException ? { baselineException } : {}),
   };
 }
 
@@ -113,11 +208,11 @@ export async function getGrowerViewerAction(): Promise<GrowerActionResult<{ role
   }
 }
 
-export async function listGrowerQuotesAction(): Promise<GrowerActionResult<Array<Pick<QuoteRecord, "id" | "quote_ref" | "revision" | "customer_name" | "site_name" | "state" | "contract_cents" | "project_id" | "created_at">>>> {
+export async function listGrowerQuotesAction(): Promise<GrowerActionResult<Array<Pick<QuoteRecord, "id" | "quote_ref" | "revision" | "customer_name" | "site_name" | "state" | "contract_cents" | "project_id" | "created_at"> & { signed_off: boolean }>>> {
   try {
     const a = await authorise();
     const rows = await listQuotes(createServiceRoleClient(), a.orgId);
-    return { ok: true, data: rows.map((q) => ({ id: q.id, quote_ref: q.quote_ref, revision: q.revision, customer_name: q.customer_name, site_name: q.site_name, state: q.state, contract_cents: q.contract_cents, project_id: q.project_id, created_at: q.created_at })) };
+    return { ok: true, data: rows.map((q) => ({ id: q.id, quote_ref: q.quote_ref, revision: q.revision, customer_name: q.customer_name, site_name: q.site_name, state: q.state, contract_cents: q.contract_cents, project_id: q.project_id, created_at: q.created_at, signed_off: !!q.estimator_signoff_hash && q.estimator_signoff_hash === q.draft_hash })) };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
@@ -128,38 +223,118 @@ export async function listGrowerQuotesAction(): Promise<GrowerActionResult<Array
  * client-supplied draft (create AND save): optional-element product mappings (trimmed, authorised, verified against this organisation's active catalogue),
  * manual quotation prices (authorised, provenance stamped by the server) and the cost fields (stamped / server-owned). `prior` is the stored draft, if any.
  */
-async function sanitiseSubmittedDraft(a: Actor, db: ReturnType<typeof createServiceRoleClient>, draft: QuoteDraft, prior: QuoteDraft | undefined): Promise<QuoteDraft> {
+async function sanitiseSubmittedDraft(a: Actor, db: ReturnType<typeof createServiceRoleClient>, draft: QuoteDraft, prior: QuoteDraft | undefined, at?: { state: QuoteRecord["state"]; revision: number }): Promise<QuoteDraft> {
   // The live preview applies a ticked exclusion at once, so a blank reason must never be stored: saved figures would then differ from the previewed ones.
   if (blankExclusions(draft).length > 0) throw new Error("Give a reason for every exclusion before saving (it is shown to the customer and frozen at approval).");
   let d = normaliseMappings(draft);
+  // Costing is Estimator-owned (owner decision): a Manager-only session (mapping decisions, verification and approval stay) may resubmit the draft unchanged but cannot change cost overrides,
+  // price resolutions, captured costs or cost-basis declarations. The whole save is refused, nothing is written.
+  const refusal = costingSaveRefusal(a.roles, d, prior);
+  if (refusal) throw new Error(refusal);
   // Any change to any product mapping (a Rep included, on create or on save) is an Estimator/Manager decision.
   if (mappingsChanged(prior?.estimator.confirmedMappings, d.estimator.confirmedMappings) && !hasAny(a.roles, ["estimator", "manager"])) throw new Error("Only an Estimator or Manager can map a product.");
   // Only new or changed mappings are verified here, so a SKU that later goes inactive cannot block unrelated edits; sign-off re-verifies all of them.
   await verifyMappings(db, a.orgId, changedMappings(prior?.estimator.confirmedMappings, d.estimator.confirmedMappings), d.config.feederVariant);
   const nowIso = new Date().toISOString();
   d = { ...d, estimator: { ...d.estimator, priceResolutions: stampPriceResolutions(d.estimator.priceResolutions, prior?.estimator.priceResolutions, a.roles, a.email, nowIso) as QuoteDraft["estimator"]["priceResolutions"] } };
-  return keepServerOwnedCostBasis(keepServerOwnedCosts(stampCostOverrides(d, prior?.estimator.costOverrides, a.canSeeCost, a.email, nowIso), prior?.estimator.physicalCosts), prior?.estimator.costBasis);
+  const stamped = keepServerOwnedCostBasis(keepServerOwnedCosts(stampCostOverrides(d, prior?.estimator.costOverrides, a.canSeeCost, a.email, nowIso), prior?.estimator.physicalCosts), prior?.estimator.costBasis);
+  // Last line of defence (field ownership): a caller without Estimator / Manager authority can never change an Estimator-owned field, whatever the checks above did.
+  const owned = keepServerOwnedTemplateRevision(keepServerOwnedPocFlag(keepServerOwnedPricing(keepEstimatorOwnedFields(stamped, prior, a.roles), prior), prior), prior); // the POC flag is server-owned: the stored value, never the client's // NQ-008B Phase 2: supplier pricing is changed only by its own action
+  // NQ-008A: after the handoff, who changed each price-affecting input and when is decided HERE (never by the client) and stored in the same save.
+  return stampChanges(owned, prior, { state: at?.state ?? "REP_DRAFT", revision: at?.revision ?? 1, email: a.email, nowIso });
 }
 
-export async function createGrowerQuoteAction(draft?: QuoteDraft): Promise<GrowerActionResult<{ id: string; quoteRef: string }>> {
+/**
+ * Starts a quotation. A POC DEMONSTRATION quotation (server-owned flag, seeded illustrative Estimator inputs, automatic Manager baseline exception for unmapped lines) is created ONLY when the
+ * caller explicitly asks for one (`demonstration: true`, the separate "Start demonstration quotation" button) AND POC Presentation Mode is in force (Preview + switch + NewQuip organisation).
+ * An ordinary call never gets the flag, even while the mode is on, so a real UAT quotation always follows the normal mapping-readiness and baseline-exception rules. Asking for a demonstration
+ * where the mode is not in force is refused (never silently downgraded to an ordinary quotation).
+ */
+export async function createGrowerQuoteAction(draft?: QuoteDraft, opts?: { demonstration?: boolean }): Promise<GrowerActionResult<{ id: string; quoteRef: string }>> {
   try {
     const a = await authorise();
     if (!a.roles.has("rep")) throw new Error("Only a rep can start a quote.");
+    const demonstration = opts?.demonstration === true;
+    const poc = demonstration && pocPresentationEnabled(process.env as Record<string, string | undefined>, a.orgId);
+    if (demonstration && !poc) throw new Error("Demonstration quotations are not available here.");
     const db = createServiceRoleClient();
-    const r = await createQuote(db, a.orgId, a.email, draft ? await sanitiseSubmittedDraft(a, db, draft, undefined) : undefined);
-    await audit(db, a, { action: "newquip.quote_created", summary: `Started NewQuip quote ${r.quoteRef} (local only; no Cin7 write)`, detail: { quoteId: r.id } });
+    let start = draft ? await sanitiseSubmittedDraft(a, db, draft, undefined) : emptyDraft();
+    if (poc) start = seedPocEstimator(start, new Date().toISOString());
+    const r = await createQuote(db, a.orgId, a.email, start, { pocPresentation: poc });
+    await audit(db, a, { action: "newquip.quote_created", summary: `Started NewQuip ${poc ? "DEMONSTRATION " : ""}quote ${r.quoteRef} (local only; no Cin7 write)`, detail: { quoteId: r.id, ...(poc ? { demonstration: true } : {}) } });
     return { ok: true, data: r };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
 }
 
+/** SERVER-derived: may the signed-in person start a demonstration quotation right now? (Rep, and POC Presentation Mode in force.) Only decides whether the separate button is shown; createGrowerQuoteAction re-checks. */
+export async function pocDemonstrationAvailableAction(): Promise<GrowerActionResult<boolean>> {
+  try {
+    const a = await authorise();
+    return { ok: true, data: a.roles.has("rep") && pocPresentationEnabled(process.env as Record<string, string | undefined>, a.orgId) };
+  } catch { return { ok: true, data: false }; }
+}
+
 export async function getGrowerQuoteAction(quoteId: string): Promise<GrowerActionResult<QuoteView>> {
   try {
     const a = await authorise();
-    const q = await loadQuote(createServiceRoleClient(), a.orgId, quoteId);
+    const db = createServiceRoleClient();
+    const q = await loadQuote(db, a.orgId, quoteId);
     if (!q) return { ok: false, error: "Quote not found." };
-    return { ok: true, data: view(q, a) };
+    return { ok: true, data: await view(db, q, a) };
+  } catch (e) {
+    return { ok: false, error: errMsg(e) };
+  }
+}
+
+/**
+ * INTERNAL Budget pricing coverage of every selectable equipment category (Estimator / Manager / anyone with cost visibility; a Rep is refused). The rows carry the exact blocker, owner and next action and
+ * some supplier-cost evidence, so they are never sent to a Rep. Read-only: it reads the existing rules, mappings and the budget basis register and writes nothing.
+ */
+export async function getBudgetCoverageAction(): Promise<GrowerActionResult<CoverageRow[]>> {
+  try {
+    const a = await authorise();
+    if (!a.canSeeCost) return { ok: false, error: "Not authorised" };
+    return { ok: true, data: buildBudgetCoverage(ACTIVE_BUDGET_BASIS, new Date().toISOString().slice(0, 10)) };
+  } catch (e) {
+    return { ok: false, error: errMsg(e) };
+  }
+}
+
+/** One part of the page bundle: the same ok / error / data shape as the individual action it replaces, so a failure degrades exactly as it did when the page called that action itself. */
+export interface BundlePart<T> { ok: boolean; error?: string; data?: T }
+/** Everything the quotation page reads when it opens. `delivery` and `documents` are present only for an approved quotation (the only state in which the page reads them). */
+export interface QuotePageBundle {
+  quote: QuoteView;
+  /** Server clock (ms since the epoch) when the parts below were read: the page bounds how long it will reuse them from this. */
+  readAt: number;
+  delivery?: BundlePart<import("./delivery-actions").DeliveryView>;
+  documents?: BundlePart<import("./document-actions").QuoteDocumentsView>;
+}
+
+const settled = async <T,>(p: Promise<T>): Promise<BundlePart<T>> => { try { return { ok: true, data: await p }; } catch (e) { return { ok: false, error: errMsg(e) }; } };
+
+/**
+ * READ-ONLY. The quotation page's opening reads in ONE server call: authorised ONCE (the same authorise() as getGrowerQuoteAction), then the quote view and - for an approved
+ * quotation - the delivery status and issued documents are read in parallel, through the same view() / deliveryViewOf() / documentsViewOf() the individual actions use, so every
+ * redaction is identical. Next.js runs server actions one after another and each pays the full authorisation chain, so four separate calls cost four times the wait.
+ * The quote itself failing fails the call (as getGrowerQuoteAction does); the delivery and documents parts fail independently and are reported per part.
+ */
+export async function getQuotePageBundleAction(quoteId: string): Promise<GrowerActionResult<QuotePageBundle>> {
+  try {
+    const a = await authorise();
+    const db = createServiceRoleClient();
+    const q = await loadQuote(db, a.orgId, quoteId);
+    if (!q) return { ok: false, error: "Quote not found." };
+    const final = q.state === "MANAGER_APPROVED_FINAL";
+    const readAt = Date.now();
+    const [quote, delivery, documents] = await Promise.all([
+      view(db, q, a),
+      final ? settled(deliveryViewOf(db, a, quoteId)) : Promise.resolve(undefined),
+      final ? settled(documentsViewOf(db, a, quoteId)) : Promise.resolve(undefined),
+    ]);
+    return { ok: true, data: { quote, readAt, ...(delivery ? { delivery } : {}), ...(documents ? { documents } : {}) } };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
@@ -170,7 +345,7 @@ export async function previewGrowerDraftAction(draft: QuoteDraft): Promise<Growe
   try {
     const a = await authorise();
     // Read-only live preview: the same engine as Save, with a ticked-but-unexplained exclusion applied so the click shows its effect. Nothing is stored.
-    return { ok: true, data: evaluateDraft(previewDraftOf(draft), evaluationContext(!a.canSeeCost)) };
+    return { ok: true, data: redactEvaluationFinancials(evaluateDraft(previewDraftOf(draft), evaluationContext(!a.canSeeCost)), a.canSeeCost) };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
@@ -195,11 +370,33 @@ export async function saveGrowerDraftAction(quoteId: string, draft: QuoteDraft):
     const a = await authorise();
     const db = createServiceRoleClient();
     const prior = await loadQuote(db, a.orgId, quoteId);
-    const saved = await saveDraft(db, a.orgId, a.roles, quoteId, await sanitiseSubmittedDraft(a, db, draft, prior?.draft));
+    // Once the quotation has a Cin7 customer snapshot, the snapshot is the ONLY source of the customer name: a typed or edited name in the submitted draft is replaced by it.
+    const snapName = (await customerFeaturesAvailable(db)) ? fieldValue((await latestSnapshot(db, a.orgId, quoteId))?.snapshot.name ?? { state: "missing" }) : null;
+    const stale = staleTemplateRefusal(hasAny(a.roles, ["estimator", "manager"]), draft, prior?.draft); // a stale Estimator tab must never undo a template change
+    if (stale) throw new Error(stale);
+    const priorHash = prior?.draft_hash; // read now (D-12, #195): a store that updates the row it handed out in place must not change what "before" means
+    const saved = await saveDraft(db, a.orgId, a.roles, quoteId, await sanitiseSubmittedDraft(a, db, draft, prior?.draft, prior ? { state: prior.state, revision: prior.revision } : undefined), snapName, { keepStoredPricing: true });
     // Changed content invalidates the estimator's sign-off (saveDraft clears it) and any open approval of the older content: the quote goes back to estimator review.
-    if (saved.draftHash !== prior?.draft_hash && (await stagedAvailable(db))) await resyncQuoteApprovals(db, ctxOf(a), quoteId, { quiet: true }).catch(() => undefined);
+    // Race repair: if the customer was (re)selected while this save was in flight, the snapshot name wins - write it again from the stored draft.
+    if (snapName !== null || (await customerFeaturesAvailable(db))) {
+      const nowName = fieldValue((await latestSnapshot(db, a.orgId, quoteId))?.snapshot.name ?? { state: "missing" });
+      if (nowName && nowName !== snapName) { const cur = await loadQuote(db, a.orgId, quoteId); if (cur) await saveDraft(db, a.orgId, a.roles, quoteId, cur.draft, nowName, { keepStoredPricing: true }); }
+    }
+    // A change of the commercial total withdraws the customer's confirmation (one helper for every draft writer); otherwise changed content only re-syncs the approval request.
+    const amount = await reconcileConfirmationAmount(db, whoOf(a), quoteId, evaluationContext(true), returnByOf(a));
+    // saveDraft already withdrew an existing sign-off for the changed content, so it counts as cleared in the reported effect
+    let confirmationEffect: ConfirmationEffectView | undefined = amount ? { ...amount, signoffCleared: amount.signoffCleared || saved.signoffCleared } : undefined;
+    if (!amount && saved.draftHash !== priorHash) {
+      // D-12 (#195): stagedAvailable is INSIDE the catch; the draft is saved, so a failed sync never fails the save. resyncApprovalsLogged still reports a sync failure to the UI.
+      await (async () => {
+        if (!(await stagedAvailable(db))) return;
+        const err = await resyncApprovalsLogged(db, whoOf(a), quoteId, { returnedToRep: false, signoffCleared: true });
+        if (err) confirmationEffect = { confirmationCleared: false, signoffCleared: saved.signoffCleared, returnedToRep: false, approvalSyncError: err };
+      })().catch(() => undefined);
+    }
+    const autoPricing = saved.draftHash !== priorHash ? (await autoPriceRepDraft(db, a, quoteId)).view : undefined; // only when the content changed: an unchanged save never re-reads Cin7
     const q = await loadQuote(db, a.orgId, quoteId);
-    return q ? { ok: true, data: view(q, a) } : { ok: false, error: "Quote not found." };
+    return q ? { ok: true, data: { ...(await view(db, q, a)), ...(confirmationEffect ? { confirmationEffect } : {}), ...(autoPricing ? { autoPricing } : {}) } } : { ok: false, error: "Quote not found." };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
@@ -217,7 +414,7 @@ async function step(
     const extra = await run(a, db);
     await audit(db, a, { action, summary: `${summary} (local only; no Cin7 write)`, detail: { quoteId, ...(extra ?? {}) } });
     const q = await loadQuote(db, a.orgId, quoteId);
-    return q ? { ok: true, data: view(q, a) } : { ok: false, error: "Quote not found." };
+    return q ? { ok: true, data: await view(db, q, a) } : { ok: false, error: "Quote not found." };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
@@ -237,6 +434,7 @@ export async function sendGrowerQuoteToEstimatorAction(quoteId: string, confirme
     const snap = available ? await latestSnapshot(db, a.orgId, quoteId) : null;
     if (available && !snap) throw new Error("Select the Cin7 customer and quotation contact in Step 1 (Customer & site) before the amount can be confirmed.");
     if (!available && contact.source !== "ALTERNATIVE") throw new Error("Customer contacts are not available yet; record the contact as an alternative contact with a reason.");
+    if (snap) { const cur = await loadQuote(db, a.orgId, quoteId); if (cur) assertNameMatchesSnapshot(cur.draft.customerName, cur.customer_name, snap.snapshot); }
     const resolved = resolveConfirmationContact(snap?.snapshot ?? null, contact, { by: a.email, at: new Date().toISOString(), amountCents: confirmedAmountCents });
     // The state change is a compare-and-set, so a double submit records one handoff; the contact record is appended only after it succeeded (no duplicate rows).
     await sendToEstimator(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true), { confirmedAmountCents, confirmedBy: confirmationLabel(resolved) });
@@ -246,7 +444,37 @@ export async function sendGrowerQuoteToEstimatorAction(quoteId: string, confirme
     }
     // The estimator stage opens now: the policy's named estimator (or every estimator) is notified in the app and by email.
     if (await stagedAvailable(db)) await resyncQuoteApprovals(db, ctxOf(a), quoteId);
-    return { confirmationContact: { source: resolved.source, name: resolved.name, email: resolved.email, reason: resolved.reason, origin: resolved.origin }, amountCents: confirmedAmountCents, confirmedBy: a.email, deliveryContactUnchanged: snap?.snapshot.chosenContact?.email ?? null };
+    // Link the acknowledgement to the Budget snapshot the customer was sent (read-only; never blocks the hand-off, never alters the confirmed amount or any baseline).
+    let currentBudget: import("@/newquip/grower/budget-pricing").BudgetPricingView | undefined;
+    try { const handed = await loadQuote(db, a.orgId, quoteId); const bb = handed ? evaluateDraft(handed.draft, { ...evaluationContext(true), provisionalPackages: true }).budget : null; currentBudget = bb ? budgetPricingOf(bb) : undefined; } catch { currentBudget = undefined; }
+    const budgetSnapshotLink = await budgetSnapshotLinkFor(db, a.orgId, quoteId, currentBudget);
+    return { confirmationContact: { source: resolved.source, name: resolved.name, email: resolved.email, reason: resolved.reason, origin: resolved.origin }, amountCents: confirmedAmountCents, confirmedBy: a.email, deliveryContactUnchanged: snap?.snapshot.chosenContact?.email ?? null, budgetSnapshotLink };
+  });
+}
+
+/**
+ * Rep → Estimator when NO indicative price exists yet (the Estimator establishes the first prices). Rep-only; takes NO amount and records NO customer confirmation:
+ * customer_confirmed_cents stays NULL, so the Estimator's sign-off and the Manager's approval still need the Rep to confirm the calculated amount first. Unavailable once an
+ * indicative price exists (checkUnpricedHandoff). The customer and contact must already be selected (same Step 1 gate); no confirmation-contact record is written.
+ */
+export async function sendGrowerQuoteUnpricedToEstimatorAction(quoteId: string, acknowledged: boolean) {
+  return step(quoteId, "Sent a NewQuip quote to the estimator with no customer price yet (pricing to be established by the Estimator)", "newquip.quote_sent_to_estimator_unpriced", async (a, db) => {
+    if (!a.roles.has("rep")) throw new Error("Only a Rep can submit a quotation to the Estimator.");
+    const available = await customerFeaturesAvailable(db);
+    const snap = available ? await latestSnapshot(db, a.orgId, quoteId) : null;
+    if (available && !snap) throw new Error("Select the Cin7 customer and quotation contact in Step 1 (Customer & site) before the quotation can be submitted.");
+    if (snap) { const cur = await loadQuote(db, a.orgId, quoteId); if (cur) assertNameMatchesSnapshot(cur.draft.customerName, cur.customer_name, snap.snapshot); }
+    if (available && snap && !snap.snapshot.chosenContact) throw new Error("Choose the quotation contact in Step 1 (Customer & site) before the quotation can be submitted.");
+    // A quotation must not reach the Estimator with products that automatic pricing could still read: it is retried once here (the same single gated entry as a draft save; it never throws, never blocks and never fails the submit).
+    const retry = await autoPriceRepDraft(db, a, quoteId, "handoff");
+    try { await sendToEstimatorUnpriced(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true), { acknowledged: acknowledged === true }); }
+    catch (e) {
+      // Pricing just completed the quotation, so it now has a total the customer must confirm: say so (the normal price-confirmation submit applies); nothing else about the refusal changes.
+      if (retry.added > 0 && /indicative price exists/i.test(errMsg(e))) throw new Error("Automatic pricing has just completed the remaining prices, so the quotation now has a total. Refresh, review it and submit it with the customer's price confirmation.");
+      throw e;
+    }
+    if (await stagedAvailable(db)) await resyncQuoteApprovals(db, ctxOf(a), quoteId);
+    return { basis: "Pricing to be established by Estimator", acknowledgedBy: a.email, at: new Date().toISOString(), total: null };
   });
 }
 
@@ -260,17 +488,18 @@ export async function returnGrowerQuoteToRepAction(quoteId: string, reason: stri
     if (await approvalsAvailable(db)) {
       // A manager returning a submitted quote is a recorded RETURN decision (reason required); an estimator pulling it back withdraws the submission.
       if (a.roles.has("manager")) { await decideDocument(db, ctxOf(a, true), "QUOTE", quoteId, "RETURN", { reason }); return; }
-      await returnToRep(db, a.orgId, a.roles, quoteId, reason);
+      await returnToRep(db, a.orgId, a.roles, quoteId, reason, returnByOf(a));
       await withdrawPendingFor(db, ctxOf(a, false), "QUOTE", quoteId, reason).catch(() => undefined);
       return;
     }
-    await returnToRep(db, a.orgId, a.roles, quoteId, reason);
+    await returnToRep(db, a.orgId, a.roles, quoteId, reason, returnByOf(a));
   });
 }
 
 export async function signOffGrowerQuoteAction(quoteId: string) {
   return step(quoteId, "Estimator signed off a NewQuip quote", "newquip.quote_estimator_signed_off", (a, db) =>
     (async () => {
+      // No automatic incomplete-costing waiver, in any mode: a quotation with incomplete costing is signed off only when costing is complete or an authorised person has recorded the exception (acceptIncompleteCostsAction).
       // Staged: the sign-off IS the estimator-stage decision (named assignment, role, history), and it opens the manager stage.
       if (await stagedAvailable(db)) { await decideDocument(db, ctxOf(a), "QUOTE", quoteId, "APPROVE", { stage: "ESTIMATOR" }); return "STAGED" as const; }
       await estimatorSignOff(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true));
@@ -290,14 +519,51 @@ export async function returnGrowerQuoteToEstimatorAction(quoteId: string, reason
   });
 }
 
-/** Manager final approval — freezes the accepted baseline. */
-export async function approveGrowerQuoteAction(quoteId: string) {
+/**
+ * Manager final approval — freezes the accepted baseline.
+ *
+ * `baselineException` (optional) is the Manager's explicit "approve with recorded exception" for Estimator-priced systems that have no Cin7 SKU. It is an OPTION OF THIS
+ * ACTION rather than a separate action that parks a pending exception, because a parked exception would need somewhere to live without a migration (the draft would change
+ * its hash and withdraw the Estimator's sign-off) and could outlive the content it was recorded for. Here it is recorded, bound to the version the Manager reviewed, and sealed
+ * into the baseline in ONE step; if any check fails nothing is written. Authorisation (Manager role, reason, version, "an exception really applies") is decided BEFORE the
+ * approval request is touched, so a refused request causes no write at all.
+ */
+export async function approveGrowerQuoteAction(quoteId: string, opts?: { baselineException?: BaselineExceptionRequest }) {
   return step(quoteId, "Manager approved a NewQuip quote and froze the accepted baseline", "newquip.quote_manager_approved", async (a, db) => {
+    // POC Presentation Mode: where a Manager baseline exception is REQUIRED and sufficient (M75 / penning are Estimator-priced by design), record it with the POC reason instead of asking for the form. Nothing else is waived.
+    let pocAuto = false;
+    if (!opts?.baselineException && a.roles.has("manager") && pocPresentationEnabled(process.env as Record<string, string | undefined>, a.orgId)) {
+      const pq = await loadQuote(db, a.orgId, quoteId);
+      if (pq && pq.state === "ESTIMATOR_REVIEW" && isPocQuote(pq.draft, a.orgId)) {
+        const need = await baselineExceptionOf(db, a.orgId, pq.draft, evaluationContext(true));
+        if (need.baselineExceptionRequired) { pocAuto = true; opts = { baselineException: { reason: POC_BASELINE_REASON, expectedRevision: pq.revision, expectedDraftHash: pq.draft_hash } }; }
+      }
+    }
+    // A stale confirmation (confirmed contact changed, or total no longer the confirmed amount) can never be approved. Read-only; the role checks below still decide who may approve.
+    if (a.roles.has("manager")) await assertConfirmationCurrent(db, a.orgId, quoteId, evaluationContext(true));
+    const bx = opts?.baselineException ? { reason: String(opts.baselineException.reason ?? ""), expectedRevision: Number(opts.baselineException.expectedRevision), expectedDraftHash: String(opts.baselineException.expectedDraftHash ?? "") } : undefined;
+    let recorded: { text: string; items: BaselineExceptionItem[]; reason: string; revision: number; draftHash: string } | undefined;
+    if (bx) {
+      if (!a.roles.has("manager")) throw new Error("Only a Manager can accept a baseline exception.");
+      const bad = validateExceptionReason(bx.reason);
+      if (bad) throw new Error(bad);
+      const q = await loadQuote(db, a.orgId, quoteId);
+      if (!q) throw new Error("Quote not found.");
+      if (bx.expectedRevision !== q.revision || bx.expectedDraftHash !== q.draft_hash) throw new Error("The quotation changed after the exception was reviewed. Review the current version and accept the exception again.");
+      const need = await baselineExceptionOf(db, a.orgId, q.draft, evaluationContext(true));
+      if (!need.baselineExceptionRequired) throw new Error(need.otherBlockers.length ? `A baseline exception cannot cover everything still unresolved: ${need.otherBlockers[0]}` : "No baseline exception applies to this quotation.");
+      recorded = { text: exceptionDecisionText({ unresolved: need.items, reason: bx.reason.trim() }), items: need.items, reason: bx.reason.trim(), revision: q.revision, draftHash: q.draft_hash };
+    }
     // One approval path: when the Approvals framework is available the decision is recorded there (separation of duties, exact revision, history).
-    if (await stagedAvailable(db)) { await decideDocument(db, ctxOf(a), "QUOTE", quoteId, "APPROVE", { stage: "MANAGER" }); return; }
-    if (await approvalsAvailable(db)) { await decideDocument(db, ctxOf(a, a.roles.has("manager")), "QUOTE", quoteId, "APPROVE"); return; }
+    if (await stagedAvailable(db)) await decideDocument(db, ctxOf(a), "QUOTE", quoteId, "APPROVE", { stage: "MANAGER", ...(bx ? { reason: recorded!.text, baselineException: bx } : {}) });
+    else if (await approvalsAvailable(db)) await decideDocument(db, ctxOf(a, a.roles.has("manager")), "QUOTE", quoteId, "APPROVE", bx ? { reason: recorded!.text, baselineException: bx } : {});
     // Approval evaluates with cost withheld; the INTERNAL margin sheet is frozen from a second, cost-visible evaluation of the same draft.
-    await managerApprove(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true), evaluationContext(false));
+    else await managerApprove(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true), evaluationContext(false), bx ? { baselineException: bx } : undefined);
+    if (!recorded) return;
+    // The exception is now sealed in the baseline. It also gets its own audit record (who, when, which version, which items, why).
+    const detail = { quoteId, revision: recorded.revision, draftHash: recorded.draftHash, unresolved: recorded.items.map((i) => ({ itemKey: i.itemKey, label: i.label, pricedBy: i.pricedBy })), reason: recorded.reason, approvedBy: a.email, ...(pocAuto ? { basis: "poc_presentation_server_flag", pocPresentation: true, autoRecorded: true, actorRole: "manager" } : { basis: "manager_recorded_exception", pocPresentation: !!(await loadQuote(db, a.orgId, quoteId))?.accepted_baseline?.pocPresentation }) };
+    await audit(db, a, { action: "newquip.baseline_exception_accepted", summary: `Manager accepted a baseline exception (${BASELINE_EXCEPTION_TITLE}) for ${recorded.items.length} item(s) at revision ${recorded.revision} (local only; no Cin7 write)`, detail });
+    return { baselineException: { items: recorded.items.map((i) => i.itemKey), reason: recorded.reason, revision: recorded.revision, draftHash: recorded.draftHash } };
   });
 }
 

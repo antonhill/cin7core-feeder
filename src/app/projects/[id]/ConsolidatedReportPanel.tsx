@@ -6,6 +6,7 @@ import { ScopeTag, statusText } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
+import { claimPostingText } from "@/lib/projects/commercial-billing-state";
 import { buildConsolidatedPhysical, type ConsolidatedCommercial } from "@/lib/projects/consolidated-report";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
 import { getPhysicalStatusAction, type PhysicalActionResult } from "../physical-actions";
@@ -56,7 +57,7 @@ export function ConsolidatedReportPanel({ view }: { view: ProjectView }) {
                   <TD>{s.label} {s.scope === "VARIATION" && <ScopeTag scope="VARIATION" />}{!s.billingStarted && <div className="text-xs text-amber-700">billing not started</div>}</TD>
                   <TD align="right" className="tabular-nums">{formatCents(s.contractCents)}</TD><TD align="right" className="tabular-nums">{formatCents(s.invoicedCents)}</TD>
                   <TD className="font-mono text-xs">{s.invoiceNumbers.join(", ") || "-"}</TD><TD align="right" className="tabular-nums">{formatCents(s.remainingCents)}</TD>
-                  <TD className="text-xs">{s.claims.length === 0 ? "-" : s.claims.map((c) => `${c.claimNumber} ${statusText(c.status)}${c.invoiceNumber ? ` (${c.invoiceNumber})` : ""} ${formatCents(c.subtotalCents)}`).join("; ")}</TD>
+                  <TD className="text-xs">{s.claims.length === 0 ? "-" : s.claims.map((c) => { const post = claimPostingText({ status: c.status, postingState: c.postingState ?? null, invoiceNumber: c.invoiceNumber, reconciled: !!c.reconciled, mismatch: !!c.mismatch, stalePending: c.stalePending }); return `${c.claimNumber} ${statusText(c.status)}${post ? ` · ${post}` : c.invoiceNumber ? ` (${c.invoiceNumber})` : ""} ${formatCents(c.subtotalCents)}`; }).join("; ")}</TD>
                 </TR>))}</TBody>
             </Table>
           </div>

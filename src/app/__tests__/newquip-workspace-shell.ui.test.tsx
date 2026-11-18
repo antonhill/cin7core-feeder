@@ -8,7 +8,7 @@ import { NEWQUIP_POC_ORG_IDS } from "@/newquip/access";
 
 const h = vi.hoisted(() => ({ pathname: "/projects" }));
 vi.mock("next/navigation", () => ({ usePathname: () => h.pathname, useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }));
-vi.mock("@/actions/auth", () => ({ signOutAction: vi.fn() }));
+vi.mock("@/actions/auth", () => ({ signOutAction: vi.fn(), signOutNewquipAction: vi.fn() }));
 vi.mock("@/actions/org-logo", () => ({ uploadCurrentOrgLogo: vi.fn() }));
 vi.mock("@/app/reports/actions", () => ({ triggerSalesSyncAction: vi.fn() }));
 vi.mock("@/app/OrgSwitcher", () => ({ OrgSwitcher: () => null }));
@@ -36,15 +36,15 @@ describe("isNewquipWorkspacePath", () => {
 
 describe("newquipWorkspaceLinks", () => {
   it("lists Solution Builder, Projects and Approvals for the NewQuip organisation, in that order", () => {
-    expect(newquipWorkspaceLinks(NQ, [], false).map((l) => l.label)).toEqual(["Solution Builder", "Projects", "Approvals"]);
+    expect(newquipWorkspaceLinks(NQ, [], false).map((l) => l.label)).toEqual(["Solution Builder", "Projects", "Approvals", "Reports"]);
   });
   it("is empty for any other organisation or no organisation", () => {
     expect(newquipWorkspaceLinks("00000000-0000-0000-0000-000000000000", [], false)).toEqual([]);
     expect(newquipWorkspaceLinks(null, [], false)).toEqual([]);
   });
   it("follows the same module toggles as the Toolbox sidebar", () => {
-    expect(newquipWorkspaceLinks(NQ, ["/quotes"], false).map((l) => l.label)).toEqual(["Projects", "Approvals"]);
-    expect(newquipWorkspaceLinks(NQ, ["/projects"], false).map((l) => l.label)).toEqual(["Solution Builder"]);
+    expect(newquipWorkspaceLinks(NQ, ["/quotes"], false).map((l) => l.label)).toEqual(["Projects", "Approvals", "Reports"]);
+    expect(newquipWorkspaceLinks(NQ, ["/projects"], false).map((l) => l.label)).toEqual(["Solution Builder", "Reports"]);
   });
 });
 
@@ -57,7 +57,7 @@ describe("AppShell on NewQuip routes", () => {
     expect(screen.getByTestId("page")).toBeTruthy();
   });
   it("shows a persistent Back to Toolbox link to the Toolbox home", () => {
-    renderAt("/approvals");
+    renderAt("/approvals", { isSuperAdmin: true }); // a Spark super-admin keeps the way back; the NewQuip-only interface has none (newquip-only-nav test)
     expect(screen.getByRole("link", { name: /Back to Toolbox/ }).getAttribute("href")).toBe("/");
   });
   it("keeps organisation and user context visible and offers sign out", () => {
@@ -67,7 +67,7 @@ describe("AppShell on NewQuip routes", () => {
     expect(screen.getByRole("button", { name: "Sign out" })).toBeTruthy();
   });
   it("links the three NewQuip areas at their existing URLs and marks only the current one", () => {
-    renderAt("/projects/42");
+    renderAt("/projects/42", { isSuperAdmin: true });
     const nq = within(screen.getByRole("navigation", { name: "NewQuip" }));
     expect(nq.getByRole("link", { name: "Solution Builder" }).getAttribute("href")).toBe("/newquip-grower");
     expect(nq.getByRole("link", { name: "Projects" }).getAttribute("href")).toBe("/projects");
@@ -104,10 +104,10 @@ describe("AppShell keeps the Toolbox shell everywhere else", () => {
 describe("AppShell workspace edge cases", () => {
   it("shows exactly the three NewQuip links to a super-admin (no Admin link) and keeps them for impersonation", () => {
     renderAt("/projects", { isSuperAdmin: true });
-    expect(within(screen.getByRole("navigation", { name: "NewQuip" })).getAllByRole("link").map((a) => a.textContent)).toEqual(["Solution Builder", "Projects", "Approvals"]);
+    expect(within(screen.getByRole("navigation", { name: "NewQuip" })).getAllByRole("link").map((a) => a.textContent)).toEqual(["Solution Builder", "Projects", "Approvals", "Reports"]);
   });
   it("keeps the Toolbox shell when every NewQuip module is hidden, and when there is no organisation", () => {
-    renderAt("/projects", { disabledModules: ["/quotes", "/projects"] });
+    renderAt("/projects", { disabledModules: ["/quotes", "/projects"], isSuperAdmin: true });
     expect(screen.queryByTestId("newquip-workspace")).toBeNull();
     cleanup();
     renderAt("/projects", { orgId: null });
@@ -115,7 +115,7 @@ describe("AppShell workspace edge cases", () => {
   });
   it("does not remount the shell or the page when moving between NewQuip areas", () => {
     h.pathname = "/projects";
-    const ui = () => <AppShell nav={nav()}><div data-testid="page">page</div></AppShell>;
+    const ui = () => <AppShell nav={nav({ isSuperAdmin: true })}><div data-testid="page">page</div></AppShell>;
     const { rerender } = render(ui());
     const shell = screen.getByTestId("newquip-workspace");
     const page = screen.getByTestId("page");
@@ -141,5 +141,16 @@ describe("pageContainerClass", () => {
   it("has a compact vertical density", () => {
     expect(pageContainerClass("data", "compact")).toContain("py-6");
     expect(pageContainerClass("data")).toContain("py-8");
+  });
+});
+
+describe("NewQuip official logo", () => {
+  it("shows the supplied logo file in the header with its proportions", () => {
+    renderAt("/approvals", { isSuperAdmin: true });
+    const img = screen.getByTestId("newquip-logo") as HTMLImageElement;
+    expect(img.getAttribute("src")).toBe("/marketing/newquip/newquip-logo.png");
+    expect(img.getAttribute("alt")).toBe("NewQuip");
+    expect(img.getAttribute("width")).toBe("365");
+    expect(img.getAttribute("height")).toBe("78");
   });
 });

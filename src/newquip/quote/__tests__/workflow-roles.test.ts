@@ -11,7 +11,10 @@ const member = rolesFor("member");
 const admin = rolesFor("admin");
 const none = rolesFor("none");
 const ready = (): Readiness => evaluateDraft(readyDraft(), { priceSource: testPriceSource(), withholdCost: true }).readiness;
-const blocked = (): Readiness => ({ ...ready(), state: "BLOCKED", reasons: ["M75: estimator commercial price required"] });
+const repBlocked = (): Readiness => ({ ...ready(), state: "BLOCKED", reasons: ["M75: estimator commercial price required"], repReasons: ["M75: estimator commercial price required"], estimatorReasons: [] });
+const estBlocked = (): Readiness => ({ ...ready(), state: "BLOCKED", reasons: ["Feeder: product mapping not confirmed"], repReasons: [], estimatorReasons: ["Feeder: product mapping not confirmed"] });
+const blocked = repBlocked;
+const costed = { complete: true, reasons: [] as string[] };
 
 describe("quote workflow — states and transitions", () => {
   it("has exactly the three confirmed POC states", () => {
@@ -48,9 +51,11 @@ describe("handoff and approval preconditions (fail closed)", () => {
     expect(checkHandoff({ readiness: ready(), totalExVatCents: 100, confirmedAmountCents: 99, confirmedBy: "Joe" }).ok).toBe(false);
     expect(checkHandoff({ readiness: ready(), totalExVatCents: 100, confirmedAmountCents: 100, confirmedBy: "" }).ok).toBe(false);
     expect(checkHandoff({ readiness: blocked(), totalExVatCents: 100, confirmedAmountCents: 100, confirmedBy: "Joe" }).ok).toBe(false);
+    // Estimator-owned items alone do not stop the Rep's handoff (REP_CONFIGURATION_READY), but they do stop approval.
+    expect(checkHandoff({ readiness: estBlocked(), totalExVatCents: 100, confirmedAmountCents: 100, confirmedBy: "Joe" }).ok).toBe(true);
     expect(checkHandoff({ readiness: ready(), totalExVatCents: null, confirmedAmountCents: 100, confirmedBy: "Joe" }).ok).toBe(false);
   });
-  const good = { readiness: ready(), totalExVatCents: 500, customerConfirmedCents: 500, signoffHash: "h", currentDraftHash: "h" };
+  const good = { readiness: ready(), totalExVatCents: 500, customerConfirmedCents: 500, signoffHash: "h", currentDraftHash: "h", costing: costed };
   it("approval needs READY + confirmation + sign-off of the exact content + an unchanged total", () => {
     expect(checkApproval(good).ok).toBe(true);
     expect(checkApproval({ ...good, readiness: blocked() }).ok).toBe(false);
@@ -118,10 +123,11 @@ describe("readiness states", () => {
     expect(ev.readiness.items.supplierQuoteRequired[0].detail).toMatch(/Covered by the estimator's higher-level price/);
     expect(assessReadiness(readyDraft(), ev.calc, ev.budget).state).toBe("READY");
   });
-  it("unconfirmed mappings are listed as missing product mappings", () => {
+  it("unconfirmed mappings are listed as missing product mappings (established catalogue products resolve by default and are not)", () => {
     const d = readyDraft();
     const ev = evaluateDraft({ ...d, estimator: { ...d.estimator, confirmedMappings: {} } }, ctx);
     expect(ev.readiness.state).toBe("BLOCKED");
-    expect(ev.readiness.counts.missingMappings).toBeGreaterThanOrEqual(4);
+    expect(ev.readiness.counts.missingMappings).toBeGreaterThanOrEqual(1);
+    expect(ev.budget!.lines.filter((l) => ["bulk_tank", "feeder", "concrete_slat", "feed_saver_mat"].includes(l.itemKey)).every((l) => l.status !== "unmapped")).toBe(true);
   });
 });

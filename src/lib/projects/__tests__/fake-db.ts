@@ -14,6 +14,8 @@ const UNIQUE: Record<string, string[][]> = {
   project_delivery_allocations: [["delivery_id", "sku"]],
   project_claim_cin7_postings: [["claim_id"], ["org_id", "idempotency_key"], ["org_id", "memo"]],
   newquip_quote_customers: [["quote_id", "seq"]],
+  newquip_indicative_price_snapshots: [["quote_id", "seq"]],
+  newquip_pricing_revisions: [["quote_id", "seq"]],
   newquip_quote_documents: [["quote_id", "version"], ["storage_path"]],
   newquip_quote_sends: [["document_id", "idempotency_key"]],
   newquip_response_links: [["token_hash"]],
@@ -55,10 +57,65 @@ export class FakeDb {
   /** Records rpc() calls; a test may install a handler to emulate the database function. */
   rpcCalls: Array<{ fn: string; args: Row }> = [];
   rpcHandlers: Record<string, (args: Row) => { error: { message: string } | null }> = {};
-  rpc(fn: string, args: Row): Promise<{ data: null; error: { message: string } | null }> {
+  rpc(fn: string, args: Row): Promise<{ data: unknown; error: { message: string } | null }> {
     this.rpcCalls.push({ fn, args });
+    if (fn === "newquip_handoff_with_snapshot") return Promise.resolve(this.handoffWithSnapshot(args));
+    if (fn === "newquip_apply_pricing_revision") return Promise.resolve(this.applyPricingRevision(args));
     const h = this.rpcHandlers[fn];
     return Promise.resolve({ data: null, error: h ? h(args).error : { message: `no handler for ${fn}` } });
+  }
+
+  /** Migration 0123 (indicative price snapshots + the atomic handoff function) is not applied unless a test says so: the function and table then read as absent, like a database that has not received it. */
+  indicativeApplied = false;
+  /** A test sets this to make the emulated function fail AFTER it would have inserted the snapshot, to prove the whole transaction rolls back (nothing is kept). */
+  failHandoffAfterInsert = false;
+  /** Emulates newquip_handoff_with_snapshot (migration 0123) as ONE transaction: check, insert the snapshot, move the quotation - or change nothing at all. */
+  private handoffWithSnapshot(a: Row): { data: unknown; error: { message: string } | null } {
+    if (!this.indicativeApplied) return { data: null, error: { message: "Could not find the function public.newquip_handoff_with_snapshot in the schema cache" } };
+    const quotes = this.rows("newquip_quotes");
+    const q = quotes.find((r) => r.id === a.p_quote && r.org_id === a.p_org);
+    if (!q) return { data: null, error: { message: "handoff_conflict: the quotation was not found" } };
+    if (q.state !== "REP_DRAFT" || q.draft_hash !== a.p_draft_hash) return { data: null, error: { message: "handoff_conflict: the quotation changed while sending" } };
+    const snaps = this.rows("newquip_indicative_price_snapshots");
+    const seq = Math.max(0, ...snaps.filter((r) => r.quote_id === a.p_quote && r.org_id === a.p_org).map((r) => Number(r.seq))) + 1;
+    const row: Row = {
+      id: `id-${++this.seq}`, created_at: this.ts(), org_id: a.p_org, quote_id: a.p_quote, seq, revision: q.revision, draft_hash: q.draft_hash,
+      ruleset_id: a.p_ruleset_id, ruleset_version: a.p_ruleset_version, price_source_id: a.p_price_source_id, price_source_fingerprint: a.p_price_source_fingerprint,
+      total_ex_vat_cents: a.p_total_cents, completeness: a.p_completeness, snapshot: structuredClone(a.p_snapshot), snapshot_hash: a.p_snapshot_hash, captured_by_email: a.p_captured_by,
+    };
+    if (this.failHandoffAfterInsert) return { data: null, error: { message: "simulated failure after the snapshot insert (rolled back)" } };
+    snaps.push(row);
+    this.writes.push({ table: "newquip_indicative_price_snapshots", op: "insert" });
+    Object.assign(q, {
+      state: "ESTIMATOR_REVIEW", customer_confirmed_cents: a.p_confirmed_cents, customer_confirmed_by: String(a.p_confirmed_by).trim(), customer_confirmed_at: this.ts(), handoff_by_email: a.p_handoff_by,
+      estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null,
+    });
+    return { data: row.id, error: null };
+  }
+
+  /** Migration 0126 (immutable Estimator pricing revisions + the atomic apply function) is not applied unless a test says so. */
+  pricingApplied = false;
+  /** Emulates newquip_apply_pricing_revision (migration 0126) as ONE transaction: check, insert the revision, write the draft - or change nothing at all. */
+  private applyPricingRevision(a: Row): { data: unknown; error: { message: string } | null } {
+    if (!this.pricingApplied) return { data: null, error: { message: "Could not find the function public.newquip_apply_pricing_revision in the schema cache" } };
+    const q = this.rows("newquip_quotes").find((r) => r.id === a.p_quote && r.org_id === a.p_org);
+    if (!q) return { data: null, error: { message: "pricing_conflict: the quotation was not found" } };
+    if (q.state !== "REP_DRAFT" && q.state !== "ESTIMATOR_REVIEW") return { data: null, error: { message: "pricing_conflict: the quotation can no longer be edited" } };
+    if (q.draft_hash !== a.p_expected_draft_hash) return { data: null, error: { message: "pricing_conflict: the quotation changed while the pricing was being edited" } };
+    const revs = this.rows("newquip_pricing_revisions");
+    const seq = Math.max(0, ...revs.filter((r) => r.quote_id === a.p_quote && r.org_id === a.p_org).map((r) => Number(r.seq)));
+    if (seq !== a.p_expected_seq) return { data: null, error: { message: "pricing_conflict: the pricing changed while it was being edited" } };
+    // The remaining checks of the real function (0126), in its order: ONLY estimator.pricing may differ, the recorded previous / new pricing are the stored / written ones, and the
+    // independent-review structure (cost reviews and forward-cover attestations) holds.
+    const bad = pricingRevisionViolation(q.draft as Row, a);
+    if (bad) return { data: null, error: { message: `pricing_conflict: ${bad}` } };
+    if (String(a.p_reason ?? "").trim().length < 3) return { data: null, error: { message: "check violation: reason" } };
+    const row: Row = { id: `id-${++this.seq}`, created_at: this.ts(), org_id: a.p_org, quote_id: a.p_quote, seq: seq + 1, quote_revision: q.revision, kind: a.p_kind, rule_version: a.p_rule_version, reason: a.p_reason,
+      previous_pricing: structuredClone(a.p_previous_pricing), new_pricing: structuredClone(a.p_new_pricing), changes: structuredClone(a.p_changes), new_pricing_hash: a.p_new_pricing_hash, draft_hash_after: a.p_new_draft_hash, changed_by_email: a.p_changed_by };
+    revs.push(row);
+    this.writes.push({ table: "newquip_pricing_revisions", op: "insert" });
+    Object.assign(q, { draft: structuredClone(a.p_new_draft), draft_hash: a.p_new_draft_hash, estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null });
+    return { data: row.id, error: null };
   }
 
   /** Emulates PostgREST's max-rows: a select with no .range() silently returns only this many rows (null = unlimited). */
@@ -97,6 +154,7 @@ export class FakeDb {
     const rolesOn = () => this.rolesApplied;
     const fxOn = () => this.fxApplied;
     const deliveryOn = () => this.deliveryApplied;
+    const indicativeOn = () => this.indicativeApplied;
     const portalOn = () => this.portalApplied;
     const notificationStatuses = () => this.notificationStatuses;
     function exec(): { data: unknown; error: { message: string } | null } {
@@ -108,6 +166,8 @@ export class FakeDb {
         const bad = (Array.isArray(payload) ? payload : [payload]).flatMap((p) => Object.keys(p)).find((k) => COLS_0117.includes(k));
         if (bad) return { data: null, error: { message: `column "${bad}" of relation "newquip_quote_responses" does not exist` } };
       }
+      if (table === "newquip_indicative_price_snapshots" && !indicativeOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
+      if (table === "newquip_indicative_price_snapshots" && (op === "update" || op === "delete")) return { data: null, error: { message: "newquip_indicative_price_snapshots: an indicative snapshot is an audit record and is never updated or deleted" } };
       if (IS_0115.test(table) && !deliveryOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
       if (/^(org_functional_role|approval_polic)/.test(table) && !rolesOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
       if (table.startsWith("approval_") && !approvals()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
@@ -176,7 +236,12 @@ export class FakeDb {
         if (existing) { op = "update"; payload = p; filters.push((r) => r[key] === p[key]); } else { op = "insert"; payload = p; }
         return q;
       },
-      eq: (c: string, v: unknown) => { used.push(c); filters.push((r) => r[c] === v); return q; },
+      // `col->>key` (PostgREST JSON text path) compares the text of that key inside a jsonb column; it is not a column name, so it is not added to `used`.
+      eq: (c: string, v: unknown) => {
+        const m = /^(\w+)->>(\w+)$/.exec(c);
+        if (m) { filters.push((r) => { const j = r[m[1]] as Record<string, unknown> | null; const x = j?.[m[2]]; return x != null && String(x) === String(v); }); return q; }
+        used.push(c); filters.push((r) => r[c] === v); return q;
+      },
       is: (c: string, v: null) => { filters.push((r) => (r[c] ?? null) === v); return q; },
       in: (c: string, v: unknown[]) => { used.push(c); filters.push((r) => v.includes(r[c])); return q; },
       order: (col: string, o?: { ascending?: boolean }) => { used.push(col); orders.push({ col, asc: o?.ascending !== false }); return q; },
@@ -195,4 +260,39 @@ export class FakeDb {
     };
     return q;
   }
+}
+
+
+// ── parity helper for newquip_apply_pricing_revision (migration 0126) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+const jn = (v: unknown): unknown => (v === undefined ? null : v);
+const jeq = (x: unknown, y: unknown): boolean => JSON.stringify(sortKeys(jn(x))) === JSON.stringify(sortKeys(jn(y)));
+function sortKeys(v: unknown): unknown { return Array.isArray(v) ? v.map(sortKeys) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v as object).sort().map((k) => [k, sortKeys((v as Record<string, unknown>)[k])])) : v; }
+const without = (o: unknown, ...keys: string[]): Record<string, unknown> => { const c = { ...(o as Record<string, unknown>) }; for (const k of keys) delete c[k]; return c; };
+const low = (x: unknown): string => String(x ?? "").trim().toLowerCase();
+/** The reason the real function would raise (after 'pricing_conflict: '), or null. Mirrors the SQL line by line; see supabase/tests/0126_newquip_apply_pricing_revision_contract.test.sql. */
+export function pricingRevisionViolation(stored: Row, a: Row): string | null {
+  const strip = (d: unknown) => { const c = structuredClone(d ?? {}) as Row; if (c.estimator && typeof c.estimator === "object") delete (c.estimator as Row).pricing; return c; };
+  const storedPricing = (stored?.estimator as Row | undefined)?.pricing, newPricing = ((a.p_new_draft as Row)?.estimator as Row | undefined)?.pricing;
+  if (!jeq(strip(a.p_new_draft), strip(stored))) return "a pricing revision may change only estimator.pricing";
+  if (!jeq(a.p_previous_pricing, storedPricing)) return "the recorded previous pricing is not the stored pricing";
+  if (!jeq(a.p_new_pricing, newPricing)) return "the recorded new pricing is not the pricing written to the draft";
+  const isObj = (x: unknown): x is Row => !!x && typeof x === "object" && !Array.isArray(x);
+  for (const [field, what, newMsg] of [["skus", "cost", "a review cannot be recorded for a new cost"], ["forwardCover", "forward-cover rate", "an attestation cannot be recorded for a new forward-cover rate"]] as const) {
+    const nm = isObj((newPricing as Row | undefined)?.[field]) ? ((newPricing as Row)[field] as Row) : {}, om = isObj((storedPricing as Row | undefined)?.[field]) ? ((storedPricing as Row)[field] as Row) : {};
+    const noun = field === "skus" ? "review" : "attestation";
+    for (const k of Object.keys(nm)) {
+      const n = nm[k], o = om[k];
+      if (!isObj(n) || !isObj(n.review)) continue;
+      if (!jeq(n.review, isObj(o) ? o.review : null)) {
+        if (o === undefined) return newMsg;
+        if ((n.by ?? null) !== (isObj(o) ? o.by ?? null : null)) return `${noun === "review" ? "a review" : "an attestation"} cannot be recorded together with a change to the ${field === "skus" ? "cost" : "rate"}`;
+        if (low((n.review as Row).by) !== low(a.p_changed_by)) return `${noun === "review" ? "a review" : "an attestation"} must be recorded by the reviewer`;
+        if (low((n.review as Row).by) === low(n.by)) return field === "skus" ? "a cost cannot be verified by the person who entered it" : "a forward-cover rate cannot be attested by the person who entered it";
+      }
+      if (isObj(o) && !jeq(without(n, "review", "by", "at"), without(o, "review", "by", "at"))) return field === "skus" ? "a changed cost cannot carry a review" : "a changed forward-cover rate cannot carry an attestation";
+      if (isObj(o) && jeq(n.review, o.review) && (n.by ?? null) !== (o.by ?? null)) return `who entered ${field === "skus" ? "a reviewed cost" : "an attested forward-cover rate"} cannot be changed`;
+    }
+    void what;
+  }
+  return null;
 }

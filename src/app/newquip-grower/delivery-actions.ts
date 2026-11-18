@@ -5,19 +5,17 @@
 // Sending is an explicit Rep action; recording a response needs the Rep or Manager role. Preview sends obey the server-side recipient allowlist. Only async functions
 // and erased types are exported.
 import { authoriseActor, auditActor, errText, ownerEmailOf, type Actor } from "./actor";
+import { deliveryViewOf } from "./page-reads";
 import { createServiceRoleClient } from "@/supabase/server";
 import { loadQuote } from "@/lib/newquip-quotes/quote-store";
-import { defaultDeps, documentsAvailable, listDocuments } from "@/lib/newquip-quotes/document-store";
-import { latestSnapshot } from "@/lib/newquip-quotes/customer-store";
+import { defaultDeps } from "@/lib/newquip-quotes/document-store";
 import { listSends, retryFailedSend, sendQuotationToCustomer, type SendRequest } from "@/lib/newquip-quotes/send-store";
-import { COMMERCIAL_STATUS_LABEL, commercialStatus, evidenceCounts, listResponses, listReviews, portalAvailable, recordCustomerResponse, requiresAcceptance, reviewResponse, standingOf, type CommercialStatus, type ResponseInput, type Standing } from "@/lib/newquip-quotes/acceptance";
-import { listEvidence } from "@/lib/newquip-quotes/response-evidence";
-import { listLinks, revokeActiveLinks } from "@/lib/newquip-quotes/response-links";
+import { recordCustomerResponse, reviewResponse, type CommercialStatus, type ResponseInput, type Standing } from "@/lib/newquip-quotes/acceptance";
+import { revokeActiveLinks } from "@/lib/newquip-quotes/response-links";
 import { notifyResponseEvent } from "@/lib/newquip-quotes/response-notify";
 import { recordStaffResponse, type StaffResponseInput } from "@/lib/newquip-quotes/response-record";
-import { fieldValue } from "@/lib/newquip-quotes/customer-snapshot";
-import { PREVIEW_EMAIL_ALLOWLIST, isRestricted, productionEmailBlocked } from "@/lib/approvals/email-policy";
-import { emailConfigStatus } from "@/lib/email/resend";
+
+const viewOf = (a: Actor, quoteId: string) => deliveryViewOf(createServiceRoleClient(), a, quoteId);
 
 export interface DeliveryActionResult<T> { ok: boolean; error?: string; data?: T }
 
@@ -51,45 +49,6 @@ export interface DeliveryView {
 
 const canRecordRole = (a: Actor) => a.roles.has("rep") || a.roles.has("manager");
 
-async function viewOf(a: Actor, quoteId: string): Promise<DeliveryView> {
-  const db = createServiceRoleClient();
-  const q = await loadQuote(db, a.orgId, quoteId);
-  if (!q) throw new Error("Quote not found.");
-  const restricted = isRestricted(process.env);
-  const policy = { restricted, production: !restricted, allowlist: restricted ? [...PREVIEW_EMAIL_ALLOWLIST] : [], emailConfigured: emailConfigStatus().configured, productionEmailOff: productionEmailBlocked(process.env) };
-  if (!(await documentsAvailable(db))) return { available: false, status: "NOT_APPROVED", statusLabel: "", requiresAcceptance: false, accepted: false, latestDocumentId: null, defaultTo: null, sends: [], responses: [], canSend: false, canRecord: false, portal: false, responseContacts: [], deliveryContact: null, canReview: false, links: { state: "NONE", expiresOn: null }, contactEmails: [], policy };
-  const [docs, sends, responses] = await Promise.all([listDocuments(db, a.orgId, quoteId), listSends(db, a.orgId, quoteId), listResponses(db, a.orgId, quoteId)]);
-  const latest = docs[0] ?? null;
-  const snap = await latestSnapshot(db, a.orgId, quoteId);
-  const portal = await portalAvailable(db);
-  const [reviews, evidence, files, links] = portal ? await Promise.all([listReviews(db, a.orgId, quoteId), evidenceCounts(db, a.orgId, quoteId), listEvidence(db, a.orgId, quoteId), listLinks(db, a.orgId, quoteId)]) : [[], new Map<string, number>(), [], []];
-  const status = commercialStatus(q, latest, sends, responses, reviews, evidence);
-  const docSnap = latest ? (await db.from("newquip_quote_customers").select("snapshot").eq("org_id", a.orgId).eq("id", latest.customer_snapshot_id).maybeSingle()).data as { snapshot: import("@/lib/newquip-quotes/customer-snapshot").CustomerSnapshot } | null : null;
-  const mineLinks = latest ? links.filter((l) => l.document_id === latest.id) : [];
-  const liveLink = mineLinks.find((l) => !l.revoked_at && new Date(l.expires_at).getTime() > Date.now());
-  const linkState = liveLink ? "ACTIVE" as const : mineLinks.length === 0 ? "NONE" as const : mineLinks.every((l) => l.revoked_at) ? "REVOKED" as const : "EXPIRED" as const;
-  const current = !!latest && latest.revision === q.revision && latest.baseline_hash === q.baseline_hash && q.state === "MANAGER_APPROVED_FINAL";
-  return {
-    available: true, status, statusLabel: COMMERCIAL_STATUS_LABEL[status], requiresAcceptance: requiresAcceptance(q), accepted: status === "CUSTOMER_ACCEPTED",
-    latestDocumentId: latest?.id ?? null, defaultTo: latest?.content.customer.contactEmail ?? null,
-    sends: sends.map((s) => ({ id: s.id, documentId: s.document_id, status: s.status, to: s.to_emails, cc: s.cc_emails, suppressed: s.suppressed_emails, alternatives: s.alternative_recipients ?? [], alternativeReason: s.alternative_reason, subject: s.subject, sentBy: s.sent_by_email, at: s.attempted_at ?? s.created_at, providerMessageId: s.provider_message_id, error: s.last_error, resendOf: s.resend_of, resendReason: s.resend_reason })),
-    responses: responses.map((r) => {
-      const rv = reviews.find((x) => x.response_id === r.id);
-      return {
-        id: r.id, documentId: r.document_id, response: r.response, contact: r.contact_name, respondedOn: r.responded_on, evidence: r.evidence_ref, note: r.note, recordedBy: r.recorded_by_email, at: r.created_at,
-        origin: r.origin ?? "STAFF", standing: standingOf(r, reviews, evidence), contactEmail: r.contact_email ?? null, contactSource: r.contact_source ?? null, company: r.contact_company ?? null, exceptionReason: r.exception_reason ?? null, authorityConfirmed: r.authority_confirmed ?? false,
-        files: files.filter((f) => f.response_id === r.id).map((f) => ({ id: f.id, fileName: f.file_name, type: f.content_type, bytes: f.byte_size, sha256: f.sha256, uploadedBy: f.uploaded_by_email, at: f.created_at, description: f.description })),
-        review: rv ? { decision: rv.decision, note: rv.note, by: rv.reviewed_by_email, at: rv.created_at } : null,
-      };
-    }),
-    portal, deliveryContact: latest ? { name: latest.content.customer.contactName, email: latest.content.customer.contactEmail } : null,
-    responseContacts: (docSnap?.snapshot.contacts ?? []).map((c, index) => ({ index, name: fieldValue(c.name) ?? "", email: fieldValue(c.email) })).filter((c) => c.name),
-    canReview: current && canRecordRole(a), links: { state: linkState, expiresOn: liveLink?.expires_at.slice(0, 10) ?? null },
-    canSend: current && a.roles.has("rep") && status !== "CUSTOMER_ACCEPTED", canRecord: current && canRecordRole(a),
-    contactEmails: [...new Set([...(snap?.snapshot.contacts ?? []).map((c) => (c.email.state === "present" ? c.email.value : "")), snap?.snapshot.chosenContact?.email ?? ""].filter(Boolean))],
-    policy,
-  };
-}
 
 export async function getQuoteDeliveryAction(quoteId: string): Promise<DeliveryActionResult<DeliveryView>> {
   try { return { ok: true, data: await viewOf(await authoriseActor(), quoteId) }; } catch (e) { return { ok: false, error: errText(e) }; }

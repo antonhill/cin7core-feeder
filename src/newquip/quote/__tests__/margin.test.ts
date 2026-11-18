@@ -4,6 +4,7 @@ import { readyDraft } from "../../grower/__tests__/golden";
 import { testPriceSource } from "../../grower/__tests__/test-snapshot";
 import { assemblyUnitCost, buildMarginSheet, marginFigures, NO_AMOUNT_YET, previewCostOverrides, redactInternalFinancials, stampCostOverrides, validateCostOverride, type CostOverride } from "../margin";
 import { buildAcceptedBaseline, baselineMatchesHash, hashOf } from "../baseline";
+import { GOLDEN_LIBRARY } from "@/newquip/grower/__tests__/golden-catalogue";
 import { quoteToProjectBaseline } from "../to-project";
 import { buildCustomerSummary } from "../../grower/customer-summary";
 
@@ -94,7 +95,7 @@ describe("margin sheet from a real evaluated quote", () => {
 
 describe("frozen at approval, kept internal", () => {
   const approvals = { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "r", handoffBy: "r", estimatorSignoffBy: "e", estimatorSignoffAt: "t", managerApprovedBy: "m", managerApprovedAt: "t" };
-  const freeze = (draft = readyDraft()) => buildAcceptedBaseline({ quoteRef: "NQ-Q-0009", revision: 1, draft, evaluation: evalDraft(false, draft).ev, approvals });
+  const freeze = (draft = readyDraft()) => buildAcceptedBaseline({ mappingLibrary: GOLDEN_LIBRARY as never, quoteRef: "NQ-Q-0009", revision: 1, draft, evaluation: evalDraft(false, draft).ev, approvals });
 
   it("the accepted baseline carries the margin sheet, sealed by the hash; a changed cost changes the seal of a NEW baseline only", () => {
     const { baseline, hash } = freeze();
@@ -146,7 +147,7 @@ describe("override stamping and viewer redaction", () => {
   });
   it("redacts cost overrides and the frozen margin sheet for a viewer who may not see cost, and leaves the contract figures intact", () => {
     const draft = withOv({ delivery: ov(100) });
-    const { baseline } = buildAcceptedBaseline({ quoteRef: "Q", revision: 1, draft, evaluation: evalDraft(false, draft).ev, approvals: { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "r", handoffBy: "r", estimatorSignoffBy: "e", estimatorSignoffAt: "t", managerApprovedBy: "m", managerApprovedAt: "t" } });
+    const { baseline } = buildAcceptedBaseline({ mappingLibrary: GOLDEN_LIBRARY as never, quoteRef: "Q", revision: 1, draft, evaluation: evalDraft(false, draft).ev, approvals: { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "r", handoffBy: "r", estimatorSignoffBy: "e", estimatorSignoffAt: "t", managerApprovedBy: "m", managerApprovedAt: "t" } });
     const q = { draft, accepted_baseline: baseline };
     const red = redactInternalFinancials(q, false);
     expect(JSON.stringify(red)).not.toMatch(/internalMargin|costOverrides|lineCostCents/);
@@ -159,13 +160,13 @@ describe("override stamping and viewer redaction", () => {
     const withheld = evalDraft(true, draft).ev;
     const visible = evalDraft(false, draft).ev;
     const approvals = { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "r", handoffBy: "r", estimatorSignoffBy: "e", estimatorSignoffAt: "t", managerApprovedBy: "m", managerApprovedAt: "t" };
-    const naive = buildAcceptedBaseline({ quoteRef: "Q", revision: 1, draft, evaluation: withheld, approvals }).baseline;
+    const naive = buildAcceptedBaseline({ mappingLibrary: GOLDEN_LIBRARY as never, quoteRef: "Q", revision: 1, draft, evaluation: withheld, approvals }).baseline;
     expect(naive.internalMargin!.lines.every((l) => l.costCents === null)).toBe(true);
-    const good = buildAcceptedBaseline({ quoteRef: "Q", revision: 1, draft, evaluation: withheld, marginEvaluation: visible, approvals }).baseline;
+    const good = buildAcceptedBaseline({ mappingLibrary: GOLDEN_LIBRARY as never, quoteRef: "Q", revision: 1, draft, evaluation: withheld, marginEvaluation: visible, approvals }).baseline;
     expect(good.internalMargin!.lines.some((l) => l.costCents !== null)).toBe(true);
     expect(good.contractCents).toBe(naive.contractCents);
     const mismatched = evalDraft(false, { ...draft, estimator: { ...draft.estimator, charges: { ...draft.estimator.charges, delivery: 1 } } }).ev;
-    expect(() => buildAcceptedBaseline({ quoteRef: "Q", revision: 1, draft, evaluation: withheld, marginEvaluation: mismatched, approvals })).toThrow(/does not match/);
+    expect(() => buildAcceptedBaseline({ mappingLibrary: GOLDEN_LIBRARY as never, quoteRef: "Q", revision: 1, draft, evaluation: withheld, marginEvaluation: mismatched, approvals })).toThrow(/does not match/);
   });
 });
 

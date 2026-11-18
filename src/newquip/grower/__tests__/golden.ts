@@ -32,7 +32,15 @@ export function readyDraft(over: Partial<QuoteDraft> = {}): QuoteDraft {
       unitPrices: { flex_auger: 150_000 },
       priceResolutions: { led_light: { unitPriceExVat: 900, reason: "FORTIS 1.2 has no SKU yet — estimator price from the supplier's current list" } },
       assumptions: "POC synthetic scenario.",
+      // Test scaffolding: this synthetic scenario has estimator-priced lines (M75, penning, resolved LED) and no captured supplier costs, so costing is incomplete by
+      // construction. The recorded authorised exception keeps the workflow fixtures focused on workflow; costing gates are proved in readiness-concepts / handoff tests.
+      costBasis: { incompleteAccepted: { reason: "synthetic scenario - costs not captured", by: "fixture@nq", at: "2026-01-01T00:00:00.000Z" } },
       ...(over.estimator ?? {}),
     },
   };
+}
+
+/** Test scaffolding: records the authorised incomplete-costing exception on a fixture draft so workflow tests are not about costing (see readyDraft). */
+export function withAcceptedIncompleteCosting<D extends QuoteDraft>(d: D): D {
+  return { ...d, estimator: { ...d.estimator, costBasis: { ...(d.estimator.costBasis ?? {}), incompleteAccepted: { reason: "fixture - costs not captured", by: "fixture@nq", at: "2026-01-01T00:00:00.000Z" } } } };
 }

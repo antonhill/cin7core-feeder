@@ -144,19 +144,15 @@ select pg_temp.expect_denied($$insert into approval_notifications (org_id, reque
 
 -- access: members of A read A only, never B; no direct writes for clients; functions are not callable by clients
 select pg_temp.act_as('00000000-0000-0000-0000-0000000010a1', 'prep@x');
-do $$ begin
-  if (select count(*) from approval_requests) = 0 then raise exception 'a member reads their organisation''s requests'; end if;
-  if (select count(*) from approval_requests where org_id = '00000000-0000-0000-0000-0000000010b2') <> 0 then raise exception 'cross-org read'; end if;
-  if (select count(*) from approval_notifications where recipient_email <> 'prep@x') <> 0 then raise exception 'a recipient sees only their own notifications'; end if;
-  if (select count(*) from approval_notifications) = 0 then raise exception 'recipient sees their notifications'; end if;
-end $$;
+select pg_temp.expect_denied($q$select count(*) from approval_requests$q$, 'a signed-in member has no read access to approval_requests (0122)');
+select pg_temp.expect_denied($q$select count(*) from approval_notifications$q$, 'a signed-in member has no read access to approval_notifications (0122)');
 select pg_temp.expect_denied($$insert into approval_requests (id, org_id, doc_type, doc_id, doc_ref, revision, digest, amount_cents, prepared_by_email) values (gen_random_uuid(), '00000000-0000-0000-0000-0000000010b1', 'CLAIM', gen_random_uuid(), 'x', 1, repeat('b',64), 1, 'p@x')$$, 'client insert');
 select pg_temp.expect_denied($$update approval_requests set decision_reason = 'x'$$, 'client update');
 select pg_temp.expect_denied($$select approval_decide('00000000-0000-0000-0000-0000000010b1', '00000000-0000-0000-0000-00000000c040', 'APPROVE', 'prep@x', 'x', null, 3, repeat('7',64), true, '[]')$$, 'client calling approval_decide');
 select pg_temp.expect_denied($$select approval_submit('00000000-0000-0000-0000-0000000010b1', gen_random_uuid(), 'CLAIM', gen_random_uuid(), 'x', null, null, null, repeat('b',64), 1, 'p@x', null, null, 'p@x', 'p', '[]')$$, 'client calling approval_submit');
 select pg_temp.reset_role();
 select pg_temp.act_as('00000000-0000-0000-0000-0000000010a2', 'other@x');
-do $$ begin if (select count(*) from approval_requests) <> 0 then raise exception 'org B member must not see org A approvals'; end if; end $$;
+select pg_temp.expect_denied($q$select count(*) from approval_requests$q$, 'a signed-in member has no read access to approval_requests (0122)');
 select pg_temp.reset_role();
 
 select 'ok' as result;

@@ -13,11 +13,15 @@ describe("UX-005 Solution Builder width", () => {
   });
   it("Stage 1 has no nested max-width box and is a two-column grid from xl", () => {
     const stage1 = page.slice(page.indexOf('data-testid="stage1-layout"') - 120, page.indexOf("2 · ESTIMATOR REVIEW"));
+    // UX-006i1: Stage 1 is a five-step wizard; the equipment step lays Selections | Optional equipment side by side from xl and the site step is a two-column grid from xl.
     expect(stage1).toContain("xl:grid-cols-2");
+    expect(stage1).toContain("xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]");
     expect(stage1).not.toContain("max-w-6xl");
-    expect(stage1.match(/xl:col-span-2/g)?.length).toBe(2); // Customer & site and Ventilation span; Room inputs and Selections sit side by side
+    expect(stage1.match(/col-span-full/g)?.length).toBeGreaterThanOrEqual(4); // the wide panels (Quantities, Charges, Exclusions) span the row
   });
   it("free-text fields keep a comfortable maximum width", () => {
-    expect(page).toMatch(/max-w-3xl flex-col gap-1 text-sm">\s*<span[^>]*>Assumptions/);
+    // UX-006i1: the Assumptions field moved with the Rep's Charges & assumptions into the shared RepConfigSections.
+    const sections = readFileSync(`${__dirname}/../[id]/RepConfigSections.tsx`, "utf8");
+    expect(sections).toMatch(/max-w-3xl flex-col gap-1 text-sm">\s*<span[^>]*>Assumptions/);
   });
 });

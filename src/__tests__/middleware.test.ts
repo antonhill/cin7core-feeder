@@ -5,6 +5,9 @@ import { NextRequest } from "next/server";
 const cfg: {
   claims: { sub: string } | null;
   getClaimsThrows: boolean;
+  // Whether the Auth server still recognises the session (false = revoked: the JWT still verifies locally).
+  serverSessionValid: boolean;
+  getUserThrows: boolean;
   aal: { currentLevel: string; nextLevel: string };
   isSuperAdmin: boolean;
   // Security re-audit round 3, item 1: a real user can belong to MULTIPLE
@@ -16,6 +19,8 @@ const cfg: {
 } = {
   claims: { sub: "user-1" },
   getClaimsThrows: false,
+  serverSessionValid: true,
+  getUserThrows: false,
   aal: { currentLevel: "aal1", nextLevel: "aal1" },
   isSuperAdmin: false,
   memberships: [{ org_id: "org1", role: "member", allowed_modules: null }],
@@ -53,6 +58,10 @@ vi.mock("@supabase/ssr", () => ({
       getClaims: async () => {
         if (cfg.getClaimsThrows) throw new Error("jwks unreachable");
         return { data: cfg.claims ? { claims: cfg.claims } : null };
+      },
+      getUser: async () => {
+        if (cfg.getUserThrows) throw new Error("auth unreachable");
+        return cfg.serverSessionValid ? { data: { user: { id: "user-1" } }, error: null } : { data: { user: null }, error: { message: "session_not_found" } };
       },
       exchangeCodeForSession: async () => ({ error: null }),
       mfa: { getAuthenticatorAssuranceLevel: async () => ({ data: cfg.aal }) },
@@ -119,6 +128,8 @@ beforeEach(() => {
   process.env.SUPABASE_SERVICE_ROLE_KEY = "service";
   cfg.claims = { sub: "user-1" };
   cfg.getClaimsThrows = false;
+  cfg.serverSessionValid = true;
+  cfg.getUserThrows = false;
   cfg.aal = { currentLevel: "aal1", nextLevel: "aal1" };
   cfg.isSuperAdmin = false;
   cfg.memberships = [{ org_id: "org1", role: "member", allowed_modules: null }];
@@ -140,6 +151,32 @@ describe("middleware auth gate (fail-closed)", () => {
     const res = await middleware(protectedRequest());
     expect(redirectTo(res, "/login")).toBe(false);
     expect(redirectTo(res, "/settings/security")).toBe(false);
+  });
+});
+
+describe("/login and /signup with a signed-in vs revoked session", () => {
+  const loginRequest = (path = "/login") => new NextRequest(`https://app.example.com${path}`);
+
+  it("a genuinely signed-in user on /login or /signup is still sent home", async () => {
+    expect(redirectTo(await middleware(loginRequest("/login")), "/")).toBe(true);
+    expect(redirectTo(await middleware(loginRequest("/signup")), "/")).toBe(true);
+  });
+
+  it("REVOKED session (JWT still verifies, Auth server says no): /login renders the form instead of bouncing home", async () => {
+    cfg.serverSessionValid = false;
+    const res = await middleware(loginRequest("/login"));
+    expect(redirectTo(res, "/")).toBe(false);
+    expect(res.status).toBeLessThan(300);
+  });
+
+  it("an Auth-server failure shows the form rather than redirecting", async () => {
+    cfg.getUserThrows = true;
+    expect(redirectTo(await middleware(loginRequest("/login")), "/")).toBe(false);
+  });
+
+  it("does not weaken the gate: a revoked-session JWT on a protected route is unchanged (still reaches the page, which re-checks the user)", async () => {
+    cfg.serverSessionValid = false;
+    expect(redirectTo(await middleware(protectedRequest()), "/login")).toBe(false);
   });
 });
 
@@ -265,5 +302,54 @@ describe("security re-audit round 3, item 1: multi-org active-org resolution mat
     const loc = res?.headers.get("location");
     const blockedParam = loc ? new URL(loc).searchParams.get("blocked") : null;
     expect(blockedParam).toBeNull();
+  });
+});
+
+describe("NewQuip dedicated sign-in routing", () => {
+  const NQ = "e1aea782-d095-47ad-90fb-4fa65c9bf855";
+  const req = (path: string, cookie?: string) => new NextRequest(`https://app.example.com${path}`, { headers: cookie ? { cookie } : {} });
+  const loc = (res: Response | undefined) => (res?.headers.get("location") ? new URL(res.headers.get("location")!) : null);
+
+  it("unauthenticated NewQuip routes go to /newquip/login with a validated next", async () => {
+    cfg.claims = null;
+    for (const p of ["/newquip-grower", "/projects", "/claims", "/approvals"]) {
+      const res = await middleware(req(`${p}?a=1`));
+      expect(redirectTo(res, "/newquip/login"), p).toBe(true);
+      expect(loc(res)!.searchParams.get("next")).toBe(`${p}?a=1`);
+    }
+  });
+  it("unauthenticated non-NewQuip routes still go to /login", async () => {
+    cfg.claims = null;
+    expect(redirectTo(await middleware(req("/reports")), "/login")).toBe(true);
+    expect(redirectTo(await middleware(req("/settings/instances", "newquip_entry=1")), "/login")).toBe(true);
+  });
+  it("the root redirects to /newquip/login only with the entry cookie; otherwise stays the public Toolbox root", async () => {
+    cfg.claims = null;
+    expect(redirectTo(await middleware(req("/", "newquip_entry=1")), "/newquip/login")).toBe(true);
+    const plain = await middleware(req("/"));
+    expect(plain.status).toBeLessThan(300);
+  });
+  it("/newquip and /newquip/login are public, and /newquip/login sets the entry cookie", async () => {
+    cfg.claims = null;
+    const res = await middleware(req("/newquip/login"));
+    expect(res.status).toBeLessThan(300);
+    expect(res.headers.get("set-cookie")).toContain("newquip_entry=1");
+    expect((await middleware(req("/newquip"))).status).toBeLessThan(300);
+  });
+  it("signed-in user on /newquip/login is bounced to / only when getUser confirms; revoked session sees the form", async () => {
+    expect(redirectTo(await middleware(req("/newquip/login?next=/projects")), "/")).toBe(true);
+    cfg.serverSessionValid = false;
+    const res = await middleware(req("/newquip/login"));
+    expect(redirectTo(res, "/")).toBe(false);
+    expect(res.status).toBeLessThan(300);
+    cfg.serverSessionValid = true;
+    cfg.getUserThrows = true;
+    expect(redirectTo(await middleware(req("/newquip/login")), "/")).toBe(false);
+  });
+  it("a NewQuip-only member can still reach their routes (guard unchanged) and is bounced from Toolbox routes", async () => {
+    cfg.memberships = [{ org_id: NQ, role: "member", allowed_modules: null }];
+    cfg.orgs = { [NQ]: { subscription_status: "trialing", disabled_modules: [] } };
+    expect(redirectTo(await middleware(req("/projects")), "/")).toBe(false);
+    expect(redirectTo(await middleware(req("/reports")), "/")).toBe(true);
   });
 });

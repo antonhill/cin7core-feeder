@@ -3,16 +3,21 @@
 // Executive Project Overview (NewQuip). READ-ONLY. Every figure comes from buildProjectOverview (pure, unit-tested); this component only loads the
 // inputs and lays them out. Commercial data is read from the database on load; Cin7 fulfilment is read ONLY when the user asks for it, so an
 // unread value is shown as "Not read yet" or "Unknown" - never as zero.
+import { ReconCin7Cell } from "./ClaimInvoiceStatus";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { OverviewSkeleton } from "./LoadingSkeletons";
+import { JourneyMap } from "./JourneyMap";
+import { useInvoiceVerification } from "./invoice-verification-context";
+import { viewPostingsSignature, type VerifiedRef } from "@/lib/projects/invoice-authorisation";
 import { Alert } from "@/components/ui/Alert";
 import { Status } from "@/components/ui/Status";
 import type { BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
-import { buildProjectOverview, type ExceptionItem, type Kpi, type OverviewTab, type PhysicalLoad, type PhysicalOverviewRow } from "@/lib/projects/overview-model";
+import { buildJourney, buildProjectOverview, type ExceptionItem, type Kpi, type OverviewTab, type PhysicalLoad, type PhysicalOverviewRow } from "@/lib/projects/overview-model";
+import { commercialBillingText } from "@/lib/projects/commercial-billing-state";
 import { formatBps, formatCents } from "@/lib/projects/project-view";
 import { getPhysicalStatusAction } from "../physical-actions";
 import { getProjectOverviewDataAction, type OverviewDataResult } from "../overview-actions";
@@ -21,7 +26,7 @@ const qty = (n: number | null): string => (n === null ? "Unknown" : Number.isInt
 const stamp = (iso: string | null): string => (iso ? `${new Date(iso).toISOString().slice(0, 16).replace("T", " ")} UTC` : "None recorded");
 const SEVERITY_TONE: Record<ExceptionItem["severity"], BadgeTone> = { critical: "danger", attention: "warning", info: "info" };
 const SEVERITY_LABEL: Record<ExceptionItem["severity"], string> = { critical: "Act now", attention: "Needs attention", info: "For information" };
-const CIN7_TONE: Record<string, BadgeTone> = { NOT_POSTED: "neutral", POSTING: "warning", DRAFT_CREATED: "info", AUTHORISED: "success", CREATED_OTHER: "info", FAILED: "danger", UNCERTAIN: "danger" };
+const CIN7_TONE: Record<string, BadgeTone> = { NOT_POSTED: "neutral", POSTING: "warning", DRAFT_CREATED: "info", AUTHORISED: "info", CREATED_OTHER: "info", FAILED: "danger", UNCERTAIN: "danger" };
 
 /** One headline figure. Plain text on the group's surface (no tile of its own); a flagged figure also says so in words, never by colour alone. */
 function KpiFigure({ k }: { k: Kpi }) {
@@ -113,6 +118,8 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab, contractShow
   const setPhys = (load: PhysicalLoad) => setPhysRead({ key: refreshKey, load });
   const [physBusy, setPhysBusy] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  // The manual "Verify invoice statuses" result, held in memory by the workspace. Reading it never reads Cin7; outside a workspace nothing is verified.
+  const invoiceVerification = useInvoiceVerification();
 
   useEffect(() => {
     let live = true;
@@ -142,6 +149,21 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab, contractShow
       return e instanceof Error ? e : new Error("The overview could not be built.");
     }
   }, [res, phys]);
+
+  // The journey reads only what is already loaded: the overview data and the fulfilment read the user may have asked for. It adds no request.
+  const journey = useMemo(() => {
+    if (!res?.ok || !res.data || !overview || overview instanceof Error) return null;
+    // Every scope's claims, asked of the in-memory context with each claim's own posting signature (so a verification retained from an unmounted variation workspace is used only
+    // while that posting is unchanged). Pure lookups: nothing is read from Cin7 or the database.
+    const verifiedByClaimId: Record<string, VerifiedRef | undefined> = {};
+    const failedClaimIds: string[] = [];
+    for (const sc of res.data.scopes) for (const cl of sc.view.claims) {
+      const ref = invoiceVerification.verifiedFor(cl.id, viewPostingsSignature([{ id: cl.id, cin7Status: cl.cin7Status }]));
+      if (ref) verifiedByClaimId[cl.id] = ref;
+      if (invoiceVerification.errorFor(cl.id) !== null) failedClaimIds.push(cl.id);
+    }
+    try { return buildJourney({ scopes: res.data.scopes, physical: overview.physical, verification: { verifiedByClaimId, failedClaimIds } }); } catch (e) { console.error("The project journey could not be built.", e); return new Error("The project journey could not be built."); }
+  }, [res, overview, invoiceVerification]);
 
   if (res === null) return <OverviewSkeleton />;
   if (!res.ok || overview === null || overview instanceof Error) {
@@ -177,6 +199,9 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab, contractShow
           </ul>
         )}
       </Section>
+
+      {journey instanceof Error && <p role="status" className="text-xs text-slate-700" data-testid="journey-unavailable">Project journey unavailable: it could not be built from this data. The rest of the overview is unaffected.</p>}
+      {journey && !(journey instanceof Error) && <JourneyMap journey={journey} onOpenTab={onOpenTab} />}
 
       <Section id="ov-summary" title="Executive summary" subtitle={contractShownAbove ? "Original contract, approved variations and revised contract are in the project summary above. Billing here covers the original project and its variations. All amounts are ex VAT." : "All commercial amounts are ex VAT."}>
         <KpiGroups kpis={o.kpis} contractShownAbove={contractShownAbove} />
@@ -260,15 +285,16 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab, contractShow
                     {r.claims.map((cl) => (
                       <TR key={cl.claimNumber}>
                         <TD>{cl.claimNumber}</TD><TD align="right">{formatCents(cl.exVatCents)}</TD><TD>{cl.invoiceNumber ?? "—"}</TD>
-                        <TD><Status tone={CIN7_TONE[cl.cin7Kind] ?? "neutral"}>{cl.cin7Label}</Status></TD>
-                        <TD>{cl.reconciled ? "Reconciled with Cin7" : cl.cin7Kind === "NOT_POSTED" ? "—" : "Not reconciled yet"}</TD>
+                        <TD><ReconCin7Cell claimId={cl.claimId} cin7Status={cl.cin7Status} label={cl.cin7Label} tone={CIN7_TONE[cl.cin7Kind] ?? "neutral"} /></TD>
+                        <TD>{cl.reconciled ? "Reconciled with Cin7" : cl.cin7Kind === "NOT_POSTED" ? "—" : cl.mismatch ? "Amount mismatch recorded" : "Not reconciled yet"}</TD>
                       </TR>
                     ))}
                   </TBody>
                 </Table>
-                <p className="mt-2 text-xs text-slate-600">{r.summary.invoiceCount} Cin7 invoice{r.summary.invoiceCount === 1 ? "" : "s"} ({formatCents(r.summary.invoicedExVatCents)} ex VAT), {r.summary.reconciledCount} reconciled{r.summary.notPostedCount ? `, ${r.summary.notPostedCount} approved claim${r.summary.notPostedCount === 1 ? "" : "s"} not yet invoiced` : ""}{r.summary.uncertainCount ? `, ${r.summary.uncertainCount} with an uncertain outcome` : ""}{r.summary.retryableCount ? `, ${r.summary.retryableCount} not created in Cin7 (can be retried)` : ""}.</p>
+                <p className="mt-2 text-xs text-slate-600">{r.summary.invoiceCount} Cin7 invoice{r.summary.invoiceCount === 1 ? "" : "s"} ({formatCents(r.summary.invoicedExVatCents)} ex VAT), {r.summary.reconciledCount} reconciled{r.summary.notPostedCount ? `, ${r.summary.notPostedCount} approved claim${r.summary.notPostedCount === 1 ? "" : "s"} not yet invoiced` : ""}{r.summary.mismatchCount ? `, ${r.summary.mismatchCount} with a recorded amount mismatch` : ""}{r.summary.uncertainCount ? `, ${r.summary.uncertainCount} with an uncertain outcome` : ""}{r.summary.retryableCount ? `, ${r.summary.retryableCount} not created in Cin7 (can be retried)` : ""}.</p>
               </div>
             )}
+            <p className="mt-2 text-sm font-medium text-slate-800" data-testid={`billing-${r.projectId}`}>{commercialBillingText(r.billing)}{r.billing.reasons.length > 0 ? <span className="font-normal text-slate-600"> ({r.billing.reasons.join("; ")})</span> : null}</p>
           </Panel>
         ))}
         <p className="text-sm font-medium text-slate-800" data-testid="invoiced-total">Invoiced in Cin7 across all Sales: {formatCents(o.reconciliation.invoicedExVatCents)} ex VAT</p>

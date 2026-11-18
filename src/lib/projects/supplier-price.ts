@@ -208,6 +208,30 @@ export function rawFromCin7(s: Record<string, unknown>, supplierCurrency: (name:
 const KNOWN_SUPPLIER_KEYS = new Set(["SupplierID", "SupplierName", "Supplier", "ID", "Cost", "FixedCost", "Currency", "LastSupplied", "DropShip", "SupplierInventoryCode", "SupplierProductName", "ProductSupplierOptions"]);
 /** Keys inside ProductSupplierOptions[] known to carry no unit information (reorder / lead-time planning only). */
 const KNOWN_OPTION_KEYS = new Set(["LocationID", "LocationName", "ReorderQuantity", "Lead", "Safety", "MinimumToReorder"]);
+const ID_LIKE = /^[0-9a-f]{8}-?([0-9a-f]{4}-?){3}[0-9a-f]{12}$/i;
+/**
+ * Fields seen on real live Cin7 Suppliers[] records (NQ-Q-0023 capture, 2026-11-03: all 24 records carried exactly these four) that carry no unit semantics, accepted
+ * ONLY in their expected shape so a changed meaning still fails closed:
+ *  - ProductID, ProductSupplierID: record identifiers (GUID strings).
+ *  - IncludeInPricing: a boolean flag (whether the supplier price feeds product pricing), not a quantity or unit.
+ *  - PurchaseCost: a cost figure. Its own semantics are not documented, so it is accepted only when it is zero (unset: a zero carries no unit or pack factor) or numerically identical to Cost (it then adds nothing that could
+ *    disagree with the Latest Price's unit); any different number, or a non-number, keeps the price blocked and is reported for a human to look at.
+ */
+function isInertMetadata(key: string, s: Record<string, unknown>): boolean {
+  const v = s[key];
+  if (key === "ProductID" || key === "ProductSupplierID") return typeof v === "string" && ID_LIKE.test(v);
+  if (key === "IncludeInPricing") return typeof v === "boolean";
+  if (key === "PurchaseCost") return typeof v === "number" && Number.isFinite(v) && (v === 0 || (typeof s.Cost === "number" && Math.abs(v - s.Cost) < 0.0000005));
+  return false;
+}
+/** A blocked field named WITH its value (prices and ids only; nothing sensitive) so the next capture shows a human what the field actually holds. */
+function describeBlocked(k: string, s: Record<string, unknown>): string {
+  const show = (v: unknown) => { const t = typeof v === "string" ? v : JSON.stringify(v); return t.length > 40 ? `${t.slice(0, 40)}...` : t; };
+  if (k === "PurchaseCost") return `PurchaseCost=${show(s[k])} (Cost=${show(s.Cost)}; accepted only when 0 or equal to Cost)`;
+  if (k === "ProductID" || k === "ProductSupplierID") return `${k}=${show(s[k])} (expected a GUID string)`;
+  if (k === "IncludeInPricing") return `IncludeInPricing=${show(s[k])} (expected true/false)`;
+  return k;
+}
 const has = (v: unknown) => v !== null && v !== undefined && v !== "";
 /**
  * The fields a Cin7 Suppliers[] record carries with a value that are NOT known to be unit-free. Empty = the record states no unit of its own.
@@ -216,7 +240,7 @@ const has = (v: unknown) => v !== null && v !== undefined && v !== "";
  */
 export function statedUnitFields(s: Record<string, unknown>): string[] {
   const out = new Set<string>();
-  for (const k of Object.keys(s)) if (has(s[k]) && !KNOWN_SUPPLIER_KEYS.has(k)) out.add(k);
+  for (const k of Object.keys(s)) if (has(s[k]) && !KNOWN_SUPPLIER_KEYS.has(k) && !isInertMetadata(k, s)) out.add(describeBlocked(k, s));
   const opts = s.ProductSupplierOptions;
   if (opts !== null && opts !== undefined && !Array.isArray(opts)) out.add("ProductSupplierOptions");
   else for (const o of (opts as unknown[] | undefined) ?? []) {

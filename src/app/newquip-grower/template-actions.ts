@@ -4,6 +4,7 @@
 // access, every write needs an org manager (owner/admin). Nothing here touches an existing project or Cin7. Only async functions and erased types are exported.
 import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
+import { narrowTier } from "@/lib/approvals/role-switch-store";
 import { logActivity } from "@/lib/activity-log";
 import { createServiceRoleClient } from "@/supabase/server";
 import { QUOTES_MODULE } from "@/app/module-nav";
@@ -22,6 +23,7 @@ async function actor() {
   const access = await requireModuleAccess(QUOTES_MODULE.href);
   let manager = false;
   try { await requireOrgAdmin("manage NewQuip project templates"); manager = true; } catch { manager = false; } // fail closed
+  if (manager) manager = await narrowTier(createServiceRoleClient(), orgId, access.userId, true);
   return { orgId, userId: access.userId, email: access.email ?? "unknown", manager };
 }
 

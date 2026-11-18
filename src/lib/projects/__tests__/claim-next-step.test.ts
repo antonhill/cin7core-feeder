@@ -6,7 +6,7 @@ describe("UAT-015 claim next-step line", () => {
     expect(claimNextStep({ status: "DRAFT", cin7Kind: "NOT_POSTED" })).toMatch(/Submit/);
     expect(claimNextStep({ status: "READY_FOR_APPROVAL", cin7Kind: "NOT_POSTED", stageRole: "MANAGER" })).toMatch(/manager.*Approvals/);
     expect(claimNextStep({ status: "APPROVED", cin7Kind: "NOT_POSTED" })).toMatch(/post it to Cin7/);
-    expect(claimNextStep({ status: "APPROVED", cin7Kind: "DRAFT_CREATED" })).toMatch(/authorise it in Cin7/);
+    expect(claimNextStep({ status: "APPROVED", cin7Kind: "DRAFT_CREATED" })).toMatch(/Recorded as draft - verify the invoice status in Cin7/);
     expect(claimNextStep({ status: "RECONCILED", cin7Kind: "AUTHORISED" })).toMatch(/authorised/);
   });
   it("an uncertain posting always says reconcile first, never retry", () => {

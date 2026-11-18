@@ -27,7 +27,8 @@ export function authoriseDecision(a: Actor, action: ApprovalAction, req: Pick<Ap
 
 // ── staged decisions (migration 0112) ───────────────────────────────────────
 
-export interface StageActor { email: string; roles: ReadonlySet<FunctionalRole>; /** Organisation owner/admin or explicit Administrator: the only people who may act as an override. */ isAdmin: boolean }
+export interface StageActor { email: string; roles: ReadonlySet<FunctionalRole>; /** Organisation owner/admin or explicit Administrator: the only people who may act as an override. */ isAdmin: boolean;
+  /** NewQuip: explicit assignments are authoritative. The tier-based Administrator override is removed: nobody approves at a stage whose role they do not hold, and only a holder of the role may override their OWN submission. */ strictRoles?: boolean }
 export type StageRequest = Pick<ApprovalRequestRow, "status" | "prepared_by_email" | "doc_type" | "assigned_to_email"> & { stage?: "ESTIMATOR" | "MANAGER"; originator_email?: string | null };
 export type StageVerdict = { ok: true; override: boolean; destination: "ESTIMATOR" | "PREPARER" | null } | { ok: false; error: string };
 
@@ -54,7 +55,7 @@ export function authoriseStageDecision(a: StageActor, action: ApprovalAction, re
   let override = false;
   if (action === "APPROVE") {
     if (!hasRole || preparedOrOriginated) {
-      if (!a.isAdmin) return { ok: false, error: hasRole ? "You prepared or originated this submission, so you cannot approve it." : `Approval at this stage needs the ${requiredRole.toLowerCase().replace("_", " ")} role.` };
+      if (!a.isAdmin || (a.strictRoles && !hasRole)) return { ok: false, error: hasRole ? "You prepared or originated this submission, so you cannot approve it." : `Approval at this stage needs the ${requiredRole.toLowerCase().replace("_", " ")} role.` };
       if (!input.override) return { ok: false, error: hasRole ? "You prepared or originated this submission, so you cannot approve it normally. An administrator may approve it only as an explicit override with a written reason." : `You do not hold the ${requiredRole.toLowerCase().replace("_", " ")} role. An administrator may approve at this stage only as an explicit override with a written reason.` };
       if (reason.length < 10) return { ok: false, error: "An override needs a written reason (at least a short sentence)." };
       override = true;

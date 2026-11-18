@@ -28,20 +28,34 @@ describe("who is offered the Cin7 product chooser", () => {
   });
   it("an optional element that is not selected, and every non-optional item, get no chooser", () => {
     expect(mappingControlFor("controller", "not_selected", estimator, true)).toBe("none");
-    for (const k of ["feeder", "pvc_door", "bulk_tank", "led_light"]) expect(mappingControlFor(k, "per_feeder", estimator, true), k).toBe("none");
+    for (const k of ["pvc_door", "led_light"]) expect(mappingControlFor(k, "per_feeder", estimator, true), k).toBe("none");
+    for (const k of ["feeder", "bulk_tank"]) expect(mappingControlFor(k, "not_selected", estimator, true), k).toBe("none"); // a line that is not selected offers nothing, alternatives or not
+  });
+  it("feeder and bulk tank have NewQuip-approved alternatives (PNQ002, SYSH-2750-4): an editable Estimator or Manager is offered them, nobody else", () => {
+    for (const k of ["feeder", "bulk_tank"]) {
+      expect(mappingControlFor(k, "per_feeder", estimator, true), k).toBe("alternative");
+      expect(mappingControlFor(k, "per_feeder", manager, true), k).toBe("alternative");
+      expect(mappingControlFor(k, "per_feeder", rep, true), k).toBe("none");
+      expect(mappingControlFor(k, "per_feeder", estimator, false), k).toBe("none"); // read-only view
+      expect(mappingControlFor(k, "per_feeder", manager, false), k).toBe("none");
+      expect(mappingControlFor(k, "per_feeder", rep, false), k).toBe("none");
+    }
   });
 });
 
 describe("the page wires the chooser into the Line decisions row", () => {
+  // UX-006i1: the table moved to the shared RepConfigSections (mode "estimator" keeps the chooser; mode "rep" never renders one); the page renders it before the Product mappings panel.
   const src = readFileSync(new URL("../../../app/newquip-grower/[id]/page.tsx", import.meta.url), "utf8");
+  const sections = readFileSync(new URL("../../../app/newquip-grower/[id]/RepConfigSections.tsx", import.meta.url), "utf8");
   it("the Line decisions table renders the chooser through mappingControlFor, before the Product mappings panel", () => {
     const table = src.indexOf("Line decisions (per room");
+    const use = src.indexOf('<LineDecisionsTable draft={draft} ev={ev} edit={edit} roles={roles} editable={s2Edit} mode="estimator"'); // UX-006i2: only the Estimator edits Stage 2 (s2Edit), quantities stay read-only (Rep-owned)
     const panel = src.indexOf("<PanelTitle>Product mappings</PanelTitle>");
-    const chooser = src.indexOf("<ProductMappingPicker");
     expect(table).toBeGreaterThan(0);
-    expect(chooser).toBeGreaterThan(table);
-    expect(chooser).toBeLessThan(panel);
-    expect(src).toContain("mappingControlFor(l.itemKey, l.basis, roles, editable)");
-    expect((src.match(/<ProductMappingPicker/g) ?? []).length).toBe(1);
+    expect(use).toBeGreaterThan(table);
+    expect(use).toBeLessThan(panel);
+    expect(sections).toContain("mappingControlFor(l.itemKey, l.basis, roles, editable)");
+    expect((sections.match(/<ProductMappingPicker/g) ?? []).length).toBe(1);
+    expect(sections).toMatch(/\) : mapControl === "chooser" \? \(/); // only the estimator-mode branch renders the chooser; the rep-mode branch is read-only
   });
 });
