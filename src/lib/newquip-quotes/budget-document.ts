@@ -97,7 +97,7 @@ export function buildBudgetDocumentModel(i: BudgetInput): BudgetDocumentModel {
 
   const outstanding = [
     ...(provisionalLines.length > 0 ? [`${provisionalLines.length} item${provisionalLines.length === 1 ? " is" : "s are"} priced provisionally and most likely to change: ${provisionalLines.map((l) => l.label).join("; ")}.`] : []),
-    ...(unpricedItems.length > 0 ? [`${unpricedItems.length} item${unpricedItems.length === 1 ? "" : "s"} still need a confirmed price: ${unpricedItems.join("; ")}.`] : []),
+    ...(unpricedItems.length > 0 ? [`${unpricedItems.length} item${unpricedItems.length === 1 ? " still needs" : "s still need"} a confirmed price: ${unpricedItems.join("; ")}.`] : []),
     "Equipment selection and quantities are to be confirmed against the final scope.",
     "Supplier pricing is to be verified before a final quotation is issued.",
   ];

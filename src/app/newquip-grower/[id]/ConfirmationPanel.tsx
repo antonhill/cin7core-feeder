@@ -16,7 +16,8 @@ import type { ConfirmationInput } from "@/lib/newquip-quotes/confirmation-contac
 
 const inputCls = "h-11 rounded-md border border-slate-300 bg-white px-2 text-sm";
 
-export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading, otherBusy = false, refreshKey, recorded, onConfirm, indicativeLines = 0, incompleteText = null }: {
+export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading, otherBusy = false, refreshKey, recorded, onConfirm, indicativeLines = 0, incompleteText = null, basisNote = null }: {
+  /** The hand-off amount is on the verified basis and differs from the Budget estimate: say so, so the customer is never told the wrong figure. */ basisNote?: string | null;
   /** UX-007: ANOTHER action is running - the send button waits (without a spinner of its own) so two actions cannot overlap. */ otherBusy?: boolean;
   /** > 0: the total is INDICATIVE while this many lines await the Estimator (the Rep confirms the current figure). */ indicativeLines?: number;
   /** Set while selected equipment has no confirmed price: the exact warning, so the amount the customer confirms is never mistaken for a complete total. */ incompleteText?: string | null;
@@ -121,12 +122,13 @@ export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading
       )}
       <div className="border-t border-slate-100 pt-3 text-sm">
         {incompleteText && <div className="mb-2" data-testid="confirm-incomplete"><Alert tone="warning"><p className="font-semibold">{incompleteText}</p><p className="mt-1 text-sm">The amount below is a subtotal of the known items only. Make sure the customer understands it is not the price of the whole project.</p></Alert></div>}
-        <p>{incompleteText ? "Known items subtotal confirmed - NOT a complete quotation total (ex VAT)" : indicativeLines > 0 ? "Indicative total confirmed (ex VAT)" : "Quote total confirmed (ex VAT)"}: <b>{amountLabel ?? "not available yet"}</b></p>
+        {basisNote && <div className="mb-2" data-testid="confirm-basis"><Alert tone="warning"><p className="text-sm">{basisNote}</p></Alert></div>}
+        <p>{basisNote ? "Hand-off figure confirmed - verified basis, not the Budget estimate (ex VAT)" : incompleteText ? "Known items subtotal confirmed - NOT a complete quotation total (ex VAT)" : indicativeLines > 0 ? "Indicative total confirmed (ex VAT)" : "Quote total confirmed (ex VAT)"}: <b>{amountLabel ?? "not available yet"}</b></p>
         <p className="mt-1 text-xs text-slate-700" data-testid="submit-effects">Submitting records the customer&apos;s price confirmation above, notifies the Estimator and moves the quotation to Estimator review. Any unsaved edits are saved first. This is not an approval and not the customer&apos;s formal acceptance, which comes after Manager approval.</p>
         {picked && amountLabel && (
           <label htmlFor={ackId} className="mt-3 flex min-h-11 cursor-pointer items-start gap-2 rounded-md border border-slate-300 p-2 text-sm text-slate-900" data-testid="confirm-ack">
             <input id={ackId} type="checkbox" className="mt-0.5 size-6 shrink-0" checked={ackFor === ackKey} disabled={!canAct || loading || !ready} onChange={(e) => setAckFor(e.target.checked ? ackKey : null)} />
-            <span>I confirm that <b>{picked.name}</b> has confirmed {incompleteText ? <>the known items subtotal of <b>{amountLabel}</b> ex VAT, which EXCLUDES the unpriced equipment and is not a complete quotation total.</> : <>the {indicativeLines > 0 ? "indicative " : ""}quotation total of <b>{amountLabel}</b> ex VAT.</>}</span>
+            <span>I confirm that <b>{picked.name}</b> has confirmed {basisNote ? <>the hand-off figure of <b>{amountLabel}</b> ex VAT (verified basis; it leaves out provisional and unpriced items).</> : incompleteText ? <>the known items subtotal of <b>{amountLabel}</b> ex VAT, which EXCLUDES the unpriced equipment and is not a complete quotation total.</> : <>the {indicativeLines > 0 ? "indicative " : ""}quotation total of <b>{amountLabel}</b> ex VAT.</>}</span>
           </label>
         )}
         <div className="mt-3">
