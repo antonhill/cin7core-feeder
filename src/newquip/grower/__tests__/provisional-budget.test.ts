@@ -122,7 +122,7 @@ describe("variance attribution (existing engine, step by step; steps sum exactly
     expect(r.lines.find((l) => l.key === "pvc_door")!.budgetStatus).toBe("unmapped");
   });
   it("an exchange-rate change is attributed to FX only", () => {
-    const f = final(); f.estimator.pricing!.fxQuotes.EUR = { asOf: "2026-11-18T09:00:00Z", source: "test", rateMicro: 20_000_000 };
+    const f = final(); f.estimator.pricing!.fxQuotes.EUR = { asOf: "2026-11-17T12:00:00Z", source: "OXR", rateMicro: 20_000_000 };
     const r = run(f);
     expect(r.totals.byStep.fx).toBeGreaterThan(0);
     for (const s of ["supplier_costs", "freight", "markup", "other"] as const) expect(r.totals.byStep[s], s).toBeCloseTo(0, 2);
