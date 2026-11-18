@@ -13,7 +13,7 @@ export const BUDGET_DISCLAIMER = "BUDGET QUOTATION – INDICATIVE PRICING ONLY. 
 export const BUDGET_TITLE = "BUDGET QUOTATION";
 export const BUDGET_UNPRICED_WORDING = "Price to be confirmed";
 
-export interface BudgetEquipmentLine { label: string; quantity: number | null; status: "priced" | "unpriced"; unitPriceExVat: number | null; amountExVat: number | null; note: string }
+export interface BudgetEquipmentLine { label: string; quantity: number | null; /** "provisional": priced from the existing calculation but still to be confirmed by the Estimator (most likely to change). */ status: "priced" | "provisional" | "unpriced"; unitPriceExVat: number | null; amountExVat: number | null; note: string }
 export interface BudgetChargeLine { label: string; status: "priced" | "unpriced"; amountExVat: number | null; note: string }
 
 export interface BudgetDocumentModel {
@@ -31,8 +31,10 @@ export interface BudgetDocumentModel {
   currency: "ZAR";
   equipment: BudgetEquipmentLine[];
   charges: BudgetChargeLine[];
-  /** False while ANY selected equipment or required charge has no confirmed price. */
+  /** False while ANY selected equipment or required charge has no price at all. (Provisional lines HAVE a price: they do not make it incomplete.) */
   complete: boolean;
+  /** Lines priced provisionally (Rep-safe wording). The total, when there is one, is then a PROVISIONAL ESTIMATE. */
+  provisional: { count: number; valueExVat: number; items: string[] };
   unpriced: { count: number; items: string[] };
   totals: {
     /** The sum of what IS priced (equipment + entered charges), ex VAT. While `complete` is false this is NOT the quotation total and is labelled so. */
@@ -64,7 +66,7 @@ export function buildBudgetDocumentModel(i: BudgetInput): BudgetDocumentModel {
   const b = i.budget;
   const equipment: BudgetEquipmentLine[] = b.lines.filter((l) => l.status !== "not_selected").map((l) => {
     const priced = l.status === "priced" && l.revenueExTax != null;
-    return { label: l.label, quantity: l.quantity, status: priced ? "priced" : "unpriced", unitPriceExVat: priced ? l.unitPrice : null, amountExVat: priced ? round2(l.revenueExTax as number) : null, note: priced ? "" : BUDGET_UNPRICED_WORDING };
+    return { label: l.label, quantity: l.quantity, status: priced ? (l.provisional ? "provisional" : "priced") : "unpriced", unitPriceExVat: priced ? l.unitPrice : null, amountExVat: priced ? round2(l.revenueExTax as number) : null, note: priced ? (l.provisional?.plain ?? "") : BUDGET_UNPRICED_WORDING } as BudgetEquipmentLine;
   });
 
   const amountOf = (key: string): number | null => { const c = b.charges.find((x) => x.key === key); return c && c.amountExTax != null ? c.amountExTax : null; };
@@ -86,6 +88,7 @@ export function buildBudgetDocumentModel(i: BudgetInput): BudgetDocumentModel {
   // Incomplete for another reason (e.g. a required explanation is missing on a priced line): never a total, and the document says pricing is still under review rather than "0 items".
   if (!complete && unpricedItems.length === 0) unpricedItems.push("Pricing still under review");
 
+  const provisionalLines = equipment.filter((l) => l.status === "provisional");
   const known = round2(equipment.reduce((a, l) => a + (l.amountExVat ?? 0), 0) + charges.reduce((a, c) => a + (c.amountExVat ?? 0), 0));
   // The model's figure must equal the engine's own subtotal for the same priced items: the document never invents or re-derives a different total (a mismatch means the budget was not built from this draft).
   if (complete && Math.abs(known - round2(b.totals.subtotalExTax)) > 0.01) throw new Error("The budget quotation figures do not match the calculated quotation; it was not produced.");
@@ -93,6 +96,7 @@ export function buildBudgetDocumentModel(i: BudgetInput): BudgetDocumentModel {
   const vat = complete ? round2(known * (ratePct / 100)) : null;
 
   const outstanding = [
+    ...(provisionalLines.length > 0 ? [`${provisionalLines.length} item${provisionalLines.length === 1 ? " is" : "s are"} priced provisionally and most likely to change: ${provisionalLines.map((l) => l.label).join("; ")}.`] : []),
     ...(unpricedItems.length > 0 ? [`${unpricedItems.length} item${unpricedItems.length === 1 ? "" : "s"} still need a confirmed price: ${unpricedItems.join("; ")}.`] : []),
     "Equipment selection and quantities are to be confirmed against the final scope.",
     "Supplier pricing is to be verified before a final quotation is issued.",
@@ -109,15 +113,17 @@ export function buildBudgetDocumentModel(i: BudgetInput): BudgetDocumentModel {
     quote: { reference: i.quoteRef, revision: i.revision, preparedOn: i.preparedOn, siteName: i.siteName, draftRef: i.draftHash.slice(0, 12) },
     customer: { name: i.customerName, contactName: i.contact?.name ?? null, contactEmail: i.contact?.email ?? null },
     configuration: cfg, currency: "ZAR", equipment, charges, complete,
+    provisional: { count: provisionalLines.length, valueExVat: round2(provisionalLines.reduce((a, l) => a + (l.amountExVat ?? 0), 0)), items: provisionalLines.map((l) => `${l.label}${l.quantity != null ? ` \u00d7 ${l.quantity}` : ""}`) },
     unpriced: { count: unpricedItems.length, items: unpricedItems },
     totals: { knownSubtotalExVat: known, vatRatePercent: ratePct, vatExVatBasis: vat, totalIncVat: vat == null ? null : round2(known + vat) },
     vatNote: complete
-      ? `All amounts are in South African Rand and exclude VAT unless stated. VAT at ${fixed2(ratePct)}% is shown on the budget total.`
+      ? `All amounts are in South African Rand and exclude VAT unless stated. VAT at ${fixed2(ratePct)}% is shown on the ${provisionalLines.length > 0 ? "provisional budget estimate" : "budget total"}.`
       : `All amounts are in South African Rand and exclude VAT. VAT at ${fixed2(ratePct)}% will be added once every item is priced. No total including VAT is shown because pricing is incomplete.`,
     assumptions: [
       "Prices are provisional and based on the equipment and quantities in the draft prepared by your representative.",
       "Delivery, installation and commissioning amounts are estimates, subject to site verification.",
       "Items marked “" + BUDGET_UNPRICED_WORDING + "” are not included in any figure on this document.",
+      ...(provisionalLines.length > 0 ? ["Items marked \u201CProvisional\u201D are priced from the best information available today. They are the items most likely to change once our Estimator confirms the products."] : []),
       "This document does not reserve stock, fix a price or commit either party to a contract.",
     ],
     outstanding,

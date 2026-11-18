@@ -15,7 +15,7 @@ export interface BudgetStatus {
   canSend: boolean; blockedReason: string | null; testMode: boolean;
   /** The saved draft this status describes: the preview and the send are bound to it. */
   draftHash: string; draftRef: string;
-  complete: boolean; unpricedCount: number; unpricedItems: string[];
+  complete: boolean; unpricedCount: number; unpricedItems: string[]; provisionalCount: number;
   /** Where a test email goes in UAT (an authorised mailbox), or null outside test mode. */
   testRecipient: string | null;
 }
@@ -33,7 +33,7 @@ export async function getBudgetStatusAction(quoteId: string): Promise<BudgetActi
     const problems = prof ? describeProfileProblems(profileProblems(prof.profile)) : ["no company details have been saved"];
     const refusal = a.roles.has("rep") ? budgetSendRefusal(process.env, !!prof && problems.length === 0, problems) : "Only a Rep sends a budget quotation.";
     const testRecipient = isRestricted(process.env) ? (process.env.NEWQUIP_UAT_TEST_CUSTOMER_EMAIL?.trim() || "anton@sparkconsulting.co.za").toLowerCase() : null;
-    return { ok: true, data: { canSend: !refusal, blockedReason: refusal, testMode: prep.testMode, draftHash: prep.draftHash, draftRef: prep.model.quote.draftRef, complete: prep.model.complete, unpricedCount: prep.model.unpriced.count, unpricedItems: prep.model.unpriced.items, testRecipient } };
+    return { ok: true, data: { canSend: !refusal, blockedReason: refusal, testMode: prep.testMode, draftHash: prep.draftHash, draftRef: prep.model.quote.draftRef, complete: prep.model.complete, unpricedCount: prep.model.unpriced.count, unpricedItems: prep.model.unpriced.items, provisionalCount: prep.model.provisional.count, testRecipient } };
   } catch (e) { return { ok: false, error: errText(e) }; }
 }
 

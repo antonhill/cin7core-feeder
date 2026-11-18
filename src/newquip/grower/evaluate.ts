@@ -22,6 +22,8 @@ export interface EvaluationContext {
   priceSource: PriceSource;
   /** True for viewers who may not see cost / margin. */
   withholdCost: boolean;
+  /** BUDGET evaluation only: price evidence-complete packages that still await the Estimator provisionally (see provisionalPackageBasis). Default off: every other caller is unchanged. */
+  provisionalPackages?: boolean;
 }
 
 export function evaluateDraft(draft: QuoteDraft, ctx: EvaluationContext): QuoteEvaluation {
@@ -42,6 +44,7 @@ export function evaluateDraft(draft: QuoteDraft, ctx: EvaluationContext): QuoteE
         estimatorUnitPrices: draft.estimator.unitPrices,
         priceResolutions: draft.estimator.priceResolutions,
         withholdCost: ctx.withholdCost,
+        ...(ctx.provisionalPackages === true ? { provisionalPackages: true } : {}),
       })
     : null;
   return { calc, budget, readiness: assessReadiness(draft, calc, budget) };

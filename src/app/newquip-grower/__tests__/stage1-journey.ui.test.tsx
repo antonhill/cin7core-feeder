@@ -531,7 +531,7 @@ describe("P1-1: the landing stage and entry step are role-aware (no ?stage=)", (
   it("a Rep whose own steps are done but who waits on Estimator mappings lands on Stage 1 and is told nothing is left for them", async () => {
     await open({ view: snapshotView(true), draftOver: noMapDraft(), stage: "" });
     expect(viewing()).toBe("1");
-    expect(screen.getByTestId("next-action").textContent).toMatch(/Complete “Submit to Estimator”/); // ONE next task, not a list
+    expect(screen.getByTestId("next-action").textContent).toMatch(/Complete “Review, Budget Quote & Submit”/); // ONE next task, not a list
     expect(screen.getByTestId("phase-header-status").textContent).toMatch(/ready to submit/i);
   }, 30000);
 
@@ -992,8 +992,10 @@ describe("S1a: the Rep submits with Estimator-owned items open (indicative total
     const bar = screen.getByTestId("phase-header");
     expect(bar.textContent).toMatch(/R\s?[\d\s\u00a0]+,\d\d/); // an amount IS shown although the budget is incomplete
     const sub = panel("submit") as HTMLElement;
-    const n = Number(caption.match(/\((\d+)/)![1]);
-    expect(within(sub).getByTestId("indicative-note").textContent).toBe(`This total is indicative while ${n} lines await the Estimator. If the Estimator's pricing changes it, the quotation returns to you to reconfirm the amount with the customer.`);
+    // ONE pricing-status summary replaces the old repeated "indicative" note: provisional / unpriced lines are stated there, in amber, with the detail expandable.
+    const summary = within(sub).getByTestId("pricing-status");
+    expect(summary.getAttribute("data-state")).toMatch(/provisional|incomplete/);
+    expect(within(summary).getByTestId("pricing-status-headline").textContent).toMatch(/Provisional estimate|Priced subtotal/);
     const btn = (await within(sub).findByRole("button", { name: "Submit to Estimator" })) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
     fireEvent.click(within(sub).getByLabelText(/has confirmed the known items subtotal of R.*EXCLUDES the unpriced equipment/));

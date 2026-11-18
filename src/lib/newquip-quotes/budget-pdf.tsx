@@ -72,9 +72,9 @@ export function BudgetQuotationDocument({ m }: { m: BudgetDocumentModel }) {
         <View style={st.th}><Text style={st.colMain}>Item</Text><Text style={{ width: 40, textAlign: "right" }}>Qty</Text><Text style={st.colAmt}>Amount (excl. VAT)</Text></View>
         {m.equipment.map((l, i) => (
           <View key={i} style={st.tr} wrap={false}>
-            <View style={st.colMain}><Text>{pdfSafe(l.label)}</Text></View>
+            <View style={st.colMain}><Text>{pdfSafe(l.label)}</Text>{l.status === "provisional" ? <Text style={{ fontSize: 7.5, color: AMBER, fontFamily: "Helvetica-Bold" }}>{pdfSafe(`PROVISIONAL - ${l.note}`)}</Text> : null}</View>
             <Text style={{ width: 40, textAlign: "right" }}>{l.quantity ?? ""}</Text>
-            <Text style={[st.colAmt, l.status === "unpriced" ? { color: "#B91C1C", fontFamily: "Helvetica-Bold" } : {}]}>{l.status === "priced" ? formatRand(l.amountExVat as number) : pdfSafe(l.note)}</Text>
+            <Text style={[st.colAmt, l.status === "unpriced" ? { color: "#B91C1C", fontFamily: "Helvetica-Bold" } : l.status === "provisional" ? { color: AMBER } : {}]}>{l.status === "unpriced" ? pdfSafe(l.note) : `${formatRand(l.amountExVat as number)}${l.status === "provisional" ? "*" : ""}`}</Text>
           </View>
         ))}
         {m.equipment.length === 0 && <View style={st.tr}><Text style={st.colMain}>No equipment is selected yet.</Text></View>}
@@ -91,13 +91,14 @@ export function BudgetQuotationDocument({ m }: { m: BudgetDocumentModel }) {
         <View style={{ marginTop: 8 }} wrap={false}>
           {m.complete ? (
             <>
-              <View style={st.tot}><Text style={st.totLabel}>Budget total excluding VAT</Text><Text style={st.totVal}>{formatRand(m.totals.knownSubtotalExVat)}</Text></View>
+              <View style={st.tot}><Text style={[st.totLabel, { width: 200 }]}>{m.provisional.count > 0 ? "Provisional estimate excluding VAT" : "Budget total excluding VAT"}</Text><Text style={st.totVal}>{formatRand(m.totals.knownSubtotalExVat)}</Text></View>
               <View style={st.tot}><Text style={st.totLabel}>VAT ({m.totals.vatRatePercent}%)</Text><Text style={st.totVal}>{formatRand(m.totals.vatExVatBasis as number)}</Text></View>
-              <View style={[st.tot, { borderTopWidth: 1, borderTopColor: NAVY }]}><Text style={[st.totLabel, { fontFamily: "Helvetica-Bold" }]}>Budget total including VAT</Text><Text style={[st.totVal, { fontFamily: "Helvetica-Bold" }]}>{formatRand(m.totals.totalIncVat as number)}</Text></View>
-              <Text style={[st.small, { marginTop: 3, textAlign: "right" }]}>Indicative budget only. Not a final quotation.</Text>
+              <View style={[st.tot, { borderTopWidth: 1, borderTopColor: NAVY }]}><Text style={[st.totLabel, { width: 200, fontFamily: "Helvetica-Bold" }]}>{m.provisional.count > 0 ? "Provisional estimate including VAT" : "Budget total including VAT"}</Text><Text style={[st.totVal, { fontFamily: "Helvetica-Bold" }]}>{formatRand(m.totals.totalIncVat as number)}</Text></View>
+              <Text style={[st.small, { marginTop: 3, textAlign: "right" }]}>{m.provisional.count > 0 ? "* Provisional: includes items most likely to change. Indicative budget only. Not a final quotation." : "Indicative budget only. Not a final quotation."}</Text>
             </>
           ) : (
             <>
+              {m.provisional.count > 0 ? <Text style={[st.small, { textAlign: "right" }]}>* Provisional prices are included in this subtotal and are most likely to change.</Text> : null}
               <View style={st.tot}><Text style={[st.totLabel, { width: 220 }]}>Subtotal of PRICED items only (excl. VAT)</Text><Text style={st.totVal}>{formatRand(m.totals.knownSubtotalExVat)}</Text></View>
               <View style={[st.tot, { borderTopWidth: 1, borderTopColor: NAVY }]}><Text style={[st.totLabel, { width: 220, fontFamily: "Helvetica-Bold" }]}>Total project price</Text><Text style={[st.totVal, { fontFamily: "Helvetica-Bold", color: "#B91C1C" }]}>NOT AVAILABLE</Text></View>
               <Text style={[st.small, { marginTop: 3, textAlign: "right" }]}>{m.unpriced.count} item{m.unpriced.count === 1 ? "" : "s"} still to be priced. This subtotal is not the quotation total.</Text>

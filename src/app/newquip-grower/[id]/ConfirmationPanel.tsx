@@ -120,7 +120,7 @@ export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading
         </details>
       )}
       <div className="border-t border-slate-100 pt-3 text-sm">
-        {incompleteText && <div className="mb-2" data-testid="confirm-incomplete"><Alert tone="danger"><p className="font-semibold">{incompleteText}</p><p className="mt-1 text-sm">The amount below is a subtotal of the known items only. Make sure the customer understands it is not the price of the whole project.</p></Alert></div>}
+        {incompleteText && <div className="mb-2" data-testid="confirm-incomplete"><Alert tone="warning"><p className="font-semibold">{incompleteText}</p><p className="mt-1 text-sm">The amount below is a subtotal of the known items only. Make sure the customer understands it is not the price of the whole project.</p></Alert></div>}
         <p>{incompleteText ? "Known items subtotal confirmed - NOT a complete quotation total (ex VAT)" : indicativeLines > 0 ? "Indicative total confirmed (ex VAT)" : "Quote total confirmed (ex VAT)"}: <b>{amountLabel ?? "not available yet"}</b></p>
         <p className="mt-1 text-xs text-slate-700" data-testid="submit-effects">Submitting records the customer&apos;s price confirmation above, notifies the Estimator and moves the quotation to Estimator review. Any unsaved edits are saved first. This is not an approval and not the customer&apos;s formal acceptance, which comes after Manager approval.</p>
         {picked && amountLabel && (

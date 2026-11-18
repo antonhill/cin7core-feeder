@@ -9,7 +9,7 @@ import { Status } from "@/components/ui/Status";
 import { getBudgetStatusAction, sendBudgetQuotationAction, type BudgetStatus } from "../budget-actions";
 import { BUDGET_DISCLAIMER } from "@/lib/newquip-quotes/budget-document";
 
-export function BudgetQuotationPanel({ quoteId, canAct, dirty, refreshKey }: { quoteId: string; canAct: boolean; dirty: boolean; refreshKey: string }) {
+export function BudgetQuotationPanel({ quoteId, canAct, dirty, refreshKey, embedded = false }: { quoteId: string; canAct: boolean; dirty: boolean; refreshKey: string; /** Inside the consolidated final step: the pricing summary above already states the incomplete / provisional position, so it is not repeated here. */ embedded?: boolean }) {
   const [st, setSt] = useState<BudgetStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -41,7 +41,8 @@ export function BudgetQuotationPanel({ quoteId, canAct, dirty, refreshKey }: { q
       <div className="flex flex-wrap items-center gap-2"><PanelTitle>Budget quotation</PanelTitle><Status tone="warning">Provisional</Status>{st?.testMode && <Status tone="danger">UAT - TEST ONLY</Status>}</div>
       <p className="mt-1 text-sm text-slate-800">An early, provisional PDF for the customer, built from the <strong>saved</strong> draft. It is not the final quotation and cannot be accepted. It does not approve, issue or create anything.</p>
       {dirty && <div className="mt-2" data-testid="budget-unsaved"><Alert tone="warning">You have unsaved changes. The budget quotation shows the last SAVED draft, not what is on screen. Save first.</Alert></div>}
-      {st && !st.complete && <div className="mt-2" data-testid="budget-incomplete"><Alert tone="danger"><p className="font-semibold">INCOMPLETE ESTIMATE {"—"} {st.unpricedCount} item{st.unpricedCount === 1 ? "" : "s"} not priced.</p><p className="mt-1 text-sm">The budget quotation will show these as &quot;Price to be confirmed&quot; and will NOT present a total: {st.unpricedItems.join("; ")}.</p></Alert></div>}
+      {st && !st.complete && !embedded && <div className="mt-2" data-testid="budget-incomplete"><Alert tone="warning"><p className="font-semibold">{st.unpricedCount} item{st.unpricedCount === 1 ? "" : "s"} not priced.</p><p className="mt-1 text-sm">The budget quotation will show these as &quot;Price to be confirmed&quot; and will NOT present a total: {st.unpricedItems.join("; ")}.</p></Alert></div>}
+      {st && st.provisionalCount > 0 && !embedded && <div className="mt-2" data-testid="budget-provisional"><Alert tone="warning">{st.provisionalCount} item{st.provisionalCount === 1 ? " is" : "s are"} priced provisionally and marked as most likely to change.</Alert></div>}
       {err && <div className="mt-2"><Alert tone="danger">{err}</Alert></div>}
       {note && <div className="mt-2" data-testid="budget-sent"><Alert tone="success">{note}</Alert></div>}
       <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -53,7 +54,7 @@ export function BudgetQuotationPanel({ quoteId, canAct, dirty, refreshKey }: { q
           <p className="font-semibold text-amber-900">{BUDGET_DISCLAIMER}</p>
           <ul className="list-disc pl-5 text-slate-800">
             <li>Document: BUDGET QUOTATION built from saved draft <code>{st.draftRef}</code> (provisional pricing; no Accept / Decline).</li>
-            <li>{st.complete ? "Pricing: every selected item is priced (still provisional)." : `Pricing: INCOMPLETE - ${st.unpricedCount} item(s) unpriced; no total is shown to the customer.`}</li>
+            <li>{st.complete ? `Pricing: every selected item has a price${st.provisionalCount > 0 ? ` (${st.provisionalCount} provisional)` : ""}; the customer sees ${st.provisionalCount > 0 ? "a provisional estimate" : "a budget total"}.` : `Pricing: ${st.unpricedCount} item(s) unpriced; no total is shown to the customer.`}</li>
             <li>Status after sending: unchanged. Estimator costing, Manager approval and the final quotation still follow.</li>
           </ul>
           {st.testMode ? (

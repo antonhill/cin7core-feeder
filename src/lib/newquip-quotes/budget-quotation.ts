@@ -13,6 +13,9 @@ import "server-only";
 import { createHash } from "node:crypto";
 import type { createServiceRoleClient } from "@/supabase/server";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
+import type { QuoteDraft } from "@/newquip/grower/draft";
+import { packageFor, provisionalPackageBasis, templateRevisionOf } from "@/newquip/grower/commercial";
+import type { DocumentStorage } from "./document-store";
 import { hashOf } from "@/newquip/quote/baseline";
 import { applyEmailPolicy, isRestricted, productionEmailBlocked, PRODUCTION_EMAIL_OFF, type EmailEnv } from "@/lib/approvals/email-policy";
 import { sendEmail as resendSend, type SendEmailInput, type SendEmailResult } from "@/lib/email/resend";
@@ -20,7 +23,7 @@ import { logActivityStrict } from "@/lib/activity-log";
 import { loadQuote } from "./quote-store";
 import { evaluationContext } from "./context";
 import { latestSnapshot } from "./customer-store";
-import { latestProfile } from "./document-store";
+import { latestProfile, supabaseStorage } from "./document-store";
 import { describeProfileProblems, profileProblems } from "./company-profile";
 import { isValidEmail } from "./customer-snapshot";
 import { BUDGET_DISCLAIMER, buildBudgetDocumentModel, presentsPartialAsTotal, type BudgetDocumentModel } from "./budget-document";
@@ -35,7 +38,7 @@ export const BUDGET_WORDING_FLAG = "NEWQUIP_BUDGET_QUOTATION_WORDING_APPROVED";
 export const MAX_BUDGET_MESSAGE = 1500;
 const sha256 = (b: Uint8Array): string => createHash("sha256").update(b).digest("hex");
 
-export interface BudgetPreparation { model: BudgetDocumentModel; draftHash: string; quoteRef: string; revision: number; state: string; testMode: boolean; repEmail: string | null }
+export interface BudgetPreparation { model: BudgetDocumentModel; draftHash: string; quoteRef: string; revision: number; state: string; testMode: boolean; repEmail: string | null; /** SERVER-INTERNAL: the saved draft (it carries pricing). Never returned to a browser. */ draft: QuoteDraft }
 
 /** Builds the budget document model from the SAVED draft of this organisation's quotation. Read-only. Throws a readable error when it cannot be built. */
 export async function prepareBudget(db: Db, orgId: string, quoteId: string, env: EmailEnv, today: () => string = () => new Date().toISOString().slice(0, 10)): Promise<BudgetPreparation> {
@@ -47,7 +50,8 @@ export async function prepareBudget(db: Db, orgId: string, quoteId: string, env:
   // The preview always needs a BUILDABLE company block; a customer SEND (below) additionally needs REAL details outside the test environment.
   const hard = profileProblems(profile?.profile, { lenient: true });
   if (!profile || hard.length) throw new Error(`The budget quotation cannot be built: ${profile ? describeProfileProblems(hard).join("; ") : "no company details have been saved"}.`);
-  const ev = evaluateDraft(q.draft, evaluationContext(true)); // cost withheld: selling prices only
+  // BUDGET evaluation: cost withheld (selling prices only) and evidence-complete packages priced PROVISIONALLY. Nothing is confirmed and no other flow uses this option.
+  const ev = evaluateDraft(q.draft, { ...evaluationContext(true), provisionalPackages: true });
   if (!ev.budget) throw new Error("The quotation has no valid configuration yet (check the room measurements); there is nothing to put in a budget quotation.");
   const snap = (await latestSnapshot(db, orgId, quoteId))?.snapshot ?? null;
   const contact = snap?.chosenContact ? { name: snap.chosenContact.name, email: snap.chosenContact.email } : null;
@@ -56,7 +60,7 @@ export async function prepareBudget(db: Db, orgId: string, quoteId: string, env:
     profile: profile.profile, config: q.draft.config, testOnly: testMode,
   });
   if (presentsPartialAsTotal(model)) throw new Error("The budget quotation would present a partial subtotal as a total; it was not produced.");
-  return { model, draftHash: q.draft_hash, quoteRef: q.quote_ref, revision: q.revision, state: q.state, testMode, repEmail: q.created_by_email ?? null };
+  return { model, draftHash: q.draft_hash, quoteRef: q.quote_ref, revision: q.revision, state: q.state, testMode, repEmail: q.created_by_email ?? null, draft: q.draft };
 }
 
 export async function previewBudgetPdf(db: Db, orgId: string, quoteId: string, env: EmailEnv): Promise<{ bytes: Uint8Array; prep: BudgetPreparation }> {
@@ -72,11 +76,12 @@ export function buildBudgetEmail(i: { model: BudgetDocumentModel; to: string; me
     BUDGET_DISCLAIMER, "",
     i.message.trim() || `Please find attached our budget quotation ${m.quote.reference}.`, "",
     `Budget quotation: ${m.quote.reference}${m.quote.siteName ? ` – ${m.quote.siteName}` : ""}`,
+    ...(m.provisional.count > 0 ? [`PROVISIONAL PRICING: ${m.provisional.count} item${m.provisional.count === 1 ? " is" : "s are"} priced from the best information available today and most likely to change once our Estimator confirms the products (${m.provisional.items.join("; ")}).`] : []),
     ...(m.complete ? [] : [`INCOMPLETE PRICING: ${m.unpriced.count} item${m.unpriced.count === 1 ? " is" : "s are"} not yet priced (${m.unpriced.items.join("; ")}). The attached document shows them as "Price to be confirmed" and presents no total.`]),
     "", "This email carries a PDF attachment only. It cannot be accepted or declined online: a final quotation will follow once pricing is confirmed.", "", BUDGET_DISCLAIMER, "", m.company.legalName,
   ];
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const html = `<p style="font-weight:700;color:#92400e;background:#fef3c7;border:1px solid #92400e;padding:8px">${esc(BUDGET_DISCLAIMER)}</p>${m.testOnly ? `<p style="font-weight:700;color:#fff;background:#b91c1c;padding:8px">TEST ONLY – NOT FOR CUSTOMER ISSUE</p>` : ""}<p>${esc(i.message.trim() || `Please find attached our budget quotation ${m.quote.reference}.`).replace(/\n/g, "<br>")}</p><p><strong>Budget quotation ${esc(m.quote.reference)}</strong></p>${m.complete ? "" : `<p style="color:#b91c1c;font-weight:700">INCOMPLETE PRICING: ${m.unpriced.count} item${m.unpriced.count === 1 ? " is" : "s are"} not yet priced. The attached document shows them as &ldquo;Price to be confirmed&rdquo; and presents no total.</p>`}<p>This email carries a PDF attachment only. It cannot be accepted or declined online: a final quotation will follow once pricing is confirmed.</p><p style="font-weight:700">${esc(BUDGET_DISCLAIMER)}</p><p>${esc(m.company.legalName)}</p>`;
+  const html = `<p style="font-weight:700;color:#92400e;background:#fef3c7;border:1px solid #92400e;padding:8px">${esc(BUDGET_DISCLAIMER)}</p>${m.testOnly ? `<p style="font-weight:700;color:#fff;background:#b91c1c;padding:8px">TEST ONLY – NOT FOR CUSTOMER ISSUE</p>` : ""}<p>${esc(i.message.trim() || `Please find attached our budget quotation ${m.quote.reference}.`).replace(/\n/g, "<br>")}</p><p><strong>Budget quotation ${esc(m.quote.reference)}</strong></p>${m.complete ? "" : `<p style="color:#b91c1c;font-weight:700">INCOMPLETE PRICING: ${m.unpriced.count} item${m.unpriced.count === 1 ? " is" : "s are"} not yet priced. The attached document shows them as &ldquo;Price to be confirmed&rdquo; and presents no total.</p>`}${m.provisional.count > 0 ? `<p style="color:#92400e;font-weight:700">PROVISIONAL PRICING: ${m.provisional.count} item${m.provisional.count === 1 ? " is" : "s are"} priced from the best information available today and most likely to change once our Estimator confirms the products.</p>` : ""}<p>This email carries a PDF attachment only. It cannot be accepted or declined online: a final quotation will follow once pricing is confirmed.</p><p style="font-weight:700">${esc(BUDGET_DISCLAIMER)}</p><p>${esc(m.company.legalName)}</p>`;
   const prefix = m.testOnly ? "TEST ONLY – " : "";
   return { to: [i.to], subject: `${prefix}BUDGET QUOTATION – INDICATIVE PRICING ONLY – ${m.quote.reference}`, text: lines.join("\n"), html, attachments: [{ filename: `${m.testOnly ? "TEST-ONLY-" : ""}BUDGET-${m.quote.reference}-draft-${m.quote.draftRef}.pdf`, content: Buffer.from(i.bytes) }] };
 }
@@ -90,8 +95,15 @@ export interface BudgetSendRequest {
 }
 export interface BudgetSendResult { status: "ACCEPTED" | "FAILED" | "SUPPRESSED"; to: string; reused: boolean; incompleteCount: number; testMode: boolean; draftRef: string; pdfSha256: string }
 
-export type BudgetSendDeps = { send: (i: SendEmailInput) => Promise<SendEmailResult>; today: () => string; now: () => string };
-export const liveBudgetDeps: BudgetSendDeps = { send: resendSend, today: () => new Date().toISOString().slice(0, 10), now: () => new Date().toISOString() };
+export type BudgetSendDeps = { send: (i: SendEmailInput) => Promise<SendEmailResult>; today: () => string; now: () => string; /** Private, service-role-only store for the INTERNAL snapshot (the saved draft with its pricing). Absent = no internal snapshot is kept (a send then fails: it must be reproducible). */ storage?: Pick<DocumentStorage, "upload"> };
+export const BUDGET_PROVISIONAL_FLAG = "NEWQUIP_PROVISIONAL_PACKAGES_APPROVED";
+
+/** INTERNAL explanation of every provisional package (Estimator / Manager / audit only; never a Rep payload or the PDF): composition, why it qualifies, and the questions still open. */
+export function provisionalInternalOf(draft: QuoteDraft, itemKeys: readonly string[]): Array<{ itemKey: string; qualifies: string; composition: Array<{ sku: string; qtyPerUnit: number }>; openQuestions: string[] }> {
+  const rev = templateRevisionOf(draft);
+  return itemKeys.flatMap((k) => { const b = provisionalPackageBasis(packageFor(k as never, rev)); return b ? [{ itemKey: k, qualifies: b.qualifies, composition: b.composition, openQuestions: b.internalReasons }] : []; });
+}
+export const liveBudgetDepsFor = (db: Db): BudgetSendDeps => ({ send: resendSend, today: () => new Date().toISOString().slice(0, 10), now: () => new Date().toISOString(), storage: supabaseStorage(db) });
 
 /** Environment gate for a SEND. Returns the reason it is refused, or null. Pure. */
 export function budgetSendRefusal(env: EmailEnv, profileOk: boolean, problems: string[]): string | null {
@@ -103,7 +115,7 @@ export function budgetSendRefusal(env: EmailEnv, profileOk: boolean, problems: s
 }
 
 export async function sendBudgetQuotation(
-  db: Db, who: { orgId: string; userId: string; email: string; isRep: boolean }, quoteId: string, req: BudgetSendRequest, env: EmailEnv, deps: BudgetSendDeps = liveBudgetDeps,
+  db: Db, who: { orgId: string; userId: string; email: string; isRep: boolean }, quoteId: string, req: BudgetSendRequest, env: EmailEnv, deps: BudgetSendDeps = liveBudgetDepsFor(db),
   audit: typeof logActivityStrict = logActivityStrict,
 ): Promise<BudgetSendResult> {
   if (!who.isRep) throw new Error("Only a Rep sends a budget quotation.");
@@ -133,13 +145,26 @@ export async function sendBudgetQuotation(
   const prep = await prepareBudget(db, who.orgId, quoteId, env, deps.today);
   if (prep.draftHash !== req.expectedDraftHash) throw new Error("The quotation changed after you previewed it. Save your changes, preview the budget quotation again, then send.");
   if (!prep.model.complete && req.acknowledgeIncomplete !== true) throw new Error(`Pricing is incomplete (${prep.model.unpriced.count} item${prep.model.unpriced.count === 1 ? "" : "s"} unpriced). Confirm that you want to send the scope with "Price to be confirmed" and no total.`);
+  // Provisional package definitions are approved for UAT ONLY. A genuine customer budget quotation needs NewQuip management to approve the package composition and alternative rules first.
+  if (!isRestricted(env) && prep.model.provisional.count > 0 && env[BUDGET_PROVISIONAL_FLAG] !== "true") throw new Error("This budget quotation contains provisional package prices, whose compositions NewQuip management has not approved for customers yet. Nothing was sent.");
   const bytes = await renderBudgetPdf(prep.model);
   const pdfSha256 = sha256(bytes);
   const mail = buildBudgetEmail({ model: prep.model, to, message, bytes });
   const decision = applyEmailPolicy(env, { to, subject: mail.subject, text: mail.text });
   const snapshot = { model: prep.model, modelHash: hashOf(prep.model), pdfSha256, pdfBytes: bytes.length };
+  // INTERNAL snapshot (the saved draft WITH its pricing, the cost-visible evaluation and the provisional explanations) goes to the private, service-role-only store. The audit row holds only its path and hash:
+  // no supplier cost, rate, freight or markup is ever put in the audit log. It lets the budget be compared line by line with the final approved quotation (see budget-variance.ts).
+  if (!deps.storage) throw new Error("The internal budget snapshot store is unavailable; nothing was sent.");
+  const internalEval = evaluateDraft(prep.draft, { ...evaluationContext(false), provisionalPackages: true }).budget;
+  const provisionalKeys = prep.model.equipment.filter((l) => l.status === "provisional").map((l) => internalEval?.lines.find((x) => x.label === l.label)?.itemKey).filter((k): k is NonNullable<typeof k> => !!k);
+  const internal = { schema: 1, quoteId, quoteRef: prep.quoteRef, draftHash: prep.draftHash, savedAt: deps.now(), draft: prep.draft, lines: (internalEval?.lines ?? []).filter((l) => l.status !== "not_selected").map((l) => ({ itemKey: l.itemKey, status: l.status, quantity: l.quantity, unitPrice: l.unitPrice, revenueExTax: l.revenueExTax, provisional: !!l.provisional })), subtotalExTax: internalEval?.totals.subtotalExTax ?? null, provisional: provisionalInternalOf(prep.draft, provisionalKeys) };
+  const internalBytes = new TextEncoder().encode(JSON.stringify(internal));
+  const internalPath = `${who.orgId}/budget-snapshots/${quoteId}/${prep.draftHash.slice(0, 16)}-${pdfSha256.slice(0, 12)}-${req.idempotencyKey.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 24)}.json`;
+  await deps.storage.upload(internalPath, internalBytes, "application/json");
+  const internalRef = { path: internalPath, sha256: sha256(internalBytes) };
+
   const base = { quoteId, quoteRef: prep.quoteRef, quoteRevision: prep.revision, quoteState: prep.state, draftHash: prep.draftHash, draftRef: prep.model.quote.draftRef, idempotencyKey: req.idempotencyKey, to, testMode: prep.testMode,
-    complete: prep.model.complete, incompleteCount: prep.model.unpriced.count, unpricedItems: prep.model.unpriced.items, knownSubtotalExVat: prep.model.totals.knownSubtotalExVat, totalIncVat: prep.model.totals.totalIncVat, pdfSha256, modelHash: snapshot.modelHash };
+    complete: prep.model.complete, provisionalCount: prep.model.provisional.count, internalSnapshot: internalRef, incompleteCount: prep.model.unpriced.count, unpricedItems: prep.model.unpriced.items, knownSubtotalExVat: prep.model.totals.knownSubtotalExVat, totalIncVat: prep.model.totals.totalIncVat, pdfSha256, modelHash: snapshot.modelHash };
   const actor = { userId: who.userId, email: who.email };
 
   // The audit record is written BEFORE anything leaves: if it cannot be written, nothing is sent.

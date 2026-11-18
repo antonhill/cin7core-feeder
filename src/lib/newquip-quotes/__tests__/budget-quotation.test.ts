@@ -15,6 +15,7 @@ import { BUDGET_DISCLAIMER, buildBudgetDocumentModel, presentsPartialAsTotal } f
 import { buildBudgetEmail, budgetSendRefusal, prepareBudget, sendBudgetQuotation, type BudgetSendDeps } from "../budget-quotation";
 import { renderBudgetPdf } from "../budget-pdf";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
+import { nqQ0002, S } from "@/newquip/grower/__tests__/nq-q-0002-fixture";
 import { buildAcceptedBaseline } from "@/newquip/quote/baseline";
 import { quoteToProjectBaseline } from "@/newquip/quote/to-project";
 import { GOLDEN_LIBRARY } from "@/newquip/grower/__tests__/golden-catalogue";
@@ -39,19 +40,20 @@ function unmappedDraft(): QuoteDraft {
 const quoteOf = (draft: QuoteDraft, over: Record<string, unknown> = {}) => ({ id: "11111111-1111-1111-1111-111111111111", org_id: "org", quote_ref: "NQ-Q-0003", revision: 1, state: "REP_DRAFT", draft, draft_hash: "draft-hash-fixture-one", created_by_email: "rep@x", ...over });
 
 const reads: string[] = [];
+const uploads: Array<{ path: string; bytes: Uint8Array }> = [];
 const fakeDb = (existing: unknown[] = []) => ({ from(t: string) {
   reads.push(t);
   if (t !== "activity_log") throw new Error(`UNEXPECTED TABLE ACCESS: ${t}`);
   const q: Record<string, unknown> = {}; for (const m of ["select", "eq", "in", "filter", "limit"]) q[m] = () => q;
   q.then = (res: (v: unknown) => unknown) => res({ data: existing, error: null }); return q;
 } }) as never;
-const deps = (over: Partial<BudgetSendDeps> = {}): BudgetSendDeps & { sent: unknown[] } => { const sent: unknown[] = []; return { sent, send: async (i) => { sent.push(i); return { ok: true, messageId: "m-1" }; }, today: () => "2026-11-18", now: () => "2026-11-18T10:00:00Z", ...over }; };
+const deps = (over: Partial<BudgetSendDeps> = {}): BudgetSendDeps & { sent: unknown[] } => { const sent: unknown[] = []; return { sent, send: async (i) => { sent.push(i); return { ok: true, messageId: "m-1" }; }, today: () => "2026-11-18", now: () => "2026-11-18T10:00:00Z", storage: { upload: async (path: string, bytes: Uint8Array) => { uploads.push({ path, bytes }); } }, ...over }; };
 const audits: Array<{ action: string; detail: Record<string, unknown> }> = [];
 const audit = (async (_db: unknown, i: { action: string; detail: Record<string, unknown> }) => { audits.push(i); }) as never;
 const who = { orgId: "org", userId: "u1", email: "rep@sparkconsulting.co.za", isRep: true };
 const req = { to: "anton@sparkconsulting.co.za", idempotencyKey: "send-attempt-one", expectedDraftHash: "draft-hash-fixture-one", acknowledgeIncomplete: true };
 
-beforeEach(() => { reads.length = 0; audits.length = 0; state.quote = quoteOf(unmappedDraft()); state.profile = { profile: PROFILE_PLACEHOLDER }; state.snapshot = null; });
+beforeEach(() => { uploads.length = 0; reads.length = 0; audits.length = 0; state.quote = quoteOf(unmappedDraft()); state.profile = { profile: PROFILE_PLACEHOLDER }; state.snapshot = null; });
 
 function pdfText(bytes: Uint8Array): string {
   const s = Buffer.from(bytes).toString("latin1"); const out: string[] = []; const re = /stream\r?\n([\s\S]*?)\r?\nendstream/g; let m: RegExpExecArray | null;
@@ -269,5 +271,65 @@ describe("commissioning: approval snapshot, Project handover and historic docume
     const s = buildCustomerSummaryFromCommercial(b.commercial);
     expect(s.sections.find((x) => /install/i.test(x.title))!.title).toBe("Installation");
     expect(s.sections.reduce((a, x) => a + Math.round(x.amountExVat * 100), 0)).toBe(b.commercial.subtotalCents);
+  });
+});
+
+describe("provisional pricing in the budget quotation (UAT only)", () => {
+  const pdfOf = async () => { const prep = await prepareBudget(fakeDb(), "org", "q", UAT, () => "2026-11-18"); return { prep, text: pdfText(await renderBudgetPdf(prep.model)) }; };
+  beforeEach(() => { state.quote = quoteOf(nqQ0002(), { draft_hash: "draft-hash-fixture-one" }); });
+
+  it("the document shows the two packages as PROVISIONAL priced lines, the PVC door as unpriced, a priced SUBTOTAL, and NO total", async () => {
+    const { prep, text } = await pdfOf();
+    const m = prep.model;
+    expect(m.provisional.count).toBe(2);
+    expect(m.equipment.filter((l) => l.status === "provisional").map((l) => l.amountExVat).sort()).toEqual([332934.72, 431082]);
+    expect(m.totals.knownSubtotalExVat).toBeCloseTo(11_129_349.36, 2);
+    expect(m.complete).toBe(false);
+    expect(m.totals.totalIncVat).toBeNull();
+    expect(text).toContain("PROVISIONAL");
+    expect(text).toContain("most likely to change");
+    expect(text).toContain("Subtotal of PRICED items only");
+    expect(text).toContain("NOT AVAILABLE");
+    expect(text).not.toMatch(/Provisional estimate including VAT/);
+  });
+  it("the Rep-facing document and email carry no product code, supplier, cost, rate, freight, markup, margin or the internal open questions", async () => {
+    const { prep, text } = await pdfOf();
+    const all = JSON.stringify(prep.model) + text + buildBudgetEmail({ model: prep.model, to: "anton@sparkconsulting.co.za", message: "", bytes: new Uint8Array([1]) }).text;
+    expect(all).not.toMatch(/HNQ|QCA00|NQ1380|NYNUT|NB3542|FERAX|supplier price|freight|markup|margin|landed|rateMicro/i);
+  });
+  it("a COMPLETE provisional budget (door costed) shows a PROVISIONAL ESTIMATE total including VAT", async () => {
+    const d = nqQ0002(); d.estimator.confirmedMappings = { pvc_door: "NQ3444" } as never; (d.estimator.pricing!.skus as Record<string, unknown>).NQ3444 = S("ZAR", 90000000000); state.quote = quoteOf(d, { draft_hash: "draft-hash-fixture-one" });
+    const { prep, text } = await pdfOf();
+    expect(prep.model.complete).toBe(true);
+    expect(prep.model.totals.totalIncVat).not.toBeNull();
+    expect(text).toContain("Provisional estimate including VAT");
+    expect(prep.model.vatNote).toMatch(/provisional budget estimate/);
+  });
+  it("sending records the INTERNAL snapshot in the private store; the audit row holds only its path and hash (no cost, rate, freight or markup)", async () => {
+    const dp = deps();
+    await sendBudgetQuotation(fakeDb(), who, "q", { ...req, expectedDraftHash: "draft-hash-fixture-one" }, UAT, dp, audit);
+    expect(uploads).toHaveLength(1);
+    const snap = JSON.parse(new TextDecoder().decode(uploads[0].bytes));
+    expect(snap.draft.estimator.pricing.skus.HNQ7046).toBeDefined(); // internal: the saved draft WITH its pricing
+    expect(snap.provisional.map((p: { itemKey: string }) => p.itemKey).sort()).toEqual(["cup_drinker", "led_light"]);
+    expect(snap.provisional[0].openQuestions.join(" ")).toMatch(/NB3542-03|FORTIS/);
+    const rec = audits[1].detail as Record<string, unknown>;
+    expect(rec.provisionalCount).toBe(2);
+    expect((rec.internalSnapshot as { path: string; sha256: string }).path).toBe(uploads[0].path);
+    expect(JSON.stringify(audits.map((a) => ({ ...a.detail, snapshot: undefined })))).not.toMatch(/nativeUnitCost|rateMicro|factorMicro|markupBps|HNQ7046/);
+  });
+  it("no internal snapshot store -> nothing is sent", async () => {
+    const dp = deps({ storage: undefined });
+    await expect(sendBudgetQuotation(fakeDb(), who, "q", { ...req, expectedDraftHash: "draft-hash-fixture-one" }, UAT, dp, audit)).rejects.toThrow(/snapshot store is unavailable/);
+    expect(dp.sent).toHaveLength(0);
+  });
+  it("PRODUCTION: a budget with provisional packages is refused until NewQuip management approves the compositions", async () => {
+    const dp = deps();
+    const prod = { VERCEL_ENV: "production", NEWQUIP_PRODUCTION_EMAIL_ENABLED: "true", NEWQUIP_BUDGET_QUOTATION_WORDING_APPROVED: "true" };
+    state.profile = { profile: PROFILE_REAL };
+    await expect(sendBudgetQuotation(fakeDb(), who, "q", { ...req, to: "farmer@realcustomer.co.za", expectedDraftHash: "draft-hash-fixture-one" }, prod, dp, audit)).rejects.toThrow(/provisional package prices/);
+    expect(dp.sent).toHaveLength(0);
+    await sendBudgetQuotation(fakeDb(), who, "q", { ...req, to: "farmer@realcustomer.co.za", expectedDraftHash: "draft-hash-fixture-one" }, { ...prod, NEWQUIP_PROVISIONAL_PACKAGES_APPROVED: "true" }, dp, audit);
+    expect(dp.sent).toHaveLength(1);
   });
 });
