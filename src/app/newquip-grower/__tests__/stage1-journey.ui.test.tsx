@@ -988,7 +988,9 @@ describe("S1a: the Rep submits with Estimator-owned items open (indicative total
     expect(status("submit")).not.toBe("Locked");
     expect(current()).toBe("submit");
     const caption = screen.getByTestId("total-caption").textContent ?? "";
-    expect(caption).toMatch(/^Indicative total \(\d+ lines? await the Estimator\)$/);
+    expect(caption).toMatch(/^Hand-off figure \(verified basis\)$/);
+    // the BUDGET estimate is the primary price, clearly identified; the older amount is labelled for what it is
+    expect(screen.getByTestId("phase-header-budget").textContent).toMatch(/R\s?[\d\s\u00a0]+,\d\d/);
     const bar = screen.getByTestId("phase-header");
     expect(bar.textContent).toMatch(/R\s?[\d\s\u00a0]+,\d\d/); // an amount IS shown although the budget is incomplete
     const sub = panel("submit") as HTMLElement;
@@ -998,7 +1000,7 @@ describe("S1a: the Rep submits with Estimator-owned items open (indicative total
     expect(within(summary).getByTestId("pricing-status-headline").textContent).toMatch(/Provisional estimate|Priced subtotal/);
     const btn = (await within(sub).findByRole("button", { name: "Submit to Estimator" })) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
-    fireEvent.click(within(sub).getByLabelText(/has confirmed the known items subtotal of R.*EXCLUDES the unpriced equipment/));
+    fireEvent.click(within(sub).getByLabelText(/has confirmed the hand-off figure of R.*verified basis/));
     await waitFor(() => expect(btn.disabled).toBe(false));
     fireEvent.click(btn);
     await waitFor(() => expect(send).toHaveBeenCalled());
