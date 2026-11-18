@@ -90,8 +90,12 @@ export const sameApprover = (a: string, b: string): boolean => {
   if (x.length === 0 || y.length === 0) return false;
   const [short, long] = x.length <= y.length ? [x, y] : [y, x];
   if (covers(short, long)) return true;
-  // a compact single-word form (an email local part like "ahill") equals the initial of the first word plus the last word of the other name, in either order
-  const compact = (one: string[], other: string[]) => one.length === 1 && other.length >= 2 && (one[0] === other[0][0] + other[other.length - 1] || one[0] === other[other.length - 1] + other[0][0]);
+  // a compact single-word form (an email local part such as "ahill", "seansmith", "smithsean", "seans") built from the first and last words of the other name: initials or whole words, in either order
+  const compact = (one: string[], other: string[]) => {
+    if (one.length !== 1 || other.length < 2) return false;
+    const f = other[0], l = other[other.length - 1];
+    return [f + l, l + f, f[0] + l, l + f[0], f + l[0], l[0] + f].includes(one[0]);
+  };
   return compact(x, y) || compact(y, x);
 };
 /** Names must be plain Latin letters (with spaces, full stops, hyphens, apostrophes, commas and an optional email form) so look-alike characters and digits cannot dodge the separation-of-duties check. */
@@ -127,7 +131,7 @@ export function budgetBasisProblems(e: BudgetBasisEntry, today: string): string[
     if (!nonEmpty(ap.reference)) p.push("approval reference missing (the approval must be recorded outside the code)");
     if (!nonEmpty(ap.enteredBy)) p.push("the person who entered the record is missing");
     else if (nonEmpty(ap.approvedBy) && sameApprover(ap.approvedBy, ap.enteredBy)) p.push("the approver cannot be the person who entered the record");
-    if ((nonEmpty(ap.approvedBy) && !latinName(ap.approvedBy)) || (nonEmpty(ap.enteredBy) && !latinName(ap.enteredBy))) p.push("names must use plain Latin letters (no look-alike characters)");
+    if ((nonEmpty(ap.approvedBy) && !latinName(ap.approvedBy)) || (nonEmpty(ap.enteredBy) && !latinName(ap.enteredBy))) p.push("names must use plain Latin letters only (no digits or look-alike characters)");
   }
 
   if (e.kind === "default_sku") { if (!nonEmpty(e.sku)) p.push("product code missing"); }
