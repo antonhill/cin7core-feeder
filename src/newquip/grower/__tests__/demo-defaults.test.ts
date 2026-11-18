@@ -173,3 +173,14 @@ describe("contextual samples (UX-006i1) fill one step only", () => {
     expect(hasMeasurementEntries(start)).toBe(true);
   });
 });
+
+import { demoPresetQuantityKeys } from "../demo-defaults";
+describe("demonstration quantities are recognised without being treated as rules", () => {
+  it("a draft holding the whole preset is recognised; a Rep's own quantities (or one coincidence) are not", () => {
+    const d = emptyDraft();
+    expect(demoPresetQuantityKeys(d)).toEqual([]);
+    expect(demoPresetQuantityKeys({ ...d, config: { ...d.config, estimatorQuantities: { cup_drinker: 54 } } })).toEqual([]);
+    expect(demoPresetQuantityKeys({ ...d, config: { ...d.config, estimatorQuantities: { ...DEMO_DEFAULTS.config.estimatorQuantities } } }).length).toBeGreaterThanOrEqual(8);
+    expect(demoPresetQuantityKeys({ ...d, config: { ...d.config, estimatorQuantities: { feeder: 18, pvc_door: 4, controller: 1, cone_fans: 4, pad_cooling: 1, control_panel: 1 } } })).toEqual([]); // NQ-Q-0003-like manual entries
+  });
+});

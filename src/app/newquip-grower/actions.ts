@@ -31,6 +31,9 @@ import { demoAuditDetail, resolveActing, type DemoInfo } from "@/lib/demo-mode/c
 import { evaluationContext } from "@/lib/newquip-quotes/context";
 import { budgetPricingOf } from "@/newquip/grower/budget-pricing";
 import { budgetSnapshotLinkFor } from "@/lib/newquip-quotes/handoff-budget-link";
+import { buildBudgetCoverage, type CoverageRow } from "@/newquip/grower/budget-coverage";
+import { demoToolsEnabled } from "@/newquip/grower/demo-gate";
+import { ACTIVE_BUDGET_BASIS } from "@/newquip/grower/budget-basis-register";
 import { confirmationLabel, resolveConfirmationContact, type ConfirmationInput } from "@/lib/newquip-quotes/confirmation-contact";
 import { returnByOf, returnInfoOf } from "@/lib/newquip-quotes/return-store";
 import { returnInfoForViewer, type ReturnInfo } from "@/newquip/quote/return-info";
@@ -187,7 +190,7 @@ async function view(db: ReturnType<typeof createServiceRoleClient>, quote: Quote
     evaluation,
     ...(budgetPricing ? { budgetPricing } : {}),
     ...(indicativeComparison ? { indicativeComparison } : {}),
-    viewer: { roles: [...a.roles], canViewCommercials, previewTools: process.env.VERCEL_ENV === "preview" },
+    viewer: { roles: [...a.roles], canViewCommercials, previewTools: demoToolsEnabled() },
     ...(isPocQuote(quote.draft, a.orgId) ? { poc: true } : {}),
     ...(costing ? { costing } : {}),
     ...(manualPriceEvidence && manualPriceEvidence.length ? { manualPriceEvidence } : {}),
@@ -280,6 +283,20 @@ export async function getGrowerQuoteAction(quoteId: string): Promise<GrowerActio
     const q = await loadQuote(db, a.orgId, quoteId);
     if (!q) return { ok: false, error: "Quote not found." };
     return { ok: true, data: await view(db, q, a) };
+  } catch (e) {
+    return { ok: false, error: errMsg(e) };
+  }
+}
+
+/**
+ * INTERNAL Budget pricing coverage of every selectable equipment category (Estimator / Manager / anyone with cost visibility; a Rep is refused). The rows carry the exact blocker, owner and next action and
+ * some supplier-cost evidence, so they are never sent to a Rep. Read-only: it reads the existing rules, mappings and the budget basis register and writes nothing.
+ */
+export async function getBudgetCoverageAction(): Promise<GrowerActionResult<CoverageRow[]>> {
+  try {
+    const a = await authorise();
+    if (!a.canSeeCost) return { ok: false, error: "Not authorised" };
+    return { ok: true, data: buildBudgetCoverage(ACTIVE_BUDGET_BASIS, new Date().toISOString().slice(0, 10)) };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }

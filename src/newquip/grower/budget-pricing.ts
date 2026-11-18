@@ -3,9 +3,11 @@
 // Selling prices, labels, quantities and plain-English wording only: never a product code, cost, rate, freight, markup or margin. It is built from the existing calculation; it prices nothing itself.
 import type { BudgetQuote } from "./quote-bridge";
 import { neutralLineReason } from "./incomplete-estimate";
+import { repNextStepFor } from "./budget-coverage";
+import type { GrowerItemKey } from "./types";
 
 export type BudgetLineState = "priced" | "provisional" | "unpriced";
-export interface BudgetPricingLine { itemKey: string; label: string; quantity: number | null; state: BudgetLineState; amountExVat: number | null; /** provisional: what may change; unpriced: why. */ note: string | null }
+export interface BudgetPricingLine { itemKey: string; label: string; quantity: number | null; state: BudgetLineState; amountExVat: number | null; /** provisional: what may change; unpriced: why. */ note: string | null; /** unpriced only: what happens next, in customer-appropriate words (never a product, cost or rate). */ nextStep?: string }
 export interface BudgetPricingView {
   lines: BudgetPricingLine[];
   counts: { priced: number; provisional: number; unpriced: number };
@@ -27,7 +29,7 @@ const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 export function budgetPricingOf(budget: BudgetQuote): BudgetPricingView {
   const lines: BudgetPricingLine[] = budget.lines.filter((l) => l.status !== "not_selected").map((l) => {
     if (l.status === "priced" && l.revenueExTax != null) return { itemKey: l.itemKey, label: l.label, quantity: l.quantity, state: l.provisional ? "provisional" : "priced", amountExVat: round2(l.revenueExTax), note: l.provisional?.plain ?? null } as BudgetPricingLine;
-    return { itemKey: l.itemKey, label: l.label, quantity: l.quantity, state: "unpriced", amountExVat: null, note: neutralLineReason(l.status) } as BudgetPricingLine;
+    return { itemKey: l.itemKey, label: l.label, quantity: l.quantity, state: "unpriced", amountExVat: null, note: neutralLineReason(l.status), nextStep: repNextStepFor(l.itemKey as GrowerItemKey) } as BudgetPricingLine;
   });
   const unpricedCharges = budget.charges.filter((c) => c.status === "required").map((c) => c.label);
   // Same rule as the Budget document: Commissioning is combined with Installation, so it is not counted while the Installation amount is still to be entered.

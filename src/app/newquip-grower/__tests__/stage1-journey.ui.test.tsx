@@ -311,13 +311,14 @@ describe("nothing resets or jumps", () => {
     for (const f of forbidden) expect(f).not.toHaveBeenCalled(); // no save / submit / sign-off / approve / project
   }, 60000);
 
-  it("'Load recommended configuration' (step 3) fills the equipment part only, keeps the step, and re-validates through the preview alone", async () => {
+  it("'Load UAT demonstration preset' (step 3) fills the equipment part only, keeps the step, and re-validates through the preview alone", async () => {
+    vi.stubEnv("VERCEL_ENV", "preview"); // the demonstration preset is offered on a Preview deployment only
     await open({ view: snapshotView(true), step: "3" });
     const forbidden = FORBIDDEN().map((k) => vi.spyOn(actions as never, k as never));
     const preview = vi.spyOn(actions, "previewGrowerDraftAction");
     expect(screen.getByText(/REPLACES every quantity you entered, the quantity overrides and their reasons/)).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Penning pig size"), { target: { value: "LARGE" } }); // an entry the recommendation would replace
-    fireEvent.click(screen.getByRole("button", { name: "Load recommended configuration" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load UAT demonstration preset" }));
     expect(screen.getByTestId("sample-confirm")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Replace values" }));
     expect(current()).toBe("equipment");
@@ -356,6 +357,38 @@ describe("nothing resets or jumps", () => {
   }, 60000);
 });
 
+describe("internal Budget coverage action", () => {
+  it("a Rep (no cost visibility) is refused; a cost-visible Estimator gets all 16 categories", async () => {
+    asRoles("REP"); vi.mocked(canSeeCosts).mockResolvedValue(false);
+    expect((await actions.getBudgetCoverageAction()).ok).toBe(false);
+    asRoles("ESTIMATOR"); vi.mocked(canSeeCosts).mockResolvedValue(true);
+    const r = await actions.getBudgetCoverageAction();
+    expect(r.ok).toBe(true); expect(r.data).toHaveLength(16);
+    expect(r.data!.filter((x) => x.state !== "READY" && x.state !== "PROVISIONAL").length).toBe(9);
+  }, 30000);
+});
+
+describe("quantity defaults: demonstration preset vs approved rules vs manual entry", () => {
+  it("on a real (non-Preview) deployment the demonstration preset is NOT offered to the Rep, and manual quantities can still be entered", async () => {
+    vi.stubEnv("VERCEL_ENV", "production");
+    await open({ view: snapshotView(true), step: "3" });
+    expect(screen.queryByRole("button", { name: "Load UAT demonstration preset" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Load recommended configuration/ })).toBeNull();
+    expect(screen.getByLabelText("Penning pig size")).toBeTruthy(); // the equipment step itself is still editable
+  }, 30000);
+  it("on newquip-uat (Production target with the explicit UAT settings) the preset IS offered, clearly labelled UAT DEMONSTRATION", async () => {
+    vi.stubEnv("VERCEL_ENV", "production"); vi.stubEnv("NEWQUIP_UAT_DEMO_TOOLS", "true"); vi.stubEnv("CIN7_CREDENTIAL_STORE", "uat");
+    await open({ view: snapshotView(true), step: "3" });
+    expect(screen.getByRole("button", { name: "Load UAT demonstration preset" })).toBeTruthy();
+    expect(screen.getByTestId("uat-demo-badge").textContent).toBe("UAT DEMONSTRATION");
+  }, 30000);
+  it("a draft carrying the demonstration quantities is flagged on the Review step (not changed)", async () => {
+    vi.stubEnv("VERCEL_ENV", "production");
+    await open({ view: snapshotView(true), step: "5", draftOver: { config: { ...goodConfig, optionalEquipment: { ...base.config.optionalEquipment, controller: true }, estimatorQuantities: { feeder: 18, pvc_door: 2, bulk_tank: 1, cone_fans: 4, controller: 2, flex_auger: 1, cup_drinker: 54, manure_plug: 2, pad_cooling: 3, concrete_slat: 1320, control_panel: 2, silo_weighing: 2, emergency_windows: 2 } } } });
+    expect(screen.getByTestId("demo-quantity-notice").textContent).toMatch(/UAT demonstration preset/);
+  }, 30000);
+});
+
 describe("server-derived previewTools flag", () => {
   it("getGrowerQuoteAction reports previewTools true on Preview only; false in Production, unset, or anything else", async () => {
     asRoles("REP");
@@ -365,6 +398,12 @@ describe("server-derived previewTools flag", () => {
       const r = await actions.getGrowerQuoteAction(id);
       expect(r.data?.viewer.previewTools, env).toBe(want);
     }
+    // newquip-uat is a Production deployment that opts in with BOTH explicit settings; one alone does nothing
+    vi.stubEnv("VERCEL_ENV", "production");
+    vi.stubEnv("NEWQUIP_UAT_DEMO_TOOLS", "true");
+    expect((await actions.getGrowerQuoteAction(id)).data?.viewer.previewTools).toBe(false);
+    vi.stubEnv("CIN7_CREDENTIAL_STORE", "uat");
+    expect((await actions.getGrowerQuoteAction(id)).data?.viewer.previewTools).toBe(true);
   }, 30000);
 });
 
@@ -758,9 +797,10 @@ describe("review findings P2", () => {
     expect(nav.querySelector('[data-phase="1"]')!.getAttribute("aria-current")).toBe("step");
   }, 30000);
 
-  it("'Load recommended configuration' states precisely what it replaces and keeps", async () => {
+  it("'Load UAT demonstration preset' states precisely what it replaces and keeps", async () => {
+    vi.stubEnv("VERCEL_ENV", "preview"); // the demonstration preset is offered on a Preview deployment only
     await open({ view: snapshotView(true), step: "3" });
-    const t = screen.getByText(/Load recommended configuration” fills/).textContent ?? "";
+    const t = screen.getByText(/Load UAT demonstration preset” fills/).textContent ?? "";
     expect(t).toMatch(/REPLACES every quantity you entered, the quantity overrides and their reasons/);
     expect(t).toMatch(/keeps the site, room measurements, charges, M75 price, assumptions, product choices and manual prices/);
   }, 30000);
@@ -851,10 +891,11 @@ describe("second review: chrome, saving rules, up-front note, step 3 disclosure"
     fireEvent.click(screen.getByTestId("section-quantities").querySelector("summary")!);
   }, 60000);
 
-  it("'Load recommended configuration' sets the penning pig size and says so", async () => {
+  it("'Load UAT demonstration preset' sets the penning pig size and says so", async () => {
+    vi.stubEnv("VERCEL_ENV", "preview"); // the demonstration preset is offered on a Preview deployment only
     await open({ view: snapshotView(true), step: "3", draftOver: { config: { ...goodConfig, penningPigSize: null } } });
-    expect(screen.getByText(/Load recommended configuration” fills/).textContent).toContain("including the penning pig size");
-    fireEvent.click(screen.getByRole("button", { name: "Load recommended configuration" }));
+    expect(screen.getByText(/Load UAT demonstration preset” fills/).textContent).toContain("including the penning pig size");
+    fireEvent.click(screen.getByRole("button", { name: "Load UAT demonstration preset" }));
     if (screen.queryByRole("button", { name: "Replace values" })) fireEvent.click(screen.getByRole("button", { name: "Replace values" }));
     expect((screen.getByLabelText("Penning pig size") as HTMLSelectElement).value).toBe("SMALL");
   }, 30000);
@@ -876,7 +917,7 @@ describe("second review: chrome, saving rules, up-front note, step 3 disclosure"
 });
 
 // ── Regression e2e findings ──
-describe("regression: customer search state and the second 'Load recommended configuration'", () => {
+describe("regression: customer search state and the second 'Load UAT demonstration preset'", () => {
   it("D-1: reopening 'Change customer' starts with an empty search, no stale 'No customers found', and closing/cancelling resets it", async () => {
     await open({ view: snapshotView(true), step: "1" });
     vi.spyOn(ca, "searchQuoteCustomersForQuoteAction").mockResolvedValue({ ok: true, data: [] } as never);
@@ -891,19 +932,20 @@ describe("regression: customer search state and the second 'Load recommended con
     expect(screen.getByTestId("search-min")).toBeTruthy();
   }, 30000);
 
-  it("D-2: pressing 'Load recommended configuration' again over edited quantities asks Replace / Cancel; Cancel keeps the values; the step is preserved", async () => {
+  it("D-2: pressing 'Load UAT demonstration preset' again over edited quantities asks Replace / Cancel; Cancel keeps the values; the step is preserved", async () => {
+    vi.stubEnv("VERCEL_ENV", "preview"); // the demonstration preset is offered on a Preview deployment only
     await open({ view: snapshotView(true), step: "3", draftOver: { config: { ...goodConfig, penningPigSize: null } } });
-    fireEvent.click(screen.getByRole("button", { name: "Load recommended configuration" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load UAT demonstration preset" }));
     fireEvent.click(screen.getByRole("button", { name: "Replace values" })); // the fixture already holds some equipment values (running metres), so the first load asks too
     const qty = screen.getByLabelText("Quantity per room for CCM feeder (incl. monoflo drinking nipples)") as HTMLInputElement;
     expect(qty.value).toBe("18");
     await act(async () => { fireEvent.change(qty, { target: { value: "7" } }); });
-    fireEvent.click(screen.getByRole("button", { name: "Load recommended configuration" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load UAT demonstration preset" }));
     expect(screen.getByTestId("sample-confirm")).toBeTruthy();
     expect(current()).toBe("equipment");
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(qty.value).toBe("7");
-    fireEvent.click(screen.getByRole("button", { name: "Load recommended configuration" }));
+    fireEvent.click(screen.getByRole("button", { name: "Load UAT demonstration preset" }));
     fireEvent.click(screen.getByRole("button", { name: "Replace values" }));
     expect((screen.getByLabelText("Quantity per room for CCM feeder (incl. monoflo drinking nipples)") as HTMLInputElement).value).toBe("18");
     expect(current()).toBe("equipment");

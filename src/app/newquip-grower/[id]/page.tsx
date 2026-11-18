@@ -15,6 +15,7 @@ import { SOLUTION_BUILDER_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
 import { BudgetQuotationPanel } from "./BudgetQuotationPanel";
 import { PricingStatusSummary } from "./PricingStatusSummary";
+import { DEMO_PRESET_QUANTITY_NOTICE, demoPresetQuantityKeys } from "@/newquip/grower/demo-defaults";
 import { incompleteEstimateOf } from "@/newquip/grower/incomplete-estimate";
 import { Status } from "@/components/ui/Status";
 import { PackageOwnConfirmation } from "./PackageOwnConfirmation";
@@ -843,7 +844,7 @@ export default function QuoteEditorPage() {
 
       {error && <div className="mt-4"><Alert tone="danger">{error}</Alert></div>}
       {/* ONE pricing-status summary, not repeated banners. For a Rep's draft it lives in the final step; for everyone else it sits here. */}
-      {!repFinalStep && view.budgetPricing && <div className="mt-4"><PricingStatusSummary view={view.budgetPricing} /></div>}
+      {!repFinalStep && view.budgetPricing && <div className="mt-4"><PricingStatusSummary view={view.budgetPricing} />{demoPresetQuantityKeys(draft).length > 0 && <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950" data-testid="demo-quantity-notice">{DEMO_PRESET_QUANTITY_NOTICE}</p>}</div>}
       {!repFinalStep && (q.state === "REP_DRAFT" || q.state === "ESTIMATOR_REVIEW") && (roles.has("rep") || roles.has("estimator") || roles.has("manager")) && <div className="mt-4"><BudgetQuotationPanel quoteId={id} canAct={roles.has("rep")} dirty={dirty} refreshKey={`${q.draft_hash}:${q.updated_at}`} /></div>}
       {autoPending.length > 0 && q.state === "REP_DRAFT" && <div className="mt-4" data-testid="auto-pricing-pending"><Alert tone="info">{autoPending.join(". ")}.</Alert></div>}
       <ActionFeedback state={acts.stateOf("page")} floating />
@@ -1085,11 +1086,12 @@ export default function QuoteEditorPage() {
           <StepPanel railId="s1" stepId="equipment" number={3} title={STAGE1_STEP_LABEL.equipment} current={stepId === "equipment"} showAll={showAllSteps} locked={lockedFor("equipment")} className={stepPanelCls}>
             <div className="col-span-full flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
               <p className="text-sm text-slate-700 max-sm:hidden">Choose the system and options, then enter the quantities and charges.</p>
-              {stage1Edit && (
+              {stage1Edit && view.viewer.previewTools && (
                 <div className="flex flex-wrap items-center gap-2">
                   <details className="text-xs text-slate-600"><summary className="inline-flex min-h-11 cursor-pointer items-center font-medium text-indigo-700 underline">What does this fill?</summary>
-                    <p className="max-w-xl">“Load recommended configuration” fills {RECOMMENDED_CONFIG_FILLS}. Nothing is saved until you press Save draft.</p></details>
-                  <Button variant="secondary" size="sm" className="min-h-11" onClick={() => askSample("recommended")}>Load recommended configuration</Button>
+                    <p className="max-w-xl">“Load UAT demonstration preset” fills {RECOMMENDED_CONFIG_FILLS} These are test values, not approved engineering quantities. Nothing is saved until you press Save draft.</p></details>
+                  <span className="rounded bg-amber-100 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-amber-900" data-testid="uat-demo-badge">UAT DEMONSTRATION</span>
+                  <Button variant="secondary" size="sm" className="min-h-11" onClick={() => askSample("recommended")}>Load UAT demonstration preset</Button>
                 </div>
               )}
             </div>
@@ -1167,6 +1169,7 @@ export default function QuoteEditorPage() {
             {repFinalStep && !wizard.submitted && (
               <div className="mt-3 space-y-3" data-testid="review-budget-submit">
                 <PricingStatusSummary view={view.budgetPricing} />
+                {demoPresetQuantityKeys(draft).length > 0 && <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950" data-testid="demo-quantity-notice">{DEMO_PRESET_QUANTITY_NOTICE}</p>}
                 <BudgetQuotationPanel quoteId={id} canAct={roles.has("rep")} dirty={dirty} refreshKey={`${q.draft_hash}:${q.updated_at}`} embedded />
               </div>
             )}

@@ -39,7 +39,7 @@ export function PricingStatusSummary({ view }: { view: BudgetPricingView | undef
             <div>
               <p className="font-medium">{incompleteEstimateText(counts.unpriced)}</p>
               <ul className="mt-1 list-disc pl-5" data-testid="unpriced-lines">
-                {view.lines.filter((l) => l.state === "unpriced").map((l) => <li key={l.itemKey}>{l.label}{l.quantity != null ? ` × ${l.quantity}` : ""} {"—"} {l.note}</li>)}
+                {view.lines.filter((l) => l.state === "unpriced").map((l) => <li key={l.itemKey}>{l.label}{l.quantity != null ? ` × ${l.quantity}` : ""} {"—"} {l.note}.{l.nextStep ? ` ${l.nextStep}` : ""}</li>)}
               </ul>
             </div>
           )}
