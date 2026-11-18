@@ -42,7 +42,7 @@ export async function sendBudgetQuotationAction(quoteId: string, req: { to: stri
     const a = await authoriseActor();
     if (!ID.test(quoteId)) throw new Error("Quotation not found.");
     const r = await sendBudgetQuotation(createServiceRoleClient(), { orgId: a.orgId, userId: a.userId, email: a.email, isRep: a.roles.has("rep") }, quoteId, req, process.env);
-    if (r.status !== "ACCEPTED" && !r.reused) return { ok: false, error: r.status === "SUPPRESSED" ? "Nothing was sent: that address is not permitted from this environment." : "The email provider did not accept the message. Nothing was delivered." };
+    if (r.status !== "ACCEPTED") return { ok: false, error: r.status === "SUPPRESSED" ? "Nothing was sent: that address is not permitted from this environment." : "The email provider did not accept the message. Nothing was delivered." };
     return { ok: true, data: { status: r.status, to: r.to, reused: r.reused, testMode: r.testMode, incompleteCount: r.incompleteCount } };
   } catch (e) { return { ok: false, error: errText(e) }; }
 }

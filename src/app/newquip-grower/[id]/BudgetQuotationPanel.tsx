@@ -33,7 +33,7 @@ export function BudgetQuotationPanel({ quoteId, canAct, dirty, refreshKey }: { q
     const r = await sendBudgetQuotationAction(quoteId, { to: recipient, message: msg, idempotencyKey: key, expectedDraftHash: st.draftHash, acknowledgeIncomplete: ack });
     setBusy(false);
     if (r.ok) { setNote(`Budget quotation ${r.data?.reused ? "was already sent" : "sent"} to ${r.data?.to}. The quotation stays in its current stage: nothing was approved or issued.`); setOpen(false); setAck(false); setKey(`budget-${Math.random().toString(36).slice(2)}-${Date.now()}`); }
-    else setErr(r.error ?? "The budget quotation could not be sent.");
+    else { setErr(r.error ?? "The budget quotation could not be sent."); setKey(`budget-${Math.random().toString(36).slice(2)}-${Date.now()}`); }
   };
 
   return (

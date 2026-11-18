@@ -121,9 +121,13 @@ export async function sendBudgetQuotation(
   if (isRestricted(env) && !recipientAllowed(to)) throw new Error("In the UAT environment a budget quotation can be sent only to an authorised Spark test mailbox. Nothing was sent.");
 
   // Idempotency: a repeat of the same click returns the recorded outcome and emits nothing.
-  const prior = await db.from("activity_log").select("detail").eq("org_id", who.orgId).eq("action", BUDGET_SEND_ACTION).filter("detail->>idempotencyKey", "eq", req.idempotencyKey).limit(1);
+  const prior = await db.from("activity_log").select("action, detail, created_at").eq("org_id", who.orgId).in("action", [BUDGET_SEND_ACTION, BUDGET_SEND_STARTED]).filter("detail->>idempotencyKey", "eq", req.idempotencyKey).limit(10);
   if (prior.error) throw new Error(`Could not check for an earlier send: ${prior.error.message}`);
-  const earlier = (prior.data ?? [])[0]?.detail as Record<string, unknown> | undefined;
+  const rows = (prior.data ?? []) as Array<{ action?: string; detail: Record<string, unknown>; created_at?: string }>;
+  // Only an ACCEPTED send is reused: a FAILED or SUPPRESSED one may be retried. A send that STARTED moments ago and has no outcome yet is still in flight: refuse a second one.
+  const earlier = rows.find((r) => r.detail?.status === "ACCEPTED")?.detail;
+  const inFlight = !earlier && rows.some((r) => r.action === BUDGET_SEND_STARTED && r.created_at && Date.now() - Date.parse(r.created_at) < 120_000) && !rows.some((r) => r.action === BUDGET_SEND_ACTION);
+  if (inFlight) throw new Error("This budget quotation is already being sent. Wait a moment and check before sending again.");
   if (earlier) return { status: earlier.status as BudgetSendResult["status"], to: String(earlier.to ?? to), reused: true, incompleteCount: Number(earlier.incompleteCount ?? 0), testMode: earlier.testMode === true, draftRef: String(earlier.draftRef ?? ""), pdfSha256: String(earlier.pdfSha256 ?? "") };
 
   const prep = await prepareBudget(db, who.orgId, quoteId, env, deps.today);

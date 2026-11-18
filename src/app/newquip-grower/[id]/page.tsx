@@ -783,8 +783,8 @@ export default function QuoteEditorPage() {
       </div>
       <dl className="mt-3 grid max-w-xl grid-cols-2 gap-y-1 text-sm" aria-busy={recalculating}>
         <dt className="text-slate-600">{incompleteEstimate ? "Known items subtotal (ex VAT) - NOT the project total" : "Subtotal (ex VAT)"}</dt><dd className="whitespace-nowrap text-right tabular-nums">{fmtZar(budget.totals.subtotalExTax)}</dd>
-        <dt className="text-slate-600">VAT 15%</dt><dd className="whitespace-nowrap text-right tabular-nums">{fmtZar(budget.totals.taxTotal)}</dd>
-        <dt className="font-semibold text-slate-900">Total</dt><dd className="whitespace-nowrap text-right font-semibold tabular-nums">{fmtZar(budget.totals.totalIncTax)}</dd>
+        {!incompleteEstimate && <><dt className="text-slate-600">VAT 15%</dt><dd className="whitespace-nowrap text-right tabular-nums">{fmtZar(budget.totals.taxTotal)}</dd>
+        <dt className="font-semibold text-slate-900">Total</dt><dd className="whitespace-nowrap text-right font-semibold tabular-nums">{fmtZar(budget.totals.totalIncTax)}</dd></>}
         {view.viewer.canViewCommercials && !startUx && <><dt className="text-slate-600">{marginIncomplete ? "Estimated cost · indicative margin (price-list basis)" : "Estimated cost · margin (costed scope)"}</dt><dd className="text-right tabular-nums">{fmtZar(shownMargin?.cost ?? budget.totals.estimatedCost)} · {fmtPctShown}{marginNote && <span className="block text-xs font-normal text-amber-800" data-testid="totals-margin-note">{marginNote}</span>}</dd></>}
       </dl>
       <p className="mt-2 text-xs text-slate-600">{view.viewer.canViewCommercials ? budget.pricingBasis : QUOTE_TYPE_NEUTRAL[draft.quoteType]}. {budget.state === "complete" ? "Every required line is priced." : "Incomplete: the total is partial until every blocker is resolved."}</p>

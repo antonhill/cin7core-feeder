@@ -83,6 +83,8 @@ export function buildBudgetDocumentModel(i: BudgetInput): BudgetDocumentModel {
   const unpricedCharges = charges.filter((c) => c.status === "unpriced");
   const unpricedItems = [...unpricedLines.map((l) => `${l.label}${l.quantity != null ? ` × ${l.quantity}` : ""}`), ...unpricedCharges.map((c) => c.label)];
   const complete = unpricedItems.length === 0 && b.state === "complete";
+  // Incomplete for another reason (e.g. a required explanation is missing on a priced line): never a total, and the document says pricing is still under review rather than "0 items".
+  if (!complete && unpricedItems.length === 0) unpricedItems.push("Pricing still under review");
 
   const known = round2(equipment.reduce((a, l) => a + (l.amountExVat ?? 0), 0) + charges.reduce((a, c) => a + (c.amountExVat ?? 0), 0));
   // The model's figure must equal the engine's own subtotal for the same priced items: the document never invents or re-derives a different total (a mismatch means the budget was not built from this draft).

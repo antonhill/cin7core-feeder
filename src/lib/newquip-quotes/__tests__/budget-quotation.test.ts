@@ -42,7 +42,7 @@ const reads: string[] = [];
 const fakeDb = (existing: unknown[] = []) => ({ from(t: string) {
   reads.push(t);
   if (t !== "activity_log") throw new Error(`UNEXPECTED TABLE ACCESS: ${t}`);
-  const q: Record<string, unknown> = {}; for (const m of ["select", "eq", "filter", "limit"]) q[m] = () => q;
+  const q: Record<string, unknown> = {}; for (const m of ["select", "eq", "in", "filter", "limit"]) q[m] = () => q;
   q.then = (res: (v: unknown) => unknown) => res({ data: existing, error: null }); return q;
 } }) as never;
 const deps = (over: Partial<BudgetSendDeps> = {}): BudgetSendDeps & { sent: unknown[] } => { const sent: unknown[] = []; return { sent, send: async (i) => { sent.push(i); return { ok: true, messageId: "m-1" }; }, today: () => "2026-11-18", now: () => "2026-11-18T10:00:00Z", ...over }; };
@@ -200,8 +200,25 @@ describe("send rules", () => {
   });
   it("a repeat of the same click returns the recorded outcome and emits nothing", async () => {
     const dp = deps();
-    const r = await sendBudgetQuotation(fakeDb([{ detail: { status: "ACCEPTED", to: "anton@sparkconsulting.co.za", incompleteCount: 5, testMode: true, draftRef: "abcdef012345", pdfSha256: "x" } }]), who, "q", req, UAT, dp, audit);
+    const r = await sendBudgetQuotation(fakeDb([{ action: "newquip.budget_quotation_sent", created_at: "2026-11-18T09:00:00Z", detail: { status: "ACCEPTED", to: "anton@sparkconsulting.co.za", incompleteCount: 5, testMode: true, draftRef: "abcdef012345", pdfSha256: "x" } }]), who, "q", req, UAT, dp, audit);
     expect(r.reused).toBe(true); expect(dp.sent).toHaveLength(0); expect(audits).toHaveLength(0);
+  });
+  it("a FAILED earlier send is NOT reported as sent: the Rep can retry with the same key", async () => {
+    const dp = deps();
+    const r = await sendBudgetQuotation(fakeDb([{ action: "newquip.budget_quotation_sent", detail: { status: "FAILED" }, created_at: "2026-11-18T09:00:00Z" }]), who, "q", req, UAT, dp, audit);
+    expect(r.reused).toBe(false); expect(dp.sent).toHaveLength(1);
+  });
+  it("a send that started seconds ago with no outcome is in flight: a second one is refused", async () => {
+    const dp = deps();
+    await expect(sendBudgetQuotation(fakeDb([{ action: "newquip.budget_quotation_send_started", detail: {}, created_at: new Date().toISOString() }]), who, "q", req, UAT, dp, audit)).rejects.toThrow(/already being sent/);
+    expect(dp.sent).toHaveLength(0);
+  });
+  it("incomplete for a non-line reason still never shows a total and says pricing is under review", async () => {
+    const d = unmappedDraft(); d.estimator.charges = { delivery: 8000, installation: 32500 }; d.config.estimatorQuantities = { ...d.config.estimatorQuantities, pvc_door: 4 };
+    d.estimator.confirmedMappings = { pvc_door: "NQ2114", controller: "X", control_panel: "X", pad_cooling: "X", cone_fans: "X" }; state.quote = quoteOf(d);
+    const m = (await prepareBudget(fakeDb(), "org", "q", UAT)).model;
+    expect(m.totals.totalIncVat === null || m.complete).toBe(true);
+    expect(m.unpriced.count).toBeGreaterThan(0);
   });
   it("if the audit record cannot be written NOTHING is sent", async () => {
     const dp = deps();
