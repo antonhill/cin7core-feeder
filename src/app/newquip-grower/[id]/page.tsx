@@ -13,6 +13,9 @@ import { LongRunningStatus } from "@/components/ui/LongRunningStatus";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { SOLUTION_BUILDER_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
+import { IncompleteEstimateBanner } from "./IncompleteEstimateBanner";
+import { BudgetQuotationPanel } from "./BudgetQuotationPanel";
+import { incompleteEstimateOf } from "@/newquip/grower/incomplete-estimate";
 import { Status } from "@/components/ui/Status";
 import { PackageOwnConfirmation } from "./PackageOwnConfirmation";
 import type { BadgeTone } from "@/components/ui/Badge";
@@ -770,16 +773,18 @@ export default function QuoteEditorPage() {
   // A stage that is not yet available can be "Preview only" where the page genuinely shows something read-only: Stage 4's customer summary once the quote is READY.
   const previewable: StageId[] = !final && summary ? [4] : [];
 
+  const incompleteEstimate = incompleteEstimateOf(budget);
   const totalsPanel = budget && (
     <Panel>
+      {incompleteEstimate && <div className="mb-3"><IncompleteEstimateBanner estimate={incompleteEstimate} mode="detail" /></div>}
       <div className="flex flex-wrap items-center gap-2">
         <PanelTitle>Totals</PanelTitle>
         {dirty && <Status tone="warning">{recalculating ? "Recalculating - figures below are not yet current" : "Unsaved - live preview"}</Status>}
       </div>
       <dl className="mt-3 grid max-w-xl grid-cols-2 gap-y-1 text-sm" aria-busy={recalculating}>
-        <dt className="text-slate-600">Subtotal (ex VAT)</dt><dd className="whitespace-nowrap text-right tabular-nums">{fmtZar(budget.totals.subtotalExTax)}</dd>
-        <dt className="text-slate-600">VAT 15%</dt><dd className="whitespace-nowrap text-right tabular-nums">{fmtZar(budget.totals.taxTotal)}</dd>
-        <dt className="font-semibold text-slate-900">Total</dt><dd className="whitespace-nowrap text-right font-semibold tabular-nums">{fmtZar(budget.totals.totalIncTax)}</dd>
+        <dt className="text-slate-600">{incompleteEstimate ? "Known items subtotal (ex VAT) - NOT the project total" : "Subtotal (ex VAT)"}</dt><dd className="whitespace-nowrap text-right tabular-nums">{fmtZar(budget.totals.subtotalExTax)}</dd>
+        {!incompleteEstimate && <><dt className="text-slate-600">VAT 15%</dt><dd className="whitespace-nowrap text-right tabular-nums">{fmtZar(budget.totals.taxTotal)}</dd>
+        <dt className="font-semibold text-slate-900">Total</dt><dd className="whitespace-nowrap text-right font-semibold tabular-nums">{fmtZar(budget.totals.totalIncTax)}</dd></>}
         {view.viewer.canViewCommercials && !startUx && <><dt className="text-slate-600">{marginIncomplete ? "Estimated cost · indicative margin (price-list basis)" : "Estimated cost · margin (costed scope)"}</dt><dd className="text-right tabular-nums">{fmtZar(shownMargin?.cost ?? budget.totals.estimatedCost)} · {fmtPctShown}{marginNote && <span className="block text-xs font-normal text-amber-800" data-testid="totals-margin-note">{marginNote}</span>}</dd></>}
       </dl>
       <p className="mt-2 text-xs text-slate-600">{view.viewer.canViewCommercials ? budget.pricingBasis : QUOTE_TYPE_NEUTRAL[draft.quoteType]}. {budget.state === "complete" ? "Every required line is priced." : "Incomplete: the total is partial until every blocker is resolved."}</p>
@@ -803,7 +808,7 @@ export default function QuoteEditorPage() {
   );
 
   if (handover) {
-    const lineLabel = (k: string) => budget?.lines.find((l) => l.itemKey === k)?.label ?? ({ delivery: "Delivery", installation: "Installation", concrete_slat_delivery: "Concrete slat delivery" } as Record<string, string>)[k] ?? k;
+    const lineLabel = (k: string) => budget?.lines.find((l) => l.itemKey === k)?.label ?? ({ delivery: "Delivery", installation: "Installation", commissioning: "Commissioning", concrete_slat_delivery: "Concrete slat delivery" } as Record<string, string>)[k] ?? k;
     return <HandoverResult quoteRef={q.quote_ref} revision={q.revision} previousCents={handover.previousCents} newCents={handover.newCents} changes={handover.changes} labelOf={lineLabel} fmtCents={fmtCents} fmtRand={fmtZar} onDismiss={() => setHandover(null)} />;
   }
 
@@ -835,6 +840,8 @@ export default function QuoteEditorPage() {
       {q.state !== "MANAGER_APPROVED_FINAL" && stage <= 2 && !uxChrome && !previewFailure && <PricingFeedbackNote feedback={pricingFeedback(budget, { canViewCommercials: !!view.viewer.canViewCommercials })} />}
 
       {error && <div className="mt-4"><Alert tone="danger">{error}</Alert></div>}
+      {incompleteEstimate && <div className="mt-4"><IncompleteEstimateBanner estimate={incompleteEstimate} mode="text" /></div>}
+      {(q.state === "REP_DRAFT" || q.state === "ESTIMATOR_REVIEW") && (roles.has("rep") || roles.has("estimator") || roles.has("manager")) && <div className="mt-4"><BudgetQuotationPanel quoteId={id} canAct={roles.has("rep")} dirty={dirty} refreshKey={`${q.draft_hash}:${q.updated_at}`} /></div>}
       {autoPending.length > 0 && q.state === "REP_DRAFT" && <div className="mt-4" data-testid="auto-pricing-pending"><Alert tone="info">{autoPending.join(". ")}.</Alert></div>}
       <ActionFeedback state={acts.stateOf("page")} floating />
       <LongRunningStatus label={phaseUx && acts.isPending("send") ? null : acts.currentLabel} />
@@ -1170,7 +1177,7 @@ export default function QuoteEditorPage() {
                   </div>
                 ) : (
                 <div className="mt-3">
-                  <ConfirmationPanel quoteId={id} amountLabel={totalCents == null ? null : fmtCents(totalCents)} canAct={roles.has("rep") && q.state === "REP_DRAFT"} ready={repReady} indicativeLines={totalIndicative ? awaiting.lines : 0} loading={phaseUx ? false : acts.isPending("send")} otherBusy={phaseUx ? isWorking : isWorking && !acts.isPending("send")} refreshKey={`${q.revision}:${q.state}:${q.updated_at}`} recorded={false}
+                  <ConfirmationPanel quoteId={id} amountLabel={totalCents == null ? null : fmtCents(totalCents)} canAct={roles.has("rep") && q.state === "REP_DRAFT"} ready={repReady} indicativeLines={totalIndicative ? awaiting.lines : 0} incompleteText={incompleteEstimate?.text ?? null} loading={phaseUx ? false : acts.isPending("send")} otherBusy={phaseUx ? isWorking : isWorking && !acts.isPending("send")} refreshKey={`${q.revision}:${q.state}:${q.updated_at}`} recorded={false}
                     onConfirm={(c) => act(() => sendGrowerQuoteToEstimatorAction(id, totalCents!, c), "Submitted to the Estimator: the customer's price confirmation is recorded and the Estimator has been notified.", "send", (v) => v.quote.state === "ESTIMATOR_REVIEW", 1, OP.submitToEstimator)} />
                 </div>
                 )}

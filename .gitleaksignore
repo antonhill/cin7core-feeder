@@ -1,2 +1,4 @@
 # Test-only placeholder in a unit test (not a credential); introduced in PR #286 commit 25115c5. Later commits use a non-secret-looking fixture.
 25115c517b720bd79b31edf4624ab60d135bfe67:src/app/settings/uat-credentials/__tests__/actions.test.ts:generic-api-key:45
+# Test-only fixture string in a unit test (not a credential); introduced in PR #293 commit e9292ef. Later commits use a non-secret-looking fixture.
+e9292efa7d03ee949c9dd86d2531ad4ba03db854:src/lib/newquip-quotes/__tests__/budget-quotation.test.ts:generic-api-key:52

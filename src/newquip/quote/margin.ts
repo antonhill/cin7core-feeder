@@ -115,7 +115,7 @@ export interface MarginSheet {
 const SECTION_BY_ITEM: Record<string, string> = {
   feeder: "Feeding", flex_auger: "Feeding", feed_saver_mat: "Feeding", bulk_tank: "Feeding",
   cup_drinker: "Drinking", concrete_slat: "Flooring", led_light: "Lighting",
-  delivery: "Delivery & installation", installation: "Delivery & installation", concrete_slat_delivery: "Delivery & installation",
+  delivery: "Delivery & installation", installation: "Delivery & installation", commissioning: "Delivery & installation", concrete_slat_delivery: "Delivery & installation",
 };
 export const sectionOf = (itemKey: string): string => SECTION_BY_ITEM[itemKey] ?? "Other equipment";
 

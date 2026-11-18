@@ -30,10 +30,10 @@ export function roundingNote(m: Pick<CustomerDocumentModel, "paymentSchedule" | 
 // Long unbroken words (e.g. a site name with no spaces) may wrap anywhere instead of overflowing their column.
 Font.registerHyphenationCallback((word) => (word.length > 18 ? word.match(/.{1,10}/g) ?? [word] : [word]));
 
-const fmtDate = (iso: string): string => { const [y, m, d] = iso.split("-"); return `${d}/${m}/${y}`; };
+export const fmtDate = (iso: string): string => { const [y, m, d] = iso.split("-"); return `${d}/${m}/${y}`; };
 
-const NAVY = "#14304f"; const GREY = "#55606b"; const LINE = "#c9d1d9";
-const st = StyleSheet.create({
+export const NAVY = "#14304f"; export const GREY = "#55606b"; export const LINE = "#c9d1d9";
+export const st = StyleSheet.create({
   page: { paddingTop: 36, paddingBottom: 64, paddingHorizontal: 40, fontFamily: "Helvetica", fontSize: 9.5, color: "#1c2733", lineHeight: 1.35 },
   head: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", borderBottomWidth: 2, borderBottomColor: NAVY, paddingBottom: 10, marginBottom: 16 },
   headLeft: { width: "52%", paddingRight: 12 },
@@ -56,7 +56,7 @@ const st = StyleSheet.create({
   foot: { position: "absolute", top: 802, left: 40, right: 40, flexDirection: "row", justifyContent: "space-between", fontSize: 8, color: GREY, borderTopWidth: 0.5, borderTopColor: LINE, paddingTop: 4 },
 });
 
-const Paras = ({ text }: { text: string }) => <>{pdfSafe(text).split(/\n{1,}/).filter((l) => l.trim()).map((l, i) => <Text key={i} style={st.para}>{l}</Text>)}</>;
+export const Paras = ({ text }: { text: string }) => <>{pdfSafe(text).split(/\n{1,}/).filter((l) => l.trim()).map((l, i) => <Text key={i} style={st.para}>{l}</Text>)}</>;
 
 export const TEST_ONLY_WATERMARK = "TEST ONLY \u2013 NOT FOR CUSTOMER ISSUE";
 

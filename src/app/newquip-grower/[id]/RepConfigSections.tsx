@@ -30,6 +30,7 @@ const repTreatment = (t: string): string => (t === "estimator_input" ? "you ente
 export const CHARGE_HELP: Record<ChargeKey, string> = {
   delivery: "Usually supplied by the courier or haulier quote: the truck price for the distance.",
   installation: "Usually from the installation team's service report: days × daily rate.",
+  commissioning: "Optional. Setting up and testing the equipment on site. Leave blank if there is none: the customer sees Installation and Commissioning as ONE line, added together once.",
   concrete_slat_delivery: "Usually from the haulier's quote for the slat trucks: truck price ÷ slat weight, by distance.",
 };
 
@@ -119,7 +120,7 @@ export function ChargesSection({ draft, edit }: { draft: QuoteDraft; edit: Edit 
   return (
     <>
       <div className="mt-4 grid gap-4 md:grid-cols-2">
-        {(["delivery", "installation", "concrete_slat_delivery"] as ChargeKey[]).map((c) => (
+        {(["delivery", "installation", "commissioning", "concrete_slat_delivery"] as ChargeKey[]).map((c) => (
           <NumField key={c} label={CHARGE_LABEL[c]} ariaLabel={`${CHARGE_LABEL[c]} charge (R ex VAT)`} unit="R" hint={CHARGE_HELP[c]} value={draft.estimator.charges[c] ?? null} onChange={(v) => edit((d) => { d.estimator.charges = { ...d.estimator.charges, [c]: v }; })} />
         ))}
         <NumField label="M75 system price (per system)" ariaLabel="M75 system price per system (R ex VAT)" unit="R per system" hint="You enter this price (it is not looked up), usually from the supplier quote. NQ3132 is not priced separately." value={draft.estimator.unitPrices.flex_auger ?? null} onChange={(v) => edit((d) => { d.estimator.unitPrices = { ...d.estimator.unitPrices, flex_auger: v }; })} />
