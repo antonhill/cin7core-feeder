@@ -93,6 +93,24 @@ describe("the commercial summary never overstates the total or the margin", () =
     expect(s.marginLabel).toBe("none");
     expect(s.blockers).toContain("7 tasks open");
   });
+  it("PARTIAL TOTAL is retained for any pricing blocker: every line priced but the budget incomplete (e.g. a required charge missing) says pricing is incomplete, not that lines lack a price", () => {
+    const priced = { lines: [line({ itemKey: "concrete_slat", label: "Slats", sku: "NQ1161", revenueExTax: 100 })], rows: [row("NQ1161", "unverified")], incomplete: true, subtotal: 100 };
+    const s = buildWorkspace({ ...test12(priced), facts: facts({ confirmedCents: 10_000 }) }).summary;
+    expect(s.totalKind).toBe("partial"); expect(s.totalLabel).toBe("PARTIAL TOTAL, EX VAT");
+    expect(s.totalNote).toMatch(/Pricing is incomplete: a required charge or a Rep input/);
+  });
+  it("PARTIAL TOTAL with unpriced lines names how many are left out (Test12)", () => {
+    const s = buildWorkspace({ ...test12(), facts: facts() }).summary;
+    expect(s.totalLabel).toBe("PARTIAL TOTAL, EX VAT"); expect(s.totalNote).toMatch(/\d+ lines? (has|have) no confirmed price/);
+  });
+  it("a fully priced, complete quotation with costs still awaiting verification is never labelled partial: the label reflects the Rep confirmation only (an Estimator task exists only for an unpriced line, so a 'priced but tasks open' total cannot occur)", () => {
+    const done = { lines: [line({ itemKey: "concrete_slat", label: "Slats", sku: "NQ1161", revenueExTax: 100 })], rows: [row("NQ1161", "unverified")], incomplete: false, subtotal: 100 };
+    const w = buildWorkspace({ ...test12(done), facts: facts({ confirmedCents: 10_000 }) });
+    expect(w.tasks).toHaveLength(0); expect(w.summary.totalKind).toBe("confirmed"); expect(w.summary.totalLabel).not.toMatch(/PARTIAL/);
+    // invariant: whenever tasks are open, some line is unpriced, so the total is partial with a named count
+    const open = buildWorkspace({ ...test12(), facts: facts() });
+    expect(open.tasks.length).toBeGreaterThan(0); expect(open.summary.unpricedLineCount).toBeGreaterThan(0);
+  });
   it("all lines priced but a different amount: calculated, not confirmed; equal amount: confirmed by the Rep, still not 'contract value'", () => {
     const done = { lines: [line({ itemKey: "concrete_slat", label: "Slats", sku: "NQ1161", revenueExTax: 100 })], rows: [row("NQ1161", "unverified")], incomplete: false, subtotal: 100 };
     const calc = buildWorkspace({ ...test12(done), facts: facts({ confirmedCents: 5000 }) }).summary;

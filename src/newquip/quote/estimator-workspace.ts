@@ -315,7 +315,9 @@ export function buildWorkspace(i: { budget: BudgetQuote; view: PricingWorkspaceV
   const summary: Summary = {
     totalKind, excluded, excludedPreviousTotal,
     totalLabel: totalKind === "partial" ? "PARTIAL TOTAL, EX VAT" : totalKind === "calculated" ? "CALCULATED TOTAL, NOT YET CONFIRMED" : "INDICATIVE TOTAL, CONFIRMED BY THE REP",
-    totalNote: totalKind === "partial" ? "Indicative only. Not a contract value." : totalKind === "calculated" ? "Not a contract value until the Rep confirms it and the costs are verified." : "Matches the amount the customer confirmed as indicative. It is not an approved price: the costs still need independent verification and a Manager must approve it.",
+    // A partial total is always one of two things (an Estimator task exists only for a line that is not priced): lines without a confirmed price are left out, or another pricing blocker (a required charge, a Rep input) is open.
+    totalNote: totalKind === "partial" ? (live.length - pricedLines.length > 0 ? `Indicative only. Not a contract value. ${live.length - pricedLines.length} line${live.length - pricedLines.length === 1 ? " has" : "s have"} no confirmed price and ${live.length - pricedLines.length === 1 ? "is" : "are"} left out.` : "Indicative only. Not a contract value. Pricing is incomplete: a required charge or a Rep input is still outstanding.")
+      : totalKind === "calculated" ? "Not a contract value until the Rep confirms it and the costs are verified." : "Matches the amount the customer confirmed as indicative. It is not an approved price: the costs still need independent verification and a Manager must approve it.",
     totalExVat, pricedLinesExVat, pricedLineCount: pricedLines.length, chargesExVat, unpricedLineCount: live.length - pricedLines.length,
     vat: Math.round(totalExVat * 0.15 * 100) / 100, totalIncVat: Math.round(totalExVat * 1.15 * 100) / 100,
     confirmedCents: confirmed, differenceCents: confirmed === null ? null : totalCents - confirmed,
