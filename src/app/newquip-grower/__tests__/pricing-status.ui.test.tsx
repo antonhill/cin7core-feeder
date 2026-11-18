@@ -49,3 +49,15 @@ describe("PricingStatusSummary", () => {
     expect(document.body.textContent).not.toMatch(/supplier|freight|markup|margin|NB3542|HNQ|FERAX/i);
   });
 });
+
+import { handoffFigureNote } from "@/newquip/grower/budget-pricing";
+describe("handoffFigureNote", () => {
+  it("says lines are left out only when provisional or unpriced lines remain", () => {
+    expect(handoffFigureNote({ counts: { priced: 8, provisional: 2, unpriced: 0 } })).toMatch(/^Leaves out provisional and unpriced lines/);
+    expect(handoffFigureNote({ counts: { priced: 8, provisional: 0, unpriced: 1 } })).toMatch(/^Leaves out/);
+  });
+  it("with none remaining it states the figure matches the budget estimate and does not claim anything is left out", () => {
+    const n = handoffFigureNote({ counts: { priced: 8, provisional: 0, unpriced: 0 } });
+    expect(n).toMatch(/matches the budget estimate/); expect(n).not.toMatch(/Leaves out/);
+  });
+});

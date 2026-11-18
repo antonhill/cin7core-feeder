@@ -314,8 +314,9 @@ export function buildWorkspace(i: { budget: BudgetQuote; view: PricingWorkspaceV
   const blockers = gates.map((g) => g.text);
   const summary: Summary = {
     totalKind, excluded, excludedPreviousTotal,
-    totalLabel: totalKind === "partial" ? "PARTIAL TOTAL, EX VAT" : totalKind === "calculated" ? "CALCULATED TOTAL, NOT YET CONFIRMED" : "INDICATIVE TOTAL, CONFIRMED BY THE REP",
-    totalNote: totalKind === "partial" ? "Indicative only. Not a contract value." : totalKind === "calculated" ? "Not a contract value until the Rep confirms it and the costs are verified." : "Matches the amount the customer confirmed as indicative. It is not an approved price: the costs still need independent verification and a Manager must approve it.",
+    // "partial" means something is open. The label says WHICH: lines without a price (a genuinely partial total) or only open review tasks on lines that all carry a price.
+    totalLabel: totalKind === "partial" ? (live.length - pricedLines.length > 0 ? "PARTIAL TOTAL, EX VAT" : "PRICED TOTAL, REVIEW OPEN, EX VAT") : totalKind === "calculated" ? "CALCULATED TOTAL, NOT YET CONFIRMED" : "INDICATIVE TOTAL, CONFIRMED BY THE REP",
+    totalNote: totalKind === "partial" ? (live.length - pricedLines.length > 0 ? "Indicative only. Not a contract value. Lines without a price are left out." : "Every line has a price. Estimator tasks are still open, so this is indicative only and not a contract value.") : totalKind === "calculated" ? "Not a contract value until the Rep confirms it and the costs are verified." : "Matches the amount the customer confirmed as indicative. It is not an approved price: the costs still need independent verification and a Manager must approve it.",
     totalExVat, pricedLinesExVat, pricedLineCount: pricedLines.length, chargesExVat, unpricedLineCount: live.length - pricedLines.length,
     vat: Math.round(totalExVat * 0.15 * 100) / 100, totalIncVat: Math.round(totalExVat * 1.15 * 100) / 100,
     confirmedCents: confirmed, differenceCents: confirmed === null ? null : totalCents - confirmed,
