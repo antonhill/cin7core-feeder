@@ -31,7 +31,7 @@ export async function budgetSnapshotLinkFor(db: Db, orgId: string, quoteId: stri
   } : undefined;
   try {
     const { data, error } = await db.from("activity_log").select("detail, created_at").eq("org_id", orgId).eq("action", BUDGET_SEND_ACTION)
-      .filter("detail->>quoteId", "eq", quoteId).filter("detail->>status", "eq", "ACCEPTED").order("created_at", { ascending: false }).limit(1);
+      .eq("detail->>quoteId", quoteId).eq("detail->>status", "ACCEPTED").order("created_at", { ascending: false }).limit(1);
     if (error) return { linked: false, reason: "The Budget Quotation record could not be looked up.", atAcknowledgement };
     const row = (data ?? [])[0] as { detail?: Record<string, unknown>; created_at?: string } | undefined;
     if (!row?.detail) return { linked: false, reason: "No Budget Quotation was sent for this quotation.", atAcknowledgement };
