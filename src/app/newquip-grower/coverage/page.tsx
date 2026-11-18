@@ -25,7 +25,7 @@ export default async function BudgetCoveragePage() {
           <tbody>
             {rows.map((x) => (
               <tr key={x.itemKey} className="border-b align-top" data-testid={`coverage-${x.itemKey}`}>
-                <td className="p-2 font-medium">{x.label}<div className="text-xs font-normal text-slate-500">{x.itemKey}</div></td>
+                <td className="p-2 font-medium">{x.label}<div className="text-xs font-normal text-slate-700">{x.itemKey}</div></td>
                 <td className="p-2">{x.quantityRule}</td>
                 <td className="p-2">{x.mapping}</td>
                 <td className="p-2">{EVIDENCE[x.priceEvidence]}{x.evidenceNote && <div className="text-xs text-slate-600">{x.evidenceNote}</div>}</td>
