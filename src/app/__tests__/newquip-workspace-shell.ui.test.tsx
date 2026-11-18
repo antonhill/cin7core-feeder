@@ -36,15 +36,15 @@ describe("isNewquipWorkspacePath", () => {
 
 describe("newquipWorkspaceLinks", () => {
   it("lists Solution Builder, Projects and Approvals for the NewQuip organisation, in that order", () => {
-    expect(newquipWorkspaceLinks(NQ, [], false).map((l) => l.label)).toEqual(["Solution Builder", "Projects", "Approvals"]);
+    expect(newquipWorkspaceLinks(NQ, [], false).map((l) => l.label)).toEqual(["Solution Builder", "Projects", "Approvals", "Reports"]);
   });
   it("is empty for any other organisation or no organisation", () => {
     expect(newquipWorkspaceLinks("00000000-0000-0000-0000-000000000000", [], false)).toEqual([]);
     expect(newquipWorkspaceLinks(null, [], false)).toEqual([]);
   });
   it("follows the same module toggles as the Toolbox sidebar", () => {
-    expect(newquipWorkspaceLinks(NQ, ["/quotes"], false).map((l) => l.label)).toEqual(["Projects", "Approvals"]);
-    expect(newquipWorkspaceLinks(NQ, ["/projects"], false).map((l) => l.label)).toEqual(["Solution Builder"]);
+    expect(newquipWorkspaceLinks(NQ, ["/quotes"], false).map((l) => l.label)).toEqual(["Projects", "Approvals", "Reports"]);
+    expect(newquipWorkspaceLinks(NQ, ["/projects"], false).map((l) => l.label)).toEqual(["Solution Builder", "Reports"]);
   });
 });
 
@@ -104,7 +104,7 @@ describe("AppShell keeps the Toolbox shell everywhere else", () => {
 describe("AppShell workspace edge cases", () => {
   it("shows exactly the three NewQuip links to a super-admin (no Admin link) and keeps them for impersonation", () => {
     renderAt("/projects", { isSuperAdmin: true });
-    expect(within(screen.getByRole("navigation", { name: "NewQuip" })).getAllByRole("link").map((a) => a.textContent)).toEqual(["Solution Builder", "Projects", "Approvals"]);
+    expect(within(screen.getByRole("navigation", { name: "NewQuip" })).getAllByRole("link").map((a) => a.textContent)).toEqual(["Solution Builder", "Projects", "Approvals", "Reports"]);
   });
   it("keeps the Toolbox shell when every NewQuip module is hidden, and when there is no organisation", () => {
     renderAt("/projects", { disabledModules: ["/quotes", "/projects"], isSuperAdmin: true });

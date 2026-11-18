@@ -674,7 +674,10 @@ export function isNavLinkActive(pathname: string, href: string): boolean {
  */
 export function newquipWorkspaceLinks(orgId: string | null, disabledModules: string[], isSuperAdmin: boolean): ModuleConfig[] {
   const group = buildNavItems(orgId, disabledModules, isSuperAdmin).find((i) => i.kind === "group");
-  return group && group.kind === "group" ? group.children : [];
+  if (!(group && group.kind === "group")) return [];
+  // Reports sit under /newquip-grower but are their own area: Solution Builder must not also read as active there.
+  const kids: WorkspaceLink[] = group.children.map((c) => (c.href === SOLUTION_BUILDER_MODULE.href ? { ...c, notActiveFor: [NEWQUIP_REPORTS_HREF] } : c));
+  return [...kids, NEWQUIP_REPORTS_LINK];
 }
 
 /** True for the routes that belong to NewQuip: Solution Builder, Projects and Approvals and everything nested under them (a segment boundary, so /projects-x never matches). Pure and client-safe; it only chooses chrome, authorisation is enforced by each route's layout and actions. */
@@ -688,6 +691,7 @@ export function isNewquipWorkspacePath(pathname: string): boolean {
 
 export const NEWQUIP_CLAIMS_HREF = "/claims";
 export const NEWQUIP_SETTINGS_HREF = "/newquip-grower/settings";
+export const NEWQUIP_REPORTS_HREF = "/newquip-grower/reports";
 
 /** A workspace link. `alsoActiveFor` / `notActiveFor` let one link own routes that live outside / inside its own path (e.g. Settings owns /settings/members). */
 export type WorkspaceLink = ModuleConfig & { alsoActiveFor?: readonly string[]; notActiveFor?: readonly string[] };
@@ -695,7 +699,8 @@ export type WorkspaceLink = ModuleConfig & { alsoActiveFor?: readonly string[]; 
 const NEWQUIP_SETTINGS_PATHS = [NEWQUIP_SETTINGS_HREF, "/newquip-grower/company-profile", "/newquip-grower/project-templates", "/newquip-grower/cost-survey", "/settings"];
 
 const NEWQUIP_DASHBOARD_LINK: WorkspaceLink = { href: "/", label: "Dashboard", gradient: SELF_COLORED_ICON_BADGE, Icon: ReportsIcon, blurb: "Quotations, approvals, projects and claims at a glance." };
-const NEWQUIP_QUOTATIONS_LINK: WorkspaceLink = { ...SOLUTION_BUILDER_MODULE, label: "Quotations", notActiveFor: [...NEWQUIP_SETTINGS_PATHS, "/newquip-grower/guide"] };
+const NEWQUIP_QUOTATIONS_LINK: WorkspaceLink = { ...SOLUTION_BUILDER_MODULE, label: "Quotations", notActiveFor: [...NEWQUIP_SETTINGS_PATHS, "/newquip-grower/guide", NEWQUIP_REPORTS_HREF] };
+const NEWQUIP_REPORTS_LINK: WorkspaceLink = { href: NEWQUIP_REPORTS_HREF, label: "Reports", gradient: SELF_COLORED_ICON_BADGE, Icon: ReportsIcon, blurb: "Pipeline, costing, bottlenecks and management overview." };
 const NEWQUIP_CLAIMS_LINK: WorkspaceLink = { href: NEWQUIP_CLAIMS_HREF, label: "Claims", gradient: SELF_COLORED_ICON_BADGE, Icon: ReportsIcon, blurb: "Progress claims across every project." };
 const NEWQUIP_SETTINGS_LINK: WorkspaceLink = { href: NEWQUIP_SETTINGS_HREF, label: "Settings", gradient: SELF_COLORED_ICON_BADGE, Icon: AuditIcon, blurb: "Company details, project templates, members and security.", alsoActiveFor: NEWQUIP_SETTINGS_PATHS };
 
@@ -710,6 +715,7 @@ export function newquipOnlyLinks(orgId: string | null, disabledModules: string[]
   if (!disabledModules.includes(QUOTES_MODULE.href)) links.push(NEWQUIP_QUOTATIONS_LINK);
   if (projectsOn) links.push({ ...PROJECTS_MODULE, notActiveFor: [] }, NEWQUIP_CLAIMS_LINK);
   if (!APPROVALS_DISABLED && projectsOn) links.push(APPROVALS_MODULE);
+  if (!disabledModules.includes(QUOTES_MODULE.href)) links.push(NEWQUIP_REPORTS_LINK);
   links.push(NEWQUIP_SETTINGS_LINK);
   return links;
 }
