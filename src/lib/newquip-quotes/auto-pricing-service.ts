@@ -21,7 +21,7 @@ import { listPricingRevisions } from "./pricing-store";
 import { applyPricingChange } from "./pricing-service";
 import { latestCommercialSettings } from "./document-store";
 import { settingsRevisionOf, topUpIneligibleReason } from "./top-up-availability";
-import { FEED_ACTOR, feedConfigured, refreshFxFromFeed } from "./fx-feed";
+import { FEED_ACTOR, feedConfigured, refreshFxFromFeed, type FeedOutcome } from "./fx-feed";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 /** Products are read from Cin7 in successive chunks of this size. EVERY product the quotation still needs is read (alphabetical order) until the ONE overall time budget for the run (suppliers + products) is spent; what is unread then is flagged "will be retried". */
@@ -51,7 +51,10 @@ export interface AutoPricingDeps {
   readRaw: (skus: readonly string[], deadline: number) => Promise<Record<string, { raw: Record<string, unknown> | null } | { error: string }>>;
   suppliers: () => Promise<MasterSupplier[]>;
   now: () => string;
+  /** Refreshes a STALE feed-owned exchange rate before pricing (default: the live Open Exchange Rates feed, or "not configured"). Injectable so a test can drive it without a network. */
+  refreshFx?: (nowIso: string) => Promise<FeedOutcome>;
 }
+const NOT_CONFIGURED: FeedOutcome = { ok: false, error: "The Open Exchange Rates feed is not configured for this deployment.", updated: [], keptManual: [], unchanged: [] };
 export const liveDeps = (db: Db, orgId: string): AutoPricingDeps => ({
   readRaw: (skus, deadline) => readRawProductsForSurvey(db, orgId, NEWQUIP_POC_CIN7_INSTANCE_ID, skus, deadline),
   suppliers: async () => (await listCin7Suppliers(db, orgId, NEWQUIP_POC_CIN7_INSTANCE_ID)).map((s) => ({ id: s.id, name: s.name, currency: s.currency, active: s.active })),
@@ -111,7 +114,9 @@ async function priceQuote(mode: Mode, db: Db, actor: AutoActor, quoteId: string,
 
   const nowIso = deps.now();
   // Exchange rates: if a rate the FEED owns (or a missing USD/EUR rate) has gone stale, fetch fresh ones first (a new FX-only settings version; a Manager's manual override is never replaced; a provider problem leaves the stale rate to be flagged, never used).
-  if (feedConfigured()) await refreshFxFromFeed(db, actor.orgId, FEED_ACTOR, { onlyIfStale: true, nowIso }).catch(() => undefined);
+  // The outcome is KEPT (it used to be discarded): when a stale rate could not be refreshed, the stored reason for each affected product says why, so the Estimator / Manager can see the real cause.
+  const refreshFx = deps.refreshFx ?? ((n: string) => (feedConfigured() ? refreshFxFromFeed(db, actor.orgId, FEED_ACTOR, { onlyIfStale: true, nowIso: n }) : Promise.resolve(NOT_CONFIGURED)));
+  const fxRefresh: FeedOutcome = await refreshFx(nowIso).catch((e: unknown) => ({ ok: false, error: e instanceof Error ? e.message : "The exchange-rate refresh failed.", updated: [], keptManual: [], unchanged: [] }));
   const stored = await latestCommercialSettings(db, actor.orgId, nowIso);
   const settings: CommercialSettings | null = stored?.settings ?? null;
   if (estimator) {
@@ -137,7 +142,7 @@ async function priceQuote(mode: Mode, db: Db, actor: AutoActor, quoteId: string,
     const r = reads[sku];
     if (!r || "error" in r) { flags.push({ sku, code: "not_read", internal: `Not read from Cin7 in this run (${r && "error" in r ? (r.error === "deadline" ? "out of time" : r.error) : "out of time"}): it will be retried when the quotation is submitted, or use Price from Cin7.` }); continue; }
     const res = autoCostFor(surveyInputFromRaw(sku, r.raw), master, settings, { version: stored.revision, enteredBy: stored.enteredBy }, nowIso, categoriesOf.get(sku) ?? []);
-    if (isFlag(res)) flags.push(res); else entries.push(res);
+    if (isFlag(res)) flags.push(res.code === "fx_stale" && !fxRefresh.ok ? { ...res, internal: `${res.internal} The automatic rate refresh did not happen: ${fxRefresh.error ?? "unknown reason"}` } : res); else entries.push(res);
   }
   // The specific reason per product is stored WITH the pricing (server-owned, internal; a Rep never receives the pricing) so the Estimator sees exactly why a product has no automatic price. No cost, rate, freight or margin is in it.
   const autoFlags: Record<string, AutoPriceFlag> = Object.fromEntries(flags.filter((f) => f.sku !== "*").map((f) => [f.sku, { code: f.code, internal: f.internal.slice(0, 300), at: nowIso }]));

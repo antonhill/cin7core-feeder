@@ -10,7 +10,8 @@ import { skuNeedsOf } from "@/newquip/pricing/estimator";
 import { AUTO_ACTOR } from "@/newquip/pricing/auto-costing";
 import { createQuote, loadQuote, saveDraft } from "../quote-store";
 import { listPricingRevisions } from "../pricing-store";
-import { saveCommercialSettings } from "../document-store";
+import { latestCommercialSettings, saveCommercialSettings } from "../document-store";
+import { FEED_ACTOR, refreshFxFromFeed } from "../fx-feed";
 import { autoPricingCutoff, isAutoOwned, READ_CHUNK, RUN_BUDGET_MS, runAutoPricing, type AutoActor, type AutoEnv, type AutoPricingDeps } from "../auto-pricing-service";
 import { createEstimatorPriceSource } from "@/newquip/pricing/estimator";
 
@@ -159,6 +160,55 @@ describe("runAutoPricing: pricing a Rep draft", () => {
     const o = await run(id);
     expect(o.status).toBe("settings_changed");
     expect(o.pending[0]).toMatch(/awaiting the Estimator/);
+  });
+});
+
+// A NEWLY CREATED quotation (not one that already carries cost evidence): the exchange rates stored in the commercial settings are older than the Manager's maximum age, exactly as on newquip-uat when a Rep creates a
+// quotation the day after the last rate refresh. Foreign-currency products can only be priced from a FRESH rate; this proves the on-demand refresh restores pricing, and that when no refresh is possible the real reason is recorded.
+describe("a NEW quotation when the stored exchange rates have gone stale (NQ-Q-0006)", () => {
+  const STALE = () => SETTINGS({ fxMaxAgeDays: 1, fx: { EUR: { rateMicro: 18_615_387, source: "OXR", asOf: "2026-11-14T11:00:00Z", origin: "oxr" }, USD: { rateMicro: 16_942_404, source: "OXR", asOf: "2026-11-14T11:00:00Z", origin: "oxr" } } });
+  const ts = Math.floor(Date.parse(NOW) / 1000) - 600;
+  const provider = (): typeof fetch => (async () => ({ ok: true, status: 200, json: async () => ({ base: "USD", timestamp: ts, rates: { ZAR: 17.0, EUR: 0.92 } }) })) as unknown as typeof fetch;
+
+  it("with the feed available the stale rate is refreshed first and the foreign-currency products ARE priced automatically (and a new settings version holds the fresh rate)", async () => {
+    await saveCommercialSettings(db as never, ORG, STALE(), "mgr@nq", NOW);
+    const id = await newQuote();
+    const o = await run(id, mixed({ refreshFx: (nowIso) => refreshFxFromFeed(db as never, ORG, FEED_ACTOR, { onlyIfStale: true, nowIso, env: { OPENEXCHANGERATES_APP_ID: "test" }, fetchFn: provider() }) }));
+    expect(o.status).toBe("applied");
+    expect(o.added).toBeGreaterThan(0);
+    const priced = (await priceOf(id)).draft.estimator.pricing!;
+    expect(Object.keys(priced.skus).length).toBe(o.added);
+    expect(Object.values(priced.skus).some((e) => e?.currency === "EUR")).toBe(true); // a foreign-currency product was priced
+    expect((await latestCommercialSettings(db as never, ORG, NOW))!.settings.fx.EUR.origin).toBe("oxr"); // fresh rate stored (append-only version)
+  });
+  // Domestic and foreign suppliers: the first product is costed in ZAR, every other in EUR (as NQ-Q-0006's slats / drinker parts vs its feeder / mat / LED).
+  const mixed = (over: Partial<AutoPricingDeps> = {}): AutoPricingDeps => deps({
+    readRaw: async (skus) => Object.fromEntries(skus.map((s, i) => [s, { raw: { SKU: s, Status: "Active", Name: s, Suppliers: i === 0
+      ? [{ SupplierID: "Z1", SupplierName: "Test ZAR Co", Cost: 100, Currency: "ZAR", LastSupplied: "2026-06-16" }]
+      : [{ SupplierID: "E1", SupplierName: "Test EUR Co", Cost: 10, Currency: "EUR", LastSupplied: "2026-06-16" }] } }])),
+    suppliers: async () => [{ id: "E1", name: "Test EUR Co", currency: "EUR", active: true }, { id: "Z1", name: "Test ZAR Co", currency: "ZAR", active: true }],
+    ...over,
+  });
+  it("with NO refresh possible the domestic (ZAR) product STILL prices, every foreign-currency product stays unpriced, nothing is invented, and the recorded reason names the missing refresh", async () => {
+    await saveCommercialSettings(db as never, ORG, STALE(), "mgr@nq", NOW);
+    const id = await newQuote();
+    const o = await run(id, mixed({ refreshFx: async () => ({ ok: false, error: "The Open Exchange Rates feed is not configured for this deployment.", updated: [], keptManual: [], unchanged: [] }) }));
+    const own = Object.values((await priceOf(id)).draft.estimator.pricing!.skus);
+    const zar = own.filter((e) => e?.currency === "ZAR");
+    expect(zar.length).toBeGreaterThan(0); // the domestic product(s) priced
+    expect(own.some((e) => e?.currency === "EUR" || e?.currency === "USD")).toBe(false); // NO foreign-currency product is priced from a stale rate
+    expect(o.added).toBe(zar.length); // and ONLY those
+    const staleReasons = o.internal.filter((i) => i.code === "fx_stale");
+    expect(staleReasons.length).toBeGreaterThan(1);
+    for (const r of staleReasons) expect(r.text).toMatch(/exchange rate is older than 1 day.*automatic rate refresh did not happen: The Open Exchange Rates feed is not configured/);
+    expect(o.pending.join(" ")).not.toMatch(/exchange|feed|rate/i); // the Rep-safe wording never carries the internal reason
+  });
+  it("a refresh that THROWS is also recorded (never swallowed) and never prices anything", async () => {
+    await saveCommercialSettings(db as never, ORG, STALE(), "mgr@nq", NOW);
+    const id = await newQuote();
+    const o = await run(id, mixed({ refreshFx: async () => { throw new Error("provider unreachable"); } }));
+    expect(Object.values((await priceOf(id)).draft.estimator.pricing?.skus ?? {}).some((e) => e?.currency === "EUR")).toBe(false);
+    expect(o.internal.find((i) => i.code === "fx_stale")!.text).toMatch(/provider unreachable/);
   });
 });
 
