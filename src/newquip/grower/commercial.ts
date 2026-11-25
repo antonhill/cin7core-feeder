@@ -499,6 +499,7 @@ export function manualSelectionSkusFor(itemKey: GrowerItemKey, revision: Templat
  * never offered as a candidate. Nothing here rewrites any stored quotation scope or saved package mapping.
  */
 export const EXCLUDED_SKUS: Readonly<Record<string, string>> = {
+  "SYSH-2750-4": "DON'T QUOTE (Sage and Cin7 product name; Spark/NewQuip decision 2026-11-26): never offered, never a valid choice for the bulk tank.",
   NQ1984: "Excluded from the Grower House (Sean, 2026-11). It is the M75 drop kit WITHOUT knobs and rope; the complete drop kit is NQ1942.",
 };
 export const isExcludedSku = (sku: string): boolean => Object.prototype.hasOwnProperty.call(EXCLUDED_SKUS, sku);
@@ -510,7 +511,6 @@ export const isExcludedSku = (sku: string): boolean => Object.prototype.hasOwnPr
 export interface SelectableAlternative { itemKey: GrowerItemKey; sku: string; label: string; caution: string }
 export const SELECTABLE_ALTERNATIVES: readonly SelectableAlternative[] = [
   { itemKey: "feeder", sku: "PNQ002", label: "CCM FEEDER FOR GROWERS (PNQ002)", caution: "Included by Sean (2026-11). How it relates to the standard PNQ082 (with monoflo nipples) was not stated, so it is an Estimator choice for the feeder line: never automatic, and never an extra line beside the feeder." },
-  { itemKey: "bulk_tank", sku: "SYSH-2750-4", label: "16.58 t silo (SYSH-2750-4)", caution: "Included by Sean (2026-11). Cin7's product name still reads 'DONT QUOTE' and the template default is the 13.39 t SYSH-2750-3, so choosing it is the Estimator's decision for the tank line (tank size is an Estimator input) and NewQuip should correct the Cin7 name." },
 ];
 export const alternativesFor = (itemKey: GrowerItemKey): SelectableAlternative[] => SELECTABLE_ALTERNATIVES.filter((a) => a.itemKey === itemKey);
 

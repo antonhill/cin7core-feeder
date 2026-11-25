@@ -31,8 +31,9 @@ describe("who is offered the Cin7 product chooser", () => {
     for (const k of ["pvc_door", "led_light"]) expect(mappingControlFor(k, "per_feeder", estimator, true), k).toBe("none");
     for (const k of ["feeder", "bulk_tank"]) expect(mappingControlFor(k, "not_selected", estimator, true), k).toBe("none"); // a line that is not selected offers nothing, alternatives or not
   });
-  it("feeder and bulk tank have NewQuip-approved alternatives (PNQ002, SYSH-2750-4): an editable Estimator or Manager is offered them, nobody else", () => {
-    for (const k of ["feeder", "bulk_tank"]) {
+  it("the feeder has a NewQuip-approved alternative (PNQ002), the bulk tank none (SYSH-2750-4 is DON'T QUOTE): an editable Estimator or Manager is offered it, nobody else", () => {
+    expect(mappingControlFor("bulk_tank", "per_feeder", estimator, true)).toBe("none");
+    for (const k of ["feeder"]) {
       expect(mappingControlFor(k, "per_feeder", estimator, true), k).toBe("alternative");
       expect(mappingControlFor(k, "per_feeder", manager, true), k).toBe("alternative");
       expect(mappingControlFor(k, "per_feeder", rep, true), k).toBe("none");

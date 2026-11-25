@@ -31,6 +31,8 @@ export interface EvaluationContext {
   budgetBasis?: readonly BudgetBasisEntry[];
   /** ISO date the register is checked against (default today). */
   budgetAsOf?: string;
+  /** UAT deployment only (uat-provisional-basis.ts). */
+  uatProvisionalRates?: readonly import("./uat-provisional-basis").UatProvisionalRate[];
 }
 
 export function evaluateDraft(draft: QuoteDraft, ctx: EvaluationContext): QuoteEvaluation {
@@ -46,6 +48,7 @@ export function evaluateDraft(draft: QuoteDraft, ctx: EvaluationContext): QuoteE
         confirmedPackages: new Set(draft.estimator.confirmedPackages),
         feederVariant: draft.config.feederVariant,
         doorSpecification: doorSpecificationFor(draft.config.doorSize),
+        ...(ctx.provisionalPackages === true && ctx.uatProvisionalRates ? { uatProvisionalRates: ctx.uatProvisionalRates } : {}),
         templateRevision: templateRevisionOf(draft),
         penningPigSize: draft.config.penningPigSize ?? null,
         coolingSystemLengthM: draft.config.coolingSystemLengthM ?? null,

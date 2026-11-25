@@ -3,6 +3,7 @@ import { isOptionalItemKey } from "./types";
 import { BUDGET_BASIS_PLAIN, budgetRateSellingPrice, usableBudgetBasis, type BudgetBasisEntry } from "./budget-basis";
 import type { FeederVariant, GeneratedLine, GrowerItemKey, PenningPigSize } from "./types";
 import { confirmedBudgetDefaultSku } from "./budget-default-products";
+import { UAT_PROVISIONAL_PLAIN, uatRateFor, type UatProvisionalRate } from "./uat-provisional-basis";
 import { INTERIM_PANEL_PLAIN, INTERIM_PANEL_REASON, interimPanelRate, type PanelSelection } from "./control-panel-interim";
 import { TEMPLATE_REVISION_LEGACY, TEMPLATE_REVISION_CURRENT, coolingPackageFor, type TemplateRevision, alternativesFor, estimatorPricedFor, feederSkuFor, isCatalogueDefaultItem, manualLinesFor, packageAutoConfirmable, packageFor, provisionalPackageBasis, recommendedSkuFor, type PackageComponent } from "./commercial";
 import { PENNING_RATE_PER_RM } from "./workbook-price-source";
@@ -132,6 +133,8 @@ export interface BudgetOptions {
   /** Output items whose package definition an estimator has confirmed. */
   confirmedPackages?: ReadonlySet<GrowerItemKey>;
   feederVariant?: FeederVariant;
+  /** UAT deployment ONLY (uat-provisional-basis.ts): provisional internal costing assumptions. Absent everywhere else. Not an approval. */
+  uatProvisionalRates?: readonly UatProvisionalRate[];
   /** The door specification the Rep chose (door-sizes.ts), or null when no size is chosen. Current template, Budget basis only. */
   doorSpecification?: string | null;
   /** The template revision the quotation was created under (default: the ORIGINAL template, so nothing that omits it can be re-scoped). */
@@ -365,6 +368,15 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
       const priced = budgetRateSellingPrice(basis, opts.budgetMarkupBps ?? null, opts.budgetAsOf ?? new Date().toISOString().slice(0, 10));
       if (priced) {
         bridge.push({ ...priceByPerson(g, priced.unitPriceExVat, "budget_rate", `Budget allowance (${basis.specification}), not an Estimator-confirmed product.`), provisional: { plain: BUDGET_BASIS_PLAIN } });
+        continue;
+      }
+    }
+    // UAT-ONLY provisional cost basis for the door size (isolated, never an approval): same markup, ONCE, no freight, always provisional.
+    const uat = isCurrentDoor && opts.doorSpecification && !explicit && !defaulted && !basis && !validResolution(resolution) ? uatRateFor(opts.uatProvisionalRates, g.itemKey, opts.doorSpecification) : null;
+    if (uat) {
+      const priced = budgetRateSellingPrice({ kind: "rate", amount: uat.amount, basis: "cost", evidence: { asOf: uat.asOf } } as never, opts.budgetMarkupBps ?? null, opts.budgetAsOf ?? new Date().toISOString().slice(0, 10));
+      if (priced) {
+        bridge.push({ ...priceByPerson(g, priced.unitPriceExVat, "budget_rate", "UAT provisional costing assumption (not an approval)."), provisional: { plain: UAT_PROVISIONAL_PLAIN } });
         continue;
       }
     }

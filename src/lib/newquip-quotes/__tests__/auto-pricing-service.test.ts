@@ -364,3 +364,20 @@ describe("Budget default products are READ from Cin7 (2026-11-25: CL1, BF and fa
     for (const s of ["HO05084000", "HO05084507", "MUG4D14A1M10238"]) expect(read.has(s), s).toBe(false);
   });
 });
+
+describe("freight is applied by price-source class (2026-11-26): a landed ZAR reference takes no further freight", () => {
+  beforeEach(async () => { await saveCommercialSettings(db as never, ORG, SETTINGS({ markupBps: 2500 }), "mgr@nq", NOW); });
+  it("the Sage-loaded local SKUs take factor 1.00; every other SKU in the same quotation keeps its category freight (1.10 in this test)", async () => {
+    const d = draftOn(); (d.config as { optionalEquipment: Record<string, boolean> }).optionalEquipment = { ...d.config.optionalEquipment, emergency_windows: true };
+    d.config.estimatorQuantities = { ...d.config.estimatorQuantities, emergency_windows: 1 };
+    const id = await newQuote(d);
+    const LANDED = new Set(["NQ1060", "NQ3401", "NQPP1017", "NQ1088"]);
+    const readRaw = async (skus: readonly string[]) => Object.fromEntries(skus.map((s) => [s, { raw: LANDED.has(s)
+      ? { SKU: s, Status: "Active", Name: s, Suppliers: [{ SupplierID: "Z1", SupplierName: "Test ZAR Co", Cost: 10, Currency: "ZAR", LastSupplied: "2026-11-16" }] }
+      : { SKU: s, Status: "Active", Name: s, Suppliers: [{ SupplierID: "E1", SupplierName: "Test EUR Co", Cost: 10, Currency: "EUR", LastSupplied: "2026-11-16" }] } }]));
+    await run(id, deps({ readRaw, suppliers: async () => [{ id: "E1", name: "Test EUR Co", currency: "EUR", active: true }, { id: "Z1", name: "Test ZAR Co", currency: "ZAR", active: true }] }));
+    const skus = (await priceOf(id)).draft.estimator.pricing!.skus as Record<string, { freight: { factorMicro: number } }>;
+    for (const s of LANDED) expect(skus[s]?.freight.factorMicro, s).toBe(1_000_000);
+    for (const s of ["ERT003", "HO08990730", "RID507450"]) expect(skus[s]?.freight.factorMicro, s).toBe(1_100_000);
+  });
+});

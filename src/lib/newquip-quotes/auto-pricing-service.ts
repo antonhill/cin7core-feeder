@@ -16,6 +16,8 @@ import type { MasterSupplier } from "@/newquip/pricing/cost-survey";
 import { skuNeedsOf, submissionFrom, SUPPLIER_AUTO_RULE_VERSION } from "@/newquip/pricing/estimator";
 import type { AutoPriceFlag, EstimatorPricing } from "@/newquip/pricing/estimator";
 import { evaluationContext } from "./context";
+import { budgetSkuNeeds } from "./sku-needs";
+import { landedZarSkuSet } from "@/newquip/pricing/cost-source-classes";
 import { hasPocFlag } from "./poc-presentation";
 import { loadQuote, type QuoteRecord } from "./quote-store";
 import { listPricingRevisions } from "./pricing-store";
@@ -131,8 +133,7 @@ async function priceQuote(mode: Mode, db: Db, actor: AutoActor, quoteId: string,
   }
 
   // The needs are judged on the BUDGET evaluation (provisionalPackages), because a Budget default product (CL1, BF, fans: budget-default-products.ts) has no SKU in the plain evaluation and so would never have its cost read.
-  const budget = evaluateDraft(q.draft, { ...evaluationContext(true), provisionalPackages: true }).budget;
-  const needsAll = skuNeedsOf(budget);
+  const needsAll = budgetSkuNeeds(q.draft);
   const categoriesOf = new Map(needsAll.map((n) => [n.sku, n.itemKeys]));
   // STANDARD equipment is read FIRST. Products are read alphabetically until the run's time budget ends, so a large optional package (sumpless pad cooling adds about 40 SKUs) must never push a standard
   // product (feeder, tank, mat, slats, drinker, light) past the deadline. A SKU used by any standard line goes first; one used only by optional additions goes last. Order within each group is unchanged.
@@ -146,7 +147,7 @@ async function priceQuote(mode: Mode, db: Db, actor: AutoActor, quoteId: string,
   for (const sku of needed) {
     const r = reads[sku];
     if (!r || "error" in r) { flags.push({ sku, code: "not_read", internal: `Not read from Cin7 in this run (${r && "error" in r ? (r.error === "deadline" ? "out of time" : r.error) : "out of time"}): it will be retried when the quotation is submitted, or use Price from Cin7.` }); continue; }
-    const res = autoCostFor(surveyInputFromRaw(sku, r.raw), master, settings, { version: stored.revision, enteredBy: stored.enteredBy }, nowIso, categoriesOf.get(sku) ?? []);
+    const res = autoCostFor(surveyInputFromRaw(sku, r.raw), master, settings, { version: stored.revision, enteredBy: stored.enteredBy }, nowIso, categoriesOf.get(sku) ?? [], landedZarSkuSet());
     if (isFlag(res)) flags.push(res.code === "fx_stale" && !fxRefresh.ok ? { ...res, internal: `${res.internal} The automatic rate refresh did not happen: ${fxRefresh.error ?? "unknown reason"}` } : res); else entries.push(res);
   }
   // The specific reason per product is stored WITH the pricing (server-owned, internal; a Rep never receives the pricing) so the Estimator sees exactly why a product has no automatic price. No cost, rate, freight or margin is in it.

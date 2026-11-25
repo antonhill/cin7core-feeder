@@ -98,18 +98,19 @@ describe("inclusion and exclusion", () => {
     expect(mergeCandidates({ sku: "NQ1984", name: "x" }, cand).map((c) => c.sku)).toEqual(["NQ1942"]);
     expect(resolveMapping("pvc_door", cand, "NQ1984")).toMatchObject({ status: "UNMAPPED", sku: null, note: EXCLUDED_SKUS.NQ1984 });
   });
-  it("PNQ002 and SYSH-2750-4 are choices within the feeder and bulk-tank lines only, never automatic, never extra lines", () => {
+  it("PNQ002 is a choice within the feeder line only (never automatic, never an extra line); SYSH-2750-4 is DON'T QUOTE and is not offered or accepted", () => {
     expect(alternativesFor("feeder").map((a) => a.sku)).toEqual(["PNQ002"]);
-    expect(alternativesFor("bulk_tank").map((a) => a.sku)).toEqual(["SYSH-2750-4"]);
+    expect(alternativesFor("bulk_tank")).toEqual([]);
+    expect(isExcludedSku("SYSH-2750-4")).toBe(true);
     expect(SELECTABLE_ALTERNATIVES.every((a) => /never automatic|decision/.test(a.caution))).toBe(true);
     expect(mappingError([{ itemKey: "feeder", sku: "PNQ002" }], [{ sku: "PNQ002", active: true }])).toBeNull();
-    expect(mappingError([{ itemKey: "bulk_tank", sku: "SYSH-2750-4" }], [{ sku: "SYSH-2750-4", active: true }])).toBeNull();
+    expect(mappingError([{ itemKey: "bulk_tank", sku: "SYSH-2750-4" }], [{ sku: "SYSH-2750-4", active: true }])).toMatch(/cannot be used/);
     // an alternative is valid only for ITS item, and a random product is still refused
     expect(mappingError([{ itemKey: "bulk_tank", sku: "PNQ002" }], [{ sku: "PNQ002", active: true }])).toMatch(/not the source-backed product/);
     expect(mappingError([{ itemKey: "feeder", sku: "NQ9999" }], [{ sku: "NQ9999", active: true }])).toMatch(/not the source-backed product/);
   });
-  it("the tank alternative's caution records that Cin7's name says DONT QUOTE", () => {
-    expect(alternativesFor("bulk_tank")[0].caution).toMatch(/DONT QUOTE/);
+  it("the DON'T QUOTE silo's exclusion reason is recorded", () => {
+    expect(EXCLUDED_SKUS["SYSH-2750-4"]).toMatch(/DON'T QUOTE/);
   });
 });
 
@@ -201,10 +202,9 @@ describe("an approved alternative actually prices through the bridge (it must no
   const demo = applyDemoDefaults({ ...emptyDraft(), customerName: "T" }).draft;
   const base = { ...demo, estimator: { ...demo.estimator, templateRevision: "grower-2026-11" as const } };
   const lineOf = (d: typeof base, k: string) => evaluateDraft(d, ctx).budget!.lines.find((l) => l.itemKey === k)!;
-  it("the feeder maps to PNQ002 and the tank to SYSH-2750-4: priced from the source, SKU kept, never 'unmapped'", () => {
-    const d = { ...base, estimator: { ...base.estimator, confirmedMappings: { ...base.estimator.confirmedMappings, feeder: "PNQ002", bulk_tank: "SYSH-2750-4" } } };
+  it("the feeder maps to PNQ002: priced from the source, SKU kept, never 'unmapped'", () => {
+    const d = { ...base, estimator: { ...base.estimator, confirmedMappings: { ...base.estimator.confirmedMappings, feeder: "PNQ002" } } };
     expect(lineOf(d, "feeder")).toMatchObject({ sku: "PNQ002", status: "priced" });
-    expect(lineOf(d, "bulk_tank")).toMatchObject({ sku: "SYSH-2750-4", status: "priced" });
   });
   it("any other product is still refused for those lines, and the standard stays the default", () => {
     const d = { ...base, estimator: { ...base.estimator, confirmedMappings: { ...base.estimator.confirmedMappings, feeder: "NQ9999" } } };
