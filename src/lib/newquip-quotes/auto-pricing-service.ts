@@ -130,7 +130,8 @@ async function priceQuote(mode: Mode, db: Db, actor: AutoActor, quoteId: string,
     return out("settings_changed", { pending: ["Price pending: commercial settings changed since this quotation was priced; awaiting the Estimator"], internal: [{ sku: "*", code: "settings_changed", text: `Priced under commercial settings v${settingsRevisionOf(prior)}; the pricing-relevant settings last changed at v${stored.epoch}.` }] });
   }
 
-  const budget = evaluateDraft(q.draft, evaluationContext(true)).budget;
+  // The needs are judged on the BUDGET evaluation (provisionalPackages), because a Budget default product (CL1, BF, fans: budget-default-products.ts) has no SKU in the plain evaluation and so would never have its cost read.
+  const budget = evaluateDraft(q.draft, { ...evaluationContext(true), provisionalPackages: true }).budget;
   const needsAll = skuNeedsOf(budget);
   const categoriesOf = new Map(needsAll.map((n) => [n.sku, n.itemKeys]));
   // STANDARD equipment is read FIRST. Products are read alphabetically until the run's time budget ends, so a large optional package (sumpless pad cooling adds about 40 SKUs) must never push a standard

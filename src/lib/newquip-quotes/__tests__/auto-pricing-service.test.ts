@@ -345,3 +345,22 @@ describe("standard equipment is read before optional additions (2026-11-25: sump
     expect(lastStandard).toBeLessThan(firstOptional);
   });
 });
+
+
+describe("Budget default products are READ from Cin7 (2026-11-25: CL1, BF and fans were never fetched)", () => {
+  beforeEach(async () => { await saveCommercialSettings(db as never, ORG, SETTINGS({ markupBps: 2500 }), "mgr@nq", NOW); });
+  it("a quotation with the controller, silo weighing and cone fans selected asks Cin7 for HO05084000, HO05084507 and MUG4D14A1M10238", async () => {
+    const d = draftOn(); (d.config as { optionalEquipment: Record<string, boolean> }).optionalEquipment = { ...d.config.optionalEquipment, controller: true, silo_weighing: true, cone_fans: true };
+    d.config.estimatorQuantities = { ...d.config.estimatorQuantities, controller: 1, silo_weighing: 1, cone_fans: 2 };
+    const id = await newQuote(d);
+    await run(id);
+    const read = new Set(calls.flat());
+    for (const s of ["HO05084000", "HO05084507", "MUG4D14A1M10238"]) expect(read.has(s), s).toBe(true);
+  });
+  it("a quotation without them does not read them", async () => {
+    const id = await newQuote();
+    await run(id);
+    const read = new Set(calls.flat());
+    for (const s of ["HO05084000", "HO05084507", "MUG4D14A1M10238"]) expect(read.has(s), s).toBe(false);
+  });
+});
