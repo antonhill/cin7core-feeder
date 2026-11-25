@@ -2,16 +2,16 @@
 // nothing, reads no cost and is NOT yet wired into a quotation: a system length input, the labour days and the travel / food / accommodation charges are separate, owner-approved steps (see
 // docs/newquip/NEWQUIP_GROWER_PRICING_IMPLEMENTATION_MATRIX.md). Costs are the current Cin7 component costs, looked up at run time by the existing pricing engine.
 //
-// Every formula below is the handoff's. The three places the handoff leaves a reading open are returned in `assumptions` so no caller can present them as settled:
-//   A1  for a system over 20 m "every plumbing quantity doubles": the UNROUNDED quantity is doubled and then rounded up to whole containers (acetone and Sikaflex 1.5 -> 3, not 2 -> 4).
-//   A2  KNQCOOL16 (cleaning fittings) is a gutter-section item, 2 per system, and is NOT doubled over 20 m.
-//   A3  no supported length range was given: lengths outside 0.6 m (one pad) to 200 m are refused as an input-sanity check, not a commercial rule; a system of 3 m or less has no middle gutter kit.
+// Every formula below is the handoff's. Two readings were CONFIRMED by NewQuip (2026-11-25 decisions) and one is a provisional UAT input check; all three are returned in `assumptions`:
+//   A1  (CONFIRMED) for a system over 20 m "every plumbing quantity doubles": the UNROUNDED quantity is doubled and then rounded up to whole containers (acetone and Sikaflex 1.5 -> 3, not 2 -> 4).
+//   A2  (CONFIRMED) KNQCOOL16 (cleaning fittings) is a gutter-section item, 2 per system in total, with no duplicate consumption, and is NOT doubled over 20 m.
+//   A3  (PROVISIONAL, needs production approval) no supported length range was given: lengths outside 0.6 m (one pad) to 200 m are refused as an input-sanity check, not a commercial rule; a system of 3 m or less has no middle gutter kit.
 
 export type CoolingSection = "gutter" | "pad" | "fixings" | "plumbing";
 export interface CoolingLine { sku: string; description: string; section: CoolingSection; quantity: number }
 export interface CoolingBom { lengthM: number; plumbingDoubled: boolean; lines: CoolingLine[]; assumptions: string[] }
 
-/** Input-sanity bounds, NOT commercial rules (the handoff gave none). The minimum is one pad (0.6 m): below it no pad would be quoted. The maximum only stops an absurd or mistyped length from producing absurd quantities; NewQuip to confirm. */
+/** Input-sanity bounds, NOT commercial rules (the handoff gave none). The minimum is one pad (0.6 m): below it no pad would be quoted. The maximum only stops an absurd or mistyped length from producing absurd quantities; PROVISIONAL for UAT, flagged as requiring production approval. */
 export const COOLING_MIN_LENGTH_M = 0.6;
 export const COOLING_MAX_LENGTH_M = 200;
 
@@ -76,9 +76,9 @@ export function coolingBom(lengthM: number): CoolingBom {
   return {
     lengthM, plumbingDoubled: doubled, lines,
     assumptions: [
-      "Over 20 m every plumbing quantity is doubled before it is rounded up to whole containers (acetone and Sikaflex: 1.5 becomes 3). NewQuip to confirm.",
-      "KNQCOOL16 (cleaning fitting) stays at 2 per system and is not doubled over 20 m, because it is counted once, in the gutter section. NewQuip to confirm.",
-      `No supported length range was given. Lengths are accepted from ${COOLING_MIN_LENGTH_M} m (one pad) to ${COOLING_MAX_LENGTH_M} m as an input-sanity check only; a system of 3 m or less has no middle gutter kit. NewQuip to confirm.`,
+      "Over 20 m every plumbing quantity is doubled before it is rounded up to whole containers (acetone and Sikaflex: 1.5 becomes 3). Confirmed by NewQuip.",
+      "KNQCOOL16 (cleaning fitting) stays at 2 per system and is not doubled over 20 m, because it is counted once, in the gutter section (two per system in total, no duplicate consumption). Confirmed by NewQuip.",
+      `No supported length range was given. Lengths are accepted from ${COOLING_MIN_LENGTH_M} m (one pad) to ${COOLING_MAX_LENGTH_M} m as an input-sanity check only; a system of 3 m or less has no middle gutter kit. Provisional for UAT: needs NewQuip approval before production.`,
     ],
   };
 }

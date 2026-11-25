@@ -95,7 +95,11 @@ describe("sumpless pad cooling: the confirmed quantities (pure; not yet wired in
   it("over 20 m the gutter section does not double: KNQCOOL16 stays 2, and the water tank kit stays 1", () => {
     expect(q(25)).toMatchObject({ KNQCOOL16: 2, KNQCOOL04: 1 });
   });
-  it("states its three open readings instead of hiding them", () => expect(coolingBom(12).assumptions).toHaveLength(3));
+  it("states its readings: two CONFIRMED by NewQuip, the length range PROVISIONAL (needs production approval)", () => {
+    const a = coolingBom(12).assumptions;
+    expect(a).toHaveLength(3);
+    expect(a[0]).toMatch(/Confirmed by NewQuip/); expect(a[1]).toMatch(/Confirmed by NewQuip/); expect(a[2]).toMatch(/Provisional for UAT/);
+  });
   it("refuses a length that is not a positive number, is below one pad (0.6 m) or is absurd (over 200 m); the edges are accepted", () => {
     for (const L of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) expect(() => coolingBom(L)).toThrow(/greater than zero/);
     for (const L of [1e-10, 0.59, 200.01, 1e7, 1e300]) expect(() => coolingBom(L)).toThrow(/between 0\.6 m and 200 m/);

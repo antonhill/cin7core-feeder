@@ -109,7 +109,7 @@ export function coolingPackageFor(lengthM: number | null | undefined): PackageMa
   return {
     kind: "package", itemKey: "pad_cooling", name: `Sumpless pad cooling, ${lengthM} m system`, layoutDriven: false,
     provenance: "NEWQUIP_GROWER_PRICING_HANDOFF_2026-11-25, section 6: confirmed quantity formulas by system length; current Cin7 component costs approved for the Budget calculation. " + bom.assumptions.join(" "),
-    estimatorConfirmation: "NewQuip confirmed the quantity formulas on 2026-11-25; three readings remain for NewQuip to confirm (plumbing doubled before rounding over 20 m, KNQCOOL16 not doubled, no minimum length). The Estimator confirms the package at sign-off. Labour, travel, food and accommodation are not included.",
+    estimatorConfirmation: "NewQuip confirmed the quantity formulas on 2026-11-25, including the plumbing doubling over 20 m and the cleaning fitting counted once (two per system). The 0.6 m to 200 m length check is provisional for UAT and needs production approval. The Estimator confirms the package at sign-off. Labour, travel, food and accommodation are not included.",
     components: bom.lines.filter((l) => l.quantity > 0).map((l) => fixed(`${l.section}-${l.sku}`, l.sku, l.description, l.quantity, `Handoff 2026-11-25 s6 (${l.section})`)),
   };
 }
