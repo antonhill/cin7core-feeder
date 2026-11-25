@@ -263,10 +263,10 @@ function optionalRules(): GrowerRuleDef[] {
     ...extra,
   });
   return [
-    opt(1, "controller", "Thomas-CL1 controller (incl. temperature sensors)", 89, ""),
-    opt(2, "silo_weighing", "THOMAS-BF silo weighing (4 load cells, IO board…)", 90, ""),
+    opt(1, "controller", "Thomas-CL1 controller (incl. temperature sensors)", 89, "", { suggested: () => 1 }), // NewQuip (2026-11-25): one per room (a suggestion; the Rep enters the quantity)
+    opt(2, "silo_weighing", "THOMAS-BF silo weighing (4 load cells, IO board…)", 90, "", { suggested: () => 1 }), // NewQuip (2026-11-25): one per room
     opt(3, "control_panel", "Control panel for CL1 & BF", 91, "Workbook: =E89 (follows the controller)."),
-    opt(4, "emergency_windows", "Emergency windows (24v RLD winches, power supplies)", 92, "Guide default 6 in D92."),
+    opt(4, "emergency_windows", "Emergency windows (24v RLD winches, power supplies)", 92, "Guide default 6 in D92.", { suggested: () => 1 }), // NewQuip (2026-11-25): ERT003, one per room by default, manual override
     opt(5, "pad_cooling", "Sumpless pad cooling (plastic pads, gutters, pumps)", 93, "Guide size 18m × 1.5m × 0.15m in D93. VENTILATION: ENGINEERING REVIEW."),
     opt(6, "cone_fans", '57" fibreglass cone fans (380v)', 94, "Guide default 6 in D94. VENTILATION: ENGINEERING REVIEW — AS.03 (fan-inclusive example) is not in the POC source set."),
     opt(7, "manure_plug", "250mm manure plug (tube, seal, plug w/ breather)", 96, ""),

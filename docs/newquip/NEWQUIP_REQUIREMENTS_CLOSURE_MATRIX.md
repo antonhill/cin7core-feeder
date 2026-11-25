@@ -12,24 +12,24 @@ Status key: ALREADY CONFIRMED, IMPLEMENTED AND VERIFIED, INTERNAL RECONCILIATION
 |---|---|---|---|---|
 | Q01 | PVC doors | Both door BOMs complete (NQ3444 2.1x1.2 m = KNQ199 + NQ3845 + NQ3846; NQ3444-B 2.1x1 m = KNQ086 + NQ3845 + NQ3846) | ALREADY CONFIRMED | - |
 | Q03 | PVC doors | Door variant chosen by dimensions; descriptions updated; old NQ2112/2113/2114/2161/2281 not to be used | ALREADY CONFIRMED | - |
-| Q03b | PVC doors | Door selection mapping in the Rep workflow (NQ3444 / NQ3444-B by size) | INTERNAL RECONCILIATION REQUIRED | Spark |
+| Q03b | PVC doors | Door selection mapping; do NQ3444-B, NQ3845, NQ3846 exist in Cin7 | GENUINELY MISSING COMMERCIAL APPROVAL | Teresa / Shirnel |
 | Q02 | PVC doors | Approve the door Budget cost basis | GENUINELY MISSING COMMERCIAL APPROVAL | Shirnel / Rene |
-| Q02b | PVC doors | Sage latest cost for the KNQ086 door panel looks anomalous (see the confidential workbook) | INTERNAL RECONCILIATION REQUIRED | Spark / NewQuip finance |
-| Q04 | THOMAS-CL1 | Which CL1 code | INTERNAL RECONCILIATION REQUIRED | Spark |
-| Q05 | THOMAS-BF | BF HO05084507, one per room, current Cin7 cost + mark-up | ALREADY CONFIRMED | - |
+| Q02b | PVC doors | Sage latest cost for the KNQ086 door panel looks anomalous (see confidential workbook) | INTERNAL RECONCILIATION REQUIRED | Spark / NewQuip finance |
+| Q04 | THOMAS-CL1 | CL1 product mapping | IMPLEMENTED AND VERIFIED | - |
+| Q05 | THOMAS-BF | BF HO05084507, one per room | IMPLEMENTED AND VERIFIED | Rene (yes/no) |
 | Q06-Q08 | Control panels | Interim Budget price R85,000 (CL1 and BF) / R65,000 (one); no wait for the 60+ configuration BOM catalogue | IMPLEMENTED AND VERIFIED | NewQuip: name the approver (record only) |
 | Q09 | Emergency windows | 11-line component BOM beyond ERT003 | GENUINELY MISSING COMMERCIAL APPROVAL | Rene (resend the BOM list) |
-| Q10 | Emergency windows | ERT003 cost usable; quantity 1 per room with override; HO08990730 and HO08020800 one per two windows | ALREADY CONFIRMED | - |
+| Q10 | Emergency windows | ERT003 one per room with override; shared parts one per two windows | IMPLEMENTED AND VERIFIED | - |
 | Q11 | Cooling | 3 m rounding, minimum length | IMPLEMENTED AND VERIFIED | - |
 | Q12 | Cooling | Rod formula 4 per gutter kit plus 2 per tank kit | IMPLEMENTED AND VERIFIED | - |
 | Q13 | Cooling | KNQCOOL16 total per system | IMPLEMENTED AND VERIFIED | - |
 | Q14 | Cooling | Plumbing scales over 20 m; NQ3341 pipe | IMPLEMENTED AND VERIFIED | - |
 | Q15 | Cooling | Fractional consumables | IMPLEMENTED AND VERIFIED | - |
 | Q16 | Cooling | Component costs | AWAITING COST SHEET RETURN | NewQuip (return cost sheet) |
-| Q16b | Cooling | Filter element code N3771 | GENUINELY MISSING COMMERCIAL APPROVAL | Rene (yes/no plus cost) |
+| Q16b | Cooling | Filter element code N3771 | GENUINELY MISSING COMMERCIAL APPROVAL | Rene (yes/no and cost) |
 | Q16c | Cooling | Sikaflex 551 vs 552 | GENUINELY MISSING COMMERCIAL APPROVAL | Rene (yes/no) |
 | Q17 | Cone fans | Cost basis and age rule | INTERNAL RECONCILIATION REQUIRED | Shirnel (yes/no) |
-| Q17b | Cone fans | SKU MUG4D14A1M10238 (3-blade); 6-blade sibling exists | ALREADY CONFIRMED | - |
+| Q17b | Cone fans | MUG4D14A1M10238 (3-blade) | IMPLEMENTED AND VERIFIED | - |
 | Q18 | Cone fans | Quantity | ALREADY CONFIRMED | - |
 | Q19 | Manure plug | MNQ048 = MNQ039 + MNQ040 + MNQ041; costs usable | IMPLEMENTED AND VERIFIED | - |
 | Q20 | Manure plug | Quantity | ALREADY CONFIRMED | - |
@@ -41,15 +41,14 @@ Status key: ALREADY CONFIRMED, IMPLEMENTED AND VERIFIED, INTERNAL RECONCILIATION
 | Q25 | UAT | Preview, email, watermark | IMPLEMENTED AND VERIFIED | - |
 | M75 | M75 system | Approved price (not the R250,000 UAT test figure) | ALREADY CONFIRMED | - |
 | M75b | M75 system | Optional: an approved Budget default per system | GENUINELY MISSING COMMERCIAL APPROVAL | Sean (optional) |
-| MAP | Mappings | BF HO05084507, ERT003, fan MUG4D14A1M10238, MNQ048 plug, cooling package, CL1 HO05084000 | INTERNAL RECONCILIATION REQUIRED | Spark (after cost sheet) |
+| MAP | Mappings | CL1, BF, ERT003, fan, plug, cooling package | IMPLEMENTED AND VERIFIED | Spark (apply after return, separately authorised) |
 
 ## Counts
-- ALREADY CONFIRMED: 8
-- INTERNAL RECONCILIATION REQUIRED: 7
-- GENUINELY MISSING COMMERCIAL APPROVAL: 5
-- IMPLEMENTED AND VERIFIED: 11
+- ALREADY CONFIRMED: 5
+- GENUINELY MISSING COMMERCIAL APPROVAL: 6
+- INTERNAL RECONCILIATION REQUIRED: 4
+- IMPLEMENTED AND VERIFIED: 16
 - AWAITING COST SHEET RETURN: 1
 
 ## Rules kept
-No cost invented, no Cin7 write, no inventory valuation change and no approval gate bypassed. Sage figures are evidence for NewQuip to approve, never approved costs.
-
+No cost invented, no Cin7 write, no inventory valuation change and no approval gate bypassed. A live read-only Cin7 check on 2026-11-25 (GET only) found no supplier record for any checked product and several expected product records missing; details are in the confidential workbook.

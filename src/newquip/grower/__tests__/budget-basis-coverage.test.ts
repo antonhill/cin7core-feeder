@@ -100,8 +100,9 @@ describe("the register", () => {
 });
 
 describe("the existing engine, Budget evaluation only", () => {
-  it("default behaviour is unchanged: with no register entry the door and the controller are unmapped and unpriced", () => {
-    for (const k of ["pvc_door", "controller"]) { const l = line(draft(), k, { provisionalPackages: true }); expect(l.status, k).toBe("unmapped"); expect(l.revenueExTax).toBeNull(); }
+  it("default behaviour is unchanged: with no register entry the door stays unmapped and unpriced; the controller carries NewQuip's confirmed default product (2026-11-25) and, with no cost in the price source, is visibly unpriced", () => {
+    const door = line(draft(), "pvc_door", { provisionalPackages: true }); expect(door.status).toBe("unmapped"); expect(door.revenueExTax).toBeNull();
+    const ctl = line(draft(), "controller", { provisionalPackages: true }); expect(ctl.sku).toBe("HO05084000"); expect(ctl.status).not.toBe("priced"); expect(ctl.revenueExTax).toBeNull();
   });
   it("an approved default door product is priced through the normal cost + freight + markup path (R5,800 x 1.15 x 1.2 = R8,004 each) and is PROVISIONAL, with Rep-safe wording", () => {
     const l = line(draft(), "pvc_door", { provisionalPackages: true, budgetBasis: [sku("pvc_door", "NQ2161")], budgetAsOf: TODAY });
@@ -119,7 +120,7 @@ describe("the existing engine, Budget evaluation only", () => {
     expect(line(draft(), "controller", { provisionalPackages: true, budgetBasis: [sku("controller", "HO05084000")], budgetAsOf: TODAY }).status).not.toBe("priced");
   });
   it("expired or incomplete entries do nothing; the formal (non-Budget) evaluation ignores the register entirely; an Estimator-confirmed product wins", () => {
-    expect(line(draft(), "controller", { provisionalPackages: true, budgetBasis: [rate({ itemKey: "controller", expiresOn: "2026-11-01" })], budgetAsOf: TODAY }).status).toBe("unmapped");
+    expect(line(draft(), "controller", { provisionalPackages: true, budgetBasis: [rate({ itemKey: "controller", expiresOn: "2026-11-01" })], budgetAsOf: TODAY }).status).not.toBe("priced"); // an expired entry does nothing
     expect(line(draft(), "controller", { budgetBasis: [rate({ itemKey: "controller" })], budgetAsOf: TODAY }).status).toBe("unmapped"); // no provisionalPackages: not a Budget evaluation
     const d = draft(); d.estimator.confirmedMappings = { ...d.estimator.confirmedMappings, pvc_door: "NQ2161" };
     expect(line(d, "pvc_door", { provisionalPackages: true, budgetBasis: [sku("pvc_door", "OTHER")], budgetAsOf: TODAY })).toMatchObject({ sku: "NQ2161", mappingSource: "estimator" });
@@ -154,7 +155,7 @@ describe("the coverage view: every selectable category, exact blocker, owner and
   const EIGHT = ["pvc_door", "controller", "silo_weighing", "emergency_windows", "cone_fans"];
   it("covers all 16 categories; with the empty register 6 have no defensible price (the NQ-Q-0005 set minus pad cooling and the manure plug, confirmed 2026-11-25)", () => {
     expect(rows.map((r) => r.itemKey)).toEqual([...GROWER_ITEM_KEYS]);
-    expect(coverageCounts(rows)).toEqual({ READY: 5, PROVISIONAL: 5, RATE_APPROVAL_REQUIRED: 2, SPECIFICATION_REQUIRED: 4, NO_PRICE_SOURCE: 0 });
+    expect(coverageCounts(rows)).toEqual({ READY: 5, PROVISIONAL: 5, RATE_APPROVAL_REQUIRED: 4, SPECIFICATION_REQUIRED: 2, NO_PRICE_SOURCE: 0 });
     const missing = rows.filter((r) => r.repSafe.status === "missing").map((r) => r.itemKey);
     for (const k of EIGHT) expect(missing).toContain(k);
   });
@@ -164,8 +165,8 @@ describe("the coverage view: every selectable category, exact blocker, owner and
     const door = rows.find((r) => r.itemKey === "pvc_door")!;
     expect(door).toMatchObject({ priceEvidence: "current_cin7", mechanismSupported: true, approvedPriceReady: false });
     expect(door.evidenceNote).toMatch(/cannot be told apart from a data-load date/);
-    for (const k of ["controller", "silo_weighing", "emergency_windows", "cone_fans"]) expect(rows.find((r) => r.itemKey === k)).toMatchObject({ priceEvidence: "historical_only", approvedPriceReady: false });
-    expect(rows.find((r) => r.itemKey === "controller")!.evidenceNote).toMatch(/historical, unverified\); not a current Cin7 supplier cost/);
+    for (const k of ["controller", "silo_weighing", "emergency_windows", "cone_fans"]) expect(rows.find((r) => r.itemKey === k)).toMatchObject({ priceEvidence: "none", approvedPriceReady: false }); // mapped 2026-11-25; live Cin7 holds no supplier cost
+    expect(rows.find((r) => r.itemKey === "controller")!.evidenceNote).toMatch(/no supplier record and a placeholder average cost/);
     expect(rows.find((r) => r.itemKey === "control_panel")).toMatchObject({ state: "PROVISIONAL", approvedPriceReady: false });
     // a provisional package is price-ready provisionally but is NOT an approved price
     for (const k of ["cup_drinker", "led_light", "pad_cooling", "manure_plug", "control_panel"]) expect(rows.find((r) => r.itemKey === k)).toMatchObject({ state: "PROVISIONAL", approvedPriceReady: false });

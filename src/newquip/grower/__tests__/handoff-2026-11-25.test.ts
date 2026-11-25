@@ -206,3 +206,50 @@ describe("interim control-panel Budget amount (R85,000 with CL1 and BF, R65,000 
     expect(v).not.toMatch(/HO0508|supplier|freight|markup|margin|landed|rateMicro/i); // the label "Thomas-CL1 controller" is the equipment name, not a leak
   });
 });
+
+describe("NewQuip-confirmed Budget default products (CL1 HO05084000, BF HO05084507, window ERT003, fan MUG4D14A1M10238)", () => {
+  const DEF = { controller: "HO05084000", silo_weighing: "HO05084507", emergency_windows: "ERT003", cone_fans: "MUG4D14A1M10238" } as const;
+  const sel = (keys: (keyof typeof DEF)[], costs: Record<string, number> = {}): QuoteDraft => {
+    const d = structuredClone(nqQ0002());
+    for (const k of keys) { (d.config.optionalEquipment as Record<string, boolean>)[k] = true; (d.config.estimatorQuantities as Record<string, number>)[k] = 1; }
+    for (const [sku, e7] of Object.entries(costs)) (d.estimator.pricing!.skus as Record<string, unknown>)[sku] = S("ZAR", e7);
+    return d;
+  };
+  it("each item maps to the confirmed product, and with NO supplier cost the line stays visibly unpriced (never a placeholder)", () => {
+    for (const [k, sku] of Object.entries(DEF)) {
+      const l = lineOf(sel([k as keyof typeof DEF]), k);
+      expect(l.sku, k).toBe(sku);
+      expect(l.status, k).not.toBe("priced");
+      expect(l.revenueExTax, k).toBeNull();
+    }
+  });
+  it("with a cost the line is priced provisionally through the normal price source (cost R1,000 x 1.15 freight x 1.20 markup, 1 per room x 12 rooms)", () => {
+    for (const [k, sku] of Object.entries(DEF)) {
+      const l = lineOf(sel([k as keyof typeof DEF], { [sku]: 10_000_000_000 }), k);
+      expect(l.status, k).toBe("priced"); expect(l.quantity, k).toBe(12);
+      expect(l.provisional, k).toBeDefined(); expect(l.mappingSource, k).toBe("budget_default");
+      expect(l.revenueExTax!, k).toBeCloseTo(12 * 1000 * 1.15 * 1.2, 2);
+    }
+  });
+  it("the with-panel controller HO05084007 is never used, and there is exactly ONE panel line (CL1 + BF with the separately priced panel: no duplicate panel charge)", () => {
+    const d = sel(["controller", "silo_weighing"]); (d.config.optionalEquipment as Record<string, boolean>).control_panel = true; (d.config.estimatorQuantities as Record<string, number>).control_panel = 2;
+    const lines = evaluateDraft(d, ctx).budget!.lines;
+    expect(lines.filter((l) => l.itemKey === "control_panel")).toHaveLength(1);
+    expect(lines.find((l) => l.itemKey === "control_panel")!.unitPrice).toBe(85_000);
+    expect(lines.some((l) => l.sku === "HO05084007")).toBe(false);
+    expect(lines.find((l) => l.itemKey === "controller")!.sku).toBe("HO05084000");
+  });
+  it("an Estimator's own confirmed mapping or manual price wins; the original template and the non-Budget evaluation are unchanged", () => {
+    const d = sel(["controller"]); d.estimator.confirmedMappings = { controller: "HO05084007" } as never;
+    expect(lineOf(d, "controller").sku).toBe("HO05084007");
+    const o = sel(["controller"]); delete (o.estimator as { templateRevision?: string }).templateRevision;
+    expect(lineOf(o, "controller").sku).toBeNull();
+    const n = evaluateDraft(sel(["controller"]), { ...ctx, provisionalPackages: false }).budget!.lines.find((l) => l.itemKey === "controller")!;
+    expect(n.sku).toBeNull();
+  });
+  it("Rep-safe: no product code, supplier or cost reaches the Budget summary", async () => {
+    const { budgetPricingOf } = await import("../budget-pricing");
+    const v = JSON.stringify(budgetPricingOf(evaluateDraft(sel(["controller", "silo_weighing", "emergency_windows", "cone_fans"], { HO05084000: 10_000_000_000 }), ctx).budget!));
+    expect(v).not.toMatch(/HO0508|ERT003|MUG4D|supplier|freight|markup|margin|landed/i);
+  });
+});

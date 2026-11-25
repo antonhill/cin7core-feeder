@@ -2,6 +2,7 @@ import { computeLine, computeQuote, type QuoteLineInput, type QuoteResult } from
 import { isOptionalItemKey } from "./types";
 import { BUDGET_BASIS_PLAIN, budgetRateSellingPrice, usableBudgetBasis, type BudgetBasisEntry } from "./budget-basis";
 import type { FeederVariant, GeneratedLine, GrowerItemKey, PenningPigSize } from "./types";
+import { confirmedBudgetDefaultSku } from "./budget-default-products";
 import { INTERIM_PANEL_PLAIN, INTERIM_PANEL_REASON, interimPanelRate, type PanelSelection } from "./control-panel-interim";
 import { TEMPLATE_REVISION_LEGACY, TEMPLATE_REVISION_CURRENT, coolingPackageFor, type TemplateRevision, alternativesFor, estimatorPricedFor, feederSkuFor, isCatalogueDefaultItem, manualLinesFor, packageAutoConfirmable, packageFor, provisionalPackageBasis, recommendedSkuFor, type PackageComponent } from "./commercial";
 import { PENNING_RATE_PER_RM } from "./workbook-price-source";
@@ -363,7 +364,9 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
         continue;
       }
     }
-    const basisSku = basis?.kind === "default_sku" ? basis.sku : null;
+    // NewQuip-CONFIRMED Budget default product (budget-default-products.ts): Budget evaluation, current template, nothing confirmed by the Estimator and no approved register entry. Provisional; a missing cost leaves the line unpriced.
+    const confirmedDefault = !explicit && !defaulted && !basis && !validResolution(resolution) && opts.provisionalPackages === true && revision === TEMPLATE_REVISION_CURRENT && isOptionalItemKey(g.itemKey) ? confirmedBudgetDefaultSku(g.itemKey) : null;
+    const basisSku = basis?.kind === "default_sku" ? basis.sku : confirmedDefault;
     const confirmed = explicit ?? defaulted ?? basisSku;
     const mapSource = defaulted ? "catalogue_default" : basisSku ? "budget_default" : "estimator";
     // pvc_door and the optional additional elements have no recommended SKU: the estimator's confirmed Cin7 choice IS the SKU. Everything else must be the expected one.
