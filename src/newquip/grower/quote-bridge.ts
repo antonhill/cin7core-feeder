@@ -132,6 +132,8 @@ export interface BudgetOptions {
   /** Output items whose package definition an estimator has confirmed. */
   confirmedPackages?: ReadonlySet<GrowerItemKey>;
   feederVariant?: FeederVariant;
+  /** The door specification the Rep chose (door-sizes.ts), or null when no size is chosen. Current template, Budget basis only. */
+  doorSpecification?: string | null;
   /** The template revision the quotation was created under (default: the ORIGINAL template, so nothing that omits it can be re-scoped). */
   templateRevision?: TemplateRevision;
   penningPigSize?: PenningPigSize | null;
@@ -356,7 +358,9 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
     const explicit = opts.confirmedMappings?.[g.itemKey] ?? null;
     const defaulted = !explicit && isCatalogueDefaultItem(g.itemKey) ? expected : null;
     // BUDGET only: with no Estimator confirmation, the door / an optional item may use a NewQuip-APPROVED default product or dated rate (never confirms anything; the line is provisional).
-    const basis = !explicit && !defaulted && !validResolution(resolution) && opts.budgetBasis ? usableBudgetBasis(opts.budgetBasis, g.itemKey, opts.budgetAsOf ?? new Date().toISOString().slice(0, 10)) : null;
+    const isCurrentDoor = g.itemKey === "pvc_door" && revision === TEMPLATE_REVISION_CURRENT;
+    // The door has one Budget basis PER SIZE: with no size chosen there is nothing to price from, and the line says so.
+    const basis = !explicit && !defaulted && !validResolution(resolution) && opts.budgetBasis && !(isCurrentDoor && !opts.doorSpecification) ? usableBudgetBasis(opts.budgetBasis, g.itemKey, opts.budgetAsOf ?? new Date().toISOString().slice(0, 10), isCurrentDoor ? opts.doorSpecification ?? undefined : undefined) : null;
     if (basis?.kind === "rate") {
       const priced = budgetRateSellingPrice(basis, opts.budgetMarkupBps ?? null, opts.budgetAsOf ?? new Date().toISOString().slice(0, 10));
       if (priced) {
@@ -374,7 +378,7 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
     const isAlternative = !!confirmed && alternativesFor(g.itemKey).some((a) => a.sku === confirmed);
     const sku = g.itemKey === "pvc_door" || isOptionalItemKey(g.itemKey) ? confirmed : confirmed && (confirmed === expected || isAlternative) ? confirmed : null;
     if (!sku) {
-      fail({ ...emptyLine(g), status: "unmapped", reason: confirmed && expected ? `Confirmed ${confirmed} does not match the expected ${expected}.` : "Product mapping not yet confirmed." }, `${g.label}: product mapping ${expected ? `to ${expected} ` : ""}not confirmed`);
+      fail({ ...emptyLine(g), status: "unmapped", reason: confirmed && expected ? `Confirmed ${confirmed} does not match the expected ${expected}.` : isCurrentDoor && !opts.doorSpecification ? "Choose the door size to price this item." : "Product mapping not yet confirmed." }, `${g.label}: product mapping ${expected ? `to ${expected} ` : ""}not confirmed`);
       continue;
     }
     const r = opts.priceSource.priceFor(sku, opts.quoteType);

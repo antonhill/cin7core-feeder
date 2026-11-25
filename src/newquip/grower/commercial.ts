@@ -217,7 +217,7 @@ const MANURE_PLUG_PACKAGE: PackageMapping = {
 const EMERGENCY_WINDOW_PACKAGE: PackageMapping = {
   kind: "package", itemKey: "emergency_windows", name: "Emergency window (ERT003) with its components", layoutDriven: false,
   estimatorConfirmation: "NewQuip confirmed the component list on 2026-11-24. The Estimator confirms the quantity per room (the drive, mounting set, coupling and pipe are written per room in the source).",
-  provenance: "Sean Bredenkamp 2026-11-24 10:22 'Emergency window breakdown': ERT003 x1; HO08990730 and HO08020800 1 for every 2 windows; RID503117 x4; RID507450 x1 per room; RID507220 x1 per RID507450; RID590008 x2 per RID507450; NQ.PP.1017 x2 per room; NQ1060 x16; NQ3401 x16; NQ1088 x1.",
+  provenance: "Sean Bredenkamp 2026-11-24 10:22 'Emergency window breakdown': ERT003 x1; HO08990730 and HO08020800 1 for every 2 windows; RID503117 x4; RID507450 x1 per room; RID507220 x1 per RID507450; RID590008 x2 per RID507450; NQPP1017 x2 per room; NQ1060 x16; NQ3401 x16; NQ1088 x1.",
   components: [
     fixed("window", "ERT003", "Emergency window 1500 x 700 mm with motor", 1, "Sean 2026-11-24"),
     shared("psu", "HO08990730", "Power supply 24VDC 150VA + 2 manual control 0-10V (1 per 2 windows)", 0.5, "Sean 2026-11-24"),
@@ -226,7 +226,7 @@ const EMERGENCY_WINDOW_PACKAGE: PackageMapping = {
     fixed("drive", "RID507450", "RLD80 / 1K / 24V / 2D25 / Z16 logic drive (1 per room)", 1, "Sean 2026-11-24"),
     fixed("mount", "RID507220", "Mounting set for RLD80 (1 per drive)", 1, "Sean 2026-11-24"),
     fixed("coupling", "RID590008", "Chain bolt coupling (2 per drive)", 2, "Sean 2026-11-24"),
-    fixed("pipe", "NQ.PP.1017", "Galvanised pipe 33.4 (1 in) incl. sockets, 6 m length (2 per room)", 2, "Sean 2026-11-24"),
+    fixed("pipe", "NQPP1017", "Galvanised pipe 33.4 (1 in) incl. sockets, 6 m length (2 per room)", 2, "Sean 2026-11-24"),
     fixed("washer", "NQ1060", "Body washer M6x19x1.6", 16, "Sean 2026-11-24 (fastening material)"),
     fixed("screw", "NQ3401", "Metapp 12-24 x 38 mm hex flange screw, class 3, plain", 16, "Sean 2026-11-24 (fastening material)"),
     fixed("rope", "NQ1088", "Braided rope 4 mm polyester", 1, "Sean 2026-11-24 (fastening material)"),

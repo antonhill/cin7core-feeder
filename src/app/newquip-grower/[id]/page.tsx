@@ -1,5 +1,6 @@
 "use client";
 
+import { DOOR_SIZES, type DoorSize } from "@/newquip/grower/door-sizes";
 import { pageContainerClass } from "@/app/PageContainer";
 import { incompleteCostingMessage } from "@/newquip/quote/workflow";
 import Link from "next/link";
@@ -1103,6 +1104,11 @@ export default function QuoteEditorPage() {
                 <Select label="CCM feeder variant" error={productChangePending ? PRODUCT_CHANGE_REFUSED : err("feederVariant")} helperText={`One feeder, two variants. Capacity ${CCM_FEEDER_CAPACITY_PIGS} pigs per feeder. ${stage1Edit && !canMap ? PRODUCT_CHANGE_NOTE : ""}`} value={cfg.feederVariant ?? "STANDARD"} onChange={(e) => edit((d) => { d.config.feederVariant = e.target.value as "STANDARD" | "WINDOW"; delete d.estimator.confirmedMappings.feeder; })}>
                   <option value="STANDARD">Standard — PNQ082</option>
                   <option value="WINDOW">With window — PNQ082-WINDOW</option>
+                </Select>
+                <Select label="PVC door size" error={err("doorSize")} helperText="Each size has its own Budget price." value={cfg.doorSize ?? ""} onChange={(e) => edit((d) => { d.config.doorSize = (e.target.value || null) as DoorSize | null; })}>
+                  <option value="">Select…</option>
+                  <option value="2.1x1.2">{DOOR_SIZES["2.1x1.2"].label} (NQ3444)</option>
+                  <option value="2.1x1.0">{DOOR_SIZES["2.1x1.0"].label} (NQ3444-B)</option>
                 </Select>
                 <Select label="Penning pig size" error={err("penningPigSize")} onBlur={() => touch("penningPigSize")} value={cfg.penningPigSize ?? ""} onChange={(e) => edit((d) => { d.config.penningPigSize = (e.target.value || null) as PenningPigSize | null; })}>
                   <option value="">Select…</option>

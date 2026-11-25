@@ -77,13 +77,13 @@ export interface Stage1Derived {
 }
 
 const ROOM_FIELDS = new Set(["lengthM", "widthM", "rooms", "totalPens", "hospitalPens", "pigsPerRoom"]);
-const EQUIPMENT_FIELDS = new Set(["penningPigSize", "feederVariant", "slattedFloorAreaM2", "penningRunningMetresPerRoom", "coolingSystemLengthM"]);
+const EQUIPMENT_FIELDS = new Set(["penningPigSize", "feederVariant", "doorSize", "slattedFloorAreaM2", "penningRunningMetresPerRoom", "coolingSystemLengthM"]);
 export const CUSTOMER_REQUIRED_MESSAGE = "Customer name is required.";
 export const SITE_REQUIRED_MESSAGE = "Site / project name is required.";
 /** Human names for the calculation's field names, for the rail and review notes only (the calculation's own messages are untouched). */
 export const FIELD_LABEL: Record<string, string> = {
   lengthM: "Length", widthM: "Width", rooms: "Number of rooms", totalPens: "Total pens", hospitalPens: "Hospital pens", pigsPerRoom: "Pigs per room",
-  penningPigSize: "Penning pig size", feederVariant: "CCM feeder variant", slattedFloorAreaM2: "Slatted floor area", penningRunningMetresPerRoom: "Penning running metres", coolingSystemLengthM: "Cooling system length",
+  penningPigSize: "Penning pig size", feederVariant: "CCM feeder variant", doorSize: "PVC door size", slattedFloorAreaM2: "Slatted floor area", penningRunningMetresPerRoom: "Penning running metres", coolingSystemLengthM: "Cooling system length",
 };
 const friendly = (i: { field: string; message: string }) => (i.message.startsWith(i.field) && FIELD_LABEL[i.field] ? FIELD_LABEL[i.field] + i.message.slice(i.field.length) : i.message);
 

@@ -105,7 +105,9 @@ describe("the existing engine, Budget evaluation only", () => {
     const ctl = line(draft(), "controller", { provisionalPackages: true }); expect(ctl.sku).toBe("HO05084000"); expect(ctl.status).not.toBe("priced"); expect(ctl.revenueExTax).toBeNull();
   });
   it("an approved default door product is priced through the normal cost + freight + markup path (R5,800 x 1.15 x 1.2 = R8,004 each) and is PROVISIONAL, with Rep-safe wording", () => {
-    const l = line(draft(), "pvc_door", { provisionalPackages: true, budgetBasis: [sku("pvc_door", "NQ2161")], budgetAsOf: TODAY });
+    // The current template prices a door per SIZE: the Rep's chosen size must match the entry's specification.
+    const d = draft(); (d.config as { doorSize?: string }).doorSize = "2.1x1.2";
+    const l = line(d, "pvc_door", { provisionalPackages: true, budgetBasis: [sku("pvc_door", "NQ2161", { specification: "PVC single door 2.1 x 1.2 m (NQ3444)" })], budgetAsOf: TODAY });
     expect(l).toMatchObject({ status: "priced", sku: "NQ2161", pricedBy: "price_source", mappingSource: "budget_default" });
     expect(l.unitPrice).toBe(8004); expect(l.revenueExTax).toBe(8004 * 24);
     expect(l.provisional?.plain).toMatch(/^Provisional:/); expect(l.provisional?.plain).not.toMatch(/R\d|cost|markup|margin|NQ2161/i);

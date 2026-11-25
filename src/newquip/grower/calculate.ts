@@ -114,6 +114,9 @@ export function validateGrowerInput(input: GrowerConfigurationInput): InputIssue
   if (input.feederVariant != null && input.feederVariant !== "STANDARD" && input.feederVariant !== "WINDOW") {
     issues.push({ field: "feederVariant", code: "invalid_feeder_variant", message: "Feeder variant must be standard or window." });
   }
+  if (input.doorSize != null && input.doorSize !== "2.1x1.2" && input.doorSize !== "2.1x1.0") {
+    issues.push({ field: "doorSize", code: "invalid_door_size", message: "Door size must be 2.1 x 1.2 m or 2.1 x 1.0 m." });
+  }
   return issues;
 }
 

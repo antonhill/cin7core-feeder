@@ -43,13 +43,22 @@ export function toCostE7(x: number | null | undefined): number | null {
   try { return cost7(fixed); } catch { return null; }
 }
 
+/**
+ * PRICE-SOURCE LEVEL FREIGHT TREATMENT. A SKU listed here has a cost that is ALREADY a landed ZAR figure (for example an approved Sage / cost-sheet landed reference): it takes NO further freight, whatever its
+ * category's policy says, so freight is never applied twice. Every other SKU is a supplier-native cost and takes its category's freight policy exactly as before. The default is EMPTY: nothing is exempt until
+ * a Manager-approved list is supplied by the caller, and a foreign-currency cost can never be treated as landed ZAR.
+ */
+export const NO_LANDED_SKUS: ReadonlySet<string> = new Set<string>();
+const LANDED_FREIGHT = { factorMicro: 1_000_000, addOnCents: 0, source: "Landed ZAR cost reference: no further freight" } as const;
+
 /** One SKU's Cin7 raw facts -> an auto cost entry, or the reason there is no price. */
-export function autoCostFor(input: SurveyInput, master: ReadonlyMap<string, MasterSupplier>, settings: CommercialSettings | null, ref: SettingsRef, nowIso: string, categories: readonly string[] = []): AutoCostEntry | AutoFlag {
+export function autoCostFor(input: SurveyInput, master: ReadonlyMap<string, MasterSupplier>, settings: CommercialSettings | null, ref: SettingsRef, nowIso: string, categories: readonly string[] = [], landedZarSkus: ReadonlySet<string> = NO_LANDED_SKUS): AutoCostEntry | AutoFlag {
   const sku = input.sku;
   const flag = (code: AutoFlagCode, internal: string): AutoFlag => ({ sku, code, internal });
   if (!settings || !canPriceAnything(settings)) return flag("settings_incomplete", "No freight policy is set in the commercial settings.");
   // Freight: the product's CATEGORY policy, else the Manager's default, else an exception. It is never silently 1.0.
-  const fr = resolveFreight(settings, categories);
+  const landed = landedZarSkus.has(sku);
+  const fr = landed ? ({ ok: true, policy: LANDED_FREIGHT, category: null } as ReturnType<typeof resolveFreight>) : resolveFreight(settings, categories);
   if (!fr.ok) return fr.reason === "conflict"
     ? flag("freight_conflict", `This product is used by more than one freight category (${fr.categories.join(", ")}) with different policies: a Manager must resolve it.`)
     : flag("freight_not_set", `No freight policy is configured for this product's category (${fr.categories.join(", ") || "none"}) and no default freight policy is set.`);
@@ -67,6 +76,7 @@ export function autoCostFor(input: SurveyInput, master: ReadonlyMap<string, Mast
   if (esc.status !== "ok") return flag("cost_needs_review", `The Cin7 cost is ${esc.status === "undated" ? "undated" : "future-dated"}: no automatic price.`);
   const currency = r.currency;
   if (!currency) return flag("currency_unknown", "The supplier's own Cin7 record holds no currency.");
+  if (landed && currency !== "ZAR") return flag("cost_needs_review", "A landed-cost reference must be in ZAR; this supplier cost is in another currency.");
   const raw = toCostE7(r.selected.cost);
   if (raw === null) return flag("cost_precision", "The Cin7 cost cannot be held exactly (more than 7 decimals or out of range).");
   if (currency !== "ZAR") {

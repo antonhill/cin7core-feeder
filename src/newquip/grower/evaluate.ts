@@ -1,3 +1,4 @@
+import { doorSpecificationFor } from "./door-sizes";
 import { templateRevisionOf } from "./commercial";
 import { calculateGrowerHouse } from "./calculate";
 import { buildBudgetQuote, type BudgetQuote } from "./quote-bridge";
@@ -44,6 +45,7 @@ export function evaluateDraft(draft: QuoteDraft, ctx: EvaluationContext): QuoteE
         confirmedMappings: draft.estimator.confirmedMappings,
         confirmedPackages: new Set(draft.estimator.confirmedPackages),
         feederVariant: draft.config.feederVariant,
+        doorSpecification: doorSpecificationFor(draft.config.doorSize),
         templateRevision: templateRevisionOf(draft),
         penningPigSize: draft.config.penningPigSize ?? null,
         coolingSystemLengthM: draft.config.coolingSystemLengthM ?? null,

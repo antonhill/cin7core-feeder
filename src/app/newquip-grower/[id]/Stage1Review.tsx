@@ -40,6 +40,7 @@ export function Stage1Review({ awaiting, draft, floorAreaM2, totalLabel, derived
     ] },
     { id: "equipment", rows: [
       ["Feeder variant", cfg.feederVariant === "WINDOW" ? "With window" : "Standard"],
+      ["PVC door size", cfg.doorSize === "2.1x1.2" ? "2.1 m × 1.2 m" : cfg.doorSize === "2.1x1.0" ? "2.1 m × 1.0 m" : "not chosen"],
       ["Penning pig size", cfg.penningPigSize ? cfg.penningPigSize.charAt(0) + cfg.penningPigSize.slice(1).toLowerCase() : "not chosen"],
       ["Optional equipment", extras.length ? `Included: ${extras.join(", ")}` : "none included"],
       ["Exclusions", excluded.length ? excluded.join(", ").replace(/_/g, " ") : "none"],

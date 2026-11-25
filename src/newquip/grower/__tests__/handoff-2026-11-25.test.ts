@@ -256,7 +256,7 @@ describe("NewQuip-confirmed Budget default products (CL1 HO05084000, BF HO050845
 
 
 describe("Emergency window package (Sean 2026-11-24 11-line component list)", () => {
-  const COSTS: Record<string, number> = { ERT003: 10_000_000_000, HO08990730: 10_000_000_000, HO08020800: 10_000_000_000, RID503117: 10_000_000_000, RID507450: 10_000_000_000, RID507220: 10_000_000_000, RID590008: 10_000_000_000, "NQ.PP.1017": 10_000_000_000, NQ1060: 10_000_000_000, NQ3401: 10_000_000_000, NQ1088: 10_000_000_000 };
+  const COSTS: Record<string, number> = { ERT003: 10_000_000_000, HO08990730: 10_000_000_000, HO08020800: 10_000_000_000, RID503117: 10_000_000_000, RID507450: 10_000_000_000, RID507220: 10_000_000_000, RID590008: 10_000_000_000, "NQPP1017": 10_000_000_000, NQ1060: 10_000_000_000, NQ3401: 10_000_000_000, NQ1088: 10_000_000_000 };
   const win = (perRoom: number, rooms: number, costs = COSTS): QuoteDraft => {
     const d = structuredClone(nqQ0002());
     (d.config.optionalEquipment as Record<string, boolean>).emergency_windows = true; (d.config.estimatorQuantities as Record<string, number>).emergency_windows = perRoom;
@@ -267,7 +267,7 @@ describe("Emergency window package (Sean 2026-11-24 11-line component list)", ()
   it("has the eleven confirmed lines and quantities", () => {
     const l = lineOf(win(1, 12), "emergency_windows");
     const q = Object.fromEntries((l.components ?? []).map((c) => [c.sku, c.quantity]));
-    expect(q).toEqual({ ERT003: 12, HO08990730: 6, HO08020800: 6, RID503117: 48, RID507450: 12, RID507220: 12, RID590008: 24, "NQ.PP.1017": 24, NQ1060: 192, NQ3401: 192, NQ1088: 12 });
+    expect(q).toEqual({ ERT003: 12, HO08990730: 6, HO08020800: 6, RID503117: 48, RID507450: 12, RID507220: 12, RID590008: 24, "NQPP1017": 24, NQ1060: 192, NQ3401: 192, NQ1088: 12 });
   });
   it("shared parts (1 per 2 windows) are rounded UP over the whole quotation: 7 windows need 4, 1 window needs 1", () => {
     const seven = Object.fromEntries((lineOf(win(7, 1), "emergency_windows").components ?? []).map((c) => [c.sku, c.quantity]));
