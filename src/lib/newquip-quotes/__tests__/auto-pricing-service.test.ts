@@ -325,3 +325,23 @@ describe("stored FX is frozen with the pricing (M3)", () => {
     expect(autoPricingCutoff({ NEWQUIP_AUTO_PRICING: "on", NEWQUIP_AUTO_PRICING_FROM: "2026-11-17T00:00:00+02:00" })).not.toBeNull();
   });
 });
+
+describe("standard equipment is read before optional additions (2026-11-25: sumpless pad cooling adds about 40 SKUs)", () => {
+  beforeEach(async () => { await saveCommercialSettings(db as never, ORG, SETTINGS({ markupBps: 2500 }), "mgr@nq", NOW); });
+  it("every SKU used by a standard line is requested from Cin7 before any SKU used only by pad cooling or the manure plug, so the run's time budget can never starve standard pricing", async () => {
+    const d = draftOn();
+    d.config.optionalEquipment = { ...d.config.optionalEquipment, pad_cooling: true, manure_plug: true } as never;
+    d.config.estimatorQuantities = { ...d.config.estimatorQuantities, pad_cooling: 1, manure_plug: 1 } as never;
+    d.config.coolingSystemLengthM = 12;
+    const needs = skuNeedsOf(evaluateDraft(d, { priceSource: testPriceSource(), withholdCost: true, provisionalPackages: true }).budget);
+    const optionalOnly = new Set(needs.filter((n) => n.itemKeys.every((k) => k === "pad_cooling" || k === "manure_plug")).map((n) => n.sku));
+    expect(optionalOnly.size).toBeGreaterThan(20); // the cooling package really is large
+    const id = await newQuote(d);
+    await run(id);
+    const order = calls.flat();
+    const lastStandard = Math.max(...order.map((s, i) => (optionalOnly.has(s) ? -1 : i)));
+    const firstOptional = Math.min(...order.map((s, i) => (optionalOnly.has(s) ? i : Infinity)));
+    expect(order.some((s) => optionalOnly.has(s))).toBe(true);
+    expect(lastStandard).toBeLessThan(firstOptional);
+  });
+});

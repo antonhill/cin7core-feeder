@@ -6,6 +6,7 @@ import "server-only";
 import type { createServiceRoleClient } from "@/supabase/server";
 import { NEWQUIP_POC_CIN7_INSTANCE_ID } from "@/newquip/access";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
+import { OPTIONAL_ITEM_KEYS } from "@/newquip/grower/types";
 import { TEMPLATE_REVISION_CURRENT, templateRevisionOf } from "@/newquip/grower/commercial";
 import { listCin7Suppliers, readRawProductsForSurvey } from "@/lib/projects/latest-cost-adapter";
 import { AUTO_ACTOR, autoCostFor, isAutoOwned, isFlag, mergeAutoEntries, NEUTRAL_FLAG_TEXT, type AutoCostEntry, type AutoFlag } from "@/newquip/pricing/auto-costing";
@@ -132,7 +133,10 @@ async function priceQuote(mode: Mode, db: Db, actor: AutoActor, quoteId: string,
   const budget = evaluateDraft(q.draft, evaluationContext(true)).budget;
   const needsAll = skuNeedsOf(budget);
   const categoriesOf = new Map(needsAll.map((n) => [n.sku, n.itemKeys]));
-  const needed = needsAll.map((n) => n.sku).filter((s) => !prior || !Object.prototype.hasOwnProperty.call(prior.skus, s));
+  // STANDARD equipment is read FIRST. Products are read alphabetically until the run's time budget ends, so a large optional package (sumpless pad cooling adds about 40 SKUs) must never push a standard
+  // product (feeder, tank, mat, slats, drinker, light) past the deadline. A SKU used by any standard line goes first; one used only by optional additions goes last. Order within each group is unchanged.
+  const optionalOnly = (sku: string): boolean => (categoriesOf.get(sku) ?? []).every((k) => (OPTIONAL_ITEM_KEYS as readonly string[]).includes(k));
+  const needed = needsAll.map((n) => n.sku).filter((s) => !prior || !Object.prototype.hasOwnProperty.call(prior.skus, s)).sort((x, y) => Number(optionalOnly(x)) - Number(optionalOnly(y)));
   if (needed.length === 0) return out("nothing_to_add");
 
   const entries: AutoCostEntry[] = [], flags: AutoFlag[] = [];
