@@ -12,7 +12,6 @@ export interface ConfirmedBudgetDefault { sku: string; note: string }
 export const CONFIRMED_BUDGET_DEFAULTS: Readonly<Partial<Record<GrowerItemKey, ConfirmedBudgetDefault>>> = {
   controller: { sku: "HO05084000", note: "THOMAS-CL1 controller WITHOUT control panel (CAN-IO-7-7 box version). The panel is priced separately, so the with-panel version HO05084007 is never used, which prevents a duplicate panel charge." },
   silo_weighing: { sku: "HO05084507", note: "THOMAS-BF weighing, one per room. Its Cin7 name says 'PANEL VERSION': NewQuip to confirm it does not already include the control panel that is priced separately." },
-  emergency_windows: { sku: "ERT003", note: "Emergency window 1500 x 700 mm with motor, one per room by default (Rep may change). Its other components (shared HO08990730 and HO08020800, one per two windows) are priced once NewQuip's component list is received." },
   cone_fans: { sku: "MUG4D14A1M10238", note: "57-inch cone fan, the 3-blade M140 fan (the 6-blade MUG4D14A0M10238 is a different product). Quantity is entered by the Rep." },
 };
 

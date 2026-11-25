@@ -130,7 +130,8 @@ describe("figures Sean / Tereesha supplied are references, compared with Cin7 an
   it("the supplied figures live ONLY in the server-only module: nothing a client component imports carries one (they would ship to every Rep)", () => {
     const FIGURES = ["57.37", "57,37", "52.72", "52,72", "9000", "9,000", "119.79", "119,79"];
     const clientSafe = JSON.stringify([COMMERCIAL_MAPPINGS, CHOICE_PRODUCT_NAMES, SELECTABLE_ALTERNATIVES, POC_ITEM_REGISTER.map((i) => [i.treatment, i.repTreatment])]);
-    for (const f of FIGURES) expect(clientSafe, f).not.toContain(f);
+    // A figure is a whole number: a product code that merely contains its digits (RID590008) is not the figure.
+    for (const f of FIGURES) expect(clientSafe, f).not.toMatch(new RegExp(`(?<![0-9A-Za-z.,])${f.replace(/[.,]/g, "\\$&")}(?![0-9])`));
     expect(clientSafe).not.toMatch(/R\s?(30|3\.14|0\.82)\b/);
   });
 });

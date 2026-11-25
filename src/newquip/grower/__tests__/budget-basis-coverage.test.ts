@@ -155,7 +155,7 @@ describe("the coverage view: every selectable category, exact blocker, owner and
   const EIGHT = ["pvc_door", "controller", "silo_weighing", "emergency_windows", "cone_fans"];
   it("covers all 16 categories; with the empty register 6 have no defensible price (the NQ-Q-0005 set minus pad cooling and the manure plug, confirmed 2026-11-25)", () => {
     expect(rows.map((r) => r.itemKey)).toEqual([...GROWER_ITEM_KEYS]);
-    expect(coverageCounts(rows)).toEqual({ READY: 5, PROVISIONAL: 5, RATE_APPROVAL_REQUIRED: 4, SPECIFICATION_REQUIRED: 2, NO_PRICE_SOURCE: 0 });
+    expect(coverageCounts(rows)).toEqual({ READY: 5, PROVISIONAL: 5, RATE_APPROVAL_REQUIRED: 5, SPECIFICATION_REQUIRED: 1, NO_PRICE_SOURCE: 0 });
     const missing = rows.filter((r) => r.repSafe.status === "missing").map((r) => r.itemKey);
     for (const k of EIGHT) expect(missing).toContain(k);
   });

@@ -58,6 +58,8 @@ export interface PackageComponent {
    * confirms the commercial treatment (e.g. NQ3132 shows Retail 0 in the Master). Value = the reason shown to the estimator.
    */
   pricingException?: string;
+  /** The quantity is shared across units (e.g. one power supply per two windows): the PROJECT total is rounded UP to whole items. */
+  roundUpTotal?: boolean;
 }
 
 /** CCM feeder product by variant (Sean final): the window option is the SAME feeder with a window — a variant, not a conflict. */
@@ -160,6 +162,8 @@ const fixed = (id: string, sku: string, description: string, qtyPerUnit: number,
   id, sku, description, identity: "source_backed", quantityStatus: "source_fixed", qtyPerUnit, evidence,
 });
 
+const shared = (id: string, sku: string, description: string, qtyPerUnit: number, evidence: string): PackageComponent => ({ ...fixed(id, sku, description, qtyPerUnit, evidence), roundUpTotal: true });
+
 const layout = (id: string, sku: string | null, description: string, historic: number, evidence: string, extra: Partial<PackageComponent> = {}): PackageComponent => ({
   id, sku, description, identity: sku ? "source_backed" : "unidentified", quantityStatus: "requires_validation", qtyPerUnit: null, historicTopigsQty: historic, evidence, ...extra,
 });
@@ -205,6 +209,30 @@ const MANURE_PLUG_PACKAGE: PackageMapping = {
   ],
 };
 
+/**
+ * The emergency window (ERT003, 1500 x 700 mm with motor) and its confirmed 11-line component list (Sean, 2026-11-24 10:22; the one-per-two-windows rule and the quantities are his). One package unit = one window; the Rep enters
+ * windows per room (suggested 1). Shared items (power supply, emergency opening) are 1 per 2 windows, ROUNDED UP over the whole quotation. The RLD80 drive, its mounting set and coupling, and the galvanised pipe are written
+ * "per room" in the source; with one window per room (the default) that is the same as per window, and the Estimator confirms the package and quantity at sign-off for a room with more windows.
+ */
+const EMERGENCY_WINDOW_PACKAGE: PackageMapping = {
+  kind: "package", itemKey: "emergency_windows", name: "Emergency window (ERT003) with its components", layoutDriven: false,
+  estimatorConfirmation: "NewQuip confirmed the component list on 2026-11-24. The Estimator confirms the quantity per room (the drive, mounting set, coupling and pipe are written per room in the source).",
+  provenance: "Sean Bredenkamp 2026-11-24 10:22 'Emergency window breakdown': ERT003 x1; HO08990730 and HO08020800 1 for every 2 windows; RID503117 x4; RID507450 x1 per room; RID507220 x1 per RID507450; RID590008 x2 per RID507450; NQ.PP.1017 x2 per room; NQ1060 x16; NQ3401 x16; NQ1088 x1.",
+  components: [
+    fixed("window", "ERT003", "Emergency window 1500 x 700 mm with motor", 1, "Sean 2026-11-24"),
+    shared("psu", "HO08990730", "Power supply 24VDC 150VA + 2 manual control 0-10V (1 per 2 windows)", 0.5, "Sean 2026-11-24"),
+    shared("opening", "HO08020800", "Emergency opening 24VDC for PS-100 slave (1 per 2 windows)", 0.5, "Sean 2026-11-24"),
+    fixed("bearing", "RID503117", "Bearing plate", 4, "Sean 2026-11-24"),
+    fixed("drive", "RID507450", "RLD80 / 1K / 24V / 2D25 / Z16 logic drive (1 per room)", 1, "Sean 2026-11-24"),
+    fixed("mount", "RID507220", "Mounting set for RLD80 (1 per drive)", 1, "Sean 2026-11-24"),
+    fixed("coupling", "RID590008", "Chain bolt coupling (2 per drive)", 2, "Sean 2026-11-24"),
+    fixed("pipe", "NQ.PP.1017", "Galvanised pipe 33.4 (1 in) incl. sockets, 6 m length (2 per room)", 2, "Sean 2026-11-24"),
+    fixed("washer", "NQ1060", "Body washer M6x19x1.6", 16, "Sean 2026-11-24 (fastening material)"),
+    fixed("screw", "NQ3401", "Metapp 12-24 x 38 mm hex flange screw, class 3, plain", 16, "Sean 2026-11-24 (fastening material)"),
+    fixed("rope", "NQ1088", "Braided rope 4 mm polyester", 1, "Sean 2026-11-24 (fastening material)"),
+  ],
+};
+
 export const COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMapping>> = {
   // ---- single SKU (source-backed recommendations) ----
   bulk_tank: single("bulk_tank", "SYSH-2750-3",
@@ -220,6 +248,7 @@ export const COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMappin
   // ---- packages ----
   cup_drinker: cupDrinkerPackage(true),
   manure_plug: MANURE_PLUG_PACKAGE,
+  emergency_windows: EMERGENCY_WINDOW_PACKAGE,
   led_light: {
     kind: "package", itemKey: "led_light", name: "FORTIS 1.2 5000K LED light", layoutDriven: false,
     provenance: `NEWQUIP_GROWER_PRICING_HANDOFF_2026-11-25, section 10: HNQ7046 FERAX 24W luminaire x1, HNQ7093 FERAX 29mm clip x3, HNQ7088 FERAX 0.6m cable x1; NewQuip asked for the customer-facing family to be FERAX (not FORTIS); that rename is HELD because the Rep-safe document guard forbids the brand, owner decision needed. Current Cin7 component costs approved. ${FEEDBACK_2026_11}: Sean confirmed HNQ7046, HNQ7088 and HNQ7093 as the Grower House LED light and accessories, replacing the revolving-light / light-trap SKUs (HO12011000, HO17050750, HO21013750). Function of each, from the Cin7 product names: HNQ7046 = FERAX 24W ON/OFF (the luminaire), HNQ7088 = FERAX CABLE 0.6M (the cable), HNQ7093 = FERAX CLIP 29MM RVS (the mounting clip). The per-light composition (1 luminaire + 3 clips + 1 cable) is the historic ${WB} sheet 'FX' composition: Sean confirmed the SKUs, not the quantities.`,
@@ -383,7 +412,7 @@ export const MANUAL_COMMERCIAL_LINES: ManualMapping[] = [
 
 /** The mapping for an item under a template revision. The revision is REQUIRED: there is deliberately no default, so no caller can silently read the latest template for an existing quotation. */
 /** Items the grower-2026-10 template had NO mapping for; a later revision's mapping must never reach a quotation created under it. */
-const LEGACY_UNMAPPED: ReadonlySet<GrowerItemKey> = new Set<GrowerItemKey>(["manure_plug"]);
+const LEGACY_UNMAPPED: ReadonlySet<GrowerItemKey> = new Set<GrowerItemKey>(["manure_plug", "emergency_windows"]);
 
 export function commercialMappingFor(itemKey: GrowerItemKey, revision: TemplateRevision): CommercialMapping | undefined {
   if (revision === TEMPLATE_REVISION_LEGACY && LEGACY_UNMAPPED.has(itemKey)) return undefined;

@@ -207,8 +207,8 @@ describe("interim control-panel Budget amount (R85,000 with CL1 and BF, R65,000 
   });
 });
 
-describe("NewQuip-confirmed Budget default products (CL1 HO05084000, BF HO05084507, window ERT003, fan MUG4D14A1M10238)", () => {
-  const DEF = { controller: "HO05084000", silo_weighing: "HO05084507", emergency_windows: "ERT003", cone_fans: "MUG4D14A1M10238" } as const;
+describe("NewQuip-confirmed Budget default products (CL1 HO05084000, BF HO05084507, fan MUG4D14A1M10238)", () => {
+  const DEF = { controller: "HO05084000", silo_weighing: "HO05084507", cone_fans: "MUG4D14A1M10238" } as const;
   const sel = (keys: (keyof typeof DEF)[], costs: Record<string, number> = {}): QuoteDraft => {
     const d = structuredClone(nqQ0002());
     for (const k of keys) { (d.config.optionalEquipment as Record<string, boolean>)[k] = true; (d.config.estimatorQuantities as Record<string, number>)[k] = 1; }
@@ -249,7 +249,41 @@ describe("NewQuip-confirmed Budget default products (CL1 HO05084000, BF HO050845
   });
   it("Rep-safe: no product code, supplier or cost reaches the Budget summary", async () => {
     const { budgetPricingOf } = await import("../budget-pricing");
-    const v = JSON.stringify(budgetPricingOf(evaluateDraft(sel(["controller", "silo_weighing", "emergency_windows", "cone_fans"], { HO05084000: 10_000_000_000 }), ctx).budget!));
-    expect(v).not.toMatch(/HO0508|ERT003|MUG4D|supplier|freight|markup|margin|landed/i);
+    const v = JSON.stringify(budgetPricingOf(evaluateDraft(sel(["controller", "silo_weighing", "cone_fans"], { HO05084000: 10_000_000_000 }), ctx).budget!));
+    expect(v).not.toMatch(/HO0508|ERT003|RID50|MUG4D|supplier|freight|markup|margin|landed/i);
+  });
+});
+
+
+describe("Emergency window package (Sean 2026-11-24 11-line component list)", () => {
+  const COSTS: Record<string, number> = { ERT003: 10_000_000_000, HO08990730: 10_000_000_000, HO08020800: 10_000_000_000, RID503117: 10_000_000_000, RID507450: 10_000_000_000, RID507220: 10_000_000_000, RID590008: 10_000_000_000, "NQ.PP.1017": 10_000_000_000, NQ1060: 10_000_000_000, NQ3401: 10_000_000_000, NQ1088: 10_000_000_000 };
+  const win = (perRoom: number, rooms: number, costs = COSTS): QuoteDraft => {
+    const d = structuredClone(nqQ0002());
+    (d.config.optionalEquipment as Record<string, boolean>).emergency_windows = true; (d.config.estimatorQuantities as Record<string, number>).emergency_windows = perRoom;
+    (d.config as { rooms: number }).rooms = rooms;
+    for (const [sku, e7] of Object.entries(costs)) (d.estimator.pricing!.skus as Record<string, unknown>)[sku] = S("ZAR", e7);
+    return d;
+  };
+  it("has the eleven confirmed lines and quantities", () => {
+    const l = lineOf(win(1, 12), "emergency_windows");
+    const q = Object.fromEntries((l.components ?? []).map((c) => [c.sku, c.quantity]));
+    expect(q).toEqual({ ERT003: 12, HO08990730: 6, HO08020800: 6, RID503117: 48, RID507450: 12, RID507220: 12, RID590008: 24, "NQ.PP.1017": 24, NQ1060: 192, NQ3401: 192, NQ1088: 12 });
+  });
+  it("shared parts (1 per 2 windows) are rounded UP over the whole quotation: 7 windows need 4, 1 window needs 1", () => {
+    const seven = Object.fromEntries((lineOf(win(7, 1), "emergency_windows").components ?? []).map((c) => [c.sku, c.quantity]));
+    expect(seven.HO08990730).toBe(4); expect(seven.HO08020800).toBe(4); expect(seven.ERT003).toBe(7);
+    const one = Object.fromEntries((lineOf(win(1, 1), "emergency_windows").components ?? []).map((c) => [c.sku, c.quantity]));
+    expect(one.HO08990730).toBe(1);
+  });
+  it("is priced provisionally when every component has a cost, and stays visibly unpriced when any one has none (never a placeholder)", () => {
+    const priced = lineOf(win(1, 12), "emergency_windows");
+    expect(priced.status).toBe("priced"); expect(priced.provisional).toBeDefined();
+    const { RID507450: _omit, ...rest } = COSTS;
+    const part = lineOf(win(1, 12, rest), "emergency_windows");
+    expect(part.status).not.toBe("priced"); expect(part.revenueExTax).toBeNull();
+  });
+  it("the original-template quotation stays unmapped", () => {
+    const o = win(1, 12); delete (o.estimator as { templateRevision?: string }).templateRevision;
+    expect(lineOf(o, "emergency_windows").status).not.toBe("priced");
   });
 });

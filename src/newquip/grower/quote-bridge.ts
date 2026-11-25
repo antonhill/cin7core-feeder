@@ -200,7 +200,7 @@ function evaluateComponent(
 ): { comp: BridgeComponent; input: QuoteLineInput | null } {
   const base = {
     id: c.id, sku: c.sku, description: c.description, qtyPerUnit: c.qtyPerUnit,
-    quantity: c.quantityStatus === "source_fixed" && c.qtyPerUnit != null ? c.qtyPerUnit * packageUnits : null,
+    quantity: c.quantityStatus === "source_fixed" && c.qtyPerUnit != null ? (c.roundUpTotal ? Math.ceil(Math.round(c.qtyPerUnit * packageUnits * 1e9) / 1e9) : c.qtyPerUnit * packageUnits) : null,
     unitPrice: null as number | null, revenueExTax: null as number | null, estimatedCost: null as number | null,
   };
   // Identity first: an uncertain/unidentified component can't be priced, whatever its quantity — and a historic surrogate is never substituted.
