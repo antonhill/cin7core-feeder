@@ -169,3 +169,40 @@ describe("sumpless pad cooling inside a NEW quotation (current template)", () =>
     expect(v).not.toMatch(/KNQCOOL|NQ3330|NQ1118|supplier|freight|markup|margin/i);
   });
 });
+
+describe("interim control-panel Budget amount (R85,000 with CL1 and BF, R65,000 with one)", () => {
+  const withPanels = (controller: boolean, silo: boolean, perRoom = 2): QuoteDraft => {
+    const d = structuredClone(nqQ0002());
+    d.config.optionalEquipment = { ...d.config.optionalEquipment, controller, silo_weighing: silo, control_panel: true } as never;
+    d.config.estimatorQuantities = { ...d.config.estimatorQuantities, control_panel: perRoom, controller: 1, silo_weighing: 1 } as never;
+    return d;
+  };
+  it("both CL1 and BF: R85,000 per panel x 24 panels (2 per room x 12 rooms), provisional, no markup", () => {
+    const l = lineOf(withPanels(true, true), "control_panel");
+    expect(l.status).toBe("priced"); expect(l.quantity).toBe(24);
+    expect(l.unitPrice).toBe(85_000); expect(l.revenueExTax).toBe(24 * 85_000);
+    expect(l.provisional).toBeDefined(); expect(l.pricedBy).toBe("budget_rate");
+  });
+  it("only CL1, or only BF: R65,000 per panel", () => {
+    for (const [c, s] of [[true, false], [false, true]] as const) { const l = lineOf(withPanels(c, s), "control_panel"); expect(l.unitPrice).toBe(65_000); expect(l.revenueExTax).toBe(24 * 65_000); }
+  });
+  it("neither CL1 nor BF: nothing is invented, the panel stays unpriced", () => {
+    const l = lineOf(withPanels(false, false), "control_panel");
+    expect(l.status).not.toBe("priced"); expect(l.revenueExTax).toBeNull();
+  });
+  it("is BUDGET only: the default (Estimator / final) evaluation does not price the panel", () => {
+    const l = evaluateDraft(withPanels(true, true), { ...ctx, provisionalPackages: false }).budget!.lines.find((x) => x.itemKey === "control_panel")!;
+    expect(l.status).not.toBe("priced");
+  });
+  it("a quotation on the ORIGINAL template is unchanged, and an Estimator's own manual price always wins", () => {
+    const o = withPanels(true, true); delete (o.estimator as { templateRevision?: string }).templateRevision;
+    expect(lineOf(o, "control_panel").status).not.toBe("priced");
+    const m = withPanels(true, true); m.estimator.priceResolutions = { control_panel: { unitPriceExVat: 70_000, reason: "Workshop quote" } } as never;
+    expect(lineOf(m, "control_panel").unitPrice).toBe(70_000);
+  });
+  it("Rep-safe: the Budget summary shows no product code, supplier, cost or rate basis", async () => {
+    const { budgetPricingOf } = await import("../budget-pricing");
+    const v = JSON.stringify(budgetPricingOf(evaluateDraft(withPanels(true, true), ctx).budget!));
+    expect(v).not.toMatch(/HO0508|supplier|freight|markup|margin|landed|rateMicro/i); // the label "Thomas-CL1 controller" is the equipment name, not a leak
+  });
+});

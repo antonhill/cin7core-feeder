@@ -47,6 +47,7 @@ export function evaluateDraft(draft: QuoteDraft, ctx: EvaluationContext): QuoteE
         templateRevision: templateRevisionOf(draft),
         penningPigSize: draft.config.penningPigSize ?? null,
         coolingSystemLengthM: draft.config.coolingSystemLengthM ?? null,
+        ...(ctx.provisionalPackages === true ? { panelSelection: { controller: Boolean(draft.config.optionalEquipment?.controller), silo_weighing: Boolean(draft.config.optionalEquipment?.silo_weighing) } } : {}),
         estimatorCharges: draft.estimator.charges,
         estimatorUnitPrices: draft.estimator.unitPrices,
         priceResolutions: draft.estimator.priceResolutions,

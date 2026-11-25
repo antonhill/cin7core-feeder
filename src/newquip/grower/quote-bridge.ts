@@ -2,6 +2,7 @@ import { computeLine, computeQuote, type QuoteLineInput, type QuoteResult } from
 import { isOptionalItemKey } from "./types";
 import { BUDGET_BASIS_PLAIN, budgetRateSellingPrice, usableBudgetBasis, type BudgetBasisEntry } from "./budget-basis";
 import type { FeederVariant, GeneratedLine, GrowerItemKey, PenningPigSize } from "./types";
+import { INTERIM_PANEL_PLAIN, INTERIM_PANEL_REASON, interimPanelRate, type PanelSelection } from "./control-panel-interim";
 import { TEMPLATE_REVISION_LEGACY, TEMPLATE_REVISION_CURRENT, coolingPackageFor, type TemplateRevision, alternativesFor, estimatorPricedFor, feederSkuFor, isCatalogueDefaultItem, manualLinesFor, packageAutoConfirmable, packageFor, provisionalPackageBasis, recommendedSkuFor, type PackageComponent } from "./commercial";
 import { PENNING_RATE_PER_RM } from "./workbook-price-source";
 import { QUOTE_TYPE_BASIS, type PriceSource, type PriceSourceDescriptor, type QuoteType } from "./pricing-source";
@@ -153,6 +154,8 @@ export interface BudgetOptions {
   budgetMarkupBps?: number | null;
   /** The length (m) of ONE sumpless pad-cooling system. Used only on the current template; absent = the cooling line asks for it and stays unpriced. */
   coolingSystemLengthM?: number | null;
+  /** BUDGET evaluation only: which of the CL1 controller / BF weighing the room has, for the interim control-panel amount (control-panel-interim.ts). */
+  panelSelection?: PanelSelection | null;
   /** Estimator-resolved unit prices for lines the source cannot price. Used ONLY when the normal route fails; needs a reason. */
   priceResolutions?: Partial<Record<GrowerItemKey, EstimatorResolution>>;
   /**
@@ -305,6 +308,15 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
       }
       bridge.push({ ...priceByPerson(g, unit, "estimator_input", "M75 system priced by the estimator (client preference, manual by design). NQ3132 is N/A / supplier quote required and is not separately priced."), components: reference });
       continue;
+    }
+
+    // ---- CONTROL PANEL: NewQuip's interim Budget amount (Budget evaluation, current template only; the Estimator's own confirmation or manual price always wins) ----
+    if (g.itemKey === "control_panel" && opts.provisionalPackages === true && revision === TEMPLATE_REVISION_CURRENT && !opts.confirmedMappings?.control_panel && !validResolution(opts.priceResolutions?.control_panel)) {
+      const panelRate = interimPanelRate(opts.panelSelection);
+      if (panelRate != null) {
+        bridge.push({ ...priceByPerson(g, panelRate, "budget_rate", INTERIM_PANEL_REASON), provisional: { plain: INTERIM_PANEL_PLAIN } });
+        continue;
+      }
     }
 
     // ---- PACKAGE ----
