@@ -54,10 +54,11 @@ describe("the confirmed package definitions (verified in code, nothing invented)
     const led = packageFor("led_light", TEMPLATE_REVISION_CURRENT)!;
     expect(led.components.map((c) => [c.sku, c.qtyPerUnit])).toEqual([["HNQ7046", 1], ["HNQ7093", 3], ["HNQ7088", 1]]);
   });
-  it("cup drinker: the seven-component build-up, with NB3542-03 shown as the ALTERNATIVE, and NEVER bulk-confirmed", () => {
+  it("cup drinker: the seven-component build-up (NB3542-03 closed on the current template, still the open ALTERNATIVE on the original one), and NEVER bulk-confirmed", () => {
     const cup = packageFor("cup_drinker", TEMPLATE_REVISION_CURRENT)!;
     expect(cup.components.map((c) => [c.sku, c.qtyPerUnit])).toEqual([["QCA00003", 1], ["NQ1380", 1], ["NQ2784", 1], ["NQ2886", 1], ["NQ1386", 5], ["NYNUT", 5], ["NQ1017", 5]]);
-    expect(cup.alternativeIdentity).toMatchObject({ sku: "NB3542-03" });
+    expect(cup.alternativeIdentity).toBeUndefined();
+    expect(packageFor("cup_drinker", "grower-2026-10")!.alternativeIdentity).toMatchObject({ sku: "NB3542-03" });
     expect(bulkConfirmablePackageKeys(["cup_drinker", "led_light"], TEMPLATE_REVISION_CURRENT)).not.toContain("cup_drinker");
   });
   it("PVC door: the Estimator chooses among NQ3444, NQ2161 and NQ2281 only (no invented specification)", () => {

@@ -38,9 +38,9 @@ describe("an existing quotation (no templateRevision) evaluates exactly as befor
 });
 
 describe("exactly three items differ between the revisions; every other substitution risk is additive", () => {
-  it("only led_light, flex_auger (M75 reference) and pvc_door (choice list) have a different definition; every other item is the same object in both revisions", () => {
+  it("only cup_drinker and led_light (2026-11-25 confirmations), manure_plug (new BOM), flex_auger (M75 reference) and pvc_door (choice list) have a different definition; every other item is the same object in both revisions", () => {
     const differing = GROWER_ITEM_KEYS.filter((k) => commercialMappingFor(k, TEMPLATE_REVISION_LEGACY) !== commercialMappingFor(k, TEMPLATE_REVISION_CURRENT));
-    expect(differing.sort()).toEqual(["flex_auger", "led_light", "pvc_door"]);
+    expect(differing.sort()).toEqual(["cup_drinker", "flex_auger", "led_light", "manure_plug", "pvc_door"]);
   });
   it("the support post and doors changed ONLY in the M75 reference package and the choice list: neither is a priced line, and a stored door or mapping is never rewritten", () => {
     expect(packageFor("flex_auger", TEMPLATE_REVISION_LEGACY)!.estimatorPriced).toBe(true);

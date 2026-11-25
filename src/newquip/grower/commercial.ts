@@ -147,6 +147,47 @@ const layout = (id: string, sku: string | null, description: string, historic: n
   id, sku, description, identity: sku ? "source_backed" : "unidentified", quantityStatus: "requires_validation", qtyPerUnit: null, historicTopigsQty: historic, evidence, ...extra,
 });
 
+/**
+ * The cup-drinker package. `confirmed` = true is the grower-2026-11 definition: NewQuip confirmed the seven-component bill of materials and said NOT to replace it with NB3542-03 (handoff 2026-11-25), so it is
+ * a fixed, source-backed composition. `confirmed` = false is the original grower-2026-10 definition, kept verbatim so a quotation created under it prices exactly as it did.
+ */
+function cupDrinkerPackage(confirmed: boolean): PackageMapping {
+  return {
+    kind: "package", itemKey: "cup_drinker", name: confirmed ? "Sow Cup Drinker Including Mounting Material" : "Grower cup drinker", layoutDriven: false,
+    provenance: confirmed
+      ? `${WB} sheet 'cup', GROWER CUP block (rows 43–49). CONFIRMED by NewQuip (NEWQUIP_GROWER_PRICING_HANDOFF_2026-11-25, section 9): the seven-component BOM is final, do NOT replace it with NB3542-03, and current Cin7 component costs are approved for the Budget calculation. The customer-facing description is "Sow Cup Drinker Including Mounting Material".`
+      : `${WB} sheet 'cup', GROWER CUP block (rows 43–49); subtotal R475.99 × 1.15 = R548 per drinker.`,
+    ...(confirmed ? { estimatorConfirmation: "NewQuip confirmed this composition on 2026-11-25 (handoff). The Estimator still confirms the package and its quantity at sign-off, exactly as for every other package." } : {
+      alternativeIdentity: {
+        sku: "NB3542-03",
+        description: "CUP DRINKERS (NEW TYPE) GROWER & FINISHER",
+        note: "The NewQuip Master (05 Oct 2026, per the owner's Round 2 brief) lists this as the current drinker product. Sean Round 1 separately confirmed the 7-part composition. Which representation prices the drinker is NOT settled — it is never chosen automatically (Round 3).",
+      },
+    }),
+    components: [
+      fixed("cup", "QCA00003", "Round drinking cup – large (11cm SS pipe) – grower", 1, "cup!B43"),
+      fixed("pipe", "NQ1380", "Water pipe 1/2in SST 800mm", 1, "cup!B44"),
+      fixed("plate", "NQ2784", "SST backing plate (cups) 2mm / 3 holes", 1, "cup!B45"),
+      fixed("bracket", "NQ2886", "Cup drinker bracket, pen mount", 1, "cup!B46"),
+      fixed("bolt", "NQ1386", "Bolt M8×65 SST", 5, "cup!B47 (qty formula 3 + 2)"),
+      fixed("nut", "NYNUT", "Nylock nut M8 SST", 5, "cup!B48"),
+      fixed("washer", "NQ1017", "Washer M8×25×2 SST", 5, "cup!B49"),
+    ],
+  };
+}
+
+/** The 250 mm manure plug: a finished item (MNQ048) that is exactly one each of MNQ039, MNQ040 and MNQ041 (handoff 2026-11-25, section 8). The Rep enters the quantity; current Cin7 component costs are approved. */
+const MANURE_PLUG_PACKAGE: PackageMapping = {
+  kind: "package", itemKey: "manure_plug", name: "250mm manure plug (MNQ048)", layoutDriven: false,
+  estimatorConfirmation: "NewQuip confirmed this composition on 2026-11-25 (handoff). The Estimator still confirms the package and its quantity at sign-off, exactly as for every other package.",
+  provenance: "NEWQUIP_GROWER_PRICING_HANDOFF_2026-11-25, section 8: finished item MNQ048 = MNQ039 x1 + MNQ040 x1 + MNQ041 x1. Current Cin7 component costs approved for the Budget calculation.",
+  components: [
+    fixed("tube", "MNQ039", "Manure plug component 1 of 3 (MNQ048 BOM)", 1, "Handoff 2026-11-25 s8"),
+    fixed("seal", "MNQ040", "Manure plug component 2 of 3 (MNQ048 BOM)", 1, "Handoff 2026-11-25 s8"),
+    fixed("plug", "MNQ041", "Manure plug component 3 of 3 (MNQ048 BOM)", 1, "Handoff 2026-11-25 s8"),
+  ],
+};
+
 export const COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMapping>> = {
   // ---- single SKU (source-backed recommendations) ----
   bulk_tank: single("bulk_tank", "SYSH-2750-3",
@@ -160,28 +201,12 @@ export const COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMappin
     "Cin7 'CONCRETE SLAT (12x045M)' = ERP '(1.2x0.45M)'; the workbook price 203 ≈ ERP latest cost 193.60 × 1.05. Delivery is a SEPARATE charge (see slat delivery)."),
 
   // ---- packages ----
-  cup_drinker: {
-    kind: "package", itemKey: "cup_drinker", name: "Grower cup drinker", layoutDriven: false,
-    provenance: `${WB} sheet 'cup', GROWER CUP block (rows 43–49); subtotal R475.99 × 1.15 = R548 per drinker.`,
-    alternativeIdentity: {
-      sku: "NB3542-03",
-      description: "CUP DRINKERS (NEW TYPE) GROWER & FINISHER",
-      note: "The NewQuip Master (05 Oct 2026, per the owner's Round 2 brief) lists this as the current drinker product. Sean Round 1 separately confirmed the 7-part composition. Which representation prices the drinker is NOT settled — it is never chosen automatically (Round 3).",
-    },
-    components: [
-      fixed("cup", "QCA00003", "Round drinking cup – large (11cm SS pipe) – grower", 1, "cup!B43"),
-      fixed("pipe", "NQ1380", "Water pipe 1/2in SST 800mm", 1, "cup!B44"),
-      fixed("plate", "NQ2784", "SST backing plate (cups) 2mm / 3 holes", 1, "cup!B45"),
-      fixed("bracket", "NQ2886", "Cup drinker bracket, pen mount", 1, "cup!B46"),
-      fixed("bolt", "NQ1386", "Bolt M8×65 SST", 5, "cup!B47 (qty formula 3 + 2)"),
-      fixed("nut", "NYNUT", "Nylock nut M8 SST", 5, "cup!B48"),
-      fixed("washer", "NQ1017", "Washer M8×25×2 SST", 5, "cup!B49"),
-    ],
-  },
+  cup_drinker: cupDrinkerPackage(true),
+  manure_plug: MANURE_PLUG_PACKAGE,
   led_light: {
     kind: "package", itemKey: "led_light", name: "FORTIS 1.2 5000K LED light", layoutDriven: false,
-    provenance: `${FEEDBACK_2026_11}: Sean confirmed HNQ7046, HNQ7088 and HNQ7093 as the Grower House LED light and accessories, replacing the revolving-light / light-trap SKUs (HO12011000, HO17050750, HO21013750). Function of each, from the Cin7 product names: HNQ7046 = FERAX 24W ON/OFF (the luminaire), HNQ7088 = FERAX CABLE 0.6M (the cable), HNQ7093 = FERAX CLIP 29MM RVS (the mounting clip). The per-light composition (1 luminaire + 3 clips + 1 cable) is the historic ${WB} sheet 'FX' composition: Sean confirmed the SKUs, not the quantities.`,
-    estimatorConfirmation: "Sean confirmed the three SKUs, not their quantities per light (the 1 + 3 + 1 composition is the historic FERAX build-up), and the customer-facing name still says FORTIS 1.2 while the confirmed luminaire is the FERAX 24W: the Estimator confirms the package and its description.",
+    provenance: `NEWQUIP_GROWER_PRICING_HANDOFF_2026-11-25, section 10: HNQ7046 FERAX 24W luminaire x1, HNQ7093 FERAX 29mm clip x3, HNQ7088 FERAX 0.6m cable x1; NewQuip asked for the customer-facing family to be FERAX (not FORTIS); that rename is HELD because the Rep-safe document guard forbids the brand, owner decision needed. Current Cin7 component costs approved. ${FEEDBACK_2026_11}: Sean confirmed HNQ7046, HNQ7088 and HNQ7093 as the Grower House LED light and accessories, replacing the revolving-light / light-trap SKUs (HO12011000, HO17050750, HO21013750). Function of each, from the Cin7 product names: HNQ7046 = FERAX 24W ON/OFF (the luminaire), HNQ7088 = FERAX CABLE 0.6M (the cable), HNQ7093 = FERAX CLIP 29MM RVS (the mounting clip). The per-light composition (1 luminaire + 3 clips + 1 cable) is the historic ${WB} sheet 'FX' composition: Sean confirmed the SKUs, not the quantities.`,
+    estimatorConfirmation: "NewQuip confirmed this composition on 2026-11-25 (handoff). The Estimator still confirms the package and its quantity at sign-off, exactly as for every other package.",
     components: [
       {
         id: "luminaire", sku: "HNQ7046", identity: "source_backed", quantityStatus: "source_fixed", qtyPerUnit: 1,
@@ -270,6 +295,7 @@ export const templateRevisionOf = (draft: { estimator?: { templateRevision?: unk
 
 /** The ORIGINAL (grower-2026-10) definitions of the items the 2026-11 answers changed, kept verbatim so a quotation created under them keeps exactly the scope, quantities and pricing it had. */
 const LEGACY_COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMapping>> = {
+  cup_drinker: cupDrinkerPackage(false),
   led_light: {
     kind: "package", itemKey: "led_light", name: "FORTIS 1.2 5000K LED light", layoutDriven: false,
     provenance: `${WB} sheet 'FX': €25.50 + 3 × €0.74 + €1.37 = €29.09 per light (priced on the FERAX 24W ON/OFF, HNQ7046, as a historic surrogate for the FORTIS 1.2).`,
@@ -339,7 +365,11 @@ export const MANUAL_COMMERCIAL_LINES: ManualMapping[] = [
 ];
 
 /** The mapping for an item under a template revision. The revision is REQUIRED: there is deliberately no default, so no caller can silently read the latest template for an existing quotation. */
+/** Items the grower-2026-10 template had NO mapping for; a later revision's mapping must never reach a quotation created under it. */
+const LEGACY_UNMAPPED: ReadonlySet<GrowerItemKey> = new Set<GrowerItemKey>(["manure_plug"]);
+
 export function commercialMappingFor(itemKey: GrowerItemKey, revision: TemplateRevision): CommercialMapping | undefined {
+  if (revision === TEMPLATE_REVISION_LEGACY && LEGACY_UNMAPPED.has(itemKey)) return undefined;
   return revision === TEMPLATE_REVISION_LEGACY && LEGACY_COMMERCIAL_MAPPINGS[itemKey] ? LEGACY_COMMERCIAL_MAPPINGS[itemKey] : COMMERCIAL_MAPPINGS[itemKey];
 }
 
@@ -402,7 +432,7 @@ export function provisionalPackageBasis(pkg: PackageMapping | undefined): Provis
     qualifies: `Every component has a source-backed SKU, a fixed source quantity and no pricing exception (${pkg.name}). This is a provisional budget composition, NOT a NewQuip-approved specification.`,
     internalReasons: open,
     composition: pkg.components.map((c) => ({ sku: c.sku as string, qtyPerUnit: c.qtyPerUnit as number })),
-    plain: PROVISIONAL_PLAIN[pkg.itemKey] ?? "Provisional: the product and its parts are still to be confirmed, so this price may change.",
+    plain: pkg.alternativeIdentity ? (PROVISIONAL_PLAIN[pkg.itemKey] ?? "Provisional: the product and its parts are still to be confirmed, so this price may change.") : "Provisional: the parts are confirmed, but the Estimator has not yet signed off the package and quantity, so this price may change.",
   };
 }
 

@@ -210,7 +210,18 @@ function evaluateComponent(
   return { comp: { ...base, status: "priced", reason: "Priced", unitPrice: r.unitPriceExVat, revenueExTax: line.revenueExTax, estimatedCost: line.estimatedCost }, input };
 }
 
+/**
+ * Customer-facing name NewQuip confirmed on 2026-11-25 (handoff section 9). The LED's FERAX name (section 10) is NOT applied: the Rep-safe document guard forbids that brand until the owner decides, applied ONLY to a quotation on the current template revision: the original template, its saved snapshots and every quotation
+ * created under it keep the wording they were issued with.
+ */
+export const CURRENT_REVISION_LABELS: Partial<Record<GrowerItemKey, string>> = {
+  cup_drinker: "Sow Cup Drinker Including Mounting Material",
+};
+const relabelForRevision = (generated: GeneratedLine[], revision: TemplateRevision | undefined): GeneratedLine[] =>
+  revision === TEMPLATE_REVISION_LEGACY || revision === undefined ? generated : generated.map((g) => (CURRENT_REVISION_LABELS[g.itemKey] ? { ...g, label: CURRENT_REVISION_LABELS[g.itemKey] as string } : g));
+
 export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions): BudgetQuote {
+  generated = relabelForRevision(generated, opts.templateRevision);
   const bridge: BridgeLine[] = [];
   const engineLines: QuoteLineInput[] = [];
   const blockers: string[] = [];

@@ -28,8 +28,8 @@ describe("LED lighting: the three SKUs Sean confirmed", () => {
     for (const gone of ["HO12011000", "HO17050750", "HO21013750"]) { expect(ids).not.toContain(gone); expect(referencedSkus()).not.toContain(gone); }
     expect(led.components.every((c) => c.identity === "source_backed" && !c.candidateSkus)).toBe(true);
   });
-  it("still needs an Estimator: Sean confirmed SKUs, not per-light quantities or the customer-facing FORTIS name", () => {
-    expect(led.estimatorConfirmation).toMatch(/not their quantities/);
+  it("still needs the Estimator's sign-off; the quantities (2026-11-25 handoff) and the FERAX name are confirmed by NewQuip", () => {
+    expect(led.estimatorConfirmation).toMatch(/Estimator still confirms/);
     expect(packageAutoConfirmable(led)).toBe(false);
   });
 });

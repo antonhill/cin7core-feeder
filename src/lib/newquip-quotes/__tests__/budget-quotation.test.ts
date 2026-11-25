@@ -312,7 +312,7 @@ describe("provisional pricing in the budget quotation (UAT only)", () => {
     const snap = JSON.parse(new TextDecoder().decode(uploads[0].bytes));
     expect(snap.draft.estimator.pricing.skus.HNQ7046).toBeDefined(); // internal: the saved draft WITH its pricing
     expect(snap.provisional.map((p: { itemKey: string }) => p.itemKey).sort()).toEqual(["cup_drinker", "led_light"]);
-    expect(snap.provisional[0].openQuestions.join(" ")).toMatch(/NB3542-03|FORTIS/);
+    expect(snap.provisional[0].openQuestions.join(" ")).toMatch(/Estimator still confirms/); // 2026-11-25 handoff closed the NB3542-03 and FORTIS questions; only the Estimator sign-off remains
     const rec = audits[1].detail as Record<string, unknown>;
     expect(rec.provisionalCount).toBe(2);
     expect((rec.internalSnapshot as { path: string; sha256: string }).path).toBe(uploads[0].path);
