@@ -69,7 +69,7 @@ describe("sumpless pad cooling: the confirmed quantities (pure; not yet wired in
   const q = (L: number) => Object.fromEntries(coolingBom(L).lines.map((l) => [l.sku, l.quantity]));
   it("reproduces the handoff's 12 m example exactly", () => {
     expect(q(12)).toMatchObject({ KNQCOOL02: 1, KNQCOOL03: 3, KNQCOOL16: 2, KNQCOOL04: 1, KNQCOOL01: 20, NQ2550: 18, NYNUT: 108, NQ1964: 54 });
-    expect(q(12)).toMatchObject({ NQ3330: 4, NQ3331: 10, NQ3332: 4, NQ3333: 1, NQ3334: 1, NQ3335: 1, NQ3336: 1, NQ2968: 1, N3771: 1, NQ3339: 1, NQ3340: 1, NQ3338: 3, NQ3341: 1, NQ1118: 1, NQ3368: 1, NQ1211: 11, NQ1342: 11, NQ1029: 6, NQ1089: 6, NQ3275: 6, NQ3382: 1, NQ1532: 2, NQ2185: 3 });
+    expect(q(12)).toMatchObject({ NQ3330: 4, NQ3331: 10, NQ3332: 4, NQ3333: 1, NQ3334: 1, NQ3335: 1, NQ3336: 1, NQ2968: 1, NQ3771: 1, NQ3339: 1, NQ3340: 1, NQ3338: 3, NQ3341: 1, NQ1118: 1, NQ3368: 1, NQ1211: 11, NQ1342: 11, NQ1029: 6, NQ1089: 6, NQ3275: 6, NQ3382: 1, NQ1532: 2, NQ2185: 3 });
     expect(coolingBom(12).plumbingDoubled).toBe(false);
   });
   it("rounds acetone and Sikaflex (1.5) UP to 2 containers", () => expect(q(12)).toMatchObject({ NQ3369: 2, NQ3344: 2 }));

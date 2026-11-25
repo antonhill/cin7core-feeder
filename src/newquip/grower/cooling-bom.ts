@@ -31,7 +31,7 @@ const PLUMBING: ReadonlyArray<{ sku: string; description: string; raw: number }>
   { sku: "NQ3335", description: "2-inch PP tank connector", raw: 1 },
   { sku: "NQ3336", description: "1.5-inch non-return valve", raw: 1 },
   { sku: "NQ2968", description: "50mm strainer", raw: 1 },
-  { sku: "N3771", description: "1000mic sediment filter element", raw: 1 },
+  { sku: "NQ3771", description: "1000mic sediment filter element", raw: 1 }, // handoff wrote N3771, which is not a Cin7 code; NQ3771 is the live product (description matches) and NewQuip loaded its supplier cost under NQ3771 on 2026-11-25
   { sku: "NQ3339", description: "Male thread adaptor 50x63x1.5", raw: 1 },
   { sku: "NQ3340", description: "Male thread adaptor 50x63x2", raw: 1 },
   { sku: "NQ3338", description: "Female spigot thread adaptor 50mm x 2", raw: 3 },
