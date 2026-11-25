@@ -71,6 +71,7 @@ export function validateGrowerInput(input: GrowerConfigurationInput): InputIssue
   checkNumber(issues, "hospitalPens", input.hospitalPens, { integer: true });
   checkNumber(issues, "pigsPerRoom", input.pigsPerRoom, { positive: true, integer: true });
   if (input.slattedFloorAreaM2 != null) checkNumber(issues, "slattedFloorAreaM2", input.slattedFloorAreaM2, { positive: false });
+  if (input.coolingSystemLengthM != null) checkNumber(issues, "coolingSystemLengthM", input.coolingSystemLengthM, { positive: true });
   if (input.penningRunningMetresPerRoom != null) checkNumber(issues, "penningRunningMetresPerRoom", input.penningRunningMetresPerRoom, { positive: false });
   if (input.penningPigSize != null && !["SMALL", "MEDIUM", "LARGE"].includes(input.penningPigSize)) {
     issues.push({ field: "penningPigSize", code: "invalid_pig_size", message: "Pig size must be small, medium or large." });

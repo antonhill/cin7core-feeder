@@ -83,6 +83,8 @@ export interface GrowerConfigurationInput {
   penningPigSize?: PenningPigSize | null;
   /** ESTIMATOR INPUT: penning RUNNING METRES for ONE room (not m²). */
   penningRunningMetresPerRoom?: number | null;
+  /** ESTIMATOR / REP INPUT: length in metres of ONE sumpless pad-cooling system. Drives the cooling bill of materials (cooling-bom.ts). Absent until entered; never defaulted. */
+  coolingSystemLengthM?: number | null;
   optionalEquipment: Record<OptionalItemKey, boolean>;
   /**
    * CUSTOMER-DRIVEN EXCLUSIONS. Everything in the Grower template is required by default (Sean), but a customer may not want a

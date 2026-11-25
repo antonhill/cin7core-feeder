@@ -150,10 +150,11 @@ describe("the existing engine, Budget evaluation only", () => {
 
 describe("the coverage view: every selectable category, exact blocker, owner and next action", () => {
   const rows = buildBudgetCoverage([], TODAY);
-  const EIGHT = ["pvc_door", "controller", "silo_weighing", "control_panel", "emergency_windows", "pad_cooling", "cone_fans", "manure_plug"];
-  it("covers all 16 categories; with the empty register 8 have no defensible price (the NQ-Q-0005 set)", () => {
+  // The NQ-Q-0005 set was eight. The 2026-11-25 handoff confirmed the pad-cooling quantity formulas and the manure-plug BOM, so those two are now provisional packages; six still have no defensible price.
+  const EIGHT = ["pvc_door", "controller", "silo_weighing", "control_panel", "emergency_windows", "cone_fans"];
+  it("covers all 16 categories; with the empty register 6 have no defensible price (the NQ-Q-0005 set minus pad cooling and the manure plug, confirmed 2026-11-25)", () => {
     expect(rows.map((r) => r.itemKey)).toEqual([...GROWER_ITEM_KEYS]);
-    expect(coverageCounts(rows)).toEqual({ READY: 5, PROVISIONAL: 2, RATE_APPROVAL_REQUIRED: 3, SPECIFICATION_REQUIRED: 5, NO_PRICE_SOURCE: 1 });
+    expect(coverageCounts(rows)).toEqual({ READY: 5, PROVISIONAL: 4, RATE_APPROVAL_REQUIRED: 3, SPECIFICATION_REQUIRED: 4, NO_PRICE_SOURCE: 0 });
     const missing = rows.filter((r) => r.repSafe.status === "missing").map((r) => r.itemKey);
     for (const k of EIGHT) expect(missing).toContain(k);
   });
@@ -163,12 +164,11 @@ describe("the coverage view: every selectable category, exact blocker, owner and
     const door = rows.find((r) => r.itemKey === "pvc_door")!;
     expect(door).toMatchObject({ priceEvidence: "current_cin7", mechanismSupported: true, approvedPriceReady: false });
     expect(door.evidenceNote).toMatch(/cannot be told apart from a data-load date/);
-    for (const k of ["controller", "silo_weighing", "emergency_windows", "pad_cooling", "cone_fans"]) expect(rows.find((r) => r.itemKey === k)).toMatchObject({ priceEvidence: "historical_only", approvedPriceReady: false });
+    for (const k of ["controller", "silo_weighing", "emergency_windows", "cone_fans"]) expect(rows.find((r) => r.itemKey === k)).toMatchObject({ priceEvidence: "historical_only", approvedPriceReady: false });
     expect(rows.find((r) => r.itemKey === "controller")!.evidenceNote).toMatch(/historical, unverified\); not a current Cin7 supplier cost/);
-    for (const k of ["control_panel", "manure_plug"]) expect(rows.find((r) => r.itemKey === k)).toMatchObject({ priceEvidence: "none", approvedPriceReady: false });
-    expect(rows.find((r) => r.itemKey === "manure_plug")!.mechanismSupported).toBe(false);
+    expect(rows.find((r) => r.itemKey === "control_panel")).toMatchObject({ priceEvidence: "none", approvedPriceReady: false });
     // a provisional package is price-ready provisionally but is NOT an approved price
-    for (const k of ["cup_drinker", "led_light"]) expect(rows.find((r) => r.itemKey === k)).toMatchObject({ state: "PROVISIONAL", approvedPriceReady: false });
+    for (const k of ["cup_drinker", "led_light", "pad_cooling", "manure_plug"]) expect(rows.find((r) => r.itemKey === k)).toMatchObject({ state: "PROVISIONAL", approvedPriceReady: false });
   });
   it("every non-READY row names the blocker, an owner and the next action; READY rows need none", () => {
     for (const r of rows) { if (r.state === "READY") { expect(r.blocker).toBeNull(); } else { expect(r.blocker, r.itemKey).toBeTruthy(); expect(r.owner, r.itemKey).toBeTruthy(); expect(r.nextAction, r.itemKey).toBeTruthy(); } }

@@ -1130,6 +1130,11 @@ export default function QuoteEditorPage() {
                   );
                 })}
               </ul>
+              {cfg.optionalEquipment.pad_cooling && (
+                <div className="mt-3 grid gap-3 sm:grid-cols-2" data-testid="cooling-length-field">
+                  <NumField label="Pad cooling system length" error={err("coolingSystemLengthM")} onBlur={() => touch("coolingSystemLengthM")} unit="metres, one system" value={cfg.coolingSystemLengthM ?? null} onChange={(v) => edit((d) => { d.config.coolingSystemLengthM = v; })} hint="The cooling parts are worked out from this length. Over 20 m the plumbing quantities double. Enter the number of systems as the quantity." />
+                </div>
+              )}
             </Panel>
             </div>
 

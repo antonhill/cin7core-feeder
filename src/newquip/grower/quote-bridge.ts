@@ -2,7 +2,7 @@ import { computeLine, computeQuote, type QuoteLineInput, type QuoteResult } from
 import { isOptionalItemKey } from "./types";
 import { BUDGET_BASIS_PLAIN, budgetRateSellingPrice, usableBudgetBasis, type BudgetBasisEntry } from "./budget-basis";
 import type { FeederVariant, GeneratedLine, GrowerItemKey, PenningPigSize } from "./types";
-import { TEMPLATE_REVISION_LEGACY, type TemplateRevision, alternativesFor, estimatorPricedFor, feederSkuFor, isCatalogueDefaultItem, manualLinesFor, packageAutoConfirmable, packageFor, provisionalPackageBasis, recommendedSkuFor, type PackageComponent } from "./commercial";
+import { TEMPLATE_REVISION_LEGACY, TEMPLATE_REVISION_CURRENT, coolingPackageFor, type TemplateRevision, alternativesFor, estimatorPricedFor, feederSkuFor, isCatalogueDefaultItem, manualLinesFor, packageAutoConfirmable, packageFor, provisionalPackageBasis, recommendedSkuFor, type PackageComponent } from "./commercial";
 import { PENNING_RATE_PER_RM } from "./workbook-price-source";
 import { QUOTE_TYPE_BASIS, type PriceSource, type PriceSourceDescriptor, type QuoteType } from "./pricing-source";
 
@@ -151,6 +151,8 @@ export interface BudgetOptions {
   budgetAsOf?: string;
   /** The markup (basis points on cost) a COST-basis rate passes through: the project's attributed markup. null / absent = a cost-basis rate cannot be priced. */
   budgetMarkupBps?: number | null;
+  /** The length (m) of ONE sumpless pad-cooling system. Used only on the current template; absent = the cooling line asks for it and stays unpriced. */
+  coolingSystemLengthM?: number | null;
   /** Estimator-resolved unit prices for lines the source cannot price. Used ONLY when the normal route fails; needs a reason. */
   priceResolutions?: Partial<Record<GrowerItemKey, EstimatorResolution>>;
   /**
@@ -282,7 +284,13 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
       continue;
     }
 
-    const pkg = packageFor(g.itemKey, opts.templateRevision ?? TEMPLATE_REVISION_LEGACY);
+    const revision = opts.templateRevision ?? TEMPLATE_REVISION_LEGACY;
+    // Cooling (current template only): the package is built from the system length. No length = no price and no guess.
+    if (g.itemKey === "pad_cooling" && revision === TEMPLATE_REVISION_CURRENT && !coolingPackageFor(opts.coolingSystemLengthM)) {
+      fail({ ...emptyLine(g), status: "unmapped", reason: "Enter the length of one cooling system (metres) to price this item." }, `${g.label}: enter the cooling system length`);
+      continue;
+    }
+    const pkg = g.itemKey === "pad_cooling" && revision === TEMPLATE_REVISION_CURRENT ? (coolingPackageFor(opts.coolingSystemLengthM) ?? undefined) : packageFor(g.itemKey, revision);
 
     // ---- M75: estimator-priced by design; the historic package is a reference only ----
     if (pkg?.estimatorPriced) {

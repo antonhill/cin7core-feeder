@@ -1,4 +1,5 @@
 import type { GrowerItemKey } from "./types";
+import { coolingBom } from "./cooling-bom";
 
 // COMMERCIAL MAPPING — what a Grower output is made of in Cin7. Deliberately separate from:
 //   ENGINEERING RULE   (rules.ts)   how many commercial units are needed
@@ -95,6 +96,22 @@ export interface PackageMapping {
    * Recorded, never priced automatically — which representation prices the output is for NewQuip to confirm.
    */
   alternativeIdentity?: { sku: string; description: string; note: string };
+}
+
+/**
+ * The sumpless pad-cooling package for ONE system of `lengthM` metres (NewQuip handoff 2026-11-25, section 6). Every component quantity is the confirmed formula in cooling-bom.ts; nothing is priced here (current Cin7 component
+ * costs are looked up at run time). Returns null when the length is missing or not a positive number: the line then stays unpriced and asks for it, never a guessed length. A component whose quantity is 0 (no middle gutter kit up to 3 m) is omitted.
+ * Labour days, travel, food and accommodation are NOT part of this package: they are manual charges and no rate was supplied.
+ */
+export function coolingPackageFor(lengthM: number | null | undefined): PackageMapping | null {
+  if (lengthM == null || !Number.isFinite(lengthM) || lengthM <= 0) return null;
+  const bom = coolingBom(lengthM);
+  return {
+    kind: "package", itemKey: "pad_cooling", name: `Sumpless pad cooling, ${lengthM} m system`, layoutDriven: false,
+    provenance: "NEWQUIP_GROWER_PRICING_HANDOFF_2026-11-25, section 6: confirmed quantity formulas by system length; current Cin7 component costs approved for the Budget calculation. " + bom.assumptions.join(" "),
+    estimatorConfirmation: "NewQuip confirmed the quantity formulas on 2026-11-25; three readings remain for NewQuip to confirm (plumbing doubled before rounding over 20 m, KNQCOOL16 not doubled, no minimum length). The Estimator confirms the package at sign-off. Labour, travel, food and accommodation are not included.",
+    components: bom.lines.filter((l) => l.quantity > 0).map((l) => fixed(`${l.section}-${l.sku}`, l.sku, l.description, l.quantity, `Handoff 2026-11-25 s6 (${l.section})`)),
+  };
 }
 
 /** Priced per a unit the estimator supplies (e.g. penning per running metre by pig size). No automatic price. */
@@ -420,6 +437,7 @@ export interface ProvisionalBasis {
 }
 const PROVISIONAL_PLAIN: Partial<Record<GrowerItemKey, string>> = {
   cup_drinker: "Provisional: the exact drinker product and its parts are still to be confirmed, so this price may change.",
+  pad_cooling: "Provisional: the cooling quantities follow NewQuip's confirmed formulas for the system length entered; labour, travel and some plumbing details are still to be confirmed, so this price may change.",
   led_light: "Provisional: the light model, the number of parts per light and the product name are still to be confirmed, so this price may change.",
 };
 export function provisionalPackageBasis(pkg: PackageMapping | undefined): ProvisionalBasis | null {

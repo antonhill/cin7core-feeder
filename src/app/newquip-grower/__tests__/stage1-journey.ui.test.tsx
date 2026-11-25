@@ -364,7 +364,7 @@ describe("internal Budget coverage action", () => {
     asRoles("ESTIMATOR"); vi.mocked(canSeeCosts).mockResolvedValue(true);
     const r = await actions.getBudgetCoverageAction();
     expect(r.ok).toBe(true); expect(r.data).toHaveLength(16);
-    expect(r.data!.filter((x) => x.state !== "READY" && x.state !== "PROVISIONAL").length).toBe(9);
+    expect(r.data!.filter((x) => x.state !== "READY" && x.state !== "PROVISIONAL").length).toBe(7); // 2026-11-25: pad cooling and the manure plug became provisional packages
   }, 30000);
 });
 

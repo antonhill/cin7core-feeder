@@ -46,6 +46,7 @@ export function evaluateDraft(draft: QuoteDraft, ctx: EvaluationContext): QuoteE
         feederVariant: draft.config.feederVariant,
         templateRevision: templateRevisionOf(draft),
         penningPigSize: draft.config.penningPigSize ?? null,
+        coolingSystemLengthM: draft.config.coolingSystemLengthM ?? null,
         estimatorCharges: draft.estimator.charges,
         estimatorUnitPrices: draft.estimator.unitPrices,
         priceResolutions: draft.estimator.priceResolutions,

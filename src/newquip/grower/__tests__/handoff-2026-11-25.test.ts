@@ -6,6 +6,7 @@ import { createWorkbookPriceSource } from "../workbook-price-source";
 import { NEWQUIP_MASTER_POC_SNAPSHOT } from "../snapshot";
 import { packageAutoConfirmable, packageFor } from "../commercial";
 import { coolingBom } from "../cooling-bom";
+import { calculateGrowerHouse } from "../calculate";
 import { nqQ0002, S } from "./nq-q-0002-fixture";
 
 const ctx = { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: false, provisionalPackages: true };
@@ -101,5 +102,62 @@ describe("sumpless pad cooling: the confirmed quantities (pure; not yet wired in
   it("lists no SKU twice (the cleaning fitting is counted once)", () => {
     const skus = coolingBom(12).lines.map((l) => l.sku);
     expect(new Set(skus).size).toBe(skus.length);
+  });
+});
+
+describe("sumpless pad cooling inside a NEW quotation (current template)", () => {
+  const withCooling = (lengthM: number | null | undefined, systemsPerRoom = 1, priced = true): QuoteDraft => {
+    const d = structuredClone(nqQ0002());
+    d.config.optionalEquipment = { ...d.config.optionalEquipment, pad_cooling: true } as never;
+    d.config.estimatorQuantities = { ...d.config.estimatorQuantities, pad_cooling: systemsPerRoom } as never;
+    if (lengthM !== undefined) d.config.coolingSystemLengthM = lengthM;
+    if (priced && lengthM) for (const l of coolingBom(lengthM).lines) (d.estimator.pricing!.skus as Record<string, unknown>)[l.sku] = S("ZAR", 1_000_000_000); // every component R100.00 (a test figure)
+    return d;
+  };
+  const unitsOf = (L: number) => coolingBom(L).lines.reduce((a, l) => a + l.quantity, 0);
+  it("with a length the line is priced provisionally from component quantities x 1 system x 12 rooms (R100 test cost, 1.15 freight, 20% markup)", () => {
+    const l = lineOf(withCooling(12), "pad_cooling");
+    expect(l.status).toBe("priced");
+    expect(l.provisional).toBeDefined();
+    expect(l.quantity).toBe(12);
+    expect(l.revenueExTax).toBeCloseTo(12 * unitsOf(12) * 100 * 1.15 * 1.2, 2);
+    expect(l.components!.find((c) => c.sku === "KNQCOOL01")!.quantity).toBe(12 * 20); // 20 pads per 12 m system
+  });
+  it("every plumbing quantity doubles just over 20 m (boundary: 20 m vs 20.01 m)", () => {
+    const at20 = lineOf(withCooling(20), "pad_cooling"), over = lineOf(withCooling(20.01), "pad_cooling");
+    expect(at20.status).toBe("priced"); expect(over.status).toBe("priced");
+    expect(over.components!.find((c) => c.sku === "NQ1118")!.quantity).toBe(2 * 12);
+    expect(at20.components!.find((c) => c.sku === "NQ1118")!.quantity).toBe(12);
+    expect(over.components!.find((c) => c.sku === "KNQCOOL16")!.quantity).toBe(2 * 12);
+  });
+  it("NO length: the line is NOT priced, says what to enter, and no length is guessed", async () => {
+    for (const L of [null, undefined] as const) {
+      const l = lineOf(withCooling(L as never, 1, false), "pad_cooling");
+      expect(l.status).toBe("unmapped");
+      expect(l.revenueExTax).toBeNull();
+      expect(l.reason).toMatch(/length of one cooling system/);
+    }
+    // a zero or negative length is an invalid input: nothing is priced at all
+    for (const L of [0, -3]) expect(evaluateDraft(withCooling(L, 1, false), ctx).budget).toBeNull();
+    const { repNextStepFor } = await import("../budget-coverage");
+    expect(repNextStepFor("pad_cooling")).toMatch(/Enter the length of one cooling system/);
+  });
+  it("a missing component cost leaves the whole package unpriced (a cost is never invented)", () => {
+    const d = withCooling(12); delete (d.estimator.pricing!.skus as Record<string, unknown>).NQ1118;
+    expect(lineOf(d, "pad_cooling").status).not.toBe("priced");
+  });
+  it("a quotation on the ORIGINAL template ignores the length and stays unmapped", () => {
+    const d = withCooling(12); delete (d.estimator as { templateRevision?: string }).templateRevision;
+    expect(lineOf(d, "pad_cooling").status).not.toBe("priced");
+  });
+  it("the length is validated by the calculation (a negative or non-numeric length is refused) and a NEW draft carries no length", () => {
+    const d = withCooling(-1, 1, false);
+    expect(calculateGrowerHouse(d.config).issues.map((i) => i.field)).toContain("coolingSystemLengthM");
+    expect("coolingSystemLengthM" in nqQ0002().config).toBe(false);
+  });
+  it("Rep-safe: the Budget summary names no cooling product code or supplier", async () => {
+    const { budgetPricingOf } = await import("../budget-pricing");
+    const v = JSON.stringify(budgetPricingOf(evaluateDraft(withCooling(12), ctx).budget!));
+    expect(v).not.toMatch(/KNQCOOL|NQ3330|NQ1118|supplier|freight|markup|margin/i);
   });
 });
