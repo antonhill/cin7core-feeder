@@ -5,11 +5,16 @@
 // Every formula below is the handoff's. The three places the handoff leaves a reading open are returned in `assumptions` so no caller can present them as settled:
 //   A1  for a system over 20 m "every plumbing quantity doubles": the UNROUNDED quantity is doubled and then rounded up to whole containers (acetone and Sikaflex 1.5 -> 3, not 2 -> 4).
 //   A2  KNQCOOL16 (cleaning fittings) is a gutter-section item, 2 per system, and is NOT doubled over 20 m.
-//   A3  no supported minimum length was given: only a non-finite or non-positive length is refused; a system of 3 m or less has no middle gutter kit.
+//   A3  no supported length range was given: lengths outside 0.6 m (one pad) to 200 m are refused as an input-sanity check, not a commercial rule; a system of 3 m or less has no middle gutter kit.
 
 export type CoolingSection = "gutter" | "pad" | "fixings" | "plumbing";
 export interface CoolingLine { sku: string; description: string; section: CoolingSection; quantity: number }
 export interface CoolingBom { lengthM: number; plumbingDoubled: boolean; lines: CoolingLine[]; assumptions: string[] }
+
+/** Input-sanity bounds, NOT commercial rules (the handoff gave none). The minimum is one pad (0.6 m): below it no pad would be quoted. The maximum only stops an absurd or mistyped length from producing absurd quantities; NewQuip to confirm. */
+export const COOLING_MIN_LENGTH_M = 0.6;
+export const COOLING_MAX_LENGTH_M = 200;
+
 
 /** A system longer than this has every plumbing quantity doubled; exactly this length does not. */
 export const COOLING_DOUBLE_PLUMBING_OVER_M = 20;
@@ -50,6 +55,7 @@ const ceilDiv = (a: number, b: number): number => Math.ceil(Math.round((a / b) *
 
 export function coolingBom(lengthM: number): CoolingBom {
   if (!Number.isFinite(lengthM) || lengthM <= 0) throw new Error("The cooling system length must be a number greater than zero.");
+  if (lengthM < COOLING_MIN_LENGTH_M || lengthM > COOLING_MAX_LENGTH_M) throw new Error(`The cooling system length must be between ${COOLING_MIN_LENGTH_M} m and ${COOLING_MAX_LENGTH_M} m.`);
   const basic = 1;
   const middle = Math.max(0, ceilDiv(lengthM, GUTTER_SECTION_M) - 1);
   const waterTank = 1;
@@ -72,7 +78,7 @@ export function coolingBom(lengthM: number): CoolingBom {
     assumptions: [
       "Over 20 m every plumbing quantity is doubled before it is rounded up to whole containers (acetone and Sikaflex: 1.5 becomes 3). NewQuip to confirm.",
       "KNQCOOL16 (cleaning fitting) stays at 2 per system and is not doubled over 20 m, because it is counted once, in the gutter section. NewQuip to confirm.",
-      "No supported minimum length was given. A system of 3 m or less has no middle gutter kit.",
+      `No supported length range was given. Lengths are accepted from ${COOLING_MIN_LENGTH_M} m (one pad) to ${COOLING_MAX_LENGTH_M} m as an input-sanity check only; a system of 3 m or less has no middle gutter kit. NewQuip to confirm.`,
     ],
   };
 }

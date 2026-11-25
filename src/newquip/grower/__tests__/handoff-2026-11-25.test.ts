@@ -96,8 +96,12 @@ describe("sumpless pad cooling: the confirmed quantities (pure; not yet wired in
     expect(q(25)).toMatchObject({ KNQCOOL16: 2, KNQCOOL04: 1 });
   });
   it("states its three open readings instead of hiding them", () => expect(coolingBom(12).assumptions).toHaveLength(3));
-  it("refuses a length that is not a positive number", () => {
+  it("refuses a length that is not a positive number, is below one pad (0.6 m) or is absurd (over 200 m); the edges are accepted", () => {
     for (const L of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) expect(() => coolingBom(L)).toThrow(/greater than zero/);
+    for (const L of [1e-10, 0.59, 200.01, 1e7, 1e300]) expect(() => coolingBom(L)).toThrow(/between 0\.6 m and 200 m/);
+    expect(q(0.6)).toMatchObject({ KNQCOOL01: 1, KNQCOOL03: 0 });
+    expect(q(200).KNQCOOL01).toBe(334);
+    for (const l of coolingBom(200).lines) expect(Number.isFinite(l.quantity) && Number.isInteger(l.quantity) || l.quantity === 0).toBe(true);
   });
   it("lists no SKU twice (the cleaning fitting is counted once)", () => {
     const skus = coolingBom(12).lines.map((l) => l.sku);
@@ -138,7 +142,7 @@ describe("sumpless pad cooling inside a NEW quotation (current template)", () =>
       expect(l.reason).toMatch(/length of one cooling system/);
     }
     // a zero or negative length is an invalid input: nothing is priced at all
-    for (const L of [0, -3]) expect(evaluateDraft(withCooling(L, 1, false), ctx).budget).toBeNull();
+    for (const L of [0, -3, 0.1, 1e300, 201]) expect(evaluateDraft(withCooling(L, 1, false), ctx).budget).toBeNull();
     const { repNextStepFor } = await import("../budget-coverage");
     expect(repNextStepFor("pad_cooling")).toMatch(/Enter the length of one cooling system/);
   });

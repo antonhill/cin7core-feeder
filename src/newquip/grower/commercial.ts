@@ -1,5 +1,5 @@
 import type { GrowerItemKey } from "./types";
-import { coolingBom } from "./cooling-bom";
+import { coolingBom, COOLING_MAX_LENGTH_M, COOLING_MIN_LENGTH_M } from "./cooling-bom";
 
 // COMMERCIAL MAPPING — what a Grower output is made of in Cin7. Deliberately separate from:
 //   ENGINEERING RULE   (rules.ts)   how many commercial units are needed
@@ -104,7 +104,7 @@ export interface PackageMapping {
  * Labour days, travel, food and accommodation are NOT part of this package: they are manual charges and no rate was supplied.
  */
 export function coolingPackageFor(lengthM: number | null | undefined): PackageMapping | null {
-  if (lengthM == null || !Number.isFinite(lengthM) || lengthM <= 0) return null;
+  if (lengthM == null || !Number.isFinite(lengthM) || lengthM < COOLING_MIN_LENGTH_M || lengthM > COOLING_MAX_LENGTH_M) return null;
   const bom = coolingBom(lengthM);
   return {
     kind: "package", itemKey: "pad_cooling", name: `Sumpless pad cooling, ${lengthM} m system`, layoutDriven: false,
@@ -450,7 +450,7 @@ export function provisionalPackageBasis(pkg: PackageMapping | undefined): Provis
     qualifies: `Every component has a source-backed SKU, a fixed source quantity and no pricing exception (${pkg.name}). This is a provisional budget composition, NOT a NewQuip-approved specification.`,
     internalReasons: open,
     composition: pkg.components.map((c) => ({ sku: c.sku as string, qtyPerUnit: c.qtyPerUnit as number })),
-    plain: pkg.alternativeIdentity ? (PROVISIONAL_PLAIN[pkg.itemKey] ?? "Provisional: the product and its parts are still to be confirmed, so this price may change.") : "Provisional: the parts are confirmed, but the Estimator has not yet signed off the package and quantity, so this price may change.",
+    plain: pkg.alternativeIdentity || pkg.itemKey === "pad_cooling" ? (PROVISIONAL_PLAIN[pkg.itemKey] ?? "Provisional: the product and its parts are still to be confirmed, so this price may change.") : "Provisional: the parts are confirmed, but the Estimator has not yet signed off the package and quantity, so this price may change.",
   };
 }
 

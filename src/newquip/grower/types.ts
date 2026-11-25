@@ -107,6 +107,7 @@ export interface GrowerConfigurationInput {
 }
 
 export type InputIssueCode =
+  | "out_of_range"
   | "not_finite"
   | "not_positive"
   | "negative"
