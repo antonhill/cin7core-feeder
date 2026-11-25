@@ -51,6 +51,17 @@ export function toCostE7(x: number | null | undefined): number | null {
 export const NO_LANDED_SKUS: ReadonlySet<string> = new Set<string>();
 const LANDED_FREIGHT = { factorMicro: 1_000_000, addOnCents: 0, source: "Landed ZAR cost reference: no further freight" } as const;
 
+/**
+ * SUPPLIER-NAME CURRENCY GUARD. A supplier whose NAME says it is paid in another currency, "(EURO)", "(EUR)", "(USD)", "(DOLLAR)" or "(RAND)", but whose Cin7 record carries a different currency would be priced at the wrong
+ * magnitude (an EUR price read as rand is about 19 times too low), silently. That is never priced: it is flagged until the supplier's currency is corrected in Cin7. A name with no such marker is not second-guessed.
+ */
+export function currencyHintFromSupplierName(name: string | null | undefined): "EUR" | "USD" | "ZAR" | null {
+  const m = /\((EURO|EUR|USD|DOLLARS?|RAND)\)/i.exec(name ?? "");
+  if (!m) return null;
+  const w = m[1].toUpperCase();
+  return w.startsWith("EUR") ? "EUR" : w === "RAND" ? "ZAR" : "USD";
+}
+
 /** One SKU's Cin7 raw facts -> an auto cost entry, or the reason there is no price. */
 export function autoCostFor(input: SurveyInput, master: ReadonlyMap<string, MasterSupplier>, settings: CommercialSettings | null, ref: SettingsRef, nowIso: string, categories: readonly string[] = [], landedZarSkus: ReadonlySet<string> = NO_LANDED_SKUS): AutoCostEntry | AutoFlag {
   const sku = input.sku;
@@ -76,6 +87,8 @@ export function autoCostFor(input: SurveyInput, master: ReadonlyMap<string, Mast
   if (esc.status !== "ok") return flag("cost_needs_review", `The Cin7 cost is ${esc.status === "undated" ? "undated" : "future-dated"}: no automatic price.`);
   const currency = r.currency;
   if (!currency) return flag("currency_unknown", "The supplier's own Cin7 record holds no currency.");
+  const hint = currencyHintFromSupplierName(r.selected.supplierName);
+  if (hint && hint !== currency) return flag("currency_unknown", `The supplier's name says ${hint} but its Cin7 currency is ${currency}: no automatic price until the supplier's currency is corrected in Cin7 (otherwise the cost would be read at the wrong magnitude).`);
   if (landed && currency !== "ZAR") return flag("cost_needs_review", "A landed-cost reference must be in ZAR; this supplier cost is in another currency.");
   const raw = toCostE7(r.selected.cost);
   if (raw === null) return flag("cost_precision", "The Cin7 cost cannot be held exactly (more than 7 decimals or out of range).");
