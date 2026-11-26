@@ -73,7 +73,7 @@ const changeNote = (l: RepLineChange, fmt: (cents: number) => string): string =>
   if (l.kind === "unchanged") return "No change";
   if (l.before?.basis === "none" && l.after?.basis !== "none") return "Now priced";
   if (l.after?.basis === "none" && l.before?.basis !== "none") return "No longer priced";
-  return l.fields.filter((f) => f !== "Selling line total").join(" · ") || (l.deltaCents != null ? `Total ${sgn(l.deltaCents, fmt)}` : "Changed");
+  return l.fields.filter((f) => f !== "Selling line total").join(" · ") || "Selling total";
 };
 
 function LineRow({ l, fmt }: { l: RepLineChange; fmt: (cents: number) => string }) {
