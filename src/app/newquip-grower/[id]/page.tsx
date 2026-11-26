@@ -72,7 +72,7 @@ import { PricingFeedbackNote } from "./PricingFeedbackNote";
 import { pricingFeedback } from "@/newquip/pricing/pricing-feedback";
 import { IndicativeComparisonPanel } from "./IndicativeComparisonPanel";
 import { ManualEvidencePanel } from "./ManualEvidencePanel";
-import { EstimatorReturnNotice, returnNoticeText } from "./ReturnNotice";
+import { EstimatorReturnNotice, RepChangesPanel, returnNoticeText } from "./ReturnNotice";
 import { ConfirmationPanel } from "./ConfirmationPanel";
 import { UnpricedHandoffPanel } from "./UnpricedHandoffPanel";
 import { DeliveryPanel, type DeliveryGate } from "./DeliveryPanel";
@@ -924,6 +924,7 @@ export default function QuoteEditorPage() {
                   <p className="mt-1">Fix what the Estimator described, then submit again.</p>
                 </>
               )}
+              <RepChangesPanel changes={view.repChanges} fmt={fmtCents} reason={serverReturn && serverReturn.kind === "RETURN" ? serverReturn.reason : null} />
               {phaseUx && (
                 <div className="mt-3 border-t border-amber-300 pt-3" data-testid="reconfirm-steps">
                   {(() => { const submitOpen = stepAccess("submit").access !== "locked"; const target = submitOpen ? "submit" : nextOpen; return target && target !== stepId ? <div className="mt-2"><Button type="button" className="min-h-11" onClick={() => goStep(target)} data-testid="go-submit">{submitOpen ? "Go to the submit step" : "Go to the next step to finish"}</Button></div> : null; })()}

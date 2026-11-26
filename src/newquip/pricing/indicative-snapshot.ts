@@ -82,6 +82,33 @@ export interface SnapshotInput {
   internalEvaluation: QuoteEvaluation;
 }
 
+
+type RepBudget = NonNullable<QuoteEvaluation["budget"]>;
+
+/**
+ * The customer-safe section, built from the Rep's (cost-withheld) evaluation. Exported so the Rep's revision comparison builds "the quotation now" with EXACTLY the code that captured "the
+ * quotation then" at the Rep's last handoff (same fields, same rounding), which is what keeps a comparison free of false changes. Unchanged output: the stored snapshot hash depends on it.
+ */
+export function customerSafeSectionOf(i: { quoteRef: string; revision: number; quoteType: QuoteType; rep: RepBudget }): IndicativeSnapshot["customerSafe"] {
+  const rep = i.rep;
+  return {
+    quoteRef: i.quoteRef,
+    revision: i.revision,
+    quoteType: i.quoteType,
+    completeness: completenessOf(rep),
+    awaiting: rep.blockers.map(neutralPriceText),
+    lines: rep.lines.map((l) => ({
+      itemKey: l.itemKey, label: l.label, status: l.status, sku: l.sku, quantity: l.quantity,
+      unitPriceExVat: l.status === "priced" ? l.unitPrice : null, revenueCents: l.status === "priced" ? cents(l.revenueExTax) : null, pricedBy: l.pricedBy,
+    })),
+    charges: rep.charges.map((c) => ({ key: c.key, label: c.label, amountCents: c.amountExTax == null ? null : cents(c.amountExTax), status: c.status })),
+    subtotalCents: Math.round(rep.totals.subtotalExTax * 100),
+    taxCents: cents(rep.totals.taxTotal) ?? 0,
+    totalCents: cents(rep.totals.totalIncTax) ?? 0,
+    taxRule: POC_TAX.rule, taxRateBps: POC_TAX.rateBps, taxInclusive: POC_TAX.inclusive,
+  };
+}
+
 export function buildIndicativeSnapshot(i: SnapshotInput): { snapshot: IndicativeSnapshot; hash: string; index: IndicativeSnapshotIndex } {
   const rep = i.repEvaluation.budget;
   const int = i.internalEvaluation.budget;
@@ -93,22 +120,7 @@ export function buildIndicativeSnapshot(i: SnapshotInput): { snapshot: Indicativ
 
   const snapshot: IndicativeSnapshot = {
     schemaVersion: INDICATIVE_SNAPSHOT_SCHEMA_VERSION,
-    customerSafe: {
-      quoteRef: i.quoteRef,
-      revision: i.revision,
-      quoteType: i.draft.quoteType,
-      completeness,
-      awaiting: rep.blockers.map(neutralPriceText),
-      lines: rep.lines.map((l) => ({
-        itemKey: l.itemKey, label: l.label, status: l.status, sku: l.sku, quantity: l.quantity,
-        unitPriceExVat: l.status === "priced" ? l.unitPrice : null, revenueCents: l.status === "priced" ? cents(l.revenueExTax) : null, pricedBy: l.pricedBy,
-      })),
-      charges: rep.charges.map((c) => ({ key: c.key, label: c.label, amountCents: c.amountExTax == null ? null : cents(c.amountExTax), status: c.status })),
-      subtotalCents,
-      taxCents: cents(rep.totals.taxTotal) ?? 0,
-      totalCents: cents(rep.totals.totalIncTax) ?? 0,
-      taxRule: POC_TAX.rule, taxRateBps: POC_TAX.rateBps, taxInclusive: POC_TAX.inclusive,
-    },
+    customerSafe: customerSafeSectionOf({ quoteRef: i.quoteRef, revision: i.revision, quoteType: i.draft.quoteType, rep }),
     internal: {
       ruleSet,
       priceSource: int.priceSource,
