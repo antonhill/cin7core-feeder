@@ -83,6 +83,8 @@ export interface GrowerConfigurationInput {
   penningPigSize?: PenningPigSize | null;
   /** ESTIMATOR INPUT: penning RUNNING METRES for ONE room (not m²). */
   penningRunningMetresPerRoom?: number | null;
+  /** ESTIMATOR / REP INPUT: length in metres of ONE sumpless pad-cooling system. Drives the cooling bill of materials (cooling-bom.ts). Absent until entered; never defaulted. */
+  coolingSystemLengthM?: number | null;
   optionalEquipment: Record<OptionalItemKey, boolean>;
   /**
    * CUSTOMER-DRIVEN EXCLUSIONS. Everything in the Grower template is required by default (Sean), but a customer may not want a
@@ -92,6 +94,8 @@ export interface GrowerConfigurationInput {
   exclusions?: Partial<Record<GrowerItemKey, string>>;
   /** Which CCM feeder product the customer wants. Defaults to STANDARD (PNQ082). */
   feederVariant?: FeederVariant;
+  /** PVC door size, chosen explicitly by the Rep (never defaulted). Selects the size's own Budget basis. */
+  doorSize?: import("./door-sizes").DoorSize | null;
   /**
    * ESTIMATOR INPUT BY DESIGN (Sean final): the final PER-ROOM quantity for lines whose quantity is a human decision —
    * feeders, drinkers, slats, M75, doors, tank and the optional ventilation scope. Supplying one is NOT an override
@@ -105,6 +109,7 @@ export interface GrowerConfigurationInput {
 }
 
 export type InputIssueCode =
+  | "out_of_range"
   | "not_finite"
   | "not_positive"
   | "negative"
@@ -114,7 +119,8 @@ export type InputIssueCode =
   | "negative_override"
   | "negative_estimator_quantity"
   | "invalid_pig_size"
-  | "invalid_feeder_variant";
+  | "invalid_feeder_variant"
+  | "invalid_door_size";
 
 export interface InputIssue {
   field: string;

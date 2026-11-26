@@ -8,6 +8,7 @@ import { budgetSendRefusal, prepareBudget, sendBudgetQuotation } from "@/lib/new
 import { latestProfile } from "@/lib/newquip-quotes/document-store";
 import { describeProfileProblems, profileProblems } from "@/lib/newquip-quotes/company-profile";
 import { isRestricted } from "@/lib/approvals/email-policy";
+import { completeAutoPricing } from "@/lib/newquip-quotes/auto-pricing-service";
 
 export interface BudgetActionResult<T> { ok: boolean; error?: string; data?: T }
 export interface BudgetStatus {
@@ -34,6 +35,23 @@ export async function getBudgetStatusAction(quoteId: string): Promise<BudgetActi
     const refusal = a.roles.has("rep") ? budgetSendRefusal(process.env, !!prof && problems.length === 0, problems) : "Only a Rep sends a budget quotation.";
     const testRecipient = isRestricted(process.env) ? (process.env.NEWQUIP_UAT_TEST_CUSTOMER_EMAIL?.trim() || "anton@sparkconsulting.co.za").toLowerCase() : null;
     return { ok: true, data: { canSend: !refusal, blockedReason: refusal, testMode: prep.testMode, draftHash: prep.draftHash, draftRef: prep.model.quote.draftRef, complete: prep.model.complete, unpricedCount: prep.model.unpriced.count, unpricedItems: prep.model.unpriced.items, provisionalCount: prep.model.provisional.count, testRecipient } };
+  } catch (e) { return { ok: false, error: errText(e) }; }
+}
+
+/**
+ * COMPLETE a Rep's initial Budget pricing (reads the supplier costs still missing, GET-only, add-only; see completeAutoPricing). Called by the Budget panel until nothing is left to read, so the Rep sees a fully
+ * priced Budget without any Estimator involvement. Rep only; it changes no approval, confirms nothing and returns only counts (never a cost, rate or SKU).
+ */
+export async function completeBudgetPricingAction(quoteId: string): Promise<BudgetActionResult<{ stillToRead: number; done: boolean; status: string }>> {
+  try {
+    const a = await authoriseActor();
+    if (!a.roles.has("rep")) throw new Error("Only a Rep prices a draft.");
+    if (!ID.test(quoteId)) throw new Error("Quotation not found.");
+    const o = await completeAutoPricing(createServiceRoleClient(), { orgId: a.orgId, userId: a.userId, roles: a.roles, demo: !!a.demo }, quoteId, { budgetMs: 85_000 });
+    const stillToRead = o.internal.filter((i) => i.code === "not_read").length;
+    // DONE only when the last run really finished the reading: it either had nothing left to add, or applied / recorded with no product left unread. A skipped run (another writer won), an error or incomplete settings is NOT done.
+    const done = o.status === "nothing_to_add" || ((o.status === "applied" || o.status === "no_prices") && stillToRead === 0);
+    return { ok: true, data: { stillToRead, done, status: o.status } };
   } catch (e) { return { ok: false, error: errText(e) }; }
 }
 

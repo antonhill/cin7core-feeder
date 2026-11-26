@@ -25,9 +25,12 @@ describe("eligibility (existing template logic; never a confirmation)", () => {
     expect(provisionalPackageBasis(packageFor("cup_drinker", "grower-2026-11"))!.composition).toEqual([{ sku: "QCA00003", qtyPerUnit: 1 }, { sku: "NQ1380", qtyPerUnit: 1 }, { sku: "NQ2784", qtyPerUnit: 1 }, { sku: "NQ2886", qtyPerUnit: 1 }, { sku: "NQ1386", qtyPerUnit: 5 }, { sku: "NYNUT", qtyPerUnit: 5 }, { sku: "NQ1017", qtyPerUnit: 5 }]);
     expect(provisionalPackageBasis(packageFor("led_light", "grower-2026-11"))!.composition).toEqual([{ sku: "HNQ7046", qtyPerUnit: 1 }, { sku: "HNQ7093", qtyPerUnit: 3 }, { sku: "HNQ7088", qtyPerUnit: 1 }]);
   });
-  it("the cup drinker's open alternative (NB3542-03) and the LED's naming question stay in the INTERNAL reasons", () => {
-    expect(provisionalPackageBasis(packageFor("cup_drinker", "grower-2026-11"))!.internalReasons.join(" ")).toMatch(/NB3542-03/);
-    expect(provisionalPackageBasis(packageFor("led_light", "grower-2026-11"))!.internalReasons.join(" ")).toMatch(/FORTIS/);
+  it("2026-11-25 handoff: on the current template the NB3542-03 and FORTIS questions are CLOSED (only the Estimator's sign-off stays in the INTERNAL reasons); the original template still carries NB3542-03", () => {
+    expect(provisionalPackageBasis(packageFor("cup_drinker", "grower-2026-11"))!.internalReasons.join(" ")).not.toMatch(/NB3542-03/);
+    expect(provisionalPackageBasis(packageFor("cup_drinker", "grower-2026-11"))!.internalReasons.join(" ")).toMatch(/Estimator still confirms/);
+    expect(provisionalPackageBasis(packageFor("led_light", "grower-2026-11"))!.internalReasons.join(" ")).not.toMatch(/FORTIS/);
+    expect(provisionalPackageBasis(packageFor("cup_drinker", "grower-2026-10"))!.internalReasons.join(" ")).toMatch(/NB3542-03/);
+    expect(provisionalPackageBasis(packageFor("cup_drinker", "grower-2026-11"))!.plain).toMatch(/parts are confirmed/);
   });
   it("nothing else qualifies: the M75 (estimator-priced / layout-driven) and the PVC door never do", () => {
     expect(provisionalPackageBasis(packageFor("flex_auger", "grower-2026-11"))).toBeNull();

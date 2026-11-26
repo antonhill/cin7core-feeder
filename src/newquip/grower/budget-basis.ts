@@ -146,9 +146,10 @@ export function budgetBasisProblems(e: BudgetBasisEntry, today: string): string[
 }
 
 /** The usable entry for an item (the latest approved when several are usable), or null. A default product wins over a rate: a costed product is the better evidence. Pure. */
-export function usableBudgetBasis(register: readonly BudgetBasisEntry[] | undefined, itemKey: GrowerItemKey, today: string): BudgetBasisEntry | null {
+export function usableBudgetBasis(register: readonly BudgetBasisEntry[] | undefined, itemKey: GrowerItemKey, today: string, specification?: string): BudgetBasisEntry | null {
   if (!budgetBasisEligible(itemKey)) return null;
-  const ok = (register ?? []).filter((e) => e.itemKey === itemKey && budgetBasisProblems(e, today).length === 0);
+  // When a specification is asked for (the door size), ONLY an entry approved for exactly that specification is usable.
+  const ok = (register ?? []).filter((e) => e.itemKey === itemKey && (specification === undefined || e.specification === specification) && budgetBasisProblems(e, today).length === 0);
   const latest = (xs: BudgetBasisEntry[]) => xs.sort((a, b) => b.approval.approvedAt.localeCompare(a.approval.approvedAt))[0] ?? null;
   return latest(ok.filter((e) => e.kind === "default_sku")) ?? latest(ok.filter((e) => e.kind === "rate"));
 }

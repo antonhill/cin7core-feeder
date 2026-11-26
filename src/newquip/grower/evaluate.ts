@@ -1,3 +1,4 @@
+import { doorSpecificationFor } from "./door-sizes";
 import { templateRevisionOf } from "./commercial";
 import { calculateGrowerHouse } from "./calculate";
 import { buildBudgetQuote, type BudgetQuote } from "./quote-bridge";
@@ -30,6 +31,8 @@ export interface EvaluationContext {
   budgetBasis?: readonly BudgetBasisEntry[];
   /** ISO date the register is checked against (default today). */
   budgetAsOf?: string;
+  /** UAT deployment only (uat-provisional-basis.ts). */
+  uatProvisionalRates?: readonly import("./uat-provisional-basis").UatProvisionalRate[];
 }
 
 export function evaluateDraft(draft: QuoteDraft, ctx: EvaluationContext): QuoteEvaluation {
@@ -44,13 +47,21 @@ export function evaluateDraft(draft: QuoteDraft, ctx: EvaluationContext): QuoteE
         confirmedMappings: draft.estimator.confirmedMappings,
         confirmedPackages: new Set(draft.estimator.confirmedPackages),
         feederVariant: draft.config.feederVariant,
+        doorSpecification: doorSpecificationFor(draft.config.doorSize),
+        // The documented Budget bases (door BOM cost, fixed panel price) are always AVAILABLE to the bridge; it applies them only in a Budget evaluation or once the Estimator has confirmed the basis for the item.
+        ...(ctx.uatProvisionalRates ? { uatProvisionalRates: ctx.uatProvisionalRates } : {}),
+        budgetBasis: ctx.budgetBasis ?? ACTIVE_BUDGET_BASIS,
+        ...(ctx.budgetAsOf ? { budgetAsOf: ctx.budgetAsOf } : {}),
+        budgetMarkupBps: draft.estimator.pricing?.projectMarkup?.markupBps ?? null,
         templateRevision: templateRevisionOf(draft),
         penningPigSize: draft.config.penningPigSize ?? null,
+        coolingSystemLengthM: draft.config.coolingSystemLengthM ?? null,
+        panelSelection: { controller: Boolean(draft.config.optionalEquipment?.controller), silo_weighing: Boolean(draft.config.optionalEquipment?.silo_weighing) },
         estimatorCharges: draft.estimator.charges,
         estimatorUnitPrices: draft.estimator.unitPrices,
         priceResolutions: draft.estimator.priceResolutions,
         withholdCost: ctx.withholdCost,
-        ...(ctx.provisionalPackages === true ? { provisionalPackages: true, budgetBasis: ctx.budgetBasis ?? ACTIVE_BUDGET_BASIS, ...(ctx.budgetAsOf ? { budgetAsOf: ctx.budgetAsOf } : {}), budgetMarkupBps: draft.estimator.pricing?.projectMarkup?.markupBps ?? null } : {}),
+        ...(ctx.provisionalPackages === true ? { provisionalPackages: true } : {}),
       })
     : null;
   return { calc, budget, readiness: assessReadiness(draft, calc, budget) };

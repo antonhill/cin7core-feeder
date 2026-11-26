@@ -88,7 +88,7 @@ export function skuNeedsOf(budget: BudgetQuote | null): SkuNeed[] {
   const add = (sku: string | null, qty: number | null, label: string, manual: boolean, itemKey: string) => { if (!sku) return; const n = m.get(sku) ?? { sku, quantity: 0, usedBy: [], itemKeys: [], manual }; n.quantity += qty ?? 0; n.manual = n.manual || manual; if (!n.usedBy.includes(label)) n.usedBy.push(label); if (!n.itemKeys.includes(itemKey)) n.itemKeys.push(itemKey); m.set(sku, n); };
   for (const l of budget?.lines ?? []) {
     // Lines the Estimator prices by design (penning rate, M75) carry no supplier cost. A line with a MANUAL resolution price is different: it still needs its supplier cost.
-    if (l.status === "not_selected" || l.pricedBy === "penning_rate" || l.pricedBy === "estimator_input") continue;
+    if (l.status === "not_selected" || l.pricedBy === "penning_rate" || l.pricedBy === "estimator_input" || l.pricedBy === "budget_rate") continue;
     const manual = l.pricedBy === "estimator_resolution";
     if (l.components) for (const c of l.components) { if (c.status !== "reference_only") add(c.sku, c.quantity, l.label, manual, l.itemKey); } else add(l.sku, l.quantity, l.label, manual, l.itemKey);
   }

@@ -325,3 +325,59 @@ describe("stored FX is frozen with the pricing (M3)", () => {
     expect(autoPricingCutoff({ NEWQUIP_AUTO_PRICING: "on", NEWQUIP_AUTO_PRICING_FROM: "2026-11-17T00:00:00+02:00" })).not.toBeNull();
   });
 });
+
+describe("standard equipment is read before optional additions (2026-11-25: sumpless pad cooling adds about 40 SKUs)", () => {
+  beforeEach(async () => { await saveCommercialSettings(db as never, ORG, SETTINGS({ markupBps: 2500 }), "mgr@nq", NOW); });
+  it("every SKU used by a standard line is requested from Cin7 before any SKU used only by pad cooling or the manure plug, so the run's time budget can never starve standard pricing", async () => {
+    const d = draftOn();
+    d.config.optionalEquipment = { ...d.config.optionalEquipment, pad_cooling: true, manure_plug: true } as never;
+    d.config.estimatorQuantities = { ...d.config.estimatorQuantities, pad_cooling: 1, manure_plug: 1 } as never;
+    d.config.coolingSystemLengthM = 12;
+    const needs = skuNeedsOf(evaluateDraft(d, { priceSource: testPriceSource(), withholdCost: true, provisionalPackages: true }).budget);
+    const optionalOnly = new Set(needs.filter((n) => n.itemKeys.every((k) => k === "pad_cooling" || k === "manure_plug")).map((n) => n.sku));
+    expect(optionalOnly.size).toBeGreaterThan(20); // the cooling package really is large
+    const id = await newQuote(d);
+    await run(id);
+    const order = calls.flat();
+    const lastStandard = Math.max(...order.map((s, i) => (optionalOnly.has(s) ? -1 : i)));
+    const firstOptional = Math.min(...order.map((s, i) => (optionalOnly.has(s) ? i : Infinity)));
+    expect(order.some((s) => optionalOnly.has(s))).toBe(true);
+    expect(lastStandard).toBeLessThan(firstOptional);
+  });
+});
+
+
+describe("Budget default products are READ from Cin7 (2026-11-25: CL1, BF and fans were never fetched)", () => {
+  beforeEach(async () => { await saveCommercialSettings(db as never, ORG, SETTINGS({ markupBps: 2500 }), "mgr@nq", NOW); });
+  it("a quotation with the controller, silo weighing and cone fans selected asks Cin7 for HO05084000, HO05084507 and MUG4D14A1M10238", async () => {
+    const d = draftOn(); (d.config as { optionalEquipment: Record<string, boolean> }).optionalEquipment = { ...d.config.optionalEquipment, controller: true, silo_weighing: true, cone_fans: true };
+    d.config.estimatorQuantities = { ...d.config.estimatorQuantities, controller: 1, silo_weighing: 1, cone_fans: 2 };
+    const id = await newQuote(d);
+    await run(id);
+    const read = new Set(calls.flat());
+    for (const s of ["HO05084000", "HO05084507", "MUG4D14A1M10238"]) expect(read.has(s), s).toBe(true);
+  });
+  it("a quotation without them does not read them", async () => {
+    const id = await newQuote();
+    await run(id);
+    const read = new Set(calls.flat());
+    for (const s of ["HO05084000", "HO05084507", "MUG4D14A1M10238"]) expect(read.has(s), s).toBe(false);
+  });
+});
+
+describe("freight is applied by price-source class (2026-11-26): a landed ZAR reference takes no further freight", () => {
+  beforeEach(async () => { await saveCommercialSettings(db as never, ORG, SETTINGS({ markupBps: 2500 }), "mgr@nq", NOW); });
+  it("the Sage-loaded local SKUs take factor 1.00; every other SKU in the same quotation keeps its category freight (1.10 in this test)", async () => {
+    const d = draftOn(); (d.config as { optionalEquipment: Record<string, boolean> }).optionalEquipment = { ...d.config.optionalEquipment, emergency_windows: true };
+    d.config.estimatorQuantities = { ...d.config.estimatorQuantities, emergency_windows: 1 };
+    const id = await newQuote(d);
+    const LANDED = new Set(["NQ1060", "NQ3401", "NQPP1017", "NQ1088"]);
+    const readRaw = async (skus: readonly string[]) => Object.fromEntries(skus.map((s) => [s, { raw: LANDED.has(s)
+      ? { SKU: s, Status: "Active", Name: s, Suppliers: [{ SupplierID: "Z1", SupplierName: "Test ZAR Co", Cost: 10, Currency: "ZAR", LastSupplied: "2026-11-16" }] }
+      : { SKU: s, Status: "Active", Name: s, Suppliers: [{ SupplierID: "E1", SupplierName: "Test EUR Co", Cost: 10, Currency: "EUR", LastSupplied: "2026-11-16" }] } }]));
+    await run(id, deps({ readRaw, suppliers: async () => [{ id: "E1", name: "Test EUR Co", currency: "EUR", active: true }, { id: "Z1", name: "Test ZAR Co", currency: "ZAR", active: true }] }));
+    const skus = (await priceOf(id)).draft.estimator.pricing!.skus as Record<string, { freight: { factorMicro: number } }>;
+    for (const s of LANDED) expect(skus[s]?.freight.factorMicro, s).toBe(1_000_000);
+    for (const s of ["ERT003", "HO08990730", "RID507450"]) expect(skus[s]?.freight.factorMicro, s).toBe(1_100_000);
+  });
+});

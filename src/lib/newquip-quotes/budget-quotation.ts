@@ -28,6 +28,7 @@ import { describeProfileProblems, profileProblems } from "./company-profile";
 import { isValidEmail } from "./customer-snapshot";
 import { BUDGET_DISCLAIMER, buildBudgetDocumentModel, presentsPartialAsTotal, type BudgetDocumentModel } from "./budget-document";
 import { renderBudgetPdf } from "./budget-pdf";
+import { budgetSkuNeeds } from "./sku-needs";
 import { recipientAllowed, testPdfEmailEnabled } from "./test-pdf-email";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
@@ -39,6 +40,13 @@ export const MAX_BUDGET_MESSAGE = 1500;
 const sha256 = (b: Uint8Array): string => createHash("sha256").update(b).digest("hex");
 
 export interface BudgetPreparation { model: BudgetDocumentModel; draftHash: string; quoteRef: string; revision: number; state: string; testMode: boolean; repEmail: string | null; /** SERVER-INTERNAL: the saved draft (it carries pricing). Never returned to a browser. */ draft: QuoteDraft }
+
+/** Supplier products this Budget still NEEDS but has not read from Cin7 (a stored "not_read" reason and no stored cost). Zero means retrieval is finished. */
+export function unreadNeeds(draft: QuoteDraft): number {
+  const p = draft.estimator.pricing; if (!p) return 0;
+  const need = new Set(budgetSkuNeeds(draft).map((n) => n.sku));
+  return Object.entries(p.autoFlags ?? {}).filter(([sku, f]) => need.has(sku) && f?.code === "not_read" && !(p.skus ?? {})[sku]).length;
+}
 
 /** Builds the budget document model from the SAVED draft of this organisation's quotation. Read-only. Throws a readable error when it cannot be built. */
 export async function prepareBudget(db: Db, orgId: string, quoteId: string, env: EmailEnv, today: () => string = () => new Date().toISOString().slice(0, 10)): Promise<BudgetPreparation> {
@@ -57,7 +65,7 @@ export async function prepareBudget(db: Db, orgId: string, quoteId: string, env:
   const contact = snap?.chosenContact ? { name: snap.chosenContact.name, email: snap.chosenContact.email } : null;
   const model = buildBudgetDocumentModel({
     budget: ev.budget, quoteRef: q.quote_ref, revision: q.revision, draftHash: q.draft_hash, preparedOn: today(), siteName: q.draft.siteName, customerName: q.draft.customerName, contact,
-    profile: profile.profile, config: q.draft.config, testOnly: testMode,
+    profile: profile.profile, config: q.draft.config, testOnly: testMode, retrievalPending: unreadNeeds(q.draft),
   });
   if (presentsPartialAsTotal(model)) throw new Error("The budget quotation would present a partial subtotal as a total; it was not produced.");
   return { model, draftHash: q.draft_hash, quoteRef: q.quote_ref, revision: q.revision, state: q.state, testMode, repEmail: q.created_by_email ?? null, draft: q.draft };

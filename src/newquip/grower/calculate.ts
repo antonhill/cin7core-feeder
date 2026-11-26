@@ -1,4 +1,5 @@
 import { DERIVED_RULES, GROWER_RULES, type GrowerRuleDef } from "./rules";
+import { COOLING_MAX_LENGTH_M, COOLING_MIN_LENGTH_M } from "./cooling-bom";
 import type {
   Explanation,
   GeneratedLine,
@@ -71,6 +72,12 @@ export function validateGrowerInput(input: GrowerConfigurationInput): InputIssue
   checkNumber(issues, "hospitalPens", input.hospitalPens, { integer: true });
   checkNumber(issues, "pigsPerRoom", input.pigsPerRoom, { positive: true, integer: true });
   if (input.slattedFloorAreaM2 != null) checkNumber(issues, "slattedFloorAreaM2", input.slattedFloorAreaM2, { positive: false });
+  if (input.coolingSystemLengthM != null) {
+    checkNumber(issues, "coolingSystemLengthM", input.coolingSystemLengthM, { positive: true });
+    if (Number.isFinite(input.coolingSystemLengthM) && input.coolingSystemLengthM > 0 && (input.coolingSystemLengthM < COOLING_MIN_LENGTH_M || input.coolingSystemLengthM > COOLING_MAX_LENGTH_M)) {
+      issues.push({ field: "coolingSystemLengthM", code: "out_of_range", message: `coolingSystemLengthM must be between ${COOLING_MIN_LENGTH_M} m and ${COOLING_MAX_LENGTH_M} m.` });
+    }
+  }
   if (input.penningRunningMetresPerRoom != null) checkNumber(issues, "penningRunningMetresPerRoom", input.penningRunningMetresPerRoom, { positive: false });
   if (input.penningPigSize != null && !["SMALL", "MEDIUM", "LARGE"].includes(input.penningPigSize)) {
     issues.push({ field: "penningPigSize", code: "invalid_pig_size", message: "Pig size must be small, medium or large." });
@@ -106,6 +113,9 @@ export function validateGrowerInput(input: GrowerConfigurationInput): InputIssue
   }
   if (input.feederVariant != null && input.feederVariant !== "STANDARD" && input.feederVariant !== "WINDOW") {
     issues.push({ field: "feederVariant", code: "invalid_feeder_variant", message: "Feeder variant must be standard or window." });
+  }
+  if (input.doorSize != null && input.doorSize !== "2.1x1.2" && input.doorSize !== "2.1x1.0") {
+    issues.push({ field: "doorSize", code: "invalid_door_size", message: "Door size must be 2.1 x 1.2 m or 2.1 x 1.0 m." });
   }
   return issues;
 }

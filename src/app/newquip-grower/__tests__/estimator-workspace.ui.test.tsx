@@ -121,11 +121,11 @@ describe("the PVC door on the ORIGINAL template: choose one of five candidates, 
 });
 
 describe("the PVC door: choose one of three candidates, then price it", () => {
-  it("shows the three Cin7 candidates (NQ3444 first, Sean 2026-11); saving the product alone saves ONLY the mapping through the draft save; pricing waits until a product is chosen", async () => {
+  it("shows the four Cin7 candidates (NQ3444 first, then its smaller size NQ3444-B); saving the product alone saves ONLY the mapping through the draft save; pricing waits until a product is chosen", async () => {
     const { saveDraft } = mount({ current: true });
     fireEvent.click(await screen.findByRole("button", { name: /Choose and price: PVC SST door/ }));
     const choice = await screen.findByTestId("product-choice");
-    expect(within(choice).getAllByRole("radio").map((r) => (r as HTMLInputElement).closest("label")!.textContent!.match(/NQ\d+/)![0])).toEqual(["NQ3444", "NQ2161", "NQ2281"]);
+    expect(within(choice).getAllByRole("radio").map((r) => (r as HTMLInputElement).closest("label")!.textContent!.match(/NQ[\d-]+B?\d*/)![0])).toEqual(["NQ3444", "NQ3444-B", "NQ2161", "NQ2281"]);
     for (const retired of ["NQ2112", "NQ2113", "NQ2114"]) expect(choice.textContent).not.toContain(retired); // replaced by NQ3444: no longer offered
     expect(screen.getByTestId("door-pricing-wait")).toBeTruthy();
     const only = screen.getByRole("button", { name: "Save the product choice only" }) as HTMLButtonElement;

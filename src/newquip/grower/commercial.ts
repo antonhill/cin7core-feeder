@@ -1,4 +1,5 @@
 import type { GrowerItemKey } from "./types";
+import { coolingBom, COOLING_MAX_LENGTH_M, COOLING_MIN_LENGTH_M } from "./cooling-bom";
 
 // COMMERCIAL MAPPING — what a Grower output is made of in Cin7. Deliberately separate from:
 //   ENGINEERING RULE   (rules.ts)   how many commercial units are needed
@@ -57,6 +58,8 @@ export interface PackageComponent {
    * confirms the commercial treatment (e.g. NQ3132 shows Retail 0 in the Master). Value = the reason shown to the estimator.
    */
   pricingException?: string;
+  /** The quantity is shared across units (e.g. one power supply per two windows): the PROJECT total is rounded UP to whole items. */
+  roundUpTotal?: boolean;
 }
 
 /** CCM feeder product by variant (Sean final): the window option is the SAME feeder with a window — a variant, not a conflict. */
@@ -95,6 +98,22 @@ export interface PackageMapping {
    * Recorded, never priced automatically — which representation prices the output is for NewQuip to confirm.
    */
   alternativeIdentity?: { sku: string; description: string; note: string };
+}
+
+/**
+ * The sumpless pad-cooling package for ONE system of `lengthM` metres (NewQuip handoff 2026-11-25, section 6). Every component quantity is the confirmed formula in cooling-bom.ts; nothing is priced here (current Cin7 component
+ * costs are looked up at run time). Returns null when the length is missing or not a positive number: the line then stays unpriced and asks for it, never a guessed length. A component whose quantity is 0 (no middle gutter kit up to 3 m) is omitted.
+ * Labour days, travel, food and accommodation are NOT part of this package: they are manual charges and no rate was supplied.
+ */
+export function coolingPackageFor(lengthM: number | null | undefined): PackageMapping | null {
+  if (lengthM == null || !Number.isFinite(lengthM) || lengthM < COOLING_MIN_LENGTH_M || lengthM > COOLING_MAX_LENGTH_M) return null;
+  const bom = coolingBom(lengthM);
+  return {
+    kind: "package", itemKey: "pad_cooling", name: `Sumpless pad cooling, ${lengthM} m system`, layoutDriven: false,
+    provenance: "NEWQUIP_GROWER_PRICING_HANDOFF_2026-11-25, section 6: confirmed quantity formulas by system length; current Cin7 component costs approved for the Budget calculation. " + bom.assumptions.join(" "),
+    estimatorConfirmation: "NewQuip confirmed the quantity formulas on 2026-11-25, including the plumbing doubling over 20 m and the cleaning fitting counted once (two per system). The 0.6 m to 200 m length check is provisional for UAT and needs production approval. The Estimator confirms the package at sign-off. Labour, travel, food and accommodation are not included.",
+    components: bom.lines.filter((l) => l.quantity > 0).map((l) => fixed(`${l.section}-${l.sku}`, l.sku, l.description, l.quantity, `Handoff 2026-11-25 s6 (${l.section})`)),
+  };
 }
 
 /** Priced per a unit the estimator supplies (e.g. penning per running metre by pig size). No automatic price. */
@@ -143,9 +162,76 @@ const fixed = (id: string, sku: string, description: string, qtyPerUnit: number,
   id, sku, description, identity: "source_backed", quantityStatus: "source_fixed", qtyPerUnit, evidence,
 });
 
+const shared = (id: string, sku: string, description: string, qtyPerUnit: number, evidence: string): PackageComponent => ({ ...fixed(id, sku, description, qtyPerUnit, evidence), roundUpTotal: true });
+
 const layout = (id: string, sku: string | null, description: string, historic: number, evidence: string, extra: Partial<PackageComponent> = {}): PackageComponent => ({
   id, sku, description, identity: sku ? "source_backed" : "unidentified", quantityStatus: "requires_validation", qtyPerUnit: null, historicTopigsQty: historic, evidence, ...extra,
 });
+
+/**
+ * The cup-drinker package. `confirmed` = true is the grower-2026-11 definition: NewQuip confirmed the seven-component bill of materials and said NOT to replace it with NB3542-03 (handoff 2026-11-25), so it is
+ * a fixed, source-backed composition. `confirmed` = false is the original grower-2026-10 definition, kept verbatim so a quotation created under it prices exactly as it did.
+ */
+function cupDrinkerPackage(confirmed: boolean): PackageMapping {
+  return {
+    kind: "package", itemKey: "cup_drinker", name: confirmed ? "Sow Cup Drinker Including Mounting Material" : "Grower cup drinker", layoutDriven: false,
+    provenance: confirmed
+      ? `${WB} sheet 'cup', GROWER CUP block (rows 43–49). CONFIRMED by NewQuip (NEWQUIP_GROWER_PRICING_HANDOFF_2026-11-25, section 9): the seven-component BOM is final, do NOT replace it with NB3542-03, and current Cin7 component costs are approved for the Budget calculation. The customer-facing description is "Sow Cup Drinker Including Mounting Material".`
+      : `${WB} sheet 'cup', GROWER CUP block (rows 43–49); subtotal R475.99 × 1.15 = R548 per drinker.`,
+    ...(confirmed ? { estimatorConfirmation: "NewQuip confirmed this composition on 2026-11-25 (handoff). The Estimator still confirms the package and its quantity at sign-off, exactly as for every other package." } : {
+      alternativeIdentity: {
+        sku: "NB3542-03",
+        description: "CUP DRINKERS (NEW TYPE) GROWER & FINISHER",
+        note: "The NewQuip Master (05 Oct 2026, per the owner's Round 2 brief) lists this as the current drinker product. Sean Round 1 separately confirmed the 7-part composition. Which representation prices the drinker is NOT settled — it is never chosen automatically (Round 3).",
+      },
+    }),
+    components: [
+      fixed("cup", "QCA00003", "Round drinking cup – large (11cm SS pipe) – grower", 1, "cup!B43"),
+      fixed("pipe", "NQ1380", "Water pipe 1/2in SST 800mm", 1, "cup!B44"),
+      fixed("plate", "NQ2784", "SST backing plate (cups) 2mm / 3 holes", 1, "cup!B45"),
+      fixed("bracket", "NQ2886", "Cup drinker bracket, pen mount", 1, "cup!B46"),
+      fixed("bolt", "NQ1386", "Bolt M8×65 SST", 5, "cup!B47 (qty formula 3 + 2)"),
+      fixed("nut", "NYNUT", "Nylock nut M8 SST", 5, "cup!B48"),
+      fixed("washer", "NQ1017", "Washer M8×25×2 SST", 5, "cup!B49"),
+    ],
+  };
+}
+
+/** The 250 mm manure plug: a finished item (MNQ048) that is exactly one each of MNQ039, MNQ040 and MNQ041 (handoff 2026-11-25, section 8). The Rep enters the quantity; current Cin7 component costs are approved. */
+const MANURE_PLUG_PACKAGE: PackageMapping = {
+  kind: "package", itemKey: "manure_plug", name: "250mm manure plug (MNQ048)", layoutDriven: false,
+  estimatorConfirmation: "NewQuip confirmed this composition on 2026-11-25 (handoff). The Estimator still confirms the package and its quantity at sign-off, exactly as for every other package.",
+  provenance: "NEWQUIP_GROWER_PRICING_HANDOFF_2026-11-25, section 8: finished item MNQ048 = MNQ039 x1 + MNQ040 x1 + MNQ041 x1. Current Cin7 component costs approved for the Budget calculation.",
+  components: [
+    fixed("tube", "MNQ039", "Manure plug component 1 of 3 (MNQ048 BOM)", 1, "Handoff 2026-11-25 s8"),
+    fixed("seal", "MNQ040", "Manure plug component 2 of 3 (MNQ048 BOM)", 1, "Handoff 2026-11-25 s8"),
+    fixed("plug", "MNQ041", "Manure plug component 3 of 3 (MNQ048 BOM)", 1, "Handoff 2026-11-25 s8"),
+  ],
+};
+
+/**
+ * The emergency window (ERT003, 1500 x 700 mm with motor) and its confirmed 11-line component list (Sean, 2026-11-24 10:22; the one-per-two-windows rule and the quantities are his). One package unit = one window; the Rep enters
+ * windows per room (suggested 1). Shared items (power supply, emergency opening) are 1 per 2 windows, ROUNDED UP over the whole quotation. The RLD80 drive, its mounting set and coupling, and the galvanised pipe are written
+ * "per room" in the source; with one window per room (the default) that is the same as per window, and the Estimator confirms the package and quantity at sign-off for a room with more windows.
+ */
+const EMERGENCY_WINDOW_PACKAGE: PackageMapping = {
+  kind: "package", itemKey: "emergency_windows", name: "Emergency window (ERT003) with its components", layoutDriven: false,
+  estimatorConfirmation: "NewQuip confirmed the component list on 2026-11-24. The Estimator confirms the quantity per room (the drive, mounting set, coupling and pipe are written per room in the source).",
+  provenance: "Sean Bredenkamp 2026-11-24 10:22 'Emergency window breakdown': ERT003 x1; HO08990730 and HO08020800 1 for every 2 windows; RID503117 x4; RID507450 x1 per room; RID507220 x1 per RID507450; RID590008 x2 per RID507450; NQPP1017 x2 per room; NQ1060 x16; NQ3401 x16; NQ1088 x1.",
+  components: [
+    fixed("window", "ERT003", "Emergency window 1500 x 700 mm with motor", 1, "Sean 2026-11-24"),
+    shared("psu", "HO08990730", "Power supply 24VDC 150VA + 2 manual control 0-10V (1 per 2 windows)", 0.5, "Sean 2026-11-24"),
+    shared("opening", "HO08020800", "Emergency opening 24VDC for PS-100 slave (1 per 2 windows)", 0.5, "Sean 2026-11-24"),
+    fixed("bearing", "RID503117", "Bearing plate", 4, "Sean 2026-11-24"),
+    fixed("drive", "RID507450", "RLD80 / 1K / 24V / 2D25 / Z16 logic drive (1 per room)", 1, "Sean 2026-11-24"),
+    fixed("mount", "RID507220", "Mounting set for RLD80 (1 per drive)", 1, "Sean 2026-11-24"),
+    fixed("coupling", "RID590008", "Chain bolt coupling (2 per drive)", 2, "Sean 2026-11-24"),
+    fixed("pipe", "NQPP1017", "Galvanised pipe 33.4 (1 in) incl. sockets, 6 m length (2 per room)", 2, "Sean 2026-11-24"),
+    fixed("washer", "NQ1060", "Body washer M6x19x1.6", 16, "Sean 2026-11-24 (fastening material)"),
+    fixed("screw", "NQ3401", "Metapp 12-24 x 38 mm hex flange screw, class 3, plain", 16, "Sean 2026-11-24 (fastening material)"),
+    fixed("rope", "NQ1088", "Braided rope 4 mm polyester", 1, "Sean 2026-11-24 (fastening material)"),
+  ],
+};
 
 export const COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMapping>> = {
   // ---- single SKU (source-backed recommendations) ----
@@ -160,28 +246,13 @@ export const COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMappin
     "Cin7 'CONCRETE SLAT (12x045M)' = ERP '(1.2x0.45M)'; the workbook price 203 ≈ ERP latest cost 193.60 × 1.05. Delivery is a SEPARATE charge (see slat delivery)."),
 
   // ---- packages ----
-  cup_drinker: {
-    kind: "package", itemKey: "cup_drinker", name: "Grower cup drinker", layoutDriven: false,
-    provenance: `${WB} sheet 'cup', GROWER CUP block (rows 43–49); subtotal R475.99 × 1.15 = R548 per drinker.`,
-    alternativeIdentity: {
-      sku: "NB3542-03",
-      description: "CUP DRINKERS (NEW TYPE) GROWER & FINISHER",
-      note: "The NewQuip Master (05 Oct 2026, per the owner's Round 2 brief) lists this as the current drinker product. Sean Round 1 separately confirmed the 7-part composition. Which representation prices the drinker is NOT settled — it is never chosen automatically (Round 3).",
-    },
-    components: [
-      fixed("cup", "QCA00003", "Round drinking cup – large (11cm SS pipe) – grower", 1, "cup!B43"),
-      fixed("pipe", "NQ1380", "Water pipe 1/2in SST 800mm", 1, "cup!B44"),
-      fixed("plate", "NQ2784", "SST backing plate (cups) 2mm / 3 holes", 1, "cup!B45"),
-      fixed("bracket", "NQ2886", "Cup drinker bracket, pen mount", 1, "cup!B46"),
-      fixed("bolt", "NQ1386", "Bolt M8×65 SST", 5, "cup!B47 (qty formula 3 + 2)"),
-      fixed("nut", "NYNUT", "Nylock nut M8 SST", 5, "cup!B48"),
-      fixed("washer", "NQ1017", "Washer M8×25×2 SST", 5, "cup!B49"),
-    ],
-  },
+  cup_drinker: cupDrinkerPackage(true),
+  manure_plug: MANURE_PLUG_PACKAGE,
+  emergency_windows: EMERGENCY_WINDOW_PACKAGE,
   led_light: {
     kind: "package", itemKey: "led_light", name: "FORTIS 1.2 5000K LED light", layoutDriven: false,
-    provenance: `${FEEDBACK_2026_11}: Sean confirmed HNQ7046, HNQ7088 and HNQ7093 as the Grower House LED light and accessories, replacing the revolving-light / light-trap SKUs (HO12011000, HO17050750, HO21013750). Function of each, from the Cin7 product names: HNQ7046 = FERAX 24W ON/OFF (the luminaire), HNQ7088 = FERAX CABLE 0.6M (the cable), HNQ7093 = FERAX CLIP 29MM RVS (the mounting clip). The per-light composition (1 luminaire + 3 clips + 1 cable) is the historic ${WB} sheet 'FX' composition: Sean confirmed the SKUs, not the quantities.`,
-    estimatorConfirmation: "Sean confirmed the three SKUs, not their quantities per light (the 1 + 3 + 1 composition is the historic FERAX build-up), and the customer-facing name still says FORTIS 1.2 while the confirmed luminaire is the FERAX 24W: the Estimator confirms the package and its description.",
+    provenance: `NEWQUIP_GROWER_PRICING_HANDOFF_2026-11-25, section 10: HNQ7046 FERAX 24W luminaire x1, HNQ7093 FERAX 29mm clip x3, HNQ7088 FERAX 0.6m cable x1; NewQuip asked for the customer-facing family to be FERAX (not FORTIS); that rename is HELD because the Rep-safe document guard forbids the brand, owner decision needed. Current Cin7 component costs approved. ${FEEDBACK_2026_11}: Sean confirmed HNQ7046, HNQ7088 and HNQ7093 as the Grower House LED light and accessories, replacing the revolving-light / light-trap SKUs (HO12011000, HO17050750, HO21013750). Function of each, from the Cin7 product names: HNQ7046 = FERAX 24W ON/OFF (the luminaire), HNQ7088 = FERAX CABLE 0.6M (the cable), HNQ7093 = FERAX CLIP 29MM RVS (the mounting clip). The per-light composition (1 luminaire + 3 clips + 1 cable) is the historic ${WB} sheet 'FX' composition: Sean confirmed the SKUs, not the quantities.`,
+    estimatorConfirmation: "NewQuip confirmed this composition on 2026-11-25 (handoff). The Estimator still confirms the package and its quantity at sign-off, exactly as for every other package.",
     components: [
       {
         id: "luminaire", sku: "HNQ7046", identity: "source_backed", quantityStatus: "source_fixed", qtyPerUnit: 1,
@@ -248,7 +319,7 @@ export const COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMappin
   pvc_door: {
     kind: "unresolved", itemKey: "pvc_door",
     reason: "MANUAL SELECTION — the estimator picks the door product. There is no automatic door-sizing rule (Sean Round 2 #11). Sean (2026-11) proposes NQ3444 (Cin7: 'PVC SINGLE DOORS'; 'a mixture of Kunlong and local parts') as the Grower House door and replaced NQ2112, NQ2113 and NQ2114. Cin7's description gives no door size, so the specification cannot be validated from the catalogue: the Estimator confirms the door and its size. Whether NQ3444 is one complete assembly or needs components is not stated, so no component is added alongside it.",
-    manualSelectionSkus: ["NQ3444", "NQ2161", "NQ2281"],
+    manualSelectionSkus: ["NQ3444", "NQ3444-B", "NQ2161", "NQ2281"],
     proposedSku: "NQ3444",
     hasSuppliedReference: true,
     retiredSkus: ["NQ2112", "NQ2113", "NQ2114"],
@@ -270,6 +341,7 @@ export const templateRevisionOf = (draft: { estimator?: { templateRevision?: unk
 
 /** The ORIGINAL (grower-2026-10) definitions of the items the 2026-11 answers changed, kept verbatim so a quotation created under them keeps exactly the scope, quantities and pricing it had. */
 const LEGACY_COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMapping>> = {
+  cup_drinker: cupDrinkerPackage(false),
   led_light: {
     kind: "package", itemKey: "led_light", name: "FORTIS 1.2 5000K LED light", layoutDriven: false,
     provenance: `${WB} sheet 'FX': €25.50 + 3 × €0.74 + €1.37 = €29.09 per light (priced on the FERAX 24W ON/OFF, HNQ7046, as a historic surrogate for the FORTIS 1.2).`,
@@ -339,7 +411,11 @@ export const MANUAL_COMMERCIAL_LINES: ManualMapping[] = [
 ];
 
 /** The mapping for an item under a template revision. The revision is REQUIRED: there is deliberately no default, so no caller can silently read the latest template for an existing quotation. */
+/** Items the grower-2026-10 template had NO mapping for; a later revision's mapping must never reach a quotation created under it. */
+const LEGACY_UNMAPPED: ReadonlySet<GrowerItemKey> = new Set<GrowerItemKey>(["manure_plug", "emergency_windows"]);
+
 export function commercialMappingFor(itemKey: GrowerItemKey, revision: TemplateRevision): CommercialMapping | undefined {
+  if (revision === TEMPLATE_REVISION_LEGACY && LEGACY_UNMAPPED.has(itemKey)) return undefined;
   return revision === TEMPLATE_REVISION_LEGACY && LEGACY_COMMERCIAL_MAPPINGS[itemKey] ? LEGACY_COMMERCIAL_MAPPINGS[itemKey] : COMMERCIAL_MAPPINGS[itemKey];
 }
 
@@ -390,6 +466,7 @@ export interface ProvisionalBasis {
 }
 const PROVISIONAL_PLAIN: Partial<Record<GrowerItemKey, string>> = {
   cup_drinker: "Provisional: the exact drinker product and its parts are still to be confirmed, so this price may change.",
+  pad_cooling: "Provisional: the cooling quantities follow NewQuip's confirmed formulas for the system length entered; labour, travel and some plumbing details are still to be confirmed, so this price may change.",
   led_light: "Provisional: the light model, the number of parts per light and the product name are still to be confirmed, so this price may change.",
 };
 export function provisionalPackageBasis(pkg: PackageMapping | undefined): ProvisionalBasis | null {
@@ -402,7 +479,7 @@ export function provisionalPackageBasis(pkg: PackageMapping | undefined): Provis
     qualifies: `Every component has a source-backed SKU, a fixed source quantity and no pricing exception (${pkg.name}). This is a provisional budget composition, NOT a NewQuip-approved specification.`,
     internalReasons: open,
     composition: pkg.components.map((c) => ({ sku: c.sku as string, qtyPerUnit: c.qtyPerUnit as number })),
-    plain: PROVISIONAL_PLAIN[pkg.itemKey] ?? "Provisional: the product and its parts are still to be confirmed, so this price may change.",
+    plain: pkg.alternativeIdentity || pkg.itemKey === "pad_cooling" ? (PROVISIONAL_PLAIN[pkg.itemKey] ?? "Provisional: the product and its parts are still to be confirmed, so this price may change.") : "Provisional: the parts are confirmed, but the Estimator has not yet signed off the package and quantity, so this price may change.",
   };
 }
 
@@ -422,6 +499,7 @@ export function manualSelectionSkusFor(itemKey: GrowerItemKey, revision: Templat
  * never offered as a candidate. Nothing here rewrites any stored quotation scope or saved package mapping.
  */
 export const EXCLUDED_SKUS: Readonly<Record<string, string>> = {
+  "SYSH-2750-4": "DON'T QUOTE (Sage and Cin7 product name; Spark/NewQuip decision 2026-11-26): never offered, never a valid choice for the bulk tank.",
   NQ1984: "Excluded from the Grower House (Sean, 2026-11). It is the M75 drop kit WITHOUT knobs and rope; the complete drop kit is NQ1942.",
 };
 export const isExcludedSku = (sku: string): boolean => Object.prototype.hasOwnProperty.call(EXCLUDED_SKUS, sku);
@@ -433,7 +511,6 @@ export const isExcludedSku = (sku: string): boolean => Object.prototype.hasOwnPr
 export interface SelectableAlternative { itemKey: GrowerItemKey; sku: string; label: string; caution: string }
 export const SELECTABLE_ALTERNATIVES: readonly SelectableAlternative[] = [
   { itemKey: "feeder", sku: "PNQ002", label: "CCM FEEDER FOR GROWERS (PNQ002)", caution: "Included by Sean (2026-11). How it relates to the standard PNQ082 (with monoflo nipples) was not stated, so it is an Estimator choice for the feeder line: never automatic, and never an extra line beside the feeder." },
-  { itemKey: "bulk_tank", sku: "SYSH-2750-4", label: "16.58 t silo (SYSH-2750-4)", caution: "Included by Sean (2026-11). Cin7's product name still reads 'DONT QUOTE' and the template default is the 13.39 t SYSH-2750-3, so choosing it is the Estimator's decision for the tank line (tank size is an Estimator input) and NewQuip should correct the Cin7 name." },
 ];
 export const alternativesFor = (itemKey: GrowerItemKey): SelectableAlternative[] => SELECTABLE_ALTERNATIVES.filter((a) => a.itemKey === itemKey);
 
@@ -456,6 +533,7 @@ export function savedMappingCaution(packageKey: string, skus: readonly string[])
 export const CHOICE_PRODUCT_NAMES: Readonly<Record<string, string>> = {
   NQ2112: "WHITE DOOR WITH UV 35MM (1980L × 600W)", NQ2113: "WHITE DOOR WITH UV 35MM (1980L × 1000W) NO WINDOWS", NQ2114: "WHITE DOOR WITH UV 35MM (1970L × 1000W)", // the original template's doors (quotations created under it keep them)
   NQ3444: "PVC SINGLE DOORS: Sean's proposed Grower House door. Cin7 gives no size, so confirm the door and its size",
+  "NQ3444-B": "PVC SINGLE DOORS, 2.1 × 1.0 m (the smaller of the two door sizes)",
   NQ2161: "WHITE DOOR WITH UV 35MM (1980 × 1000W) WITH WINDOWS",
   NQ2281: "35MM WHITE DOOR (1990 × 790MM)",
 };

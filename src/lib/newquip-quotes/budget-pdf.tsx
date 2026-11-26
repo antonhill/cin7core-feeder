@@ -64,6 +64,7 @@ export function BudgetQuotationDocument({ m }: { m: BudgetDocumentModel }) {
         {!m.complete && (
           <View style={{ marginTop: 10, borderWidth: 1.5, borderColor: "#B91C1C", backgroundColor: "#FEF2F2", padding: 6 }} wrap={false}>
             <Text style={{ fontFamily: "Helvetica-Bold", color: "#B91C1C" }}>INCOMPLETE PRICING – {m.unpriced.count} item{m.unpriced.count === 1 ? "" : "s"} not yet priced</Text>
+            {m.retrievalPending > 0 && <Text style={{ fontFamily: "Helvetica-Bold", color: "#B91C1C" }}>Supplier price retrieval is UNFINISHED: {m.retrievalPending} supplier product{m.retrievalPending === 1 ? " has" : "s have"} not been read yet. This is NOT a complete Budget; retry the preview in a moment.</Text>}
             <Text style={{ color: "#7F1D1D" }}>The amounts below cover only the priced items. They are not a total for the equipment or the project.</Text>
           </View>
         )}

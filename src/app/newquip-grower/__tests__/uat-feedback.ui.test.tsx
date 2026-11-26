@@ -5,11 +5,13 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { IncompleteEstimateBanner } from "../[id]/IncompleteEstimateBanner";
 import { incompleteEstimateText } from "@/newquip/grower/incomplete-estimate";
 
-const h = vi.hoisted(() => ({ send: vi.fn(), status: vi.fn() }));
-vi.mock("../budget-actions", () => ({ getBudgetStatusAction: (...a: unknown[]) => h.status(...a), sendBudgetQuotationAction: (...a: unknown[]) => h.send(...a) }));
+const DONE = { ok: true, data: { stillToRead: 0, done: true, status: "applied" } };
+const h = vi.hoisted(() => ({ send: vi.fn(), status: vi.fn(), complete: vi.fn() }));
+vi.mock("../budget-actions", () => ({ getBudgetStatusAction: (...a: unknown[]) => h.status(...a), sendBudgetQuotationAction: (...a: unknown[]) => h.send(...a), completeBudgetPricingAction: (...a: unknown[]) => h.complete(...a) }));
 import { BudgetQuotationPanel } from "../[id]/BudgetQuotationPanel";
+h.complete.mockResolvedValue({ ok: true, data: { stillToRead: 0, done: true } });
 
-afterEach(() => { cleanup(); h.send.mockReset(); h.status.mockReset(); });
+afterEach(() => { cleanup(); h.send.mockReset(); h.status.mockReset(); h.complete.mockReset(); h.complete.mockResolvedValue(DONE); });
 
 const est = { lines: [{ itemKey: "pvc_door", label: "PVC SST door (incl. frame)", quantity: 12, reason: "Product not yet confirmed" }, { itemKey: "controller", label: "Thomas-CL1 controller", quantity: 3, reason: "Product not yet confirmed" }], count: 2, text: incompleteEstimateText(2), chargesSubtotalExVat: 40500, pricedEquipmentExVat: 0, knownSubtotalExVat: 40500 };
 const status = (over = {}) => ({ ok: true, data: { canSend: true, blockedReason: null, testMode: true, draftHash: "h1", draftRef: "abc123", complete: false, unpricedCount: 5, unpricedItems: ["PVC SST door x 12"], testRecipient: "anton@sparkconsulting.co.za", ...over } });
@@ -71,5 +73,62 @@ describe("BudgetQuotationPanel", () => {
     fireEvent.click(screen.getByTestId("send-budget-quotation"));
     await waitFor(() => expect(screen.getByTestId("budget-send-why").textContent).toContain("Production email is not enabled"));
     expect((screen.getByText("Send Budget Quotation now").closest("button") as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("BudgetQuotationPanel completes a Rep's supplier prices by itself (P0: no 'not yet priced' for a price that is obtainable)", () => {
+  it("a Rep's saved draft with unpriced lines triggers the completion; the Preview waits for it and returns afterwards", async () => {
+    let release: (v: unknown) => void = () => undefined;
+    h.complete.mockReturnValue(new Promise((r) => { release = r; }));
+    h.status.mockResolvedValue(status());
+    render(<BudgetQuotationPanel quoteId="q1" canAct dirty={false} refreshKey="k" />);
+    await waitFor(() => expect(h.complete).toHaveBeenCalledWith("q1"));
+    expect(screen.getByTestId("budget-pricing-progress")).toBeTruthy();
+    expect(screen.queryByTestId("preview-budget-quotation")).toBeNull();
+    release({ ok: true, data: { stillToRead: 0, done: true, status: "applied" } });
+    await waitFor(() => expect(screen.getByTestId("preview-budget-quotation")).toBeTruthy());
+  });
+  it("it does not run for a viewer who is not the Rep, with unsaved changes, or when nothing is unpriced", async () => {
+    h.status.mockResolvedValue(status());
+    // each case waits for the STATUS TO RENDER (the incomplete banner / the preview link), so the effect has had its chance to run before we assert it did not
+    const a = render(<BudgetQuotationPanel quoteId="q1" canAct={false} dirty={false} refreshKey="k" />);
+    await waitFor(() => expect(screen.getByTestId("budget-incomplete")).toBeTruthy());
+    a.unmount();
+    h.status.mockResolvedValue(status());
+    const b = render(<BudgetQuotationPanel quoteId="q1" canAct dirty refreshKey="k2" />);
+    await waitFor(() => expect(screen.getByTestId("budget-incomplete")).toBeTruthy());
+    b.unmount();
+    h.status.mockResolvedValue(status({ unpricedCount: 0, complete: true, unpricedItems: [] }));
+    render(<BudgetQuotationPanel quoteId="q1" canAct dirty={false} refreshKey="k3" />);
+    await waitFor(() => expect(screen.getByTestId("preview-budget-quotation")).toBeTruthy());
+    expect(h.complete).not.toHaveBeenCalled();
+  });
+});
+
+describe("BudgetQuotationPanel: unfinished retrieval is never hidden", () => {
+  it("when retrieval keeps making no progress the panel says so plainly, offers a retry, and the retry runs the completion again", async () => {
+    h.complete.mockResolvedValue({ ok: true, data: { stillToRead: 7, done: false, status: "applied" } });
+    h.status.mockImplementation(async () => status()); // a FRESH status object per read, like the real action
+    render(<BudgetQuotationPanel quoteId="q1" canAct dirty={false} refreshKey="kx" />);
+    await waitFor(() => expect(screen.getByTestId("budget-retrieval-unfinished")).toBeTruthy(), { timeout: 5000 });
+    expect(screen.getByTestId("budget-retrieval-unfinished").textContent).toMatch(/NOT complete/);
+    const callsBefore = h.complete.mock.calls.length;
+    expect(callsBefore).toBeLessThanOrEqual(6); // the round cap is honoured
+    h.complete.mockResolvedValue({ ok: true, data: { stillToRead: 0, done: true, status: "applied" } });
+    fireEvent.click(screen.getByTestId("budget-retry-pricing"));
+    await waitFor(() => expect(h.complete.mock.calls.length).toBeGreaterThan(callsBefore));
+    await waitFor(() => expect(screen.queryByTestId("budget-retrieval-unfinished")).toBeNull());
+  });
+});
+
+describe("BudgetQuotationPanel: a status a retry cannot change is not blamed on Cin7", () => {
+  it("settings_incomplete stops at once with its own message and no retry button", async () => {
+    h.complete.mockResolvedValue({ ok: true, data: { stillToRead: 0, done: false, status: "settings_incomplete" } });
+    h.status.mockImplementation(async () => status());
+    render(<BudgetQuotationPanel quoteId="q1" canAct dirty={false} refreshKey="ky" />);
+    await waitFor(() => expect(screen.getByTestId("budget-retrieval-not-applicable")).toBeTruthy());
+    expect(h.complete).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("budget-retrieval-unfinished")).toBeNull();
+    expect(screen.queryByTestId("budget-retry-pricing")).toBeNull();
   });
 });

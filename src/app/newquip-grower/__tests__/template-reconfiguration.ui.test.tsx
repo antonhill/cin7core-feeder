@@ -7,7 +7,7 @@ import { penningScope } from "@/newquip/grower/penning";
 
 afterEach(cleanup);
 
-describe("alternative products (PNQ002 for the feeder, SYSH-2750-4 for the tank)", () => {
+describe("alternative products (PNQ002 for the feeder)", () => {
   it("the standard product is the default; choosing an alternative shows its caution and REPLACES the product through onChange; choosing standard clears it", () => {
     const onChange = vi.fn();
     const { rerender } = render(<AlternativeProductChoice itemKey="feeder" standardSku="PNQ082" value={undefined} onChange={onChange} />);
@@ -20,9 +20,9 @@ describe("alternative products (PNQ002 for the feeder, SYSH-2750-4 for the tank)
     fireEvent.click(screen.getByLabelText(/Standard product/));
     expect(onChange).toHaveBeenLastCalledWith(null);
   });
-  it("the bulk-tank alternative warns that Cin7 says DONT QUOTE; an item with no alternatives renders nothing", () => {
-    const { container, rerender } = render(<AlternativeProductChoice itemKey="bulk_tank" standardSku="SYSH-2750-3" value="SYSH-2750-4" onChange={() => {}} />);
-    expect(screen.getByTestId("alternative-caution-SYSH-2750-4").textContent).toMatch(/DONT QUOTE/);
+  it("the bulk tank offers NO alternative (SYSH-2750-4 is DON'T QUOTE); an item with no alternatives renders nothing", () => {
+    const { container, rerender } = render(<AlternativeProductChoice itemKey="bulk_tank" standardSku="SYSH-2750-3" value={undefined} onChange={() => {}} />);
+    expect(container.textContent).toBe("");
     rerender(<AlternativeProductChoice itemKey="concrete_slat" standardSku="NQ1161" value={undefined} onChange={() => {}} />);
     expect(container.textContent).toBe("");
   });

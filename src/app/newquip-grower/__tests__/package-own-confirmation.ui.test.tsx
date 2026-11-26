@@ -35,7 +35,7 @@ describe("PackageOwnConfirmation", () => {
     expect(items.some((t) => /^1 ×\s*HNQ7046/.test(t ?? ""))).toBe(true);
     expect(items.some((t) => /^3 ×\s*HNQ7093/.test(t ?? ""))).toBe(true);
     expect(items.some((t) => /^1 ×\s*HNQ7088/.test(t ?? ""))).toBe(true);
-    expect(screen.getByTestId("package-own-reason").textContent).toMatch(/not their quantities/);
+    expect(screen.getByTestId("package-own-reason").textContent).toMatch(/Estimator still confirms/);
     expect(screen.getByText("Package unconfirmed")).toBeTruthy();
     expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
   });
@@ -47,9 +47,13 @@ describe("PackageOwnConfirmation", () => {
     rerender(<PackageOwnConfirmation pkg={led} confirmed={false} canEdit={false} onChange={onChange} />);
     expect((screen.getByRole("checkbox") as HTMLInputElement).disabled).toBe(true);
   });
-  it("shows the cup drinker's alternative representation as its reason", () => {
+  it("shows the cup drinker's sign-off reason on the current template, and the open NB3542-03 alternative on the original one", () => {
     const cup = packageFor("cup_drinker", TEMPLATE_REVISION_CURRENT)!;
     render(<PackageOwnConfirmation pkg={cup} confirmed={false} canEdit onChange={() => {}} />);
+    expect(screen.getByTestId("package-own-reason").textContent).toMatch(/Estimator still confirms/);
+    expect(screen.getByTestId("package-own-reason").textContent).not.toMatch(/NB3542-03/);
+    cleanup();
+    render(<PackageOwnConfirmation pkg={packageFor("cup_drinker", "grower-2026-10")!} confirmed={false} canEdit onChange={() => {}} />);
     expect(screen.getByTestId("package-own-reason").textContent).toMatch(/NB3542-03/);
   });
 });

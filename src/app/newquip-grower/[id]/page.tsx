@@ -1,5 +1,6 @@
 "use client";
 
+import { DOOR_SIZES, type DoorSize } from "@/newquip/grower/door-sizes";
 import { pageContainerClass } from "@/app/PageContainer";
 import { incompleteCostingMessage } from "@/newquip/quote/workflow";
 import Link from "next/link";
@@ -387,7 +388,7 @@ export default function QuoteEditorPage() {
       const sheet = final ? q.accepted_baseline?.internalMargin : buildMarginSheet(budget, previewCostOverrides(draft.estimator.costOverrides).usable);
       if (!sheet) return null;
       // Lines the Estimator prices by design (M75, penning, a resolved manual price) have no supplier cost and are exempt from the costing gate: they keep the margin INDICATIVE but are not "missing cost".
-      const byDesign = new Set(budget.lines.filter((b) => b.pricedBy === "estimator_input" || b.pricedBy === "penning_rate" || b.pricedBy === "estimator_resolution").map((b) => b.label));
+      const byDesign = new Set(budget.lines.filter((b) => b.pricedBy === "estimator_input" || b.pricedBy === "penning_rate" || b.pricedBy === "estimator_resolution" || b.pricedBy === "budget_rate").map((b) => b.label));
       const gaps = sheet.project.missingCostLines;
       return { incomplete: sheet.project.incomplete, projectCostCents: sheet.project.costCents, projectMarginPct: sheet.project.marginPct, missing: gaps.filter((l) => !byDesign.has(l)).length, exempt: gaps.filter((l) => byDesign.has(l)) };
     } catch { return null; }
@@ -845,7 +846,7 @@ export default function QuoteEditorPage() {
       {error && <div className="mt-4"><Alert tone="danger">{error}</Alert></div>}
       {/* ONE pricing-status summary, not repeated banners. For a Rep's draft it lives in the final step; for everyone else it sits here. */}
       {!repFinalStep && view.budgetPricing && <div className="mt-4"><PricingStatusSummary view={view.budgetPricing} />{demoPresetQuantityKeys(draft).length > 0 && <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950" data-testid="demo-quantity-notice">{DEMO_PRESET_QUANTITY_NOTICE}</p>}</div>}
-      {!repFinalStep && (q.state === "REP_DRAFT" || q.state === "ESTIMATOR_REVIEW") && (roles.has("rep") || roles.has("estimator") || roles.has("manager")) && <div className="mt-4"><BudgetQuotationPanel quoteId={id} canAct={roles.has("rep")} dirty={dirty} refreshKey={`${q.draft_hash}:${q.updated_at}`} /></div>}
+      {!repFinalStep && (q.state === "REP_DRAFT" || q.state === "ESTIMATOR_REVIEW") && (roles.has("rep") || roles.has("estimator") || roles.has("manager")) && <div className="mt-4"><BudgetQuotationPanel quoteId={id} canAct={roles.has("rep")} dirty={dirty} refreshKey={`${q.draft_hash}:${q.updated_at}`} onPriced={() => { void reloadQuote(); }} /></div>}
       {autoPending.length > 0 && q.state === "REP_DRAFT" && <div className="mt-4" data-testid="auto-pricing-pending"><Alert tone="info">{autoPending.join(". ")}.</Alert></div>}
       <ActionFeedback state={acts.stateOf("page")} floating />
       <LongRunningStatus label={phaseUx && acts.isPending("send") ? null : acts.currentLabel} />
@@ -1104,6 +1105,11 @@ export default function QuoteEditorPage() {
                   <option value="STANDARD">Standard — PNQ082</option>
                   <option value="WINDOW">With window — PNQ082-WINDOW</option>
                 </Select>
+                <Select label="PVC door size" error={err("doorSize")} helperText="Each size has its own Budget price." value={cfg.doorSize ?? ""} onChange={(e) => edit((d) => { d.config.doorSize = (e.target.value || null) as DoorSize | null; })}>
+                  <option value="">Select…</option>
+                  <option value="2.1x1.2">{DOOR_SIZES["2.1x1.2"].label} (NQ3444)</option>
+                  <option value="2.1x1.0">{DOOR_SIZES["2.1x1.0"].label} (NQ3444-B)</option>
+                </Select>
                 <Select label="Penning pig size" error={err("penningPigSize")} onBlur={() => touch("penningPigSize")} value={cfg.penningPigSize ?? ""} onChange={(e) => edit((d) => { d.config.penningPigSize = (e.target.value || null) as PenningPigSize | null; })}>
                   <option value="">Select…</option>
                   {(Object.keys(PIG_SIZE_LABEL) as PenningPigSize[]).map((k) => <option key={k} value={k}>{PIG_SIZE_LABEL[k]}</option>)}
@@ -1130,6 +1136,11 @@ export default function QuoteEditorPage() {
                   );
                 })}
               </ul>
+              {cfg.optionalEquipment.pad_cooling && (
+                <div className="mt-3 grid gap-3 sm:grid-cols-2" data-testid="cooling-length-field">
+                  <NumField label="Pad cooling system length" error={err("coolingSystemLengthM")} onBlur={() => touch("coolingSystemLengthM")} unit="metres, one system" value={cfg.coolingSystemLengthM ?? null} onChange={(v) => edit((d) => { d.config.coolingSystemLengthM = v; })} hint="The cooling parts are worked out from this length. Over 20 m the plumbing quantities double. Enter the number of systems as the quantity." />
+                </div>
+              )}
             </Panel>
             </div>
 
@@ -1170,7 +1181,7 @@ export default function QuoteEditorPage() {
               <div className="mt-3 space-y-3" data-testid="review-budget-submit">
                 <PricingStatusSummary view={view.budgetPricing} />
                 {demoPresetQuantityKeys(draft).length > 0 && <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950" data-testid="demo-quantity-notice">{DEMO_PRESET_QUANTITY_NOTICE}</p>}
-                <BudgetQuotationPanel quoteId={id} canAct={roles.has("rep")} dirty={dirty} refreshKey={`${q.draft_hash}:${q.updated_at}`} embedded />
+                <BudgetQuotationPanel quoteId={id} canAct={roles.has("rep")} dirty={dirty} refreshKey={`${q.draft_hash}:${q.updated_at}`} embedded onPriced={() => { void reloadQuote(); }} />
               </div>
             )}
             {wizard.submitted ? (

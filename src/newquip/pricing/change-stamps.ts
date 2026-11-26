@@ -28,8 +28,10 @@ const TRACKED_SCALARS: { key: string; label: string; read: (d: QuoteDraft) => un
   { key: "penningPigSize", label: "Penning pig size", read: (d) => d.config.penningPigSize ?? null },
   { key: "penningRunningMetresPerRoom", label: "Penning running metres", read: (d) => d.config.penningRunningMetresPerRoom ?? null },
   { key: "feederVariant", label: "Feeder variant", read: (d) => d.config.feederVariant ?? null },
+  { key: "doorSize", label: "PVC door size", read: (d) => d.config.doorSize ?? null },
+  { key: "coolingSystemLengthM", label: "Cooling system length", read: (d) => d.config.coolingSystemLengthM ?? null },
 ];
-const TRACKED_CONFIG_FIELDS = new Set(["estimatorQuantities", "quantityOverrides", "quantityOverrideReasons", "exclusions", "optionalEquipment", "penningPigSize", "penningRunningMetresPerRoom", "feederVariant"]);
+const TRACKED_CONFIG_FIELDS = new Set(["estimatorQuantities", "quantityOverrides", "quantityOverrideReasons", "exclusions", "optionalEquipment", "penningPigSize", "penningRunningMetresPerRoom", "doorSize", "feederVariant", "coolingSystemLengthM"]);
 /** Everything else in the configuration (dimensions, rooms, pens, pigs, selections): one combined input. */
 const LAYOUT_KEY = "layout";
 

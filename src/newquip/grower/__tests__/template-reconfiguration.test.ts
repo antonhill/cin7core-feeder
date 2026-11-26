@@ -28,8 +28,8 @@ describe("LED lighting: the three SKUs Sean confirmed", () => {
     for (const gone of ["HO12011000", "HO17050750", "HO21013750"]) { expect(ids).not.toContain(gone); expect(referencedSkus()).not.toContain(gone); }
     expect(led.components.every((c) => c.identity === "source_backed" && !c.candidateSkus)).toBe(true);
   });
-  it("still needs an Estimator: Sean confirmed SKUs, not per-light quantities or the customer-facing FORTIS name", () => {
-    expect(led.estimatorConfirmation).toMatch(/not their quantities/);
+  it("still needs the Estimator's sign-off; the quantities (2026-11-25 handoff) and the FERAX name are confirmed by NewQuip", () => {
+    expect(led.estimatorConfirmation).toMatch(/Estimator still confirms/);
     expect(packageAutoConfirmable(led)).toBe(false);
   });
 });
@@ -98,18 +98,19 @@ describe("inclusion and exclusion", () => {
     expect(mergeCandidates({ sku: "NQ1984", name: "x" }, cand).map((c) => c.sku)).toEqual(["NQ1942"]);
     expect(resolveMapping("pvc_door", cand, "NQ1984")).toMatchObject({ status: "UNMAPPED", sku: null, note: EXCLUDED_SKUS.NQ1984 });
   });
-  it("PNQ002 and SYSH-2750-4 are choices within the feeder and bulk-tank lines only, never automatic, never extra lines", () => {
+  it("PNQ002 is a choice within the feeder line only (never automatic, never an extra line); SYSH-2750-4 is DON'T QUOTE and is not offered or accepted", () => {
     expect(alternativesFor("feeder").map((a) => a.sku)).toEqual(["PNQ002"]);
-    expect(alternativesFor("bulk_tank").map((a) => a.sku)).toEqual(["SYSH-2750-4"]);
+    expect(alternativesFor("bulk_tank")).toEqual([]);
+    expect(isExcludedSku("SYSH-2750-4")).toBe(true);
     expect(SELECTABLE_ALTERNATIVES.every((a) => /never automatic|decision/.test(a.caution))).toBe(true);
     expect(mappingError([{ itemKey: "feeder", sku: "PNQ002" }], [{ sku: "PNQ002", active: true }])).toBeNull();
-    expect(mappingError([{ itemKey: "bulk_tank", sku: "SYSH-2750-4" }], [{ sku: "SYSH-2750-4", active: true }])).toBeNull();
+    expect(mappingError([{ itemKey: "bulk_tank", sku: "SYSH-2750-4" }], [{ sku: "SYSH-2750-4", active: true }])).toMatch(/cannot be used/);
     // an alternative is valid only for ITS item, and a random product is still refused
     expect(mappingError([{ itemKey: "bulk_tank", sku: "PNQ002" }], [{ sku: "PNQ002", active: true }])).toMatch(/not the source-backed product/);
     expect(mappingError([{ itemKey: "feeder", sku: "NQ9999" }], [{ sku: "NQ9999", active: true }])).toMatch(/not the source-backed product/);
   });
-  it("the tank alternative's caution records that Cin7's name says DONT QUOTE", () => {
-    expect(alternativesFor("bulk_tank")[0].caution).toMatch(/DONT QUOTE/);
+  it("the DON'T QUOTE silo's exclusion reason is recorded", () => {
+    expect(EXCLUDED_SKUS["SYSH-2750-4"]).toMatch(/DON'T QUOTE/);
   });
 });
 
@@ -130,7 +131,8 @@ describe("figures Sean / Tereesha supplied are references, compared with Cin7 an
   it("the supplied figures live ONLY in the server-only module: nothing a client component imports carries one (they would ship to every Rep)", () => {
     const FIGURES = ["57.37", "57,37", "52.72", "52,72", "9000", "9,000", "119.79", "119,79"];
     const clientSafe = JSON.stringify([COMMERCIAL_MAPPINGS, CHOICE_PRODUCT_NAMES, SELECTABLE_ALTERNATIVES, POC_ITEM_REGISTER.map((i) => [i.treatment, i.repTreatment])]);
-    for (const f of FIGURES) expect(clientSafe, f).not.toContain(f);
+    // A figure is a whole number: a product code that merely contains its digits (RID590008) is not the figure.
+    for (const f of FIGURES) expect(clientSafe, f).not.toMatch(new RegExp(`(?<![0-9A-Za-z.,])${f.replace(/[.,]/g, "\\$&")}(?![0-9])`));
     expect(clientSafe).not.toMatch(/R\s?(30|3\.14|0\.82)\b/);
   });
 });
@@ -200,10 +202,9 @@ describe("an approved alternative actually prices through the bridge (it must no
   const demo = applyDemoDefaults({ ...emptyDraft(), customerName: "T" }).draft;
   const base = { ...demo, estimator: { ...demo.estimator, templateRevision: "grower-2026-11" as const } };
   const lineOf = (d: typeof base, k: string) => evaluateDraft(d, ctx).budget!.lines.find((l) => l.itemKey === k)!;
-  it("the feeder maps to PNQ002 and the tank to SYSH-2750-4: priced from the source, SKU kept, never 'unmapped'", () => {
-    const d = { ...base, estimator: { ...base.estimator, confirmedMappings: { ...base.estimator.confirmedMappings, feeder: "PNQ002", bulk_tank: "SYSH-2750-4" } } };
+  it("the feeder maps to PNQ002: priced from the source, SKU kept, never 'unmapped'", () => {
+    const d = { ...base, estimator: { ...base.estimator, confirmedMappings: { ...base.estimator.confirmedMappings, feeder: "PNQ002" } } };
     expect(lineOf(d, "feeder")).toMatchObject({ sku: "PNQ002", status: "priced" });
-    expect(lineOf(d, "bulk_tank")).toMatchObject({ sku: "SYSH-2750-4", status: "priced" });
   });
   it("any other product is still refused for those lines, and the standard stays the default", () => {
     const d = { ...base, estimator: { ...base.estimator, confirmedMappings: { ...base.estimator.confirmedMappings, feeder: "NQ9999" } } };

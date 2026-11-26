@@ -290,17 +290,17 @@ describe("ZERO PRICE — supplier quote required, never R0", () => {
     expect(JSON.stringify(light)).not.toContain("HNQ7046\",\"description");
     expect(light.components!.find((c) => c.id === "luminaire")!.status).toBe("identity_unresolved");
   });
-  it("the LED package carries the Sean-confirmed SKUs (HNQ7046 / HNQ7093 x3 / HNQ7088) yet is never auto-confirmed; the customer-facing name still says FORTIS and a note records that", () => {
+  it("the LED package carries the confirmed SKUs (HNQ7046 / HNQ7093 x3 / HNQ7088) yet is never auto-confirmed (the Estimator signs it off); the FERAX customer name NewQuip asked for is HELD (owner decision)", () => {
     const d = onCurrentTemplate(readyDraft()); // a NEW quotation (current template revision)
     const ev = evaluateDraft({ ...d, estimator: { ...d.estimator, priceResolutions: {} } }, ctx);
     const light = ev.budget!.lines.find((l) => l.itemKey === "led_light")!;
     expect(light.status).toBe("package_unconfirmed"); // still needs the Estimator to confirm it (estimatorConfirmation), even though every component is source-backed
-    expect(light.label).toMatch(/FORTIS 1\.2/);
+    expect(light.label).toMatch(/FORTIS 1\.2/); // the FERAX rename is HELD: the Rep-safe document guard forbids the brand until the owner decides
     expect(light.components!.map((c) => [c.id, c.sku, c.qtyPerUnit])).toEqual([["luminaire", "HNQ7046", 1], ["clip", "HNQ7093", 3], ["cable", "HNQ7088", 1]]);
     expect(light.components!.some((c) => c.status === "identity_unresolved")).toBe(false); // no component is unidentified any more
     const mapping = COMMERCIAL_MAPPINGS.led_light as PackageMapping;
     expect(mapping.components.every((c) => c.identity === "source_backed" && c.confirmedBy === FEEDBACK_2026_11)).toBe(true);
-    expect(mapping.estimatorConfirmation).toMatch(/FORTIS 1\.2/); // the note recording the FORTIS / FERAX naming question
+    expect(mapping.estimatorConfirmation).toMatch(/Estimator still confirms/); // the FORTIS / FERAX naming question is closed; only the Estimator sign-off remains
     expect(packageAutoConfirmable(mapping)).toBe(false);
   });
 });

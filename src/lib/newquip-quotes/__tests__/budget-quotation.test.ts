@@ -12,7 +12,8 @@ vi.mock("../customer-store", () => ({ latestSnapshot: async () => state.snapshot
 vi.mock("../context", async () => { const { testPriceSource } = await import("@/newquip/grower/__tests__/test-snapshot"); return { evaluationContext: (w: boolean) => ({ priceSource: testPriceSource(), withholdCost: w }) }; });
 
 import { BUDGET_DISCLAIMER, buildBudgetDocumentModel, presentsPartialAsTotal } from "../budget-document";
-import { buildBudgetEmail, budgetSendRefusal, prepareBudget, sendBudgetQuotation, type BudgetSendDeps } from "../budget-quotation";
+import { buildBudgetEmail, budgetSendRefusal, prepareBudget, sendBudgetQuotation, unreadNeeds, type BudgetSendDeps } from "../budget-quotation";
+import { budgetSkuNeeds } from "../sku-needs";
 import { renderBudgetPdf } from "../budget-pdf";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { nqQ0002, S } from "@/newquip/grower/__tests__/nq-q-0002-fixture";
@@ -27,7 +28,7 @@ const PROFILE_REAL = { brandName: "Fictional Feed", legalName: "Fictional Feed (
 const PROFILE_PLACEHOLDER = { ...PROFILE_REAL, paymentTerms: "test", termsAndConditions: "TBD" };
 const UAT = { VERCEL_ENV: "production", CIN7_CREDENTIAL_STORE: "uat", NEWQUIP_UAT_TEST_EMAIL_ENABLED: "true" };
 
-// NQ-Q-0003-like: nothing mapped -> five equipment lines unpriced; plus Delivery and Installation (+ commissioning).
+// NQ-Q-0003-like: nothing mapped -> four equipment lines unpriced (the control panel carries NewQuip's interim Budget amount since 2026-11-25); plus Delivery and Installation (+ commissioning).
 function unmappedDraft(): QuoteDraft {
   const d = emptyDraft();
   return { ...d, customerName: "Test Customer", siteName: "Test Site", quoteType: "project",
@@ -63,14 +64,15 @@ function pdfText(bytes: Uint8Array): string {
 }
 
 describe("budget document model", () => {
-  it("INCOMPLETE (NQ-Q-0003): five unpriced equipment lines read 'Price to be confirmed'; Delivery and the COMBINED Installation & Commissioning are priced; NO total is presented", async () => {
+  it("INCOMPLETE (NQ-Q-0003): four unpriced equipment lines read 'Price to be confirmed'; Delivery and the COMBINED Installation & Commissioning are priced; NO total is presented", async () => {
     const m = (await prepareBudget(fakeDb(), "org", "q", UAT, () => "2026-11-18")).model;
     expect(m.complete).toBe(false);
-    expect(m.unpriced.count).toBe(5);
-    expect(m.equipment.filter((l) => l.status === "unpriced")).toHaveLength(5);
-    expect(m.equipment.every((l) => l.amountExVat === null)).toBe(true);
+    expect(m.unpriced.count).toBe(4);
+    expect(m.equipment.filter((l) => l.status === "unpriced")).toHaveLength(4);
+    expect(m.equipment.filter((l) => l.status === "unpriced").every((l) => l.amountExVat === null)).toBe(true);
+    expect(m.equipment.find((l) => /control panel/i.test(l.label))!.amountExVat).toBe(3 * 65_000); // controller only (R65,000), 3 panels: NewQuip's interim Budget amount, provisional
     expect(m.charges.map((c) => [c.label, c.amountExVat])).toEqual([["Delivery", 8000], ["Installation & Commissioning", 40000]]); // 32,500 + 7,500 counted ONCE
-    expect(m.totals.knownSubtotalExVat).toBe(48000);
+    expect(m.totals.knownSubtotalExVat).toBe(48000 + 3 * 65_000);
     expect(m.totals.totalIncVat).toBeNull();
     expect(m.totals.vatExVatBasis).toBeNull();
     expect(presentsPartialAsTotal(m)).toBe(false);
@@ -86,7 +88,7 @@ describe("budget document model", () => {
     const d = unmappedDraft(); d.estimator.charges = { delivery: 8000 }; state.quote = quoteOf(d);
     const m = (await prepareBudget(fakeDb(), "org", "q", UAT)).model;
     expect(m.unpriced.items).toContain("Installation & Commissioning");
-    expect(m.unpriced.count).toBe(6);
+    expect(m.unpriced.count).toBe(5);
   });
   it("COMPLETE: a fully priced quotation shows subtotal, VAT 15% and total, equal to the engine's own figures (no double counting)", () => {
     const d = readyDraft(); d.estimator.charges = { ...d.estimator.charges, commissioning: 7500 };
@@ -120,7 +122,7 @@ describe("budget PDF", () => {
     expect(t).toContain("INDICATIVE PRICING ONLY");
     expect(t).toContain("This is not a final commercial quotation");
     expect(t).toContain("Price to be confirmed");
-    expect(t).toMatch(/INCOMPLETE PRICING.{0,4}5 item\s?s not yet priced/);
+    expect(t).toMatch(/INCOMPLETE PRICING.{0,4}4 item\s?s not yet priced/);
     expect(t).toContain("NOT AVAILABLE");
     expect(t).toContain("Installation & Commissioning");
     expect(t).toContain("R 40 000,00");
@@ -145,7 +147,7 @@ describe("budget email", () => {
     const mail = buildBudgetEmail({ model: prep.model, to: "anton@sparkconsulting.co.za", message: "", bytes: new Uint8Array([1]) });
     expect(mail.subject).toBe("TEST ONLY \u2013 BUDGET QUOTATION \u2013 INDICATIVE PRICING ONLY \u2013 NQ-Q-0003");
     expect(mail.text.split("\n").filter((l) => l === BUDGET_DISCLAIMER)).toHaveLength(2);
-    expect(mail.text).toContain("INCOMPLETE PRICING: 5 items are not yet priced");
+    expect(mail.text).toContain("INCOMPLETE PRICING: 4 items are not yet priced");
     expect(mail.text + mail.html).not.toMatch(/https?:|accept the quotation|decline the quotation|request changes/i);
     expect(mail.attachments).toHaveLength(1);
   });
@@ -155,7 +157,7 @@ describe("send rules", () => {
   it("UAT: sends ONLY to an authorised test mailbox, with the incomplete acknowledgement, and records the exact snapshot", async () => {
     const dp = deps(); const db = fakeDb();
     const r = await sendBudgetQuotation(db, who, "q", req, UAT, dp, audit);
-    expect(r).toMatchObject({ status: "ACCEPTED", to: "anton@sparkconsulting.co.za", reused: false, incompleteCount: 5, testMode: true });
+    expect(r).toMatchObject({ status: "ACCEPTED", to: "anton@sparkconsulting.co.za", reused: false, incompleteCount: 4, testMode: true });
     expect(dp.sent).toHaveLength(1);
     const sent = dp.sent[0] as { to: string[]; subject: string; text: string };
     expect(sent.to).toEqual(["anton@sparkconsulting.co.za"]);
@@ -163,7 +165,7 @@ describe("send rules", () => {
     expect(audits.map((a) => a.action)).toEqual(["newquip.budget_quotation_send_started", "newquip.budget_quotation_sent"]); // intent recorded BEFORE the email leaves
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rec = audits[1].detail as Record<string, any>;
-    expect(rec).toMatchObject({ quoteRef: "NQ-Q-0003", draftHash: "draft-hash-fixture-one", complete: false, incompleteCount: 5, status: "ACCEPTED", providerMessageId: "m-1", testMode: true });
+    expect(rec).toMatchObject({ quoteRef: "NQ-Q-0003", draftHash: "draft-hash-fixture-one", complete: false, incompleteCount: 4, status: "ACCEPTED", providerMessageId: "m-1", testMode: true });
     expect(rec.pdfSha256).toMatch(/^[0-9a-f]{64}$/);
     expect(rec.snapshot.model.kind).toBe("BUDGET_QUOTATION"); // the exact document model is reproducible from the audit record
     expect(rec.snapshot.modelHash).toBe(rec.modelHash);
@@ -202,7 +204,7 @@ describe("send rules", () => {
   });
   it("a repeat of the same click returns the recorded outcome and emits nothing", async () => {
     const dp = deps();
-    const r = await sendBudgetQuotation(fakeDb([{ action: "newquip.budget_quotation_sent", created_at: "2026-11-18T09:00:00Z", detail: { status: "ACCEPTED", to: "anton@sparkconsulting.co.za", incompleteCount: 5, testMode: true, draftRef: "draft-hash-fi", pdfSha256: "x" } }]), who, "q", req, UAT, dp, audit);
+    const r = await sendBudgetQuotation(fakeDb([{ action: "newquip.budget_quotation_sent", created_at: "2026-11-18T09:00:00Z", detail: { status: "ACCEPTED", to: "anton@sparkconsulting.co.za", incompleteCount: 4, testMode: true, draftRef: "draft-hash-fi", pdfSha256: "x" } }]), who, "q", req, UAT, dp, audit);
     expect(r.reused).toBe(true); expect(dp.sent).toHaveLength(0); expect(audits).toHaveLength(0);
   });
   it("a FAILED earlier send is NOT reported as sent: the Rep can retry with the same key", async () => {
@@ -312,7 +314,7 @@ describe("provisional pricing in the budget quotation (UAT only)", () => {
     const snap = JSON.parse(new TextDecoder().decode(uploads[0].bytes));
     expect(snap.draft.estimator.pricing.skus.HNQ7046).toBeDefined(); // internal: the saved draft WITH its pricing
     expect(snap.provisional.map((p: { itemKey: string }) => p.itemKey).sort()).toEqual(["cup_drinker", "led_light"]);
-    expect(snap.provisional[0].openQuestions.join(" ")).toMatch(/NB3542-03|FORTIS/);
+    expect(snap.provisional[0].openQuestions.join(" ")).toMatch(/Estimator still confirms/); // 2026-11-25 handoff closed the NB3542-03 and FORTIS questions; only the Estimator sign-off remains
     const rec = audits[1].detail as Record<string, unknown>;
     expect(rec.provisionalCount).toBe(2);
     expect((rec.internalSnapshot as { path: string; sha256: string }).path).toBe(uploads[0].path);
@@ -331,5 +333,30 @@ describe("provisional pricing in the budget quotation (UAT only)", () => {
     expect(dp.sent).toHaveLength(0);
     await sendBudgetQuotation(fakeDb(), who, "q", { ...req, to: "farmer@realcustomer.co.za", expectedDraftHash: "draft-hash-fixture-one" }, { ...prod, NEWQUIP_PROVISIONAL_PACKAGES_APPROVED: "true" }, dp, audit);
     expect(dp.sent).toHaveLength(1);
+  });
+});
+
+// RETRIEVAL IS PART OF "COMPLETE" (P0 26 Nov 2026): supplier products the Budget needs but has not read from Cin7 make the real prepared document incomplete, whatever else it contains.
+describe("prepareBudget carries unread supplier retrieval into the document", () => {
+  const withFlags = (codes: Record<string, string>, stored: string[] = []) => {
+    const d = nqQ0002() as QuoteDraft;
+    d.estimator.pricing = { enabled: true, ruleVersionId: "supplier-auto-v1", pricingDate: "2026-11-26T04:00:00Z", revision: 1, skus: Object.fromEntries(stored.map((k) => [k, { supplierId: "s", supplierName: "S", currency: "ZAR", nativeUnitCostE7: 1e9, source: "t", freight: null, by: "t", at: "2026-11-26T04:00:00Z" }])), fxQuotes: {}, forwardCover: {}, skuPriceOverrides: {}, projectMarkup: null, targetAdjustment: null,
+      autoFlags: Object.fromEntries(Object.entries(codes).map(([k, c]) => [k, { code: c, internal: "x", at: "2026-11-26T04:00:00Z" }])) } as never;
+    return d;
+  };
+  const needs = budgetSkuNeeds(nqQ0002() as QuoteDraft).map((n) => n.sku);
+  it("two needed SKUs flagged not_read: the REAL prepared document is incomplete and says so (prepareBudget wiring, not a local helper)", async () => {
+    state.quote = quoteOf(withFlags({ [needs[0]]: "not_read", [needs[1]]: "not_read" }), { draft_hash: "h-unread" });
+    const m = (await prepareBudget(fakeDb(), "org", "q", UAT, () => "2026-11-26")).model;
+    expect(m.retrievalPending).toBe(2); expect(m.complete).toBe(false); expect(m.totals.totalIncVat).toBeNull();
+    expect(await renderBudgetPdf(m)).toBeInstanceOf(Uint8Array);
+    expect(pdfText(await renderBudgetPdf(m))).toMatch(/retrieval is UNFINISHED: 2 supplier product ?s have not been read yet/);
+  });
+  it("unreadNeeds counts only: a NEEDED SKU, flagged not_read, with NO stored cost (a later-stored SKU, an unneeded SKU and any other flag code are not counted)", () => {
+    expect(unreadNeeds(withFlags({ [needs[0]]: "not_read" }))).toBe(1);
+    expect(unreadNeeds(withFlags({ [needs[0]]: "not_read" }, [needs[0]]))).toBe(0);      // read since
+    expect(unreadNeeds(withFlags({ ZZ_NOT_NEEDED: "not_read" }))).toBe(0);               // the Budget no longer needs it
+    expect(unreadNeeds(withFlags({ [needs[0]]: "no_cost" }))).toBe(0);                    // a different, permanent reason (reported elsewhere), not an unfinished read
+    expect(unreadNeeds(nqQ0002() as QuoteDraft)).toBe(0);                                 // no pricing at all: the lines are simply unpriced
   });
 });

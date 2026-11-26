@@ -6,6 +6,7 @@ import "server-only";
 import type { createServiceRoleClient } from "@/supabase/server";
 import { NEWQUIP_POC_CIN7_INSTANCE_ID } from "@/newquip/access";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
+import { OPTIONAL_ITEM_KEYS } from "@/newquip/grower/types";
 import { TEMPLATE_REVISION_CURRENT, templateRevisionOf } from "@/newquip/grower/commercial";
 import { listCin7Suppliers, readRawProductsForSurvey } from "@/lib/projects/latest-cost-adapter";
 import { AUTO_ACTOR, autoCostFor, isAutoOwned, isFlag, mergeAutoEntries, NEUTRAL_FLAG_TEXT, type AutoCostEntry, type AutoFlag } from "@/newquip/pricing/auto-costing";
@@ -15,6 +16,8 @@ import type { MasterSupplier } from "@/newquip/pricing/cost-survey";
 import { skuNeedsOf, submissionFrom, SUPPLIER_AUTO_RULE_VERSION } from "@/newquip/pricing/estimator";
 import type { AutoPriceFlag, EstimatorPricing } from "@/newquip/pricing/estimator";
 import { evaluationContext } from "./context";
+import { budgetSkuNeeds } from "./sku-needs";
+import { landedZarSkuSet } from "@/newquip/pricing/cost-source-classes";
 import { hasPocFlag } from "./poc-presentation";
 import { loadQuote, type QuoteRecord } from "./quote-store";
 import { listPricingRevisions } from "./pricing-store";
@@ -53,6 +56,8 @@ export interface AutoPricingDeps {
   now: () => string;
   /** Refreshes a STALE feed-owned exchange rate before pricing (default: the live Open Exchange Rates feed, or "not configured"). Injectable so a test can drive it without a network. */
   refreshFx?: (nowIso: string) => Promise<FeedOutcome>;
+  /** The time budget of ONE run (default RUN_BUDGET_MS). completeAutoPricing lowers it so several runs fit one request. */
+  runBudgetMs?: number;
 }
 const NOT_CONFIGURED: FeedOutcome = { ok: false, error: "The Open Exchange Rates feed is not configured for this deployment.", updated: [], keptManual: [], unchanged: [] };
 export const liveDeps = (db: Db, orgId: string): AutoPricingDeps => ({
@@ -100,7 +105,7 @@ async function priceQuote(mode: Mode, db: Db, actor: AutoActor, quoteId: string,
   if (actor.demo || (!estimator && cutoff === null)) return out("not_applicable");
   if (mode === "rep" ? !actor.roles.has("rep") : !(actor.roles.has("estimator") && actor.canSeeCost === true)) return unavailable("Only an Estimator who can see costs can price from Cin7.");
   const started = Date.now();
-  const deadline = started + RUN_BUDGET_MS;
+  const deadline = started + (deps.runBudgetMs ?? RUN_BUDGET_MS);
   const states = mode === "rep" ? ["REP_DRAFT"] : ["REP_DRAFT", "ESTIMATOR_REVIEW"];
   const q = await loadQuote(db, actor.orgId, quoteId);
   if (!q || !states.includes(q.state) || q.draft.quoteType !== "project" || templateRevisionOf(q.draft) !== TEMPLATE_REVISION_CURRENT || hasPocFlag(q.draft)) return unavailable(q && !states.includes(q.state) ? "The quotation is no longer with the Rep or the Estimator, so its pricing cannot change." : "Cin7 supplier pricing applies only to project quotations on the current template.");
@@ -129,10 +134,13 @@ async function priceQuote(mode: Mode, db: Db, actor: AutoActor, quoteId: string,
     return out("settings_changed", { pending: ["Price pending: commercial settings changed since this quotation was priced; awaiting the Estimator"], internal: [{ sku: "*", code: "settings_changed", text: `Priced under commercial settings v${settingsRevisionOf(prior)}; the pricing-relevant settings last changed at v${stored.epoch}.` }] });
   }
 
-  const budget = evaluateDraft(q.draft, evaluationContext(true)).budget;
-  const needsAll = skuNeedsOf(budget);
+  // The needs are judged on the BUDGET evaluation (provisionalPackages), because a Budget default product (CL1, BF, fans: budget-default-products.ts) has no SKU in the plain evaluation and so would never have its cost read.
+  const needsAll = budgetSkuNeeds(q.draft);
   const categoriesOf = new Map(needsAll.map((n) => [n.sku, n.itemKeys]));
-  const needed = needsAll.map((n) => n.sku).filter((s) => !prior || !Object.prototype.hasOwnProperty.call(prior.skus, s));
+  // STANDARD equipment is read FIRST. Products are read alphabetically until the run's time budget ends, so a large optional package (sumpless pad cooling adds about 40 SKUs) must never push a standard
+  // product (feeder, tank, mat, slats, drinker, light) past the deadline. A SKU used by any standard line goes first; one used only by optional additions goes last. Order within each group is unchanged.
+  const optionalOnly = (sku: string): boolean => (categoriesOf.get(sku) ?? []).every((k) => (OPTIONAL_ITEM_KEYS as readonly string[]).includes(k));
+  const needed = needsAll.map((n) => n.sku).filter((s) => !prior || !Object.prototype.hasOwnProperty.call(prior.skus, s)).sort((x, y) => Number(optionalOnly(x)) - Number(optionalOnly(y)));
   if (needed.length === 0) return out("nothing_to_add");
 
   const entries: AutoCostEntry[] = [], flags: AutoFlag[] = [];
@@ -141,7 +149,7 @@ async function priceQuote(mode: Mode, db: Db, actor: AutoActor, quoteId: string,
   for (const sku of needed) {
     const r = reads[sku];
     if (!r || "error" in r) { flags.push({ sku, code: "not_read", internal: `Not read from Cin7 in this run (${r && "error" in r ? (r.error === "deadline" ? "out of time" : r.error) : "out of time"}): it will be retried when the quotation is submitted, or use Price from Cin7.` }); continue; }
-    const res = autoCostFor(surveyInputFromRaw(sku, r.raw), master, settings, { version: stored.revision, enteredBy: stored.enteredBy }, nowIso, categoriesOf.get(sku) ?? []);
+    const res = autoCostFor(surveyInputFromRaw(sku, r.raw), master, settings, { version: stored.revision, enteredBy: stored.enteredBy }, nowIso, categoriesOf.get(sku) ?? [], landedZarSkuSet());
     if (isFlag(res)) flags.push(res.code === "fx_stale" && !fxRefresh.ok ? { ...res, internal: `${res.internal} The automatic rate refresh did not happen: ${fxRefresh.error ?? "unknown reason"}` } : res); else entries.push(res);
   }
   // The specific reason per product is stored WITH the pricing (server-owned, internal; a Rep never receives the pricing) so the Estimator sees exactly why a product has no automatic price. No cost, rate, freight or margin is in it.
@@ -173,6 +181,31 @@ async function priceQuote(mode: Mode, db: Db, actor: AutoActor, quoteId: string,
  */
 export function runAutoPricing(db: Db, actor: AutoActor, quoteId: string, deps: AutoPricingDeps = liveDeps(db, actor.orgId), env: AutoEnv = process.env as AutoEnv): Promise<AutoPricingOutcome> {
   return priceQuote("rep", db, actor, quoteId, deps, env);
+}
+
+/**
+ * COMPLETE a Rep draft's initial Budget pricing. WHY THIS EXISTS: Cin7 is read one product at a time at a polite pace (about 35 products fit one 40-second run), and a fully configured house needs about 100.
+ * A single run therefore prices only part of the quotation and flags the rest "not read"; the Budget PDF, built from what is stored, then said "N items not yet priced" although every price was obtainable.
+ * This loops the SAME add-only job (every run keeps what earlier runs stored, and only reads what has no entry) until nothing is left to read, no progress is being made, or the time budget is spent.
+ * Anything still unread is reported honestly in the outcome; nothing is guessed, zeroed or confirmed.
+ */
+export async function completeAutoPricing(db: Db, actor: AutoActor, quoteId: string, opts: { budgetMs: number; deps?: AutoPricingDeps; env?: AutoEnv }): Promise<AutoPricingOutcome & { runs: number }> {
+  const deps0 = opts.deps ?? liveDeps(db, actor.orgId);
+  const t0 = Date.now();
+  let last: AutoPricingOutcome = out("not_applicable");
+  let runs = 0, stalls = 0, added = 0;
+  const MIN_RUN_MS = 12_000;
+  while (runs < 8) {
+    const left = opts.budgetMs - (Date.now() - t0);
+    if (runs > 0 && left < MIN_RUN_MS) break;
+    last = await runAutoPricing(db, actor, quoteId, { ...deps0, runBudgetMs: Math.max(MIN_RUN_MS - 2_000, Math.min(RUN_BUDGET_MS, left - 2_000)) }, opts.env);
+    runs += 1; added += last.added;
+    const unread = last.internal.some((i) => i.code === "not_read");
+    if (!unread || (last.status !== "applied" && last.status !== "no_prices")) break; // done, or a state a retry cannot change
+    stalls = last.added === 0 ? stalls + 1 : 0;
+    if (stalls >= 2) break;
+  }
+  return { ...last, added, runs };
 }
 
 /**
