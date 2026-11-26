@@ -1,15 +1,15 @@
 "use client";
 // BUDGET QUOTATION (customer UAT feedback): the Rep previews a provisional PDF of the SAVED draft and may send it to the customer BEFORE Estimator sign-off and Manager approval. It is not the final
 // quotation: no Accept / Decline, no approval, no Project. The panel is explicit about unsaved changes, incomplete pricing and (in UAT) that only an authorised test mailbox can receive it.
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Status } from "@/components/ui/Status";
-import { getBudgetStatusAction, sendBudgetQuotationAction, type BudgetStatus } from "../budget-actions";
+import { completeBudgetPricingAction, getBudgetStatusAction, sendBudgetQuotationAction, type BudgetStatus } from "../budget-actions";
 import { BUDGET_DISCLAIMER } from "@/lib/newquip-quotes/budget-document";
 
-export function BudgetQuotationPanel({ quoteId, canAct, dirty, refreshKey, embedded = false }: { quoteId: string; canAct: boolean; dirty: boolean; refreshKey: string; /** Inside the consolidated final step: the pricing summary above already states the incomplete / provisional position, so it is not repeated here. */ embedded?: boolean }) {
+export function BudgetQuotationPanel({ quoteId, canAct, dirty, refreshKey, embedded = false, onPriced }: { quoteId: string; canAct: boolean; dirty: boolean; refreshKey: string; /** Called after the Rep's supplier prices were completed, so the page re-reads the (now fuller) Budget. */ onPriced?: () => void; /** Inside the consolidated final step: the pricing summary above already states the incomplete / provisional position, so it is not repeated here. */ embedded?: boolean }) {
   const [st, setSt] = useState<BudgetStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -23,6 +23,17 @@ export function BudgetQuotationPanel({ quoteId, canAct, dirty, refreshKey, embed
 
   const load = useCallback(() => { void getBudgetStatusAction(quoteId).then((r) => { if (r.ok && r.data) { setSt(r.data); setErr(null); } else setErr(r.error ?? "The budget quotation is unavailable."); }); }, [quoteId]);
   useEffect(() => { load(); }, [load, refreshKey]);
+
+  // A Rep's Budget must be COMPLETE without an Estimator: when the saved draft still has unpriced lines, the supplier prices still to be read from Cin7 are read now (one paced batch at a time) until nothing is left to read.
+  // The Preview waits for it, so the Rep never opens a Budget that says "not yet priced" for a price that is obtainable.
+  const [pricing, setPricing] = useState(false);
+  const rounds = useRef(0);
+  useEffect(() => { rounds.current = 0; }, [refreshKey]);
+  useEffect(() => {
+    if (!st || !canAct || dirty || pricing || st.unpricedCount === 0 || rounds.current >= 6) return;
+    rounds.current += 1; setPricing(true);
+    void completeBudgetPricingAction(quoteId).then((r) => { setPricing(false); if (r.ok && r.data && r.data.stillToRead === 0) rounds.current = 6; load(); onPriced?.(); }, () => { setPricing(false); rounds.current = 6; });
+  }, [st, canAct, dirty, pricing, quoteId, load, onPriced]);
 
   const recipient = st?.testMode ? (st.testRecipient ?? "") : to.trim();
   const needsAck = (st?.unpricedCount ?? 0) > 0;
@@ -43,10 +54,11 @@ export function BudgetQuotationPanel({ quoteId, canAct, dirty, refreshKey, embed
       {dirty && <div className="mt-2" data-testid="budget-unsaved"><Alert tone="warning">You have unsaved changes. The budget quotation shows the last SAVED draft, not what is on screen. Save first.</Alert></div>}
       {st && !st.complete && !embedded && <div className="mt-2" data-testid="budget-incomplete"><Alert tone="warning"><p className="font-semibold">{st.unpricedCount} item{st.unpricedCount === 1 ? "" : "s"} not priced.</p><p className="mt-1 text-sm">The budget quotation will show these as &quot;Price to be confirmed&quot; and will NOT present a total: {st.unpricedItems.join("; ")}.</p></Alert></div>}
       {st && st.provisionalCount > 0 && !embedded && <div className="mt-2" data-testid="budget-provisional"><Alert tone="warning">{st.provisionalCount} item{st.provisionalCount === 1 ? " is" : "s are"} priced provisionally and marked as most likely to change.</Alert></div>}
+      {pricing && <div className="mt-2" data-testid="budget-pricing-progress"><Alert tone="info"><span role="status">Reading the supplier prices for your equipment from Cin7. This takes up to a minute; the Budget completes by itself.</span></Alert></div>}
       {err && <div className="mt-2"><Alert tone="danger">{err}</Alert></div>}
       {note && <div className="mt-2" data-testid="budget-sent"><Alert tone="success">{note}</Alert></div>}
       <div className="mt-3 flex flex-wrap items-center gap-3">
-        <a className="inline-flex min-h-11 items-center rounded-md bg-slate-900 px-4 text-sm font-semibold text-white" data-testid="preview-budget-quotation" href={`/api/newquip-budget-preview/${quoteId}`} target="_blank" rel="noreferrer">Preview Budget Quotation</a>
+        {pricing ? <span className="inline-flex min-h-11 items-center rounded-md bg-slate-400 px-4 text-sm font-semibold text-white" data-testid="preview-budget-quotation-wait" aria-disabled="true">Preview Budget Quotation (pricing in progress)</span> : <a className="inline-flex min-h-11 items-center rounded-md bg-slate-900 px-4 text-sm font-semibold text-white" data-testid="preview-budget-quotation" href={`/api/newquip-budget-preview/${quoteId}`} target="_blank" rel="noreferrer">Preview Budget Quotation</a>}
         {canAct && <Button className="min-h-11" variant="secondary" data-testid="send-budget-quotation" disabled={busy || !st} onClick={() => setOpen((o) => !o)}>Send Budget Quotation</Button>}
       </div>
       {open && st && (

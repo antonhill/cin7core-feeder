@@ -3,8 +3,10 @@
 import { authoriseActor } from "@/app/newquip-grower/actor";
 import { createServiceRoleClient } from "@/supabase/server";
 import { previewBudgetPdf } from "@/lib/newquip-quotes/budget-quotation";
+import { completeAutoPricing } from "@/lib/newquip-quotes/auto-pricing-service";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 const H = { "Cache-Control": "private, no-store" };
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }): Promise<Response> {
@@ -14,7 +16,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const { id } = await ctx.params;
   if (!/^[0-9a-f-]{36}$/i.test(id)) return new Response("Not found", { status: 404, headers: H });
   try {
-    const { bytes, prep } = await previewBudgetPdf(createServiceRoleClient(), actor.orgId, id, process.env);
+    const db = createServiceRoleClient();
+    // A Rep's Budget is built COMPLETE: any supplier cost still unread is read now (add-only, GET-only), so the PDF never says "not yet priced" for a price that was obtainable. Best effort: what genuinely cannot be priced is still reported.
+    if (actor.roles.has("rep")) await completeAutoPricing(db, { orgId: actor.orgId, userId: actor.userId, roles: actor.roles, demo: !!actor.demo }, id, { budgetMs: 85_000 }).catch(() => undefined);
+    const { bytes, prep } = await previewBudgetPdf(db, actor.orgId, id, process.env);
     return new Response(Buffer.from(bytes), { status: 200, headers: { ...H, "Content-Type": "application/pdf", "Content-Disposition": `inline; filename="${prep.testMode ? "TEST-ONLY-" : ""}BUDGET-${prep.quoteRef}.pdf"`, "X-Content-Type-Options": "nosniff", "X-Budget-Draft-Ref": prep.model.quote.draftRef } });
   } catch (e) {
     return new Response(e instanceof Error ? e.message : "Preview unavailable", { status: 409, headers: H });

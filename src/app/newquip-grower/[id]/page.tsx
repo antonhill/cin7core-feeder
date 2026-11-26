@@ -846,7 +846,7 @@ export default function QuoteEditorPage() {
       {error && <div className="mt-4"><Alert tone="danger">{error}</Alert></div>}
       {/* ONE pricing-status summary, not repeated banners. For a Rep's draft it lives in the final step; for everyone else it sits here. */}
       {!repFinalStep && view.budgetPricing && <div className="mt-4"><PricingStatusSummary view={view.budgetPricing} />{demoPresetQuantityKeys(draft).length > 0 && <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950" data-testid="demo-quantity-notice">{DEMO_PRESET_QUANTITY_NOTICE}</p>}</div>}
-      {!repFinalStep && (q.state === "REP_DRAFT" || q.state === "ESTIMATOR_REVIEW") && (roles.has("rep") || roles.has("estimator") || roles.has("manager")) && <div className="mt-4"><BudgetQuotationPanel quoteId={id} canAct={roles.has("rep")} dirty={dirty} refreshKey={`${q.draft_hash}:${q.updated_at}`} /></div>}
+      {!repFinalStep && (q.state === "REP_DRAFT" || q.state === "ESTIMATOR_REVIEW") && (roles.has("rep") || roles.has("estimator") || roles.has("manager")) && <div className="mt-4"><BudgetQuotationPanel quoteId={id} canAct={roles.has("rep")} dirty={dirty} refreshKey={`${q.draft_hash}:${q.updated_at}`} onPriced={() => { void reloadQuote(); }} /></div>}
       {autoPending.length > 0 && q.state === "REP_DRAFT" && <div className="mt-4" data-testid="auto-pricing-pending"><Alert tone="info">{autoPending.join(". ")}.</Alert></div>}
       <ActionFeedback state={acts.stateOf("page")} floating />
       <LongRunningStatus label={phaseUx && acts.isPending("send") ? null : acts.currentLabel} />
@@ -1181,7 +1181,7 @@ export default function QuoteEditorPage() {
               <div className="mt-3 space-y-3" data-testid="review-budget-submit">
                 <PricingStatusSummary view={view.budgetPricing} />
                 {demoPresetQuantityKeys(draft).length > 0 && <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950" data-testid="demo-quantity-notice">{DEMO_PRESET_QUANTITY_NOTICE}</p>}
-                <BudgetQuotationPanel quoteId={id} canAct={roles.has("rep")} dirty={dirty} refreshKey={`${q.draft_hash}:${q.updated_at}`} embedded />
+                <BudgetQuotationPanel quoteId={id} canAct={roles.has("rep")} dirty={dirty} refreshKey={`${q.draft_hash}:${q.updated_at}`} embedded onPriced={() => { void reloadQuote(); }} />
               </div>
             )}
             {wizard.submitted ? (
