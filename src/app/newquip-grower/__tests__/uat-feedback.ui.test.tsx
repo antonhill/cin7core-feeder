@@ -120,3 +120,15 @@ describe("BudgetQuotationPanel: unfinished retrieval is never hidden", () => {
     await waitFor(() => expect(screen.queryByTestId("budget-retrieval-unfinished")).toBeNull());
   });
 });
+
+describe("BudgetQuotationPanel: a status a retry cannot change is not blamed on Cin7", () => {
+  it("settings_incomplete stops at once with its own message and no retry button", async () => {
+    h.complete.mockResolvedValue({ ok: true, data: { stillToRead: 0, done: false, status: "settings_incomplete" } });
+    h.status.mockImplementation(async () => status());
+    render(<BudgetQuotationPanel quoteId="q1" canAct dirty={false} refreshKey="ky" />);
+    await waitFor(() => expect(screen.getByTestId("budget-retrieval-not-applicable")).toBeTruthy());
+    expect(h.complete).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("budget-retrieval-unfinished")).toBeNull();
+    expect(screen.queryByTestId("budget-retry-pricing")).toBeNull();
+  });
+});

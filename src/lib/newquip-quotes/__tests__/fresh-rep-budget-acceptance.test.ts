@@ -200,7 +200,7 @@ describe("completion loop safety: timeout, no progress, retry", () => {
     const done = await budgetOf(id);
     const after = done.q.draft.estimator.pricing!.skus;
     for (const [sku, e] of Object.entries(before)) expect(after[sku], sku).toEqual(e); // preserved exactly (same cost, same timestamp)
-    expect(Object.keys(after).length).toBe(Object.keys(done.q.draft.estimator.pricing!.skus).length); // one entry per SKU: nothing duplicated
+    expect(Object.keys(after).length).toBe(Object.keys(ref.q.draft.estimator.pricing!.skus).length); // exactly the same set of SKUs as one full read: nothing duplicated, nothing missing
     expect(unreadNeeds(done.q.draft)).toBe(0);
     expect(cents(done.b.totals.subtotalExTax)).toBe(cents(ref.b.totals.subtotalExTax));
     expect(model(done.q, done.b).complete).toBe(true);

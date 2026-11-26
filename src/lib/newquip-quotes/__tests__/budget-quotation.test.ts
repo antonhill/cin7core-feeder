@@ -12,7 +12,8 @@ vi.mock("../customer-store", () => ({ latestSnapshot: async () => state.snapshot
 vi.mock("../context", async () => { const { testPriceSource } = await import("@/newquip/grower/__tests__/test-snapshot"); return { evaluationContext: (w: boolean) => ({ priceSource: testPriceSource(), withholdCost: w }) }; });
 
 import { BUDGET_DISCLAIMER, buildBudgetDocumentModel, presentsPartialAsTotal } from "../budget-document";
-import { buildBudgetEmail, budgetSendRefusal, prepareBudget, sendBudgetQuotation, type BudgetSendDeps } from "../budget-quotation";
+import { buildBudgetEmail, budgetSendRefusal, prepareBudget, sendBudgetQuotation, unreadNeeds, type BudgetSendDeps } from "../budget-quotation";
+import { budgetSkuNeeds } from "../sku-needs";
 import { renderBudgetPdf } from "../budget-pdf";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { nqQ0002, S } from "@/newquip/grower/__tests__/nq-q-0002-fixture";
@@ -332,5 +333,30 @@ describe("provisional pricing in the budget quotation (UAT only)", () => {
     expect(dp.sent).toHaveLength(0);
     await sendBudgetQuotation(fakeDb(), who, "q", { ...req, to: "farmer@realcustomer.co.za", expectedDraftHash: "draft-hash-fixture-one" }, { ...prod, NEWQUIP_PROVISIONAL_PACKAGES_APPROVED: "true" }, dp, audit);
     expect(dp.sent).toHaveLength(1);
+  });
+});
+
+// RETRIEVAL IS PART OF "COMPLETE" (P0 26 Nov 2026): supplier products the Budget needs but has not read from Cin7 make the real prepared document incomplete, whatever else it contains.
+describe("prepareBudget carries unread supplier retrieval into the document", () => {
+  const withFlags = (codes: Record<string, string>, stored: string[] = []) => {
+    const d = nqQ0002() as QuoteDraft;
+    d.estimator.pricing = { enabled: true, ruleVersionId: "supplier-auto-v1", pricingDate: "2026-11-26T04:00:00Z", revision: 1, skus: Object.fromEntries(stored.map((k) => [k, { supplierId: "s", supplierName: "S", currency: "ZAR", nativeUnitCostE7: 1e9, source: "t", freight: null, by: "t", at: "2026-11-26T04:00:00Z" }])), fxQuotes: {}, forwardCover: {}, skuPriceOverrides: {}, projectMarkup: null, targetAdjustment: null,
+      autoFlags: Object.fromEntries(Object.entries(codes).map(([k, c]) => [k, { code: c, internal: "x", at: "2026-11-26T04:00:00Z" }])) } as never;
+    return d;
+  };
+  const needs = budgetSkuNeeds(nqQ0002() as QuoteDraft).map((n) => n.sku);
+  it("two needed SKUs flagged not_read: the REAL prepared document is incomplete and says so (prepareBudget wiring, not a local helper)", async () => {
+    state.quote = quoteOf(withFlags({ [needs[0]]: "not_read", [needs[1]]: "not_read" }), { draft_hash: "h-unread" });
+    const m = (await prepareBudget(fakeDb(), "org", "q", UAT, () => "2026-11-26")).model;
+    expect(m.retrievalPending).toBe(2); expect(m.complete).toBe(false); expect(m.totals.totalIncVat).toBeNull();
+    expect(await renderBudgetPdf(m)).toBeInstanceOf(Uint8Array);
+    expect(pdfText(await renderBudgetPdf(m))).toMatch(/retrieval is UNFINISHED: 2 supplier product ?s have not been read yet/);
+  });
+  it("unreadNeeds counts only: a NEEDED SKU, flagged not_read, with NO stored cost (a later-stored SKU, an unneeded SKU and any other flag code are not counted)", () => {
+    expect(unreadNeeds(withFlags({ [needs[0]]: "not_read" }))).toBe(1);
+    expect(unreadNeeds(withFlags({ [needs[0]]: "not_read" }, [needs[0]]))).toBe(0);      // read since
+    expect(unreadNeeds(withFlags({ ZZ_NOT_NEEDED: "not_read" }))).toBe(0);               // the Budget no longer needs it
+    expect(unreadNeeds(withFlags({ [needs[0]]: "no_cost" }))).toBe(0);                    // a different, permanent reason (reported elsewhere), not an unfinished read
+    expect(unreadNeeds(nqQ0002() as QuoteDraft)).toBe(0);                                 // no pricing at all: the lines are simply unpriced
   });
 });
