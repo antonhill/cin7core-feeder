@@ -20,7 +20,9 @@ describe("PackageConfirm for a layout-driven package", () => {
     expect(screen.getByRole("heading", { name: /3-component package/ })).toBeTruthy();
   });
   it("a fixed package still lists its own definition", () => {
-    mount({ itemKey: "cup_drinker", lineComponents: undefined });
-    expect(document.body.textContent ?? "").toMatch(/7 components below \(.+\)/);
+    mount({ itemKey: "cup_drinker", lineComponents: lines });
+    const text = document.body.textContent ?? "";
+    expect(text).toMatch(/7 components below \(.+\)/);
+    expect(text).not.toContain("Cooling paper pad");
   });
 });
