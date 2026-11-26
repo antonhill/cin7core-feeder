@@ -78,8 +78,24 @@ export interface ExcludedLine { id: string; label: string; /** What it was worth
 export interface CompleteLine { /** the SKU-less manual item's pricing-evidence record (the existing approval requirement) */ evidence?: EvidenceView; /** the stored reason of a manual quotation price, decoded (reason and evidence) */ manual?: DecodedManualReason; id: string; label: string; how: string; quantity: number | null; unit: number | null; revenue: number | null; provisional: boolean; /** A documented Budget basis (door BOM cost, fixed panel price), NOT a manual quotation price. */ budgetBasis?: boolean; estimatorPriced: boolean; costState: "n/a" | "unverified" | "verified"; /** Priced entirely from automatic Cin7 costs that a Manager has not yet verified: shown under "Ready for verification". */ autoReady?: boolean }
 
 /** What the Estimator needs to see about ONE automatically costed product, without opening anything. INTERNAL (the whole workspace is cost-entitled only). */
-export interface AutoSkuFact { sku: string; supplier: string | null; currency: string | null; cost: string | null; costDate: string | null; fx: string | null; freight: string | null; landed: string | null; selling: string | null; provenance: string | null }
-export interface ReadyLine { id: string; label: string; quantity: number | null; skus: AutoSkuFact[]; unit: number | null; revenue: number | null }
+export interface AutoSkuFact {
+  sku: string; supplier: string | null; currency: string | null; cost: string | null; costDate: string | null; fx: string | null; freight: string | null; landed: string | null; selling: string | null; provenance: string | null;
+  /** The product's own words, kept apart so the screen can say the SAME freight source once per package (all three together are `provenance`). */
+  costNote: string | null; freightNote: string | null; fxNote: string | null;
+  /** How many of this product the line uses in total (the component quantity for a package, the line quantity for a single product). */
+  quantity: number | null;
+}
+/** A warning the Estimator must see even while the cost details are closed. `severity` "critical" is shown in strong colour. */
+export interface ReadyWarning { code: "freight_unapproved" | "cost_aged"; severity: "critical" | "notice"; text: string }
+export interface ReadyLine {
+  id: string; label: string; quantity: number | null; skus: AutoSkuFact[]; unit: number | null; revenue: number | null;
+  /** The line's total cost (the bridge's own estimate, rand) - null when the bridge does not hold one. Internal: this whole view is cost-entitled only. */
+  totalCost: number | null;
+  /** Genuine pricing warnings, each said ONCE for the whole line however many components share it. */
+  warnings: ReadyWarning[];
+  /** Distinct freight sources used by the components (normally one): shown once in the details, not per component. */
+  freightNotes: string[];
+}
 /** One product that has NO automatic price: the SPECIFIC stored reason and what to do about it. */
 export interface PricingException { sku: string; usedBy: string[]; reason: string; action: string; /** The task that opens the editor for it. */ taskId: string; /** Reading Cin7 again may price it (it was not read, or a setting was missing at the time). */ retryable: boolean }
 export interface AutoView {
@@ -173,13 +189,30 @@ const qtyText = (n: number | null): string => (n == null ? "" : n.toLocaleString
 const componentSkus = (l: BridgeLine): string[] => (l.components ?? []).map((c: BridgeComponent) => c.sku).filter((s): s is string => !!s);
 const rowOf = (rows: readonly SkuRow[], sku: string): SkuRow | undefined => rows.find((r) => r.sku === sku);
 /** Everything the Estimator checks about one automatically costed product, read straight from the pricing view (no arithmetic here: the landed cost and the price come from the model). */
-function autoFact(r: SkuRow): AutoSkuFact {
+function autoFact(r: SkuRow, quantity: number | null = null): AutoSkuFact {
+  const fxNote = r.currency !== "ZAR" && r.rate?.source ? `Exchange rate: ${r.rate.source}.` : null;
   return {
+    quantity, costNote: r.costSource, freightNote: r.freightSource ? `Freight: ${r.freightSource.replace(/\.+$/, "")}.` : null, fxNote,
     sku: r.sku, supplier: r.supplier, currency: r.currency, cost: r.nativeUnitCostE7 == null || !r.currency ? null : `${r.currency} ${costText(r.nativeUnitCostE7)}`, costDate: r.costDate,
     fx: r.currency === "ZAR" || !r.rate ? null : `${r.currency} ${(r.rate.rateMicro / 1e6).toFixed(4)}${r.rate.asOf ? ` as of ${r.rate.asOf.slice(0, 10)}` : ""}`,
     freight: r.freightFactorMicro == null ? null : `× ${(r.freightFactorMicro / 1e6).toFixed(2)}${r.freightAddOnCents ? ` + ${money(r.freightAddOnCents / 100)}` : ""}`,
     landed: r.unitLandedCostCents == null ? null : money(r.unitLandedCostCents / 100), selling: r.unitPriceCents == null ? null : money(r.unitPriceCents / 100), provenance: [r.costSource, r.freightSource ? `Freight: ${r.freightSource}.` : null, r.currency !== "ZAR" && r.rate?.source ? `Exchange rate: ${r.rate.source}.` : null].filter(Boolean).join(" ") || null,
   };
+}
+const FREIGHT_UNAPPROVED = /test[- ]only|not approved/i;
+const ESCALATION = /\+(\d+(?:\.\d+)?)% age escalation/i;
+/** The line's warnings, deduplicated: the unapproved-freight note is ONE warning for the package, however many components carry it (every component still keeps its own text in the details). Pure. */
+export function readyWarnings(skus: readonly AutoSkuFact[]): { warnings: ReadyWarning[]; freightNotes: string[] } {
+  const freightNotes = [...new Set(skus.map((s) => s.freightNote).filter((n): n is string => !!n))];
+  const warnings: ReadyWarning[] = [];
+  const unapproved = skus.filter((s) => s.freightNote && FREIGHT_UNAPPROVED.test(s.freightNote));
+  if (unapproved.length > 0) {
+    const all = unapproved.length === skus.length;
+    warnings.push({ code: "freight_unapproved", severity: "critical", text: `Freight uses a TEST-ONLY assumption, not an approved policy${all ? "" : ` (${unapproved.length} of ${skus.length} components)`}.` });
+  }
+  const aged = skus.map((s) => Number(ESCALATION.exec(s.costNote ?? "")?.[1] ?? 0)).filter((p) => p > 0);
+  if (aged.length > 0) warnings.push({ code: "cost_aged", severity: "notice", text: `${aged.length} cost${aged.length === 1 ? " is" : "s are"} age-escalated (up to ${Math.max(...aged)}%).` });
+  return { warnings, freightNotes };
 }
 /** Codes for which reading Cin7 again may produce a price (nothing about the product itself was wrong). */
 const RETRYABLE_CODES: ReadonlySet<string> = new Set(["not_read", "settings_incomplete", "fx_missing", "fx_stale", "freight_not_set", "freight_conflict"]);
@@ -254,7 +287,11 @@ export function buildWorkspace(i: { budget: BudgetQuote; view: PricingWorkspaceV
       const states = skus.map((s) => rowOf(view.rows, s)?.costState);
       const verified = states.length > 0 && states.every((s) => s === "verified");
       const autoOnly = skus.length > 0 && skus.every((s) => rowOf(view.rows, s)?.costKind === "cin7_auto");
-      if (autoOnly && !verified) ready.push({ id: l.itemKey as string, label: l.label, quantity: l.quantity, unit: l.unitPrice, revenue: l.revenueExTax, skus: skus.map((s) => autoFact(rowOf(view.rows, s)!)) });
+      if (autoOnly && !verified) {
+        const qtyOf = (s: string): number | null => { const cs = (l.components ?? []).filter((c) => c.sku === s && c.quantity != null); return cs.length > 0 ? cs.reduce((a, c) => a + (c.quantity as number), 0) : l.sku === s ? l.quantity : null; };
+        const facts2 = [...new Set(skus)].map((s) => autoFact(rowOf(view.rows, s)!, qtyOf(s)));
+        ready.push({ id: l.itemKey as string, label: l.label, quantity: l.quantity, unit: l.unitPrice, revenue: l.revenueExTax, skus: facts2, totalCost: l.estimatedCost ?? null, ...readyWarnings(facts2) });
+      }
       complete.push({ ...base, how: autoOnly && !verified ? `${l.sku ?? "Package"} · Automatically priced — awaiting Manager verification` : `${l.sku ?? "Package"} · supplier cost entered · ${verified ? "independently verified" : "awaiting Manager verification"}`, unit: l.unitPrice, revenue: l.revenueExTax, provisional: false, estimatorPriced: false, costState: verified ? "verified" : "unverified", ...(autoOnly && !verified ? { autoReady: true } : {}) });
       continue;
     }
