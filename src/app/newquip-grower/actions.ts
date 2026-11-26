@@ -36,6 +36,8 @@ import { demoToolsEnabled } from "@/newquip/grower/demo-gate";
 import { ACTIVE_BUDGET_BASIS } from "@/newquip/grower/budget-basis-register";
 import { confirmationLabel, resolveConfirmationContact, type ConfirmationInput } from "@/lib/newquip-quotes/confirmation-contact";
 import { returnByOf, returnInfoOf } from "@/lib/newquip-quotes/return-store";
+import { repChangesOf } from "@/lib/newquip-quotes/rep-changes-store";
+import type { RepRevisionChanges } from "@/newquip/quote/rep-revision-changes";
 import { returnInfoForViewer, type ReturnInfo } from "@/newquip/quote/return-info";
 import { appendSnapshot, customerFeaturesAvailable, latestSnapshot } from "@/lib/newquip-quotes/customer-store";
 import { fieldValue } from "@/lib/newquip-quotes/customer-snapshot";
@@ -132,6 +134,8 @@ export interface QuoteView {
    * Manager return): { kind, reason, byEmail, byRole, at, destination, previousCents?, newCents?, source }. Totals are ex VAT; no cost data. A viewer WITHOUT commercial visibility (a Rep) gets a neutral line (reason "With the Estimator for review.", no actor) for destination ESTIMATOR: Manager->Estimator reasons are internal. Always present (null = nothing to show).
    */
   returnInfo: ReturnInfo | null;
+  /** REP REVISION COMPARISON. Present only while the quotation is back with the Rep (Rep draft, revision >= 2): what changed in the CUSTOMER-FACING quotation since the Rep last confirmed it. Whitelisted customer-safe fields only (labels, quantities, selling prices, totals): never a cost, SKU, rate, freight, markup or margin. Built server-side for every viewer. */
+  repChanges?: RepRevisionChanges;
   /** Whether the Manager must accept a baseline exception to approve (Estimator-priced systems with no Cin7 SKU), and which items. Cost-entitled callers only (labels and pricing route, never a value). */
   baselineException?: BaselineExceptionView;
   /** NQ-008B P2-E. Pricing evidence for SKU-less manual items (M75, LED, penning...): who recorded what, and whether it still covers the current price. Cost-entitled viewers only (a Manager sees it at approval); NEVER in a Rep payload. Absent while supplier pricing is off. */
@@ -167,10 +171,11 @@ async function view(db: ReturnType<typeof createServiceRoleClient>, quote: Quote
     ? costingOf(db, a.orgId, quote.draft, evaluationContext(true)).then((c) => ({ complete: c.complete, reason: c.reasons[0] ?? null, ...(c.acceptedIncomplete ? { acceptedIncomplete: c.acceptedIncomplete } : {}) }), () => undefined) : Promise.resolve(undefined);
   const snapsP = canViewCommercials && open && (quote.customer_confirmed_cents != null || quote.revision > 1) ? allIndicativeSnapshots(db, a.orgId, quote.id).then((x) => x, () => null) : Promise.resolve(null);
   const returnP = returnInfoOf(db, quote.org_id, quote);
+  const repChangesP = repChangesOf(db, a.orgId, quote);
   let manualPriceEvidence: QuoteView["manualPriceEvidence"];
   if (canViewCommercials && quote.draft.estimator.pricing?.enabled) { try { manualPriceEvidence = manualEvidenceRows(quote.draft.estimator.pricing, evaluateDraft(quote.draft, evaluationContext(false)).budget); } catch { manualPriceEvidence = undefined; } }
   const evaluation = redactEvaluationFinancials(evaluateDraft(quote.draft, evaluationContext(!canViewCommercials)), canViewCommercials);
-  const [baselineException, costing, snaps, returnRaw] = await Promise.all([baselineP, costingP, snapsP, returnP]);
+  const [baselineException, costing, snaps, returnRaw, repChanges] = await Promise.all([baselineP, costingP, snapsP, returnP, repChangesP]);
   let indicativeComparison: IndicativeComparison | undefined;
   if (snaps) {
     try {
@@ -195,6 +200,7 @@ async function view(db: ReturnType<typeof createServiceRoleClient>, quote: Quote
     ...(costing ? { costing } : {}),
     ...(manualPriceEvidence && manualPriceEvidence.length ? { manualPriceEvidence } : {}),
     returnInfo: returnInfoForViewer(returnRaw, canViewCommercials),
+    ...(repChanges ? { repChanges } : {}),
     ...(baselineException ? { baselineException } : {}),
   };
 }
