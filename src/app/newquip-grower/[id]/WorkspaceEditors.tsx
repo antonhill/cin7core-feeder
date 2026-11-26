@@ -207,8 +207,11 @@ export function ProductChoice({ templateRevision, itemKey, label, chosen, canEdi
 const PRODUCT_NAMES = CHOICE_PRODUCT_NAMES;
 
 /** Cup drinker: confirm the seven-component package (existing definition), then cost each component. */
-export function PackageConfirm({ templateRevision, itemKey, confirmed, canEdit, busy, onConfirm }: { templateRevision: TemplateRevision; itemKey: string; confirmed: boolean; canEdit: boolean; busy: boolean; onConfirm: (yes: boolean) => void }) {
-  const pkg = packageFor(itemKey as GrowerItemKey, templateRevision);
+/** A layout-driven package (pad cooling) has no fixed definition, so `packageFor` cannot list it: the components of the SAVED budget line are what is being confirmed, and are shown instead. */
+export type ConfirmComponent = { description: string; qtyPerUnit?: number | null };
+export function PackageConfirm({ templateRevision, itemKey, confirmed, canEdit, busy, onConfirm, lineComponents }: { templateRevision: TemplateRevision; itemKey: string; confirmed: boolean; canEdit: boolean; busy: boolean; onConfirm: (yes: boolean) => void; lineComponents?: ReadonlyArray<ConfirmComponent> }) {
+  const fixedPkg = packageFor(itemKey as GrowerItemKey, templateRevision);
+  const pkg = fixedPkg ?? (lineComponents && lineComponents.length > 0 ? { components: lineComponents, estimatorConfirmation: undefined, alternativeIdentity: undefined } : undefined);
   return (
     <Section title={`A. Confirm the ${pkg?.components.length ?? 7}-component package`} hint="the existing, supported pricing path" testId="package-confirm">
       {(pkg?.estimatorConfirmation || pkg?.alternativeIdentity) && <p className="mb-2 text-xs text-amber-900" data-testid="package-confirm-reason">{pkg.estimatorConfirmation ?? `The NewQuip Master lists ${pkg?.alternativeIdentity?.sku} (${pkg?.alternativeIdentity?.description}) as a different representation of this item. ${pkg?.alternativeIdentity?.note}`}</p>}

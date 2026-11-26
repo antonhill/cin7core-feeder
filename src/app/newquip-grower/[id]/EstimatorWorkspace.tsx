@@ -315,7 +315,7 @@ function PackageEditor({ templateRevision, line, confirmed, bundle, canEdit, onC
   const act = comps.find((c) => c.sku === active);
   return (
     <div className="flex min-w-0 flex-col gap-4" data-testid="package-editor">
-      <PackageConfirm templateRevision={templateRevision} itemKey={line.itemKey} confirmed={local} canEdit={canEdit} busy={busy} onConfirm={(yes) => { setLocal(yes); void saveConfirm(yes); }} />
+      <PackageConfirm templateRevision={templateRevision} itemKey={line.itemKey} confirmed={local} canEdit={canEdit} busy={busy} lineComponents={comps} onConfirm={(yes) => { setLocal(yes); void saveConfirm(yes); }} />
       {err && <Alert tone="warning"><span data-testid="package-error">{err}</span></Alert>}
       <p className="text-sm text-slate-800">Cannot price it this way? <button type="button" className="font-semibold text-blue-800 underline" onClick={onManual}>Quote a manual price for the whole {line.label.toLowerCase()}</button>. It needs a reason and written evidence and is labelled provisional.</p>
       {local && (
