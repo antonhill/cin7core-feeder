@@ -25,7 +25,7 @@ describe("repChangesOf", () => {
   it("same draft => no false changes (the snapshot builder and the live evaluation agree)", async () => {
     const d = readyDraft(); const { db } = dbOf([snapRow(d, 1, 1)]);
     const r = await repChangesOf(db, "org-1", quote(d));
-    expect(r?.available).toBe(true); expect(r?.anyChange).toBe(false); expect(r?.counts.added + r!.counts.removed + r!.counts.changed).toBe(0);
+    expect(r?.available).toBe(true); expect(r?.anyChange).toBe(false); expect(r!.counts.added + r!.counts.removed + r!.counts.changed).toBe(0);
   });
   it("a real change is reported against the stored previous revision", async () => {
     const d = readyDraft(); const d2 = structuredClone(d);
