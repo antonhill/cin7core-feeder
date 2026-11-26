@@ -8,3 +8,6 @@ export const DOOR_SIZES: Readonly<Record<DoorSize, { label: string; sku: string;
 export const DOOR_SIZE_KEYS = Object.keys(DOOR_SIZES) as DoorSize[];
 export const isDoorSize = (v: unknown): v is DoorSize => typeof v === "string" && Object.prototype.hasOwnProperty.call(DOOR_SIZES, v);
 export const doorSpecificationFor = (size: unknown): string | null => (isDoorSize(size) ? DOOR_SIZES[size].specification : null);
+
+/** The reason on a door line whose size the Rep has not chosen. Rep-owned: stage1-steps routes it to the Rep's Equipment step, not to the Estimator. */
+export const DOOR_SIZE_REQUIRED_REASON = "Choose the door size to price this item.";

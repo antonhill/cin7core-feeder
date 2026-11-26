@@ -71,8 +71,15 @@ export async function prepareBudget(db: Db, orgId: string, quoteId: string, env:
   return { model, draftHash: q.draft_hash, quoteRef: q.quote_ref, revision: q.revision, state: q.state, testMode, repEmail: q.created_by_email ?? null, draft: q.draft };
 }
 
+/** The one customer-facing refusal for an incomplete Budget (NQ-Q-0020 regression, 2026-11-26): no Budget PDF, preview or email exists while any selected item is unpriced. Pure. */
+export function incompleteBudgetMessage(unpriced: { count: number; items: readonly string[] }): string {
+  return `A Budget Quotation can only be produced when every selected item has a price. ${unpriced.count} item${unpriced.count === 1 ? " is" : "s are"} not priced yet: ${unpriced.items.join("; ")}. Complete the missing selections on the Equipment step (for example the PVC door size), or wait for the supplier prices to finish reading, then try again. Nothing was produced.`;
+}
+
 export async function previewBudgetPdf(db: Db, orgId: string, quoteId: string, env: EmailEnv): Promise<{ bytes: Uint8Array; prep: BudgetPreparation }> {
   const prep = await prepareBudget(db, orgId, quoteId, env);
+  // NEVER a PDF with "Price to be confirmed" / "TOTAL NOT AVAILABLE": an incomplete Budget is refused before anything is rendered.
+  if (!prep.model.complete) throw new Error(incompleteBudgetMessage(prep.model.unpriced));
   return { bytes: await renderBudgetPdf(prep.model), prep };
 }
 
@@ -152,7 +159,8 @@ export async function sendBudgetQuotation(
 
   const prep = await prepareBudget(db, who.orgId, quoteId, env, deps.today);
   if (prep.draftHash !== req.expectedDraftHash) throw new Error("The quotation changed after you previewed it. Save your changes, preview the budget quotation again, then send.");
-  if (!prep.model.complete && req.acknowledgeIncomplete !== true) throw new Error(`Pricing is incomplete (${prep.model.unpriced.count} item${prep.model.unpriced.count === 1 ? "" : "s"} unpriced). Confirm that you want to send the scope with "Price to be confirmed" and no total.`);
+  // An incomplete Budget is never sent, with or without an acknowledgement (the acknowledgement path is retired).
+  if (!prep.model.complete) throw new Error(incompleteBudgetMessage(prep.model.unpriced));
   // Provisional package definitions are approved for UAT ONLY. A genuine customer budget quotation needs NewQuip management to approve the package composition and alternative rules first.
   if (!isRestricted(env) && prep.model.provisional.count > 0 && env[BUDGET_PROVISIONAL_FLAG] !== "true") throw new Error("This budget quotation contains provisional package prices, whose compositions NewQuip management has not approved for customers yet. Nothing was sent.");
   const bytes = await renderBudgetPdf(prep.model);

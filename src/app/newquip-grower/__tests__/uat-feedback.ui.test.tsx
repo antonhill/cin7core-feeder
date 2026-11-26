@@ -14,6 +14,7 @@ h.complete.mockResolvedValue({ ok: true, data: { stillToRead: 0, done: true } })
 afterEach(() => { cleanup(); h.send.mockReset(); h.status.mockReset(); h.complete.mockReset(); h.complete.mockResolvedValue(DONE); });
 
 const est = { lines: [{ itemKey: "pvc_door", label: "PVC SST door (incl. frame)", quantity: 12, reason: "Product not yet confirmed" }, { itemKey: "controller", label: "Thomas-CL1 controller", quantity: 3, reason: "Product not yet confirmed" }], count: 2, text: incompleteEstimateText(2), chargesSubtotalExVat: 40500, pricedEquipmentExVat: 0, knownSubtotalExVat: 40500 };
+const COMPLETE = { complete: true, unpricedCount: 0, unpricedItems: [] as string[] };
 const status = (over = {}) => ({ ok: true, data: { canSend: true, blockedReason: null, testMode: true, draftHash: "h1", draftRef: "abc123", complete: false, unpricedCount: 5, unpricedItems: ["PVC SST door x 12"], testRecipient: "anton@sparkconsulting.co.za", ...over } });
 
 describe("IncompleteEstimateBanner", () => {
@@ -37,33 +38,43 @@ describe("IncompleteEstimateBanner", () => {
 });
 
 describe("BudgetQuotationPanel", () => {
-  it("offers a prominent Preview link to the saved-draft PDF and warns about unsaved changes", async () => {
-    h.status.mockResolvedValue(status());
+  it("COMPLETE Budget: offers a prominent Preview link to the saved-draft PDF and warns about unsaved changes", async () => {
+    h.status.mockResolvedValue(status(COMPLETE));
     render(<BudgetQuotationPanel quoteId="q1" canAct dirty refreshKey="k" />);
-    expect(screen.getByTestId("preview-budget-quotation").getAttribute("href")).toBe("/api/newquip-budget-preview/q1");
+    await waitFor(() => expect(screen.getByTestId("preview-budget-quotation").getAttribute("href")).toBe("/api/newquip-budget-preview/q1"));
     expect(screen.getByTestId("budget-unsaved").textContent).toContain("unsaved changes");
-    await waitFor(() => expect(screen.getByTestId("budget-incomplete").textContent).toContain("Price to be confirmed"));
+    expect(screen.queryByTestId("budget-incomplete")).toBeNull();
   });
-  it("cannot send with unsaved changes or without the incomplete acknowledgement; sends once to the UAT mailbox with the previewed draft hash", async () => {
+  it("INCOMPLETE Budget (NQ-Q-0020): there is NO preview link and NO send, and the panel names what is unpriced and how to fix it (no 'Price to be confirmed' document is offered)", async () => {
     h.status.mockResolvedValue(status());
-    h.send.mockResolvedValue({ ok: true, data: { status: "ACCEPTED", to: "anton@sparkconsulting.co.za", reused: false, testMode: true, incompleteCount: 5 } });
-    const { rerender } = render(<BudgetQuotationPanel quoteId="q1" canAct dirty refreshKey="k" />);
+    render(<BudgetQuotationPanel quoteId="q1" canAct dirty={false} refreshKey="k" />);
     await waitFor(() => expect(screen.getByTestId("budget-incomplete")).toBeTruthy());
+    expect(screen.getByTestId("budget-incomplete").textContent).toContain("PVC SST door x 12");
+    expect(screen.getByTestId("budget-incomplete").textContent).toContain("cannot be previewed or sent until every item is priced");
+    expect(screen.queryByTestId("preview-budget-quotation")).toBeNull();
+    expect(screen.getByTestId("preview-budget-quotation-blocked").getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(screen.getByTestId("send-budget-quotation"));
+    expect(screen.getByTestId("budget-send-why").textContent).toContain("Every selected item must be priced");
+    expect(screen.queryByRole("checkbox")).toBeNull(); // the acknowledge-incomplete path is retired
+  });
+  it("COMPLETE Budget: cannot send with unsaved changes; sends once to the UAT mailbox with the previewed draft hash", async () => {
+    h.status.mockResolvedValue(status(COMPLETE));
+    h.send.mockResolvedValue({ ok: true, data: { status: "ACCEPTED", to: "anton@sparkconsulting.co.za", reused: false, testMode: true, incompleteCount: 0 } });
+    const { rerender } = render(<BudgetQuotationPanel quoteId="q1" canAct dirty refreshKey="k" />);
+    await waitFor(() => expect(screen.getByTestId("preview-budget-quotation")).toBeTruthy());
     fireEvent.click(screen.getByTestId("send-budget-quotation"));
     expect(screen.getByTestId("budget-send-why").textContent).toContain("Save your changes first");
     rerender(<BudgetQuotationPanel quoteId="q1" canAct dirty={false} refreshKey="k" />);
-    expect(screen.getByTestId("budget-send-why").textContent).toContain("Tick the confirmation");
     expect(screen.getByTestId("budget-test-recipient").textContent).toContain("anton@sparkconsulting.co.za");
-    fireEvent.click(screen.getByRole("checkbox"));
     fireEvent.click(screen.getByText("Send Budget Quotation now"));
     await waitFor(() => expect(h.send).toHaveBeenCalledTimes(1));
-    expect(h.send.mock.calls[0][1]).toMatchObject({ to: "anton@sparkconsulting.co.za", expectedDraftHash: "h1", acknowledgeIncomplete: true });
+    expect(h.send.mock.calls[0][1]).toMatchObject({ to: "anton@sparkconsulting.co.za", expectedDraftHash: "h1", acknowledgeIncomplete: false });
     await waitFor(() => expect(screen.getByTestId("budget-sent").textContent).toContain("nothing was approved or issued"));
   });
   it("a non-Rep (Estimator / Manager) sees Preview but no Send", async () => {
-    h.status.mockResolvedValue(status({ canSend: false, blockedReason: "Only a Rep sends a budget quotation." }));
+    h.status.mockResolvedValue(status({ ...COMPLETE, canSend: false, blockedReason: "Only a Rep sends a budget quotation." }));
     render(<BudgetQuotationPanel quoteId="q1" canAct={false} dirty={false} refreshKey="k" />);
-    expect(screen.getByTestId("preview-budget-quotation")).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId("preview-budget-quotation")).toBeTruthy());
     expect(screen.queryByTestId("send-budget-quotation")).toBeNull();
   });
   it("a blocked environment shows the reason and keeps Send disabled", async () => {
@@ -80,7 +91,7 @@ describe("BudgetQuotationPanel completes a Rep's supplier prices by itself (P0: 
   it("a Rep's saved draft with unpriced lines triggers the completion; the Preview waits for it and returns afterwards", async () => {
     let release: (v: unknown) => void = () => undefined;
     h.complete.mockReturnValue(new Promise((r) => { release = r; }));
-    h.status.mockResolvedValue(status());
+    h.status.mockResolvedValueOnce(status()).mockResolvedValue(status(COMPLETE));
     render(<BudgetQuotationPanel quoteId="q1" canAct dirty={false} refreshKey="k" />);
     await waitFor(() => expect(h.complete).toHaveBeenCalledWith("q1"));
     expect(screen.getByTestId("budget-pricing-progress")).toBeTruthy();

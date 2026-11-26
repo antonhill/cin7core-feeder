@@ -122,7 +122,8 @@ describe("viewer permissions are display-only", () => {
       const together = await actions.getProjectAction("p1");
       const alone = await actions.getViewerPermissionsAction();
       expect(together.ok).toBe(true);
-      expect(together.viewer).toEqual(alone.data);
+      expect({ canApprove: together.viewer?.canApprove, newquip: together.viewer?.newquip }).toEqual(alone.data); // the commercial-approval flag is asserted in commercial-progress-gate.test.ts
+      expect(typeof together.viewer?.canApproveCommercial).toBe("boolean");
     }
     vi.mocked(requireModuleAccess).mockRejectedValue(new Error(MODULE_DENIED));
     const denied = await actions.getProjectAction("p1");

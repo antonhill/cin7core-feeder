@@ -3,6 +3,7 @@ import { isOptionalItemKey } from "./types";
 import { BUDGET_BASIS_PLAIN, budgetRateSellingPrice, usableBudgetBasis, type BudgetBasisEntry } from "./budget-basis";
 import type { FeederVariant, GeneratedLine, GrowerItemKey, PenningPigSize } from "./types";
 import { confirmedBudgetDefaultSku } from "./budget-default-products";
+import { DOOR_SIZE_REQUIRED_REASON } from "./door-sizes";
 import { UAT_PROVISIONAL_PLAIN, uatRateFor, type UatProvisionalRate } from "./uat-provisional-basis";
 import { INTERIM_PANEL_PLAIN, INTERIM_PANEL_REASON, interimPanelRate, type PanelSelection } from "./control-panel-interim";
 import { TEMPLATE_REVISION_LEGACY, TEMPLATE_REVISION_CURRENT, coolingPackageFor, type TemplateRevision, alternativesFor, estimatorPricedFor, feederSkuFor, isCatalogueDefaultItem, manualLinesFor, packageAutoConfirmable, packageFor, provisionalPackageBasis, recommendedSkuFor, type PackageComponent } from "./commercial";
@@ -413,7 +414,7 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
     const isAlternative = !!confirmed && alternativesFor(g.itemKey).some((a) => a.sku === confirmed);
     const sku = g.itemKey === "pvc_door" || isOptionalItemKey(g.itemKey) ? confirmed : confirmed && (confirmed === expected || isAlternative) ? confirmed : null;
     if (!sku) {
-      fail({ ...emptyLine(g), status: "unmapped", reason: confirmed && expected ? `Confirmed ${confirmed} does not match the expected ${expected}.` : isCurrentDoor && !opts.doorSpecification ? "Choose the door size to price this item." : offered ? "The documented Budget basis awaits the Estimator's confirmation." : "Product mapping not yet confirmed.", ...(offered ? { budgetBasis: offered } : {}) }, offered ? `${g.label}: Budget basis awaiting confirmation` : `${g.label}: product mapping ${expected ? `to ${expected} ` : ""}not confirmed`);
+      fail({ ...emptyLine(g), status: "unmapped", reason: confirmed && expected ? `Confirmed ${confirmed} does not match the expected ${expected}.` : isCurrentDoor && !opts.doorSpecification ? DOOR_SIZE_REQUIRED_REASON : offered ? "The documented Budget basis awaits the Estimator's confirmation." : "Product mapping not yet confirmed.", ...(offered ? { budgetBasis: offered } : {}) }, offered ? `${g.label}: Budget basis awaiting confirmation` : `${g.label}: product mapping ${expected ? `to ${expected} ` : ""}not confirmed`);
       continue;
     }
     const r = opts.priceSource.priceFor(sku, opts.quoteType);

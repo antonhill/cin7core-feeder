@@ -13,7 +13,10 @@ export type ReviewTone = "ok" | "open" | "missing";
 export interface ReviewCell { text: string; tone?: ReviewTone }
 export interface CostReviewRow {
   sku: string; description: string; quantity: ReviewCell; source: ReviewCell; costDate: ReviewCell; originalCost: ReviewCell; uplift: ReviewCell; fx: ReviewCell; freight: ReviewCell;
-  landedUnit: ReviewCell; totalCost: ReviewCell; selling: ReviewCell; margin: ReviewCell; status: ReviewCell; /** Extra detail for an unusual status (shown once on that row), null for the standard cases the legend explains. */ statusDetail: string | null; missing: string[];
+  landedUnit: ReviewCell; totalCost: ReviewCell; selling: ReviewCell; margin: ReviewCell; status: ReviewCell;
+  /** Layout-only extras (the cells above are unchanged): the equipment lines this product belongs to, the supplier/kind headline apart from the long cost note, the freight source text, and the exact cents for the group summary. */
+  usedBy: string[]; sourceHead: string; sourceNote: string | null; freightSource: string | null; totalCostCents: number | null; sellingCents: number | null;
+  /** Extra detail for an unusual status (shown once on that row), null for the standard cases the legend explains. */ statusDetail: string | null; missing: string[];
 }
 export interface CostReview { rows: CostReviewRow[]; counts: { products: number; verified: number; missing: number; unverified: number; provisional: number }; upliftNote: string }
 
@@ -87,6 +90,8 @@ function rowOf(r: SkuRow, desc: Map<string, string>): CostReviewRow {
     sku: r.sku, description: desc.get(r.sku) ?? r.usedBy.join(", "), quantity: { text: r.quantity.toLocaleString("en-US") },
     source: need(source, "supplier cost"), costDate: date, originalCost: need(original, "original cost"), uplift: { text: UPLIFT_NONE }, fx: need(fx, "exchange rate"), freight: freight,
     landedUnit: money(r.unitLandedCostCents), totalCost: money(r.lineCostCents), selling: money(r.lineRevenueCents), margin, status, statusDetail, missing,
+    usedBy: r.usedBy, sourceHead: entered ? ([supplierLabel, kind].filter(Boolean).join(" · ") || (r.costSource ? "Source recorded in the cost note" : source.text)) : source.text, sourceNote: entered ? r.costSource : null,
+    freightSource: r.freightSource ?? null, totalCostCents: r.lineCostCents, sellingCents: r.lineRevenueCents,
   };
   return row;
 }
@@ -99,4 +104,34 @@ export function buildCostReview(view: PricingWorkspaceView, budget: BudgetQuote 
     counts: { products: rows.length, verified: rows.filter((r) => r.status.text === STATUS_VERIFIED).length, missing: rows.filter((r) => r.status.text === STATUS_MISSING).length, unverified: rows.filter((r) => r.status.text === STATUS_NEEDS).length, provisional: rows.filter((r) => r.status.text === STATUS_PROVISIONAL).length },
     upliftNote: UPLIFT_NOTE,
   };
+}
+
+// ── GROUPS (layout only) ── The itemised table is one row per product, which for a large package (cooling: dozens of components) is pages long. The rows are grouped under the equipment line(s) that use them; the
+// group shows a compact summary and its rows stay in the DOM, folded. A group is never hidden when it needs action: one with a missing cost, or a status needing attention, opens by default.
+export interface CostReviewGroup {
+  key: string; label: string; rows: CostReviewRow[];
+  counts: { verified: number; unverified: number; provisional: number; missing: number };
+  totalCostCents: number | null; sellingCents: number | null;
+  /** Stated ONCE for the group, however many products carry it. */
+  warnings: string[];
+  /** The freight source when every product of the group shares exactly one (stated once); null when they differ or none is recorded. */
+  sharedFreightSource: string | null;
+  /** Open by default: something in it is missing or unusual. */
+  needsAttention: boolean;
+}
+const FREIGHT_UNAPPROVED = /test[- ]only|not approved/i;
+export function groupCostReview(rows: readonly CostReviewRow[]): CostReviewGroup[] {
+  const order: string[] = []; const by = new Map<string, CostReviewRow[]>();
+  for (const r of rows) { const k = r.usedBy.length ? [...r.usedBy].sort().join(" + ") : "Other products"; if (!by.has(k)) { by.set(k, []); order.push(k); } by.get(k)!.push(r); }
+  return order.map((k) => {
+    const rs = by.get(k)!;
+    const sum = (f: (r: CostReviewRow) => number | null): number | null => (rs.some((r) => f(r) == null) ? null : rs.reduce((a, r) => a + (f(r) as number), 0));
+    const counts = { verified: rs.filter((r) => r.status.text === STATUS_VERIFIED).length, unverified: rs.filter((r) => r.status.text === STATUS_NEEDS).length, provisional: rs.filter((r) => r.status.text === STATUS_PROVISIONAL).length, missing: rs.filter((r) => r.status.text === STATUS_MISSING).length };
+    const unapproved = rs.filter((r) => r.freightSource && FREIGHT_UNAPPROVED.test(r.freightSource)).length;
+    const warnings: string[] = [];
+    if (counts.missing > 0) warnings.push(`${counts.missing} ${counts.missing === 1 ? "product has" : "products have"} no supplier cost.`);
+    if (unapproved > 0) warnings.push(`Freight ${rs.some((r) => r.freightSource && /test[- ]only/i.test(r.freightSource)) ? "uses a TEST-ONLY assumption, not an approved policy" : "is not on an approved policy"}${unapproved === rs.length ? "" : ` (${unapproved} of ${rs.length} products)`}.`);
+    const fs = [...new Set(rs.map((r) => r.freightSource))];
+    return { key: k, label: k, rows: rs, counts, totalCostCents: sum((r) => r.totalCostCents), sellingCents: sum((r) => r.sellingCents), warnings, sharedFreightSource: fs.length === 1 && fs[0] ? fs[0] : null, needsAttention: counts.missing > 0 || rs.some((r) => r.statusDetail != null) };
+  });
 }

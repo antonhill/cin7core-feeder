@@ -196,13 +196,14 @@ export function ProjectWorkspace({ id, embedded = false, initialTab }: { id: str
   // Display only: every mutating action re-checks the owner/admin role on the server.
   // LOADING until known, so privileged controls (and the non-admin explanation) never flash; any failure => MEMBER (fail closed).
   const [perm, setPerm] = useState<ViewerPermission>("loading");
+  const [canCommercial, setCanCommercial] = useState(false); // display only: the explicit Manager role (NewQuip) / owner-admin (elsewhere); recordProgressAction re-checks
   const [newquip, setNewquip] = useState(false); // NewQuip-only tabs (Variations, Products & Fulfilment); hidden until the server confirms
   function load() {
     startLoading(async () => {
       // The project and the viewer's DISPLAY permissions come back from one server round trip (they were two serial ones); the server still checks everything.
       let res: Awaited<ReturnType<typeof getProjectAction>>;
       try { res = await getProjectAction(id); } catch { setPerm("member"); return setError("The project could not be loaded."); }
-      setPerm(res.ok && res.viewer?.canApprove ? "admin" : "member"); setNewquip(Boolean(res.ok && res.viewer?.newquip)); // no answer => member / no NewQuip tabs (fail closed)
+      setPerm(res.ok && res.viewer?.canApprove ? "admin" : "member"); setCanCommercial(Boolean(res.ok && res.viewer?.canApproveCommercial)); setNewquip(Boolean(res.ok && res.viewer?.newquip)); // no answer => member / no NewQuip tabs (fail closed)
       // An internal variation billing scope is not for ordinary users: send them to the project it belongs to.
       if (!res.ok && res.redirectTo && !embedded) return router.replace(`/projects/${res.redirectTo}`);
       if (!res.ok) return setError(res.error ?? "Unknown error");
@@ -499,6 +500,7 @@ export function ProjectWorkspace({ id, embedded = false, initialTab }: { id: str
                 stage={s}
                 disabled={isWorking}
                 perm={perm}
+                canCommercial={canCommercial}
                 onPhysical={(reported, comment) => run(() => recordProgressAction(id, s.id, reported, null, comment), `Physical progress recorded for ${s.name}. Commercial approval and claims are unchanged.`, `stage:${s.id}`, { confirm: (v) => v.stages.find((x) => x.id === s.id)?.reportedBps === pctToBps(reported) && pctToBps(reported) !== null })}
                 onCommercial={(approved, comment) => run(() => recordProgressAction(id, s.id, (s.reportedBps / 100).toString(), approved, comment), `Commercial approval recorded for ${s.name}. Nothing was claimed or sent to Cin7.`, `stage:${s.id}`, { confirm: (v) => v.stages.find((x) => x.id === s.id)?.approvedBps === pctToBps(approved) && pctToBps(approved) !== null })}
               />
@@ -727,6 +729,7 @@ function ProgressForm({
   stage,
   disabled,
   perm,
+  canCommercial,
   onPhysical,
   onCommercial,
 }: {
@@ -734,6 +737,8 @@ function ProgressForm({
   stage: StageView;
   disabled: boolean;
   perm: ViewerPermission;
+  /** May record Approve commercial progress (decided by the server; see canApproveCommercialProgress). */
+  canCommercial: boolean;
   /** Resolve true on success: the form then clears its comment and collapses. A failure leaves everything as typed. */
   onPhysical: (reported: string, comment: string) => Promise<boolean>;
   onCommercial: (approved: string, comment: string) => Promise<boolean>;
@@ -811,15 +816,15 @@ function ProgressForm({
             <p className="text-xs text-slate-600">Informational. Does not change commercial approval and never creates or changes a claim.</p>
             <Button size="sm" variant="secondary" disabled={disabled || reported === currentReported} onClick={() => { setFieldErr({}); void finish(onPhysical(reported, comment)); }}>Record physical progress</Button>
           </div>
-          {perm === "admin" ? (
+          {canCommercial ? (
             <div className="space-y-2 rounded-md border border-indigo-200 bg-indigo-50/40 p-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-indigo-800">Approve commercial progress (owner/admin)</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-indigo-800">Approve commercial progress (Manager)</p>
               <Input label={`Approved commercial completion (%) — now ${formatBps(stage.approvedBps)}, physical ${formatBps(stage.reportedBps)}`} value={approved} onChange={(e) => { setApproved(e.target.value); setFieldErr((f) => ({ ...f, approved: undefined })); }} error={fieldErr.approved} inputMode="decimal" />
               <p className="text-xs text-slate-600">This is the only completion that drives a claim. Recording it creates no claim and sends nothing to Cin7.</p>
               <Button size="sm" disabled={disabled} onClick={submitCommercial}>Approve commercial progress</Button>
             </div>
-          ) : perm === "member" ? (
-            <p className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">Commercial approval is set by an organisation owner or admin.</p>
+          ) : perm !== "loading" ? (
+            <p className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">Commercial approval is recorded by a Manager.</p>
           ) : null}
         </div>
       )}

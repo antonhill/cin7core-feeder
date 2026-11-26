@@ -24,6 +24,22 @@ function build(o: { rows: SkuRow[]; lines: BridgeLine[]; autoOwned?: boolean; ca
 const priced = (itemKey: BridgeLine["itemKey"], label: string, sku: string) => line({ itemKey, label, status: "priced", sku, quantity: 10, unitPrice: 287.5, revenueExTax: 2875 });
 const costNeeded = (itemKey: BridgeLine["itemKey"], label: string, sku: string) => line({ itemKey, label, status: "not_in_price_source", sku, quantity: 1 });
 
+describe("Estimator workspace: a package's ready line carries its total cost, per-component quantities and ONE deduplicated warning", () => {
+  const FR = "Commercial settings v8: TEST-ONLY freight assumption, not approved policy.";
+  const rows = [autoRow({ sku: "A1", freightSource: FR } as Over), autoRow({ sku: "B2", freightSource: FR } as Over), autoRow({ sku: "C3", freightSource: null } as Over)];
+  const pkg = line({ itemKey: "cooling", label: "Cooling", status: "priced", sku: null, quantity: 12, unitPrice: 100, revenueExTax: 1200, estimatedCost: 800, components: [{ ...comp("a", "A1"), quantity: 24 }, { ...comp("a2", "A1"), quantity: 6 }, { ...comp("b", "B2"), quantity: null }, { ...comp("c", "C3"), quantity: 3 }] } as unknown as Partial<BridgeLine> & { itemKey: string; label: string });
+  const r = build({ rows, lines: [pkg] }).auto.ready[0];
+  it("total cost is the bridge's own line cost; component quantities are summed per SKU, and an unknowable quantity stays null (never 0)", () => {
+    expect(r.totalCost).toBe(800);
+    expect(r.skus.map((k) => [k.sku, k.quantity])).toEqual([["A1", 30], ["B2", null], ["C3", 3]]);
+  });
+  it("the unapproved-freight warning is raised once and says how many components carry it when not all do; the shared note is not claimed as common", () => {
+    expect(r.warnings).toEqual([{ code: "freight_unapproved", severity: "critical", text: "Freight uses a TEST-ONLY assumption, not an approved policy (2 of 3 components)." }]);
+    expect(r.freightNotes).toEqual([`Freight: ${FR}`]);
+    expect(r.skus.map((k) => k.freightNote)).toEqual([`Freight: ${FR}`, `Freight: ${FR}`, null]);
+  });
+});
+
 describe("Estimator workspace: automatic pricing is three clear groups with honest counts", () => {
   const rows = [autoRow({ sku: "NQ1161" }), autoRow({ sku: "PNQ082" }), missingRow("SYSH-2750-3", flag("not_read", "Not read from Cin7 in this run (out of time): it will be retried when the quotation is submitted, or use Price from Cin7."))];
   const lines = [priced("concrete_slat", "Concrete slats", "NQ1161"), priced("feeder", "CCM feeder", "PNQ082"), costNeeded("bulk_tank", "Bulk tank", "SYSH-2750-3")];
@@ -31,7 +47,8 @@ describe("Estimator workspace: automatic pricing is three clear groups with hone
 
   it("an automatically priced product is under 'Ready for verification' with its supplier, cost, date, FX, freight, landed and selling price, and is NEVER a task", () => {
     expect(w.auto.ready.map((r) => r.id)).toEqual(["concrete_slat", "feeder"]);
-    expect(w.auto.ready[0].skus[0]).toEqual({ sku: "NQ1161", supplier: "Fixture Supplier", currency: "EUR", cost: "EUR 10.00", costDate: "2026-06-16", fx: "EUR 20.0000 as of 2026-11-16", freight: "× 1.15", landed: money(230), selling: money(287.5), provenance: "Auto from Cin7: 10.00 EUR last supplied 2026-06-16 Exchange rate: fix." });
+    expect(w.auto.ready[0].skus[0]).toEqual({ sku: "NQ1161", supplier: "Fixture Supplier", currency: "EUR", cost: "EUR 10.00", costDate: "2026-06-16", fx: "EUR 20.0000 as of 2026-11-16", freight: "× 1.15", landed: money(230), selling: money(287.5), provenance: "Auto from Cin7: 10.00 EUR last supplied 2026-06-16 Exchange rate: fix.", costNote: "Auto from Cin7: 10.00 EUR last supplied 2026-06-16", freightNote: null, fxNote: "Exchange rate: fix.", quantity: 10 });
+    expect(w.auto.ready[0]).toMatchObject({ totalCost: null, warnings: [], freightNotes: [] }); // nothing hidden: the line keeps its own figures; no warning when there is none to give
     expect(w.complete.filter((c) => c.autoReady).map((c) => c.id)).toEqual(["concrete_slat", "feeder"]);
     expect(w.complete[0].how).toContain("Automatically priced — awaiting Manager verification");
     expect(w.tasks.map((t) => t.id)).toEqual(["bulk_tank"]); // not 'supplier cost needed' for NQ1161 / PNQ082

@@ -75,6 +75,21 @@ export async function tierHoldsManagerRole(db: Db, orgId: string, userId: string
   return (await resolveRoles(db, orgId, userId, true)).has("MANAGER");
 }
 
+/**
+ * May this person record "Approve commercial progress" on a Project stage? (UAT finding 2026-11-26: the combined "organisation owner/admin tier AND Manager role"
+ * rule was met by nobody, because the NewQuip Managers are plain members.) In the NewQuip organisation the EXPLICIT Manager role is the only thing that matters:
+ * a member who holds it may approve, an owner/admin who does not hold it may not, and a person with no assignment in THIS organisation (another organisation,
+ * or none) never can. Elsewhere the organisation owner/admin tier alone decides, exactly as before, and is checked by the caller. Never widens another gate.
+ */
+export async function holdsManagerRoleForCommercialApproval(db: Db, orgId: string, userId: string): Promise<boolean> {
+  if (!isNewquipPocOrg(orgId)) return false; // the caller keeps the unchanged owner/admin-tier rule outside NewQuip
+  const m = await db.from("org_members").select("role").eq("org_id", orgId).eq("user_id", userId).maybeSingle();
+  if (m.error || !m.data) return false; // not a member of THIS organisation
+  // adminTier here only ever adds ADMINISTRATOR (never MANAGER) in the always-strict NewQuip organisation, so the role-switch narrowTier is not needed; do not rely on it for more.
+  const adminTier = (m.data as { role: string }).role === "owner" || (m.data as { role: string }).role === "admin";
+  return (await resolveRoles(db, orgId, userId, adminTier)).has("MANAGER");
+}
+
 export interface OrgUser { userId: string; email: string; tier: "owner" | "admin" | "member"; roles: FunctionalRole[] }
 
 export async function listOrgUsers(db: Db, orgId: string): Promise<OrgUser[]> {

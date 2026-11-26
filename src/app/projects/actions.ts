@@ -8,7 +8,7 @@
 import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { logActivity } from "@/lib/activity-log";
-import { listOrgUsers, tierHoldsManagerRole } from "@/lib/approvals/role-store";
+import { holdsManagerRoleForCommercialApproval, listOrgUsers, tierHoldsManagerRole } from "@/lib/approvals/role-store";
 import { validateProjectDetails } from "@/lib/projects/project-details";
 import { loadProjectDetails, updateProjectDetails } from "@/lib/projects/project-details-store";
 import { createServiceRoleClient } from "@/supabase/server";
@@ -46,7 +46,7 @@ export interface ActionResult<T> {
   /** Set when the caller asked for an internal billing scope they may not open: the project to show instead. */
   redirectTo?: string;
   /** getProjectAction only: DISPLAY permissions of the caller, returned with the project so the page needs no second round trip. Every mutating action re-checks on the server. */
-  viewer?: { canApprove: boolean; newquip: boolean };
+  viewer?: { canApprove: boolean; newquip: boolean; /** May record Approve commercial progress (NewQuip: the explicit Manager role, member or admin). Display only; the action re-checks. */ canApproveCommercial?: boolean };
 }
 
 export interface ClaimPreviewResult {
@@ -58,6 +58,15 @@ export interface ClaimPreviewResult {
 /** Whether the caller is an org owner/admin (may see internal costs). Fails closed. */
 async function isAdmin(): Promise<boolean> {
   try { const c = await requireOrgAdmin("view internal costs"); return await tierHoldsManagerRole(createServiceRoleClient(), c.orgId, c.userId); } catch { return false; }
+}
+
+/**
+ * May the caller approve COMMERCIAL progress? NewQuip: the explicit Manager role decides (a Manager need not be an organisation admin; an admin without the role cannot).
+ * Every other organisation: unchanged - an organisation owner/admin. Fails closed.
+ */
+async function canApproveCommercialProgress(orgId: string, userId: string): Promise<boolean> {
+  if (isNewquipPocOrg(orgId)) { try { return await holdsManagerRoleForCommercialApproval(createServiceRoleClient(), orgId, userId); } catch { return false; } }
+  try { await requireOrgAdmin("approve commercial completion"); return true; } catch { return false; }
 }
 
 function message(e: unknown): string {
@@ -77,13 +86,13 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectView[]>>
 
 export async function getProjectAction(projectId: string): Promise<ActionResult<ProjectView>> {
   try {
-    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId } = await requireModuleAccess(PROJECTS_MODULE.href);
     const admin = await isAdmin();
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, admin);
     const view = await loadProjectView(createServiceRoleClient(), orgId, projectId);
     if (!view) return { ok: false, error: "Project not found." };
     // `admin` is the same owner/admin check getViewerPermissionsAction makes; `newquip` is the organisation rollout flag. Display only.
-    return { ok: true, data: redactVariationCosts(view, admin), viewer: { canApprove: admin, newquip: isNewquipPocOrg(orgId) } };
+    return { ok: true, data: redactVariationCosts(view, admin), viewer: { canApprove: admin, newquip: isNewquipPocOrg(orgId), canApproveCommercial: await canApproveCommercialProgress(orgId, userId) } };
   } catch (e) {
     if (e instanceof BillingScopeAccessError) return { ok: false, error: e.message, ...(e.parentProjectId ? { redirectTo: e.parentProjectId } : {}) };
     return { ok: false, error: message(e) };
@@ -173,7 +182,7 @@ export async function recordProgressAction(
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, await isAdmin());
-    if (approvedPct !== null) { const c = await requireOrgAdmin("approve commercial completion"); if (!(await tierHoldsManagerRole(createServiceRoleClient(), c.orgId, c.userId))) throw new Error("This needs the Manager role."); }
+    if (approvedPct !== null && !(await canApproveCommercialProgress(orgId, userId))) throw new Error(isNewquipPocOrg(orgId) ? "This needs the Manager role." : "Only an org owner or admin can approve commercial completion.");
     const db = createServiceRoleClient();
     await recordProgress(db, orgId, email ?? "unknown", { projectId, stageId, reportedPct, approvedPct, comment });
     if (approvedPct !== null) {
