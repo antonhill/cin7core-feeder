@@ -17,6 +17,8 @@ export interface BudgetEquipmentLine { label: string; quantity: number | null; /
 export interface BudgetChargeLine { label: string; status: "priced" | "unpriced"; amountExVat: number | null; note: string }
 
 export interface BudgetDocumentModel {
+  /** Supplier products still to be read from Cin7 (0 when retrieval is finished). */
+  retrievalPending: number;
   schemaVersion: 1;
   kind: "BUDGET_QUOTATION";
   /** UAT / restricted environment: watermarked, never a commercial document. */
@@ -58,6 +60,8 @@ export interface BudgetInput {
   profile: Pick<CompanyProfile, "brandName" | "legalName" | "registrationNumber" | "vatNumber" | "addressLines" | "phone" | "email" | "website">;
   config: { rooms?: number; lengthM?: number; widthM?: number; pigsPerRoom?: number; totalPens?: number };
   testOnly: boolean;
+  /** Supplier products still UNREAD from Cin7 (retrieval unfinished). While above zero the document can never be complete or show a total, whatever else it contains. */
+  retrievalPending?: number;
 }
 
 const fixed2 = (n: number) => n.toFixed(2);
@@ -84,9 +88,10 @@ export function buildBudgetDocumentModel(i: BudgetInput): BudgetDocumentModel {
   const unpricedLines: UnpricedLine[] = estimate?.lines ?? [];
   const unpricedCharges = charges.filter((c) => c.status === "unpriced");
   const unpricedItems = [...unpricedLines.map((l) => `${l.label}${l.quantity != null ? ` × ${l.quantity}` : ""}`), ...unpricedCharges.map((c) => c.label)];
-  const complete = unpricedItems.length === 0 && b.state === "complete";
+  const retrievalPending = Math.max(0, i.retrievalPending ?? 0);
+  const complete = unpricedItems.length === 0 && b.state === "complete" && retrievalPending === 0;
   // Incomplete for another reason (e.g. a required explanation is missing on a priced line): never a total, and the document says pricing is still under review rather than "0 items".
-  if (!complete && unpricedItems.length === 0) unpricedItems.push("Pricing still under review");
+  if (!complete && unpricedItems.length === 0) unpricedItems.push(retrievalPending > 0 ? "Supplier price retrieval unfinished" : "Pricing still under review");
 
   const provisionalLines = equipment.filter((l) => l.status === "provisional");
   const known = round2(equipment.reduce((a, l) => a + (l.amountExVat ?? 0), 0) + charges.reduce((a, c) => a + (c.amountExVat ?? 0), 0));
@@ -108,7 +113,7 @@ export function buildBudgetDocumentModel(i: BudgetInput): BudgetDocumentModel {
   if (i.config.totalPens) cfg.push({ label: "Pens per room", value: String(i.config.totalPens) });
 
   return {
-    schemaVersion: 1, kind: "BUDGET_QUOTATION", testOnly: i.testOnly, title: BUDGET_TITLE, disclaimer: BUDGET_DISCLAIMER,
+    schemaVersion: 1, retrievalPending, kind: "BUDGET_QUOTATION", testOnly: i.testOnly, title: BUDGET_TITLE, disclaimer: BUDGET_DISCLAIMER,
     company: { brandName: i.profile.brandName, legalName: i.profile.legalName, registrationNumber: i.profile.registrationNumber, vatNumber: i.profile.vatNumber, addressLines: i.profile.addressLines, phone: i.profile.phone, email: i.profile.email, website: i.profile.website },
     quote: { reference: i.quoteRef, revision: i.revision, preparedOn: i.preparedOn, siteName: i.siteName, draftRef: i.draftHash.slice(0, 12) },
     customer: { name: i.customerName, contactName: i.contact?.name ?? null, contactEmail: i.contact?.email ?? null },

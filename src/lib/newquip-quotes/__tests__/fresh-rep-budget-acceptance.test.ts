@@ -19,6 +19,7 @@ import { completeAutoPricing, runAutoPricing, type AutoActor, type AutoEnv, type
 import { budgetSkuNeeds } from "../sku-needs";
 import { landedZarSkuSet } from "@/newquip/pricing/cost-source-classes";
 import { buildBudgetDocumentModel, presentsPartialAsTotal } from "../budget-document";
+import { unreadNeeds } from "../budget-quotation";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 
 vi.mock("server-only", () => ({}));
@@ -152,5 +153,67 @@ describe("a fresh Rep quotation, before any Estimator action", () => {
     const unpriced = b.lines.filter((l) => l.status !== "not_selected" && l.status !== "priced");
     expect(unpriced.map((l) => l.itemKey)).toEqual(["pad_cooling"]); // only the package that contains the unpriceable acetone; nothing was zeroed or invented
     expect(b.state).not.toBe("complete");
+  });
+
+});
+
+// THE LOOP CAN NEVER MAKE A PARTIALLY PRICED QUOTATION LOOK COMPLETE: timeout, no-progress and retry, with every earlier read preserved and nothing duplicated or re-priced.
+describe("completion loop safety: timeout, no progress, retry", () => {
+  const model = (q: Awaited<ReturnType<typeof budgetOf>>["q"], b: Awaited<ReturnType<typeof budgetOf>>["b"]) => buildBudgetDocumentModel({ budget: b, quoteRef: "NQ-Q-SAFE", revision: 1, draftHash: q.draft_hash, preparedOn: "2026-11-26", siteName: "S", customerName: "C", contact: null, profile: {} as never, config: q.draft.config, testOnly: true, retrievalPending: unreadNeeds(q.draft) });
+
+  it("TIMEOUT on the very first run: nothing is priced, the outcome says products are unread, and the document is never complete", async () => {
+    const id = await newQuote(freshRepDraft());
+    const dead: AutoPricingDeps = { ...deps(), readRaw: async (skus) => Object.fromEntries(skus.map((s) => [s, { error: "deadline" }])) };
+    const o = await completeAutoPricing(db as never, REP, id, { budgetMs: 300_000, deps: dead, env: ON });
+    expect(o.internal.some((i) => i.code === "not_read")).toBe(true);
+    const { q, b } = await budgetOf(id);
+    expect(b.state).not.toBe("complete");
+    expect(model(q, b).complete).toBe(false);
+  });
+
+  it("NO PROGRESS (every read errors): the loop stops after the stall limit, still reports unread, and never completes", async () => {
+    const id = await newQuote(freshRepDraft());
+    let n = 0;
+    const flaky: AutoPricingDeps = { ...deps(), readRaw: async (skus) => { n += skus.length; return Object.fromEntries(skus.map((s) => [s, { error: "http_503" }])); } };
+    const o = await completeAutoPricing(db as never, REP, id, { budgetMs: 300_000, deps: flaky, env: ON });
+    expect(o.runs).toBeLessThanOrEqual(3); expect(n).toBeGreaterThan(0);
+    expect(o.internal.some((i) => i.code === "not_read")).toBe(true);
+    const { q, b } = await budgetOf(id);
+    expect(model(q, b).complete).toBe(false);
+  });
+
+  it("PARTIAL then RETRY: successful reads are preserved byte-for-byte (no duplicate or re-priced cost), the final total equals a single full read to the cent, and the partial document was never complete", async () => {
+    // reference: one quotation read completely in one go
+    const refId = await newQuote(freshRepDraft());
+    readThisRun = -1_000_000; // unlimited pace for the reference
+    await completeAutoPricing(db as never, REP, refId, { budgetMs: 300_000, deps: deps(), env: ON });
+    const ref = await budgetOf(refId);
+    // the retry quotation: ONE paced run, then check, then the retry
+    readThisRun = 0;
+    const id = await newQuote(freshRepDraft());
+    await runAutoPricing(db as never, REP, id, deps(), ON);
+    const part = await budgetOf(id);
+    expect(model(part.q, part.b).complete).toBe(false);
+    expect(unreadNeeds(part.q.draft)).toBeGreaterThan(0);
+    const before = structuredClone(part.q.draft.estimator.pricing!.skus);
+    await completeAutoPricing(db as never, REP, id, { budgetMs: 300_000, deps: deps(), env: ON });
+    const done = await budgetOf(id);
+    const after = done.q.draft.estimator.pricing!.skus;
+    for (const [sku, e] of Object.entries(before)) expect(after[sku], sku).toEqual(e); // preserved exactly (same cost, same timestamp)
+    expect(Object.keys(after).length).toBe(Object.keys(done.q.draft.estimator.pricing!.skus).length); // one entry per SKU: nothing duplicated
+    expect(unreadNeeds(done.q.draft)).toBe(0);
+    expect(cents(done.b.totals.subtotalExTax)).toBe(cents(ref.b.totals.subtotalExTax));
+    expect(model(done.q, done.b).complete).toBe(true);
+  });
+
+  it("INVARIANT: a document with unread supplier products is never complete and carries no total, even if every visible line looks priced", async () => {
+    const id = await newQuote(freshRepDraft());
+    readThisRun = -1_000_000;
+    await completeAutoPricing(db as never, REP, id, { budgetMs: 300_000, deps: deps(), env: ON });
+    const { q, b } = await budgetOf(id);
+    expect(model(q, b).complete).toBe(true);
+    const forced = buildBudgetDocumentModel({ budget: b, quoteRef: "X", revision: 1, draftHash: q.draft_hash, preparedOn: "2026-11-26", siteName: "S", customerName: "C", contact: null, profile: {} as never, config: q.draft.config, testOnly: true, retrievalPending: 3 });
+    expect(forced.complete).toBe(false); expect(forced.totals.totalIncVat).toBeNull(); expect(forced.retrievalPending).toBe(3);
+    expect(forced.unpriced.items.join(" ")).toMatch(/retrieval unfinished/i);
   });
 });

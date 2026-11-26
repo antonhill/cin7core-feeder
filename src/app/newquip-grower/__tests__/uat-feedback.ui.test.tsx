@@ -104,3 +104,19 @@ describe("BudgetQuotationPanel completes a Rep's supplier prices by itself (P0: 
     expect(h.complete).not.toHaveBeenCalled();
   });
 });
+
+describe("BudgetQuotationPanel: unfinished retrieval is never hidden", () => {
+  it("when retrieval keeps making no progress the panel says so plainly, offers a retry, and the retry runs the completion again", async () => {
+    h.complete.mockResolvedValue({ ok: true, data: { stillToRead: 7, done: false, status: "applied" } });
+    h.status.mockImplementation(async () => status()); // a FRESH status object per read, like the real action
+    render(<BudgetQuotationPanel quoteId="q1" canAct dirty={false} refreshKey="kx" />);
+    await waitFor(() => expect(screen.getByTestId("budget-retrieval-unfinished")).toBeTruthy(), { timeout: 5000 });
+    expect(screen.getByTestId("budget-retrieval-unfinished").textContent).toMatch(/NOT complete/);
+    const callsBefore = h.complete.mock.calls.length;
+    expect(callsBefore).toBeLessThanOrEqual(6); // the round cap is honoured
+    h.complete.mockResolvedValue({ ok: true, data: { stillToRead: 0, done: true, status: "applied" } });
+    fireEvent.click(screen.getByTestId("budget-retry-pricing"));
+    await waitFor(() => expect(h.complete.mock.calls.length).toBeGreaterThan(callsBefore));
+    await waitFor(() => expect(screen.queryByTestId("budget-retrieval-unfinished")).toBeNull());
+  });
+});
