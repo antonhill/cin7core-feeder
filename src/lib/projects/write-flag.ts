@@ -2,8 +2,10 @@
 // Used by every Cin7-writing Server Action.
 //
 //  * OFF unless NEWQUIP_CIN7_WRITES_ENABLED is exactly the string "true" (any other value, including "TRUE", "1", "yes", is OFF).
-//  * ON ONLY on a Vercel PREVIEW deployment (VERCEL_ENV === "preview"). Production, a local run (`next dev`/`next start`), a test runner or an unset/unknown value are
-//    ALWAYS OFF whatever the variable says: writes in Production stay disabled until the owner changes this code in a reviewed release, not by flipping a variable.
+//  * ON ONLY on (a) a Vercel PREVIEW deployment (VERCEL_ENV === "preview"), or (b) the dedicated NewQuip UAT deployment: VERCEL_ENV === "production" AND
+//    CIN7_CREDENTIAL_STORE === "uat" (that deployment reads and writes ONLY the separate UAT credential column, which exists for the NewQuip POC test organisation alone).
+//    Any other Production deployment (no CIN7_CREDENTIAL_STORE=uat), a local run (`next dev`/`next start`), a test runner or an unset/unknown value are
+//    ALWAYS OFF whatever the variable says. Added 2026-11-26 on the owner's explicit authorisation to run the connected Advanced Sale test on the UAT organisation.
 //  * ALWAYS OFF unless the deployment is wired to the required Supabase project (below). A Preview that inherited the wrong database
 //    cannot write to Cin7 even if the flag is on. Fails closed: an unreadable or missing URL is a mismatch.
 
@@ -28,7 +30,9 @@ export function supabaseWiring(env: Record<string, string | undefined>): Supabas
 }
 
 export function cin7WritesEnabled(env: Record<string, string | undefined>): boolean {
-  if (env.VERCEL_ENV !== "preview") return false;   // Preview only: Production, local and unknown environments never write
+  const preview = env.VERCEL_ENV === "preview";
+  const uatDeployment = env.VERCEL_ENV === "production" && env.CIN7_CREDENTIAL_STORE === "uat"; // both required; one flag set by mistake is not enough
+  if (!preview && !uatDeployment) return false;     // every other Production, local and unknown environment never writes
   if (!supabaseWiring(env).ok) return false;
   return env.NEWQUIP_CIN7_WRITES_ENABLED === "true";
 }

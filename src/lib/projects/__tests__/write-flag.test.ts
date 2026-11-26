@@ -14,7 +14,15 @@ describe("Cin7 write flag", () => {
   it("is ON only for the exact string 'true' on a PREVIEW deployment wired to the required Supabase project", () => {
     expect(cin7WritesEnabled({ ...WIRED, NEWQUIP_CIN7_WRITES_ENABLED: "true", VERCEL_ENV: "preview" })).toBe(true);
   });
-  it("is ALWAYS OFF on Production, a local run, a test runner or an unknown environment, even if the variable is 'true' and the project is the required one (A20)", () => {
+  it("is ON on the dedicated NewQuip UAT deployment only: Production AND CIN7_CREDENTIAL_STORE exactly 'uat' AND the flag AND the required Supabase project", () => {
+    const base = { ...WIRED, NEWQUIP_CIN7_WRITES_ENABLED: "true", VERCEL_ENV: "production" };
+    expect(cin7WritesEnabled({ ...base, CIN7_CREDENTIAL_STORE: "uat" })).toBe(true);
+    for (const store of [undefined, "", "UAT", "uat ", "toolbox", "prod"]) expect(cin7WritesEnabled({ ...base, CIN7_CREDENTIAL_STORE: store }), String(store)).toBe(false);
+    expect(cin7WritesEnabled({ ...base, CIN7_CREDENTIAL_STORE: "uat", NEWQUIP_CIN7_WRITES_ENABLED: "false" })).toBe(false);
+    expect(cin7WritesEnabled({ ...base, CIN7_CREDENTIAL_STORE: "uat", SUPABASE_URL: "https://aaaaaaaaaaaaaaaaaaaa.supabase.co" })).toBe(false);
+    for (const venv of [undefined, "", "development", "staging", "Production", "production "]) expect(cin7WritesEnabled({ ...base, CIN7_CREDENTIAL_STORE: "uat", VERCEL_ENV: venv }), String(venv)).toBe(false);
+  });
+  it("is ALWAYS OFF on a Production deployment without CIN7_CREDENTIAL_STORE=uat, a local run, a test runner or an unknown environment, even if the variable is 'true' and the project is the required one (A20)", () => {
     const on = { ...WIRED, NEWQUIP_CIN7_WRITES_ENABLED: "true" };
     for (const env of [{ VERCEL_ENV: "production" }, {}, { VERCEL_ENV: "development" }, { VERCEL_ENV: "Preview" }, { VERCEL_ENV: "preview " }, { VERCEL_ENV: "" }, { VERCEL_ENV: "staging" }, { NODE_ENV: "development" }, { NODE_ENV: "test" }]) {
       expect(cin7WritesEnabled({ ...on, ...env }), JSON.stringify(env)).toBe(false);
