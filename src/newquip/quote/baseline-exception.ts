@@ -22,11 +22,12 @@ export const BASELINE_EXCEPTION_MIN_REASON = 10;
  * deliberately NOT here: an Estimator can type a unit price on ANY blocking line (for example an unmapped or mismatched catalogue product), so a resolved price says nothing
  * about whether a Cin7 SKU should exist. Such a line keeps blocking the freeze until it is mapped.
  */
-export const BY_DESIGN_PRICED_BY = ["estimator_input", "penning_rate"] as const satisfies readonly PricedBy[];
+export const BY_DESIGN_PRICED_BY = ["estimator_input", "penning_rate", "budget_rate"] as const satisfies readonly PricedBy[];
 export type ByDesignPricedBy = (typeof BY_DESIGN_PRICED_BY)[number];
 export const PRICED_BY_LABEL: Record<ByDesignPricedBy, string> = {
   estimator_input: "priced by the Estimator (entered price)",
   penning_rate: "priced per running metre (penning rate)",
+  budget_rate: "priced from a documented Budget basis (fixed price or BOM cost, provisional)",
 };
 const isByDesign = (p: PricedBy | null): p is ByDesignPricedBy => p != null && (BY_DESIGN_PRICED_BY as readonly string[]).includes(p);
 

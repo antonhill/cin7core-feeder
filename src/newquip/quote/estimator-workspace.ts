@@ -50,7 +50,7 @@ export const manualPriceComplete = (reason: string, evidence: string, unitPrice:
 /** done = complete; open = needed from someone now; wait = cannot start yet; na = does not apply to this line. */
 export type IndicatorState = "done" | "open" | "wait" | "na";
 export interface TaskIndicators { mapping: IndicatorState; price: IndicatorState; cost: IndicatorState; verified: IndicatorState }
-export type TaskKind = "product" | "package" | "manual" | "cost" | "m75";
+export type TaskKind = "product" | "package" | "manual" | "cost" | "m75" | "budget_basis";
 export type TaskTag = "PRODUCT" | "COMPONENTS" | "PRICE" | "COST";
 export interface WorkspaceTask {
   /** The budget line's item key. */
@@ -160,7 +160,7 @@ export interface Workspace {
 
 /** The ONE plain-English status shown for a line in the primary list (the four underlying readiness checks stay in the editor and in the derivation). */
 export type StatusWord = "Confirmation needed" | "Supplier cost needed" | "Product selection needed" | "Component pricing needed" | "Price needed" | "Evidence needed" | "Provisional" | "Complete";
-export const taskStatusWord = (t: Pick<WorkspaceTask, "kind"> & { confirmOnly?: boolean }): StatusWord => (t.confirmOnly ? "Confirmation needed" : t.kind === "cost" ? "Supplier cost needed" : t.kind === "product" ? "Product selection needed" : t.kind === "m75" ? "Price needed" : "Component pricing needed");
+export const taskStatusWord = (t: Pick<WorkspaceTask, "kind"> & { confirmOnly?: boolean }): StatusWord => (t.confirmOnly || t.kind === "budget_basis" ? "Confirmation needed" : t.kind === "cost" ? "Supplier cost needed" : t.kind === "product" ? "Product selection needed" : t.kind === "m75" ? "Price needed" : "Component pricing needed");
 /** A line whose only open item is its pricing-evidence record (it gates sign-off, so it belongs in the OPEN list, not the completed group). */
 export const needsEvidence = (c: Pick<CompleteLine, "evidence">): boolean => !!c.evidence && c.evidence.state !== "recorded";
 export const completeStatusWord = (c: CompleteLine): StatusWord => (needsEvidence(c) ? "Evidence needed" : c.provisional ? "Provisional" : "Complete");
@@ -198,6 +198,8 @@ export function targetOf(l: BridgeLine): { kind: TaskKind | "complete_manual"; s
   const skus = l.sku ? [l.sku] : componentSkus(l);
   if (l.status === "estimator_price_required" && l.itemKey === "flex_auger") return { kind: "m75", skus: [] };
   if (l.pricedBy === "estimator_resolution") return { kind: "complete_manual", skus };
+  // A documented Budget basis (door BOM cost, fixed panel price): its own editor, never a supplier-cost or manual-price form.
+  if (l.pricedBy === "budget_rate" || (l.budgetBasis && l.status !== "priced")) return { kind: "budget_basis", skus: [] };
   const isPackage = !!l.components && l.components.length > 0;
   if (isPackage && (l.components ?? []).some((c) => c.status === "identity_unresolved" || !c.sku)) return { kind: "manual", skus: [] };
   if (isPackage) return { kind: "package", skus };
@@ -220,6 +222,16 @@ export function buildWorkspace(i: { budget: BudgetQuote; view: PricingWorkspaceV
     // Estimator-priced by design (M75, penning): never a product mapping, no supplier cost.
     if (l.pricedBy === "estimator_input" || l.pricedBy === "penning_rate") {
       complete.push({ ...base, how: l.pricedBy === "penning_rate" ? "Pig-size rate (not a product mapping)" : "Your price, by design (not a product mapping)", unit: l.unitPrice, revenue: l.revenueExTax, provisional: false, estimatorPriced: true, costState: "n/a", evidence: evidenceOf(l.itemKey as string) });
+      continue;
+    }
+    // A DOCUMENTED BUDGET BASIS (door BOM cost + markup once; fixed control-panel price): confirmed by the Estimator, evidenced, provisional. No supplier cost exists or is asked for.
+    if (l.pricedBy === "budget_rate" && l.status === "priced") {
+      const ev = evidenceOf(l.itemKey as string);
+      complete.push({ ...base, how: `Documented Budget basis, provisional (not a supplier cost)${ev?.state === "recorded" ? " · evidence recorded" : " · pricing evidence still to record"}`, unit: l.unitPrice, revenue: l.revenueExTax, provisional: true, estimatorPriced: true, costState: "n/a", evidence: ev });
+      continue;
+    }
+    if (l.budgetBasis && l.status !== "priced") {
+      tasks.push({ ...base, kind: "budget_basis", tags: ["PRICE"], meta: `${qtyText(l.quantity)}`, why: l.budgetBasis.kind === "fixed_selling_price" ? "Confirm the fixed Budget selling price. No supplier cost, freight or markup applies." : "Confirm the documented Budget cost basis. The project markup is applied once, with no freight. No supplier is required.", group: "decision", indicators: { mapping: "open", price: "open", cost: "na", verified: "na" }, skus: [], action: "Confirm Budget basis" });
       continue;
     }
     // The M75 system price: the Estimator's own commercial price per system. It has no supplier cost and is not a product mapping, so it is a PRICE task (never a package or component task).

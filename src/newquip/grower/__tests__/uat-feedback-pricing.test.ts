@@ -35,7 +35,10 @@ describe("NQ-Q-0003 revision 1: line-by-line diagnosis", () => {
     const expected: Record<string, number> = { pvc_door: 12, controller: 3, control_panel: 3, pad_cooling: 3, cone_fans: 12 };
     for (const [k, qty] of Object.entries(expected)) {
       expect(line(k).quantity, k).toBe(qty);
-      expect(line(k).status, k).toBe("unmapped"); // the intended source is an Estimator-confirmed Cin7 product; none exists, so no price is looked up or invented
+      // The intended source is an Estimator-confirmed Cin7 product; none exists, so no price is looked up or invented. The control panel (controller selected) alone has a documented FIXED Budget price that
+      // awaits the Estimator's confirmation: still unpriced here, but it says what it is waiting for.
+      expect(line(k).status, k).toBe(k === "control_panel" ? "package_unconfirmed" : "unmapped");
+      if (k === "control_panel") expect(line(k).budgetBasis?.kind).toBe("fixed_selling_price");
       expect(line(k).sku, k).toBeNull();
       expect(line(k).revenueExTax, k).toBeNull();
     }

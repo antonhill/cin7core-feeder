@@ -11,14 +11,15 @@ import type { EstimatorPricing, ManualPriceEvidence } from "./types";
 // OPT-IN with supplier pricing: when `estimator.pricing` is not enabled nothing here applies and the legacy POC behaviour is unchanged. Items whose SKU supplier cost is already governed
 // by cost verification (a manual price on a SKU line) are excluded: cost verification covers them.
 
-export interface ManualItem { itemKey: string; label: string; /** The item's current unit price in cents (the line's revenue when it has no unit price): what the evidence is bound to. */ unitPriceCents: number; pricedBy: "estimator_input" | "estimator_resolution" | "penning_rate" }
+export interface ManualItem { itemKey: string; label: string; /** The item's current unit price in cents (the line's revenue when it has no unit price): what the evidence is bound to. */ unitPriceCents: number; pricedBy: "estimator_input" | "estimator_resolution" | "penning_rate" | "budget_rate" }
 
-const MANUAL_BY = new Set(["estimator_input", "estimator_resolution", "penning_rate"]);
+const MANUAL_BY = new Set(["estimator_input", "estimator_resolution", "penning_rate", "budget_rate"]);
 
 /**
  * Priced budget lines the Estimator prices by hand that cost verification does NOT govern. Sorted by key. Never invents a SKU.
  *  - M75 / penning (`estimator_input`, `penning_rate`): the Estimator prices the system as a whole. Cost verification already skips these lines entirely (see skuNeedsOf), whatever
  *    component SKUs they list for reference (the M75 line lists some), so they always need evidence here.
+ *  - a documented Budget basis (`budget_rate`: the door BOM cost, the fixed control-panel price): no supplier exists, so the Estimator's recorded evidence note IS the verification of the basis. Same record, same hash, same gate.
  *  - a manual price resolution (`estimator_resolution`, e.g. LED lighting): needs evidence only when the line has no SKU of its own and no non-reference component SKU; a line whose
  *    SKU carries a supplier cost is governed by cost verification (manualPricedSkus) instead.
  */

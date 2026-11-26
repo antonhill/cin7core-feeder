@@ -16,7 +16,8 @@ import { applyEditor, revisionReason, type SkuEditor } from "@/newquip/quote/wor
 import { applyEstimatorPricingAction, attestEstimatorRatesAction, getEstimatorPricingAction, priceFromCin7Action, recordManualPriceEvidenceAction, verifyEstimatorCostsAction } from "../pricing-actions";
 import { AutoSummary, PricingExceptions, ReadyForVerification } from "./AutoPricingSections";
 import type { IndicativeComparison } from "@/newquip/pricing/comparison";
-import { M75PriceForm, ManualPriceForm, PackageConfirm, ProductChoice, Rail, SkuCostForm, type SaveResult } from "./WorkspaceEditors";
+import { DOOR_SIZES, isDoorSize } from "@/newquip/grower/door-sizes";
+import { BudgetBasisConfirm, M75PriceForm, ManualPriceForm, PackageConfirm, ProductChoice, Rail, SkuCostForm, type SaveResult } from "./WorkspaceEditors";
 import { CompleteGroup, EvidenceOpenRow, HowItWorks, NextActionBar, OpenRow, ReadinessList, RepItems, SummaryPanel, WorkspaceHeader } from "./WorkspaceParts";
 
 // NewQuip Phase 2: the ESTIMATOR WORKSPACE. It replaces the stacked Line decisions / Product mappings / Cin7 cost capture / Margin detail / Cost overrides / supplier-pricing forms for a quotation
@@ -73,6 +74,7 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [open, setOpen] = useState<Open>(null);
   const [dirty, setDirty] = useState(false);
+  const [busyBasis, setBusyBasis] = useState(false);
   const [pendingNav, setPendingNav] = useState<Open | "list" | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const readSeq = useRef(0);
@@ -114,8 +116,8 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
   // ── navigation with an unsaved-editor guard ──
   const go = (to: Open | "list") => { if (dirty) { setPendingNav(to); return; } setOpen(to === "list" ? null : to); setNote(null); };
   const hasChoices = (id: string) => manualSelectionSkusFor(id as GrowerItemKey, templateRevisionOf(p.draft)).length > 0;
-  const openTask = (t: WorkspaceTask) => go({ id: t.id, kind: t.kind !== "m75" && hasChoices(t.id) ? "product" : t.kind });
-  const openLine = (id: string) => { const l = lineOf(id); if (!l) return; const tg = targetOf(l); go({ id, kind: tg.kind === "complete_manual" ? "manual" : tg.kind !== "m75" && hasChoices(id) ? "product" : tg.kind }); };
+  const openTask = (t: WorkspaceTask) => go({ id: t.id, kind: t.kind !== "m75" && t.kind !== "budget_basis" && hasChoices(t.id) ? "product" : t.kind });
+  const openLine = (id: string) => { const l = lineOf(id); if (!l) return; const tg = targetOf(l); go({ id, kind: tg.kind === "complete_manual" ? "manual" : tg.kind !== "m75" && tg.kind !== "budget_basis" && hasChoices(id) ? "product" : tg.kind }); };
 
   // ── saves ──
   /**
@@ -234,6 +236,13 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
       ) : undefined;
       return <ManualPriceForm key={`manual-${open.id}`} itemKey={open.id} label={line.label} quantity={qty} existing={manualHere} canEdit={canEdit} parts={parts} save={saveManual} onDirty={setDirty} onSaved={() => setNote("Saved. This line is priced as a manual, provisional quotation price.")} remove={removeManual} />;
     }
+    if (open.kind === "budget_basis") {
+      const confirmed = p.draft.estimator.confirmedPackages.includes(open.id as GrowerItemKey);
+      const size = open.id === "pvc_door" ? doorSizeLabelOf(p.draft.config.doorSize) : null;
+      const kind = line.budgetBasis?.kind ?? (open.id === "control_panel" ? "fixed_selling_price" : "bom_cost_markup");
+      const panel = open.id === "control_panel" ? `Control panel for CL1 and/or BF (${[p.draft.config.optionalEquipment?.controller ? "CL1" : null, p.draft.config.optionalEquipment?.silo_weighing ? "BF" : null].filter(Boolean).join(" + ") || "none selected"})` : null;
+      return <BudgetBasisConfirm key={`bb-${open.id}`} label={line.label} quantity={qty} unitPrice={line.status === "priced" ? line.unitPrice : null} basisKind={kind} plain={line.provisional?.plain ?? line.budgetBasis?.plain ?? "Provisional: a documented Budget basis, not an approved NewQuip price."} detail={line.budgetBasis?.detail ?? line.reason} configuration={size ? `PVC door ${size} (chosen by the Rep)` : panel} confirmed={confirmed} canEdit={canEdit} busy={busyBasis} onConfirm={(yes) => { setBusyBasis(true); void saveConfirmed(open.id, yes).finally(() => setBusyBasis(false)); }} onChooseProduct={hasChoices(open.id) ? () => go({ id: open.id, kind: "product" }) : undefined} />;
+    }
     if (open.kind === "package") {
       const confirmed = p.draft.estimator.confirmedPackages.includes(open.id as GrowerItemKey);
       return <PackageEditor templateRevision={templateRevisionOf(p.draft)} key={`pkg-${open.id}`} line={line} confirmed={confirmed} bundle={bundle} canEdit={canEdit} onConfirm={(yes) => saveConfirmed(open.id, yes)} costForm={costForm} onManual={() => go({ id: open.id, kind: "manual" })} />;
@@ -298,6 +307,8 @@ export function EstimatorWorkspace(p: EstimatorWorkspaceProps) {
     </div>
   );
 }
+
+const doorSizeLabelOf = (size: unknown): string | null => (isDoorSize(size) ? `${DOOR_SIZES[size].label} (${DOOR_SIZES[size].sku})` : null);
 
 function PackageEditor({ templateRevision, line, confirmed, bundle, canEdit, onConfirm, costForm, onManual }: {
   templateRevision: TemplateRevision;

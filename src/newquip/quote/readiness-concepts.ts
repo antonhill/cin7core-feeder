@@ -67,7 +67,7 @@ export function estimatorCostingComplete(draft: QuoteDraft, costEvaluation: Quot
     try {
       const sheet = buildMarginSheet(b, draft.estimator.costOverrides ?? {});
       // Lines the Estimator prices by design (excluded from margin: M75, penning, manual prices) legitimately carry no cost: they do not count as missing.
-      const byDesign = new Set(b.lines.filter((l) => l.pricedBy === "estimator_input" || l.pricedBy === "penning_rate" || l.pricedBy === "estimator_resolution").map((l) => l.itemKey as string));
+      const byDesign = new Set(b.lines.filter((l) => l.pricedBy === "estimator_input" || l.pricedBy === "penning_rate" || l.pricedBy === "estimator_resolution" || l.pricedBy === "budget_rate").map((l) => l.itemKey as string));
       const missing = sheet.lines.filter((l) => l.costCents === null && !byDesign.has(l.itemKey)).map((l) => l.label);
       if (missing.length) cost.push(`Project margin not available: ${missing.length} line(s) have no cost (${missing.slice(0, 5).join("; ")}${missing.length > 5 ? "; ..." : ""}).`);
     } catch (e) {

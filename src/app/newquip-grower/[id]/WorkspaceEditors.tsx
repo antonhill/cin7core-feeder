@@ -222,6 +222,36 @@ export function PackageConfirm({ templateRevision, itemKey, confirmed, canEdit, 
   );
 }
 
+/**
+ * A DOCUMENTED BUDGET BASIS (door BOM cost + markup once; fixed control-panel price): the Estimator confirms the configuration, quantity and basis. There is NO supplier to choose and no cost form: these lines have no
+ * supplier-cost record by design (see BudgetBasisKind). The confirmation is saved with the draft; the pricing-evidence note that verifies the basis is recorded from the line's evidence row.
+ */
+export function BudgetBasisConfirm({ label, quantity, unitPrice, basisKind, plain, detail, configuration, confirmed, canEdit, busy, onConfirm, onChooseProduct }: {
+  label: string; quantity: number; unitPrice: number | null; basisKind: "fixed_selling_price" | "bom_cost_markup" | null; plain: string; detail: string; configuration?: string | null;
+  confirmed: boolean; canEdit: boolean; busy: boolean; onConfirm: (yes: boolean) => void; onChooseProduct?: () => void;
+}) {
+  const fixed = basisKind === "fixed_selling_price";
+  return (
+    <div className="flex min-w-0 flex-col gap-4" data-testid="budget-basis-editor">
+      <Section title={`A. Confirm the ${fixed ? "fixed Budget selling price" : "documented Budget cost basis"}`} hint={fixed ? "no supplier, no freight, no markup" : "no supplier, markup once, no freight"} testId="budget-basis-confirm">
+        <p className="mb-2 text-xs text-amber-900" data-testid="budget-basis-plain">{plain}</p>
+        <dl className="mb-3 grid gap-1 text-sm sm:grid-cols-[10rem_1fr]">
+          {configuration && <><dt className="text-slate-700">Configuration</dt><dd data-testid="budget-basis-config">{configuration}</dd></>}
+          <dt className="text-slate-700">Quantity</dt><dd className="tabular-nums">{quantity.toLocaleString("en-ZA").replace(/\s/g, ",")}</dd>
+          <dt className="text-slate-700">Basis</dt><dd data-testid="budget-basis-detail">{detail}</dd>
+          {unitPrice != null && <><dt className="text-slate-700">Selling price</dt><dd className="tabular-nums" data-testid="budget-basis-price">{money(unitPrice)} each, {money(unitPrice * quantity)} ex VAT</dd></>}
+        </dl>
+        <label className={`flex cursor-pointer items-start gap-3 rounded-lg border-[1.5px] p-3 text-sm ${confirmed ? "border-blue-700 bg-sky-50" : "border-slate-400"}`}>
+          <input type="checkbox" className="mt-0.5 size-5" checked={confirmed} disabled={!canEdit || busy} onChange={(e) => onConfirm(e.target.checked)} />
+          <span>I confirm the configuration, quantity and {fixed ? "fixed Budget selling price" : "Budget cost basis"} for {label}. It stays provisional and is not an approved NewQuip price. <span className="text-slate-700">Recorded with your name and the time when saved.</span></span>
+        </label>
+      </Section>
+      <div className="rounded-lg bg-sky-50 px-4 py-3 text-[13px] text-sky-950" data-testid="budget-basis-note">No supplier cost is needed or asked for here. After you confirm, record the pricing evidence that verifies this basis (the line then shows under &ldquo;Needs you&rdquo;). The Manager approves it as a Budget-priced line, not as a missing supplier cost.</div>
+      {onChooseProduct && <p className="text-sm text-slate-800">Prefer to price it from a Cin7 supplier product? <button type="button" className="font-semibold text-blue-800 underline" onClick={onChooseProduct}>Choose a Cin7 product instead</button>.</p>}
+    </div>
+  );
+}
+
 /** The M75 system price: the Estimator's commercial price per system, ex VAT. It is NOT a product mapping and has no supplier cost, so there is no cost, FX or verification here. Saved through the draft save. */
 export function M75PriceForm({ itemKey, label, quantity, existing, canEdit, save, onDirty, onSaved }: {
   itemKey: string; label: string; quantity: number; existing: number | null | undefined; canEdit: boolean;

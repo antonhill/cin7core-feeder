@@ -60,7 +60,7 @@ describe("every SKU the Budget looks up is in the list automatic pricing sends t
   it("(B) the union of needs covers every SKU the commercial mappings reference, except the documented never-priced-from-Cin7 references", () => {
     const union = new Set<string>(); for (const c of matrix) for (const s of needsOf(draftFor(c))) union.add(s);
     // By design NOT looked up in Cin7 for the Budget: the M75 reference parts (the Rep enters the price per system), the PVC door choices (priced from the Budget basis, or by an Estimator-confirmed product), the feeder alternative (an Estimator choice).
-    const BY_DESIGN = new Set(["NQ1163", "NQ1223", "NQ1764", "NQ1227", "NQ1942", "NQ.TUBE.63", "NQ.TUBE.75", "T3750001", "TSA3750505", "T3000365", "NQ3132", "KNQ050-900", "KNQ160", "NQ3444", "NQ2161", "NQ2281", "PNQ002"]);
+    const BY_DESIGN = new Set(["NQ1163", "NQ1223", "NQ1764", "NQ1227", "NQ1942", "NQ.TUBE.63", "NQ.TUBE.75", "T3750001", "TSA3750505", "T3000365", "NQ3132", "KNQ050-900", "KNQ160", "NQ3444", "NQ3444-B", "NQ2161", "NQ2281", "PNQ002"]);
     const unrequested = referencedSkus().filter((s) => !union.has(s) && !BY_DESIGN.has(s) && !(s in EXCLUDED_SKUS));
     expect(unrequested).toEqual([]);
   });

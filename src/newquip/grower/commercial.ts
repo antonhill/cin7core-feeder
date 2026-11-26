@@ -319,7 +319,7 @@ export const COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMappin
   pvc_door: {
     kind: "unresolved", itemKey: "pvc_door",
     reason: "MANUAL SELECTION — the estimator picks the door product. There is no automatic door-sizing rule (Sean Round 2 #11). Sean (2026-11) proposes NQ3444 (Cin7: 'PVC SINGLE DOORS'; 'a mixture of Kunlong and local parts') as the Grower House door and replaced NQ2112, NQ2113 and NQ2114. Cin7's description gives no door size, so the specification cannot be validated from the catalogue: the Estimator confirms the door and its size. Whether NQ3444 is one complete assembly or needs components is not stated, so no component is added alongside it.",
-    manualSelectionSkus: ["NQ3444", "NQ2161", "NQ2281"],
+    manualSelectionSkus: ["NQ3444", "NQ3444-B", "NQ2161", "NQ2281"],
     proposedSku: "NQ3444",
     hasSuppliedReference: true,
     retiredSkus: ["NQ2112", "NQ2113", "NQ2114"],
@@ -533,6 +533,7 @@ export function savedMappingCaution(packageKey: string, skus: readonly string[])
 export const CHOICE_PRODUCT_NAMES: Readonly<Record<string, string>> = {
   NQ2112: "WHITE DOOR WITH UV 35MM (1980L × 600W)", NQ2113: "WHITE DOOR WITH UV 35MM (1980L × 1000W) NO WINDOWS", NQ2114: "WHITE DOOR WITH UV 35MM (1970L × 1000W)", // the original template's doors (quotations created under it keep them)
   NQ3444: "PVC SINGLE DOORS: Sean's proposed Grower House door. Cin7 gives no size, so confirm the door and its size",
+  "NQ3444-B": "PVC SINGLE DOORS, 2.1 × 1.0 m (the smaller of the two door sizes)",
   NQ2161: "WHITE DOOR WITH UV 35MM (1980 × 1000W) WITH WINDOWS",
   NQ2281: "35MM WHITE DOOR (1990 × 790MM)",
 };

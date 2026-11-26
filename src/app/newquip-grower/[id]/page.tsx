@@ -388,7 +388,7 @@ export default function QuoteEditorPage() {
       const sheet = final ? q.accepted_baseline?.internalMargin : buildMarginSheet(budget, previewCostOverrides(draft.estimator.costOverrides).usable);
       if (!sheet) return null;
       // Lines the Estimator prices by design (M75, penning, a resolved manual price) have no supplier cost and are exempt from the costing gate: they keep the margin INDICATIVE but are not "missing cost".
-      const byDesign = new Set(budget.lines.filter((b) => b.pricedBy === "estimator_input" || b.pricedBy === "penning_rate" || b.pricedBy === "estimator_resolution").map((b) => b.label));
+      const byDesign = new Set(budget.lines.filter((b) => b.pricedBy === "estimator_input" || b.pricedBy === "penning_rate" || b.pricedBy === "estimator_resolution" || b.pricedBy === "budget_rate").map((b) => b.label));
       const gaps = sheet.project.missingCostLines;
       return { incomplete: sheet.project.incomplete, projectCostCents: sheet.project.costCents, projectMarginPct: sheet.project.marginPct, missing: gaps.filter((l) => !byDesign.has(l)).length, exempt: gaps.filter((l) => byDesign.has(l)) };
     } catch { return null; }

@@ -87,6 +87,7 @@ export function assessReadiness(draft: QuoteDraft, calc: GrowerCalculationResult
     }
     for (const b of budget.lines) {
       if (b.pricedBy === "estimator_input") items.estimatorInputs.push({ label: `${b.label} — commercial price`, detail: b.reason });
+      if (b.pricedBy === "budget_rate") items.estimatorInputs.push({ label: `${b.label} — documented Budget basis`, detail: b.reason });
       if (b.pricedBy === "penning_rate") items.autoCalculated.push({ label: `${b.label} — priced`, detail: b.reason });
       if (b.pricedBy === "estimator_resolution") items.pricingExceptions.push({ label: b.label, detail: b.reason });
       if (b.status === "unmapped" || b.status === "package_unconfirmed" || b.status === "not_in_price_source" || b.status === "package_incomplete") {

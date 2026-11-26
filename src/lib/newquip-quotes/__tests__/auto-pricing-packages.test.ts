@@ -61,8 +61,8 @@ describe("the confirmed package definitions (verified in code, nothing invented)
     expect(packageFor("cup_drinker", "grower-2026-10")!.alternativeIdentity).toMatchObject({ sku: "NB3542-03" });
     expect(bulkConfirmablePackageKeys(["cup_drinker", "led_light"], TEMPLATE_REVISION_CURRENT)).not.toContain("cup_drinker");
   });
-  it("PVC door: the Estimator chooses among NQ3444, NQ2161 and NQ2281 only (no invented specification)", () => {
-    expect(manualSelectionSkusFor("pvc_door", TEMPLATE_REVISION_CURRENT)).toEqual(["NQ3444", "NQ2161", "NQ2281"]);
+  it("PVC door: the Estimator chooses among NQ3444, NQ3444-B (the 2.1 x 1.0 m size), NQ2161 and NQ2281 only (no invented specification)", () => {
+    expect(manualSelectionSkusFor("pvc_door", TEMPLATE_REVISION_CURRENT)).toEqual(["NQ3444", "NQ3444-B", "NQ2161", "NQ2281"]);
   });
 });
 

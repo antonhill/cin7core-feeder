@@ -36,6 +36,16 @@ export type BridgeComponentStatus = "priced" | "identity_unresolved" | "not_in_p
 /** Who/what produced a line's price — shown on the estimator view and frozen in the baseline. */
 export type PricedBy = "price_source" | "penning_rate" | "estimator_input" | "estimator_resolution" | "budget_rate";
 
+/**
+ * The THREE explicit pricing sources (NewQuip decision, 26 Nov 2026), each with its own rules, never one blurred "manual price":
+ *   A. supplier-costed   `price_source`    a Cin7 supplier cost x currency x freight x markup, independently verified (a supplier IS required).
+ *   B. Budget BOM cost   `budget_rate`     (BudgetBasisKind "bom_cost_markup") a documented internal BOM cost + the project markup ONCE, no freight. No supplier exists, none is invented.
+ *   C. fixed Budget price `budget_rate`    (BudgetBasisKind "fixed_selling_price") a fixed selling price: no freight, no markup, no supplier, no catalogue SKU.
+ * B and C are only ever applied after the Estimator CONFIRMS the basis for the item (`confirmedPackages`), need a recorded pricing-evidence note before the price can be final, stay PROVISIONAL, and are
+ * Estimator-priced "by design" at Manager approval. They are never an approved NewQuip price.
+ */
+export type BudgetBasisKind = "fixed_selling_price" | "bom_cost_markup";
+
 /** Commercial charges the ESTIMATOR enters by hand (no automatic freight/installation model — Sean Round 2 #12). */
 export type ChargeKey = "delivery" | "installation" | "commissioning" | "concrete_slat_delivery";
 export const CHARGE_LABEL: Record<ChargeKey, string> = {
@@ -85,6 +95,8 @@ export interface BridgeLine {
   components?: BridgeComponent[];
   /** Set ONLY by a Budget evaluation (BudgetOptions.provisionalPackages) on a package priced provisionally, i.e. WITHOUT the Estimator's confirmation. Rep-safe: plain wording only, never a product code, cost or rate. */
   provisional?: { plain: string };
+  /** Set on an UNCONFIRMED line that has a documented Budget basis the Estimator can confirm (see BudgetBasisKind). `plain` is Rep-safe; `detail` (the cost / fixed amount) is for cost-entitled viewers only. */
+  budgetBasis?: { kind: BudgetBasisKind; plain: string; detail?: string };
   /** Where the product came from: the established catalogue default (no Estimator decision needed) or an explicit per-quotation Estimator confirmation. Absent when no product is mapped. */
   mappingSource?: "catalogue_default" | "estimator" | "budget_default";
 }
@@ -316,11 +328,16 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
       continue;
     }
 
-    // ---- CONTROL PANEL: NewQuip's interim Budget amount (Budget evaluation, current template only; the Estimator's own confirmation or manual price always wins) ----
-    if (g.itemKey === "control_panel" && opts.provisionalPackages === true && revision === TEMPLATE_REVISION_CURRENT && !opts.confirmedMappings?.control_panel && !validResolution(opts.priceResolutions?.control_panel)) {
+    // ---- CONTROL PANEL: NewQuip's interim FIXED Budget selling price (current template only; the Estimator's own mapping or manual price always wins). It is applied in a Budget evaluation, or once the Estimator has CONFIRMED the basis. ----
+    const budgetAllowed = opts.provisionalPackages === true || Boolean(opts.confirmedPackages?.has(g.itemKey));
+    if (g.itemKey === "control_panel" && revision === TEMPLATE_REVISION_CURRENT && !opts.confirmedMappings?.control_panel && !validResolution(opts.priceResolutions?.control_panel)) {
       const panelRate = interimPanelRate(opts.panelSelection);
       if (panelRate != null) {
-        bridge.push({ ...priceByPerson(g, panelRate, "budget_rate", INTERIM_PANEL_REASON), provisional: { plain: INTERIM_PANEL_PLAIN } });
+        if (budgetAllowed) {
+          bridge.push({ ...priceByPerson(g, panelRate, "budget_rate", INTERIM_PANEL_REASON), provisional: { plain: INTERIM_PANEL_PLAIN } });
+        } else {
+          fail({ ...emptyLine(g), status: "package_unconfirmed", reason: "The fixed Budget price awaits the Estimator's confirmation.", budgetBasis: { kind: "fixed_selling_price", plain: INTERIM_PANEL_PLAIN, detail: `Fixed Budget selling price R${panelRate.toLocaleString("en-ZA")} per panel, ex VAT. No freight, no markup, no supplier cost.` } }, `${g.label}: Budget price awaiting confirmation`);
+        }
         continue;
       }
     }
@@ -363,22 +380,28 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
     // BUDGET only: with no Estimator confirmation, the door / an optional item may use a NewQuip-APPROVED default product or dated rate (never confirms anything; the line is provisional).
     const isCurrentDoor = g.itemKey === "pvc_door" && revision === TEMPLATE_REVISION_CURRENT;
     // The door has one Budget basis PER SIZE: with no size chosen there is nothing to price from, and the line says so.
-    const basis = !explicit && !defaulted && !validResolution(resolution) && opts.budgetBasis && !(isCurrentDoor && !opts.doorSpecification) ? usableBudgetBasis(opts.budgetBasis, g.itemKey, opts.budgetAsOf ?? new Date().toISOString().slice(0, 10), isCurrentDoor ? opts.doorSpecification ?? undefined : undefined) : null;
+    const basisAll = !explicit && !defaulted && !validResolution(resolution) && opts.budgetBasis && !(isCurrentDoor && !opts.doorSpecification) ? usableBudgetBasis(opts.budgetBasis, g.itemKey, opts.budgetAsOf ?? new Date().toISOString().slice(0, 10), isCurrentDoor ? opts.doorSpecification ?? undefined : undefined) : null;
+    // An approved default PRODUCT is a Budget-only convenience (a rate basis is offered to the Estimator for confirmation, see below).
+    const basis = basisAll && basisAll.kind === "default_sku" && opts.provisionalPackages !== true ? null : basisAll;
+    /** A documented Budget basis the Estimator has NOT yet confirmed (an Estimator evaluation): offered on the unpriced line, never priced. */
+    let offered: BridgeLine["budgetBasis"] | undefined;
     if (basis?.kind === "rate") {
       const priced = budgetRateSellingPrice(basis, opts.budgetMarkupBps ?? null, opts.budgetAsOf ?? new Date().toISOString().slice(0, 10));
-      if (priced) {
+      if (priced && budgetAllowed) {
         bridge.push({ ...priceByPerson(g, priced.unitPriceExVat, "budget_rate", `Budget allowance (${basis.specification}), not an Estimator-confirmed product.`), provisional: { plain: BUDGET_BASIS_PLAIN } });
         continue;
       }
+      if (priced) offered = { kind: basis.basis === "selling_price" ? "fixed_selling_price" : "bom_cost_markup", plain: BUDGET_BASIS_PLAIN, detail: `${basis.specification}: R${priced.unitPriceExVat.toLocaleString("en-ZA")} each ex VAT, from the approved Budget register.` };
     }
     // UAT-ONLY provisional cost basis for the door size (isolated, never an approval): same markup, ONCE, no freight, always provisional.
     const uat = isCurrentDoor && opts.doorSpecification && !explicit && !defaulted && !basis && !validResolution(resolution) ? uatRateFor(opts.uatProvisionalRates, g.itemKey, opts.doorSpecification) : null;
     if (uat) {
       const priced = budgetRateSellingPrice({ kind: "rate", amount: uat.amount, basis: "cost", evidence: { asOf: uat.asOf } } as never, opts.budgetMarkupBps ?? null, opts.budgetAsOf ?? new Date().toISOString().slice(0, 10));
-      if (priced) {
+      if (priced && budgetAllowed) {
         bridge.push({ ...priceByPerson(g, priced.unitPriceExVat, "budget_rate", "UAT provisional costing assumption (not an approval)."), provisional: { plain: UAT_PROVISIONAL_PLAIN } });
         continue;
       }
+      if (priced) offered = { kind: "bom_cost_markup", plain: UAT_PROVISIONAL_PLAIN, detail: `${opts.doorSpecification}: BOM cost R${uat.amount.toLocaleString("en-ZA")} plus the project markup once, no freight = R${priced.unitPriceExVat.toLocaleString("en-ZA")} each ex VAT. UAT-only assumption, not an approved NewQuip price.` };
     }
     // NewQuip-CONFIRMED Budget default product (budget-default-products.ts): Budget evaluation, current template, nothing confirmed by the Estimator and no approved register entry. Provisional; a missing cost leaves the line unpriced.
     const confirmedDefault = !explicit && !defaulted && !basis && !validResolution(resolution) && opts.provisionalPackages === true && revision === TEMPLATE_REVISION_CURRENT && isOptionalItemKey(g.itemKey) ? confirmedBudgetDefaultSku(g.itemKey) : null;
@@ -390,7 +413,7 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
     const isAlternative = !!confirmed && alternativesFor(g.itemKey).some((a) => a.sku === confirmed);
     const sku = g.itemKey === "pvc_door" || isOptionalItemKey(g.itemKey) ? confirmed : confirmed && (confirmed === expected || isAlternative) ? confirmed : null;
     if (!sku) {
-      fail({ ...emptyLine(g), status: "unmapped", reason: confirmed && expected ? `Confirmed ${confirmed} does not match the expected ${expected}.` : isCurrentDoor && !opts.doorSpecification ? "Choose the door size to price this item." : "Product mapping not yet confirmed." }, `${g.label}: product mapping ${expected ? `to ${expected} ` : ""}not confirmed`);
+      fail({ ...emptyLine(g), status: "unmapped", reason: confirmed && expected ? `Confirmed ${confirmed} does not match the expected ${expected}.` : isCurrentDoor && !opts.doorSpecification ? "Choose the door size to price this item." : offered ? "The documented Budget basis awaits the Estimator's confirmation." : "Product mapping not yet confirmed.", ...(offered ? { budgetBasis: offered } : {}) }, offered ? `${g.label}: Budget basis awaiting confirmation` : `${g.label}: product mapping ${expected ? `to ${expected} ` : ""}not confirmed`);
       continue;
     }
     const r = opts.priceSource.priceFor(sku, opts.quoteType);
@@ -445,7 +468,7 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
   const totals = computeQuote(engineLines, { taxInclusive: opts.taxInclusive });
   // A viewer who may not see cost must not receive it through ANY field — including per-component cost inside a package.
   const lines = withhold
-    ? bridge.map((l) => ({ ...l, estimatedCost: null, estimatedGP: null, marginPct: null, components: l.components?.map((c) => ({ ...c, estimatedCost: null })) }))
+    ? bridge.map((l) => ({ ...l, estimatedCost: null, estimatedGP: null, marginPct: null, components: l.components?.map((c) => ({ ...c, estimatedCost: null })), ...(l.budgetBasis ? { budgetBasis: { kind: l.budgetBasis.kind, plain: l.budgetBasis.plain } } : {}) }))
     : bridge;
   return {
     lines,
