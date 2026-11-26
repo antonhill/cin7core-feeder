@@ -56,4 +56,12 @@ describe("Itemised cost review: grouped, compact, nothing hidden", () => {
     const [g] = groupCostReview(rows);
     expect(g.totalCostCents).toBeNull(); expect(g.sellingCents).toBe(48_000);
   });
+  it("a partly-unapproved group says how many; a shared SKU forms one combined group in a stable order; a cost with no supplier is not shown twice", () => {
+    const rows = buildCostReview({ rows: [row("A", ["y", "x"]), row("B", ["x", "y"], { freightSource: "Approved policy v3." }), row("C", ["z"], { supplier: null, supplierId: null, costKind: null, costSource: "Quote Q-77" })] } as never, null).rows;
+    const gs = groupCostReview(rows);
+    expect(gs.map((g) => g.label)).toEqual(["x + y", "z"]);
+    expect(gs[0].warnings).toEqual(["Freight uses a TEST-ONLY assumption, not an approved policy (1 of 2 products)."]);
+    expect(gs[0].sharedFreightSource).toBeNull();
+    expect(rows[2].sourceHead).toBe("Source recorded in the cost note");
+  });
 });
