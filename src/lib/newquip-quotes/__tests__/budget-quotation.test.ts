@@ -12,7 +12,7 @@ vi.mock("../customer-store", () => ({ latestSnapshot: async () => state.snapshot
 vi.mock("../context", async () => { const { testPriceSource } = await import("@/newquip/grower/__tests__/test-snapshot"); return { evaluationContext: (w: boolean) => ({ priceSource: testPriceSource(), withholdCost: w }) }; });
 
 import { BUDGET_DISCLAIMER, buildBudgetDocumentModel, presentsPartialAsTotal } from "../budget-document";
-import { buildBudgetEmail, budgetSendRefusal, prepareBudget, sendBudgetQuotation, unreadNeeds, type BudgetSendDeps } from "../budget-quotation";
+import { buildBudgetEmail, budgetSendRefusal, prepareBudget, previewBudgetPdf, sendBudgetQuotation, unreadNeeds, type BudgetSendDeps } from "../budget-quotation";
 import { budgetSkuNeeds } from "../sku-needs";
 import { renderBudgetPdf } from "../budget-pdf";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
@@ -154,10 +154,12 @@ describe("budget email", () => {
 });
 
 describe("send rules", () => {
-  it("UAT: sends ONLY to an authorised test mailbox, with the incomplete acknowledgement, and records the exact snapshot", async () => {
+  // NQ-Q-0020: an INCOMPLETE Budget is never sent, so the send mechanics are exercised on a COMPLETE one.
+  beforeEach(() => { state.quote = quoteOf(readyDraft(), { draft_hash: "draft-hash-fixture-one" }); });
+  it("UAT: sends ONLY to an authorised test mailbox and records the exact snapshot (complete Budget)", async () => {
     const dp = deps(); const db = fakeDb();
     const r = await sendBudgetQuotation(db, who, "q", req, UAT, dp, audit);
-    expect(r).toMatchObject({ status: "ACCEPTED", to: "anton@sparkconsulting.co.za", reused: false, incompleteCount: 4, testMode: true });
+    expect(r).toMatchObject({ status: "ACCEPTED", to: "anton@sparkconsulting.co.za", reused: false, incompleteCount: 0, testMode: true });
     expect(dp.sent).toHaveLength(1);
     const sent = dp.sent[0] as { to: string[]; subject: string; text: string };
     expect(sent.to).toEqual(["anton@sparkconsulting.co.za"]);
@@ -165,7 +167,7 @@ describe("send rules", () => {
     expect(audits.map((a) => a.action)).toEqual(["newquip.budget_quotation_send_started", "newquip.budget_quotation_sent"]); // intent recorded BEFORE the email leaves
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rec = audits[1].detail as Record<string, any>;
-    expect(rec).toMatchObject({ quoteRef: "NQ-Q-0003", draftHash: "draft-hash-fixture-one", complete: false, incompleteCount: 4, status: "ACCEPTED", providerMessageId: "m-1", testMode: true });
+    expect(rec).toMatchObject({ quoteRef: "NQ-Q-0003", draftHash: "draft-hash-fixture-one", complete: true, incompleteCount: 0, status: "ACCEPTED", providerMessageId: "m-1", testMode: true });
     expect(rec.pdfSha256).toMatch(/^[0-9a-f]{64}$/);
     expect(rec.snapshot.model.kind).toBe("BUDGET_QUOTATION"); // the exact document model is reproducible from the audit record
     expect(rec.snapshot.modelHash).toBe(rec.modelHash);
@@ -180,10 +182,20 @@ describe("send rules", () => {
     await expect(sendBudgetQuotation(fakeDb(), { ...who, isRep: false }, "q", req, UAT, dp, audit)).rejects.toThrow(/Only a Rep/);
     expect(dp.sent).toHaveLength(0);
   });
-  it("incomplete pricing needs the Rep's explicit acknowledgement", async () => {
-    const dp = deps();
-    await expect(sendBudgetQuotation(fakeDb(), who, "q", { ...req, acknowledgeIncomplete: false }, UAT, dp, audit)).rejects.toThrow(/Pricing is incomplete/);
-    expect(dp.sent).toHaveLength(0);
+  it("an INCOMPLETE Budget is refused with or without the acknowledgement, and nothing is sent (NQ-Q-0020)", async () => {
+    state.quote = quoteOf(unmappedDraft(), { draft_hash: "draft-hash-fixture-one" });
+    for (const ack of [false, true]) {
+      const dp = deps();
+      await expect(sendBudgetQuotation(fakeDb(), who, "q", { ...req, acknowledgeIncomplete: ack }, UAT, dp, audit)).rejects.toThrow(/can only be produced when every selected item has a price/);
+      expect(dp.sent).toHaveLength(0);
+    }
+  });
+  it("an INCOMPLETE Budget produces NO preview PDF: previewBudgetPdf refuses and names the unpriced items (NQ-Q-0020)", async () => {
+    state.quote = quoteOf(unmappedDraft(), { draft_hash: "draft-hash-fixture-one" });
+    await expect(previewBudgetPdf(fakeDb(), "org", "q", UAT)).rejects.toThrow(/not priced yet/);
+    state.quote = quoteOf(readyDraft(), { draft_hash: "draft-hash-fixture-one" });
+    const { bytes, prep } = await previewBudgetPdf(fakeDb(), "org", "q", UAT);
+    expect(prep.model.complete).toBe(true); expect(bytes.length).toBeGreaterThan(1000);
   });
   it("a draft that changed since the preview is refused: the customer gets exactly what was previewed", async () => {
     const dp = deps();
@@ -276,6 +288,7 @@ describe("commissioning: approval snapshot, Project handover and historic docume
   });
 });
 
+const costedNqQ0002 = () => { const d = nqQ0002(); d.estimator.confirmedMappings = { pvc_door: "NQ3444" } as never; (d.estimator.pricing!.skus as Record<string, unknown>).NQ3444 = S("ZAR", 90000000000); return d; };
 describe("provisional pricing in the budget quotation (UAT only)", () => {
   const pdfOf = async () => { const prep = await prepareBudget(fakeDb(), "org", "q", UAT, () => "2026-11-18"); return { prep, text: pdfText(await renderBudgetPdf(prep.model)) }; };
   beforeEach(() => { state.quote = quoteOf(nqQ0002(), { draft_hash: "draft-hash-fixture-one" }); });
@@ -308,6 +321,7 @@ describe("provisional pricing in the budget quotation (UAT only)", () => {
     expect(prep.model.vatNote).toMatch(/provisional budget estimate/);
   });
   it("sending records the INTERNAL snapshot in the private store; the audit row holds only its path and hash (no cost, rate, freight or markup)", async () => {
+    state.quote = quoteOf(costedNqQ0002(), { draft_hash: "draft-hash-fixture-one" }); // a COMPLETE provisional Budget
     const dp = deps();
     await sendBudgetQuotation(fakeDb(), who, "q", { ...req, expectedDraftHash: "draft-hash-fixture-one" }, UAT, dp, audit);
     expect(uploads).toHaveLength(1);
@@ -321,11 +335,13 @@ describe("provisional pricing in the budget quotation (UAT only)", () => {
     expect(JSON.stringify(audits.map((a) => ({ ...a.detail, snapshot: undefined })))).not.toMatch(/nativeUnitCost|rateMicro|factorMicro|markupBps|HNQ7046/);
   });
   it("no internal snapshot store -> nothing is sent", async () => {
+    state.quote = quoteOf(costedNqQ0002(), { draft_hash: "draft-hash-fixture-one" }); // a COMPLETE provisional Budget
     const dp = deps({ storage: undefined });
     await expect(sendBudgetQuotation(fakeDb(), who, "q", { ...req, expectedDraftHash: "draft-hash-fixture-one" }, UAT, dp, audit)).rejects.toThrow(/snapshot store is unavailable/);
     expect(dp.sent).toHaveLength(0);
   });
   it("PRODUCTION: a budget with provisional packages is refused until NewQuip management approves the compositions", async () => {
+    state.quote = quoteOf(costedNqQ0002(), { draft_hash: "draft-hash-fixture-one" }); // a COMPLETE provisional Budget
     const dp = deps();
     const prod = { VERCEL_ENV: "production", NEWQUIP_PRODUCTION_EMAIL_ENABLED: "true", NEWQUIP_BUDGET_QUOTATION_WORDING_APPROVED: "true" };
     state.profile = { profile: PROFILE_REAL };

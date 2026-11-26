@@ -1,4 +1,5 @@
 import type { RailStep, StepStatus } from "@/components/ui/step-rail-model";
+import { DOOR_SIZE_REQUIRED_REASON } from "@/newquip/grower/door-sizes";
 
 // SOLUTION BUILDER STAGE 1 (the Rep's preparation) - pure. Five steps; a step is complete ONLY from data (draft fields, the live calculation's input issues, the readiness reasons,
 // the priced lines and the Cin7 customer snapshot) and never because it was visited. This module derives the three CONTENT steps and who owns every open item; the two closing
@@ -101,6 +102,7 @@ export function ownedWork(w: Stage1WorkFacts): { rep: string[]; estimator: strin
   for (const b of w.budgetLines ?? []) {
     if (b.status === "no_quantity") rep.push(`${b.label}: enter the quantity`);
     else if (b.status === "estimator_price_required") rep.push(`${b.label}: ${b.reason.replace(/\.$/, "")}`);
+    else if (b.status === "unmapped" && b.reason === DOOR_SIZE_REQUIRED_REASON) rep.push(`${b.label}: choose the door size`); // the Rep's own selection (NQ-Q-0020): never an Estimator task, and the Budget cannot be produced without it
     else if (ESTIMATOR_PRICING_STATUSES.has(b.status)) estimator.push(`Estimator pricing needed: ${b.label}`);
     else if (ESTIMATOR_LINE_STATUSES.has(b.status)) estimator.push(`Estimator product choice needed: ${b.label}`);
   }
