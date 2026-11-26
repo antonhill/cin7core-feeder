@@ -39,6 +39,19 @@ describe("RepChangesPanel", () => {
     expect(screen.getByTestId("rep-changes-summary").textContent).toBe("No customer-facing quotation changes detected");
     expect(screen.getByTestId("rep-changes-none").textContent).toBe("No customer-facing quotation changes detected");
   });
+  it("compact table row: Not priced -> package total is labelled, with no 'Unit not priced' and no invented unit", () => {
+    const pk = (total: number | null): L => ({ itemKey: "led", label: "LED lights", status: total == null ? "package_unconfirmed" : "priced", sku: null, quantity: 456, unitPriceExVat: null, revenueCents: total, pricedBy: null });
+    render(<RepChangesPanel changes={run(S([pk(null)]), S([pk(34473600)]))} fmt={fmt} />);
+    const row = screen.getByTestId("change-line-led");
+    expect(row.textContent).toMatch(/Not priced/); expect(row.textContent).toMatch(/R 344736\.00/); expect(row.textContent).toMatch(/Package total \(unit price not separately recorded\)/); expect(row.textContent).toMatch(/Now priced/);
+    expect(row.textContent).not.toMatch(/Unit not priced/); expect(row.textContent).not.toMatch(/Unit R/);
+    expect(row.querySelector('[data-basis="package"]')).toBeTruthy();
+  });
+  it("a unit-priced row shows its unit price and what changed", () => {
+    render(<RepChangesPanel changes={run(S([L("a", "Feeder", 10, 100)]), S([L("a", "Feeder", 12, 110)]))} fmt={fmt} />);
+    const t = screen.getByTestId("change-line-a").textContent!;
+    expect(t).toMatch(/Qty 10 · Unit R 100\.00/); expect(t).toMatch(/Qty 12 · Unit R 110\.00/); expect(t).toMatch(/Quantity · Selling unit price/);
+  });
   it("older revision: no itemised view, states why, never an empty comparison", () => {
     render(<RepChangesPanel changes={run(null, b)} fmt={fmt} />);
     expect(screen.getByTestId("rep-changes-unavailable").textContent).toMatch(/not available for this revision/);

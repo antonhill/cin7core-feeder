@@ -11,7 +11,12 @@ import type { IndicativeSnapshot } from "../pricing/indicative-snapshot";
 type CustomerSafe = IndicativeSnapshot["customerSafe"];
 export type ChangeKind = "added" | "removed" | "changed" | "unchanged";
 
-export interface RepLineValues { label: string; quantity: number | null; unitPriceCents: number | null; lineTotalCents: number | null; priced: boolean }
+/**
+ * How the line was priced, exactly as stored: "unit" = a selling unit price AND a line total; "package" = a line total with NO unit price stored (a package priced from its components has no unit
+ * price of its own, and its quantity is not a unit of sale); "none" = not priced. A unit price is never derived from the total and the quantity: that would invent a figure for a package.
+ */
+export type PriceBasis = "unit" | "package" | "none";
+export interface RepLineValues { label: string; quantity: number | null; unitPriceCents: number | null; lineTotalCents: number | null; priced: boolean; basis: PriceBasis }
 export interface RepLineChange {
   key: string;
   kind: ChangeKind;
@@ -52,7 +57,8 @@ const norm = (s: string) => s.replace(/\s+/g, " ").trim();
 
 function valuesOf(l: CustomerSafe["lines"][number]): RepLineValues {
   const priced = l.status === "priced" && l.revenueCents != null;
-  return { label: norm(l.label), quantity: l.quantity ?? null, unitPriceCents: priced ? unitCents(l.unitPriceExVat) : null, lineTotalCents: priced ? l.revenueCents : null, priced };
+  const unit = priced ? unitCents(l.unitPriceExVat) : null;
+  return { label: norm(l.label), quantity: l.quantity ?? null, unitPriceCents: unit, lineTotalCents: priced ? l.revenueCents : null, priced, basis: !priced ? "none" : unit != null ? "unit" : "package" };
 }
 
 /** Selected lines only: a "not_selected" line is not on the quotation, whichever side it is on. Keyed by the stable item key, so display order never matters. */

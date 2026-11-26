@@ -67,6 +67,30 @@ describe("Rep revision comparison scenarios", () => {
   it("nothing priced now", () => expect(cmp(base(), null)).toMatchObject({ available: false, unavailableReason: "NOT_PRICED" }));
 });
 
+describe("price basis (unit vs package)", () => {
+  const pkg = (k: string, label: string, q: number, totalCents: number | null): L => ({ itemKey: k, label, status: totalCents == null ? "package_unconfirmed" : "priced", sku: null, quantity: q, unitPriceExVat: null, revenueCents: totalCents, pricedBy: null });
+  it("a package total with no stored unit price is a package, never 'unit not priced' and never a derived unit", () => {
+    const r = cmp(snap([pkg("led", "LED", 456, null)]), snap([pkg("led", "LED", 456, 34473600)]));
+    const l = r.lines[0];
+    expect(l.before).toMatchObject({ basis: "none", lineTotalCents: null }); expect(l.after).toMatchObject({ basis: "package", lineTotalCents: 34473600, unitPriceCents: null });
+    expect(l.deltaCents).toBeNull(); // no honest difference against an unpriced side
+    expect(JSON.stringify(r)).not.toContain("75600"); // 34473600 / 456 must never appear
+  });
+  it("a unit-priced line keeps its recorded unit price", () => {
+    const l = cmp(snap([line("a", "Feeder", 10, 100)]), snap([line("a", "Feeder", 10, 110)])).lines[0];
+    expect(l.after).toMatchObject({ basis: "unit", unitPriceCents: 11000 }); expect(l.before).toMatchObject({ basis: "unit", unitPriceCents: 10000 });
+  });
+  it("a historical package (no unit price) compared with a unit-priced revision flags the unit price as changed", () => {
+    const l = cmp(snap([pkg("a", "Feeder", 10, 100000)]), snap([line("a", "Feeder", 10, 100)])).lines[0];
+    expect(l.before?.basis).toBe("package"); expect(l.after?.basis).toBe("unit"); expect(l.fields).toEqual(["Selling unit price"]);
+  });
+  it("a package whose quantity changes shows the quantity change and the total change, with no unit price invented", () => {
+    const l = cmp(snap([pkg("p", "Cup drinker", 600, 40000000)]), snap([pkg("p", "Cup drinker", 648, 43506720)])).lines[0];
+    expect(l.fields).toEqual(["Quantity", "Selling line total"]); expect(l.after?.unitPriceCents).toBeNull(); expect(l.deltaCents).toBe(3506720);
+  });
+  it("an unchanged package is unchanged", () => expect(cmp(snap([pkg("p", "X", 2, 500)]), snap([pkg("p", "X", 2, 500)])).anyChange).toBe(false));
+});
+
 describe("previousHandoffOf (multiple returns)", () => {
   const s = (seq: number, revision: number) => ({ seq, revision });
   it("picks the latest handoff before the current revision", () => {
