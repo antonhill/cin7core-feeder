@@ -6,9 +6,9 @@ import * as actions from "../actions";
 import type { ProjectView } from "@/lib/projects/project-view";
 
 // getProjectAction returns the viewer's display permissions together with the project (one round trip); the Commercial tab reads its Sale + posting state in one call.
-let viewer = { canApprove: true, newquip: false };
+let viewer: { canApprove: boolean; newquip: boolean; canApproveCommercial?: boolean } = { canApprove: true, newquip: false, canApproveCommercial: true };
 beforeEach(() => {
-  viewer = { canApprove: true, newquip: false };
+  viewer = { canApprove: true, newquip: false, canApproveCommercial: true };
 });
 
 // UAT-025 / UAT-023 on the real Project screen: a claim near the BOTTOM of a long page must show what happened beside its own buttons.
@@ -58,7 +58,7 @@ async function openClaims() {
 }
 
 beforeEach(() => {
-  viewer = { canApprove: true, newquip: false };
+  viewer = { canApprove: true, newquip: false, canApproveCommercial: true };
   vi.mocked(actions.getProjectAction).mockImplementation((async () => ({ ok: true, data: view("READY_FOR_APPROVAL"), viewer })) as never);
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.clearAllMocks(); });
@@ -140,7 +140,7 @@ describe("claim approval near the bottom of a long Project page", () => {
 
 describe("authorisation is unchanged by the feedback work", () => {
   it("the Approve button is still offered only to administrators (the server decides everything else)", async () => {
-    viewer = { canApprove: false, newquip: false };
+    viewer = { canApprove: false, newquip: false, canApproveCommercial: false };
     const card = await openClaims();
     expect(within(card).queryByRole("button", { name: "Approve" })).toBeNull();
     expect(actions.approveClaimAction).not.toHaveBeenCalled();
