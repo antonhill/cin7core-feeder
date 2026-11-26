@@ -113,7 +113,7 @@ describe("the Estimator workspace", () => {
     expect(w.tasks.find((x) => x.id === "pvc_door" || x.id === "control_panel")).toBeUndefined();
     for (const id of ["pvc_door", "control_panel"]) {
       const c = w.complete.find((x) => x.id === id)!;
-      expect(c).toMatchObject({ provisional: true, estimatorPriced: true, costState: "n/a" });
+      expect(c).toMatchObject({ provisional: true, budgetBasis: true, estimatorPriced: true, costState: "n/a" });
       expect(c.how).toMatch(/Documented Budget basis/);
       expect(c.how).not.toMatch(/supplier cost (needed|missing)/i);
     }

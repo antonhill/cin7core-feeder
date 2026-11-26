@@ -79,7 +79,7 @@ export function EvidenceForm({ line, onRecord, onDone }: { line: CompleteLine; o
 export function EvidenceOpenRow({ n, line, canEdit, onRecord }: { n: number; line: CompleteLine; canEdit: boolean; onRecord: (itemKey: string, note: string, reference: string) => Promise<{ ok: boolean; errors?: string[] }> }) {
   const [open, setOpen] = useState(false);
   const ev = line.evidence!;
-  const what = line.provisional ? "Manual quotation price, provisional. " : "";
+  const what = line.budgetBasis ? "Documented Budget basis, provisional (not a supplier cost). " : line.provisional ? "Manual quotation price, provisional. " : "";
   return (
     <OpenRow n={n} id={line.id} plain testId={`evidence-${line.id}`} dataState={ev.state} label={line.label} meta={`${line.quantity ?? "—"} × ${line.unit == null ? "—" : money(line.unit)}`} status="Evidence needed" action={open ? "Hide form" : "Record evidence"} active={false} canEdit={canEdit} onAct={() => setOpen((o) => !o)}
       why={`${what}Pricing evidence: ${ev.text}. It is needed before sign-off and changes no price.`}>

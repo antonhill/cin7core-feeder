@@ -75,7 +75,7 @@ export interface WorkspaceTask {
 export type EvidenceView = { state: "missing" | "recorded" | "outdated"; text: string; note: string | null; reference: string | null };
 /** A line that WAS priced on the reference basis (the Rep's handoff) and is now excluded from the total until it has a supplier cost. */
 export interface ExcludedLine { id: string; label: string; /** What it was worth on the reference basis, ex VAT, rand. */ previous: number; why: string }
-export interface CompleteLine { /** the SKU-less manual item's pricing-evidence record (the existing approval requirement) */ evidence?: EvidenceView; /** the stored reason of a manual quotation price, decoded (reason and evidence) */ manual?: DecodedManualReason; id: string; label: string; how: string; quantity: number | null; unit: number | null; revenue: number | null; provisional: boolean; estimatorPriced: boolean; costState: "n/a" | "unverified" | "verified"; /** Priced entirely from automatic Cin7 costs that a Manager has not yet verified: shown under "Ready for verification". */ autoReady?: boolean }
+export interface CompleteLine { /** the SKU-less manual item's pricing-evidence record (the existing approval requirement) */ evidence?: EvidenceView; /** the stored reason of a manual quotation price, decoded (reason and evidence) */ manual?: DecodedManualReason; id: string; label: string; how: string; quantity: number | null; unit: number | null; revenue: number | null; provisional: boolean; /** A documented Budget basis (door BOM cost, fixed panel price), NOT a manual quotation price. */ budgetBasis?: boolean; estimatorPriced: boolean; costState: "n/a" | "unverified" | "verified"; /** Priced entirely from automatic Cin7 costs that a Manager has not yet verified: shown under "Ready for verification". */ autoReady?: boolean }
 
 /** What the Estimator needs to see about ONE automatically costed product, without opening anything. INTERNAL (the whole workspace is cost-entitled only). */
 export interface AutoSkuFact { sku: string; supplier: string | null; currency: string | null; cost: string | null; costDate: string | null; fx: string | null; freight: string | null; landed: string | null; selling: string | null; provenance: string | null }
@@ -227,7 +227,7 @@ export function buildWorkspace(i: { budget: BudgetQuote; view: PricingWorkspaceV
     // A DOCUMENTED BUDGET BASIS (door BOM cost + markup once; fixed control-panel price): confirmed by the Estimator, evidenced, provisional. No supplier cost exists or is asked for.
     if (l.pricedBy === "budget_rate" && l.status === "priced") {
       const ev = evidenceOf(l.itemKey as string);
-      complete.push({ ...base, how: `Documented Budget basis, provisional (not a supplier cost)${ev?.state === "recorded" ? " · evidence recorded" : " · pricing evidence still to record"}`, unit: l.unitPrice, revenue: l.revenueExTax, provisional: true, estimatorPriced: true, costState: "n/a", evidence: ev });
+      complete.push({ ...base, how: `Documented Budget basis, provisional (not a supplier cost)${ev?.state === "recorded" ? " · evidence recorded" : " · pricing evidence still to record"}`, unit: l.unitPrice, revenue: l.revenueExTax, provisional: true, budgetBasis: true, estimatorPriced: true, costState: "n/a", evidence: ev });
       continue;
     }
     if (l.budgetBasis && l.status !== "priced") {
