@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { IncompleteEstimateBanner } from "../[id]/IncompleteEstimateBanner";
 import { incompleteEstimateText } from "@/newquip/grower/incomplete-estimate";
 
-const DONE = { ok: true, data: { stillToRead: 0, done: true } };
+const DONE = { ok: true, data: { stillToRead: 0, done: true, status: "applied" } };
 const h = vi.hoisted(() => ({ send: vi.fn(), status: vi.fn(), complete: vi.fn() }));
 vi.mock("../budget-actions", () => ({ getBudgetStatusAction: (...a: unknown[]) => h.status(...a), sendBudgetQuotationAction: (...a: unknown[]) => h.send(...a), completeBudgetPricingAction: (...a: unknown[]) => h.complete(...a) }));
 import { BudgetQuotationPanel } from "../[id]/BudgetQuotationPanel";
@@ -85,21 +85,22 @@ describe("BudgetQuotationPanel completes a Rep's supplier prices by itself (P0: 
     await waitFor(() => expect(h.complete).toHaveBeenCalledWith("q1"));
     expect(screen.getByTestId("budget-pricing-progress")).toBeTruthy();
     expect(screen.queryByTestId("preview-budget-quotation")).toBeNull();
-    release({ ok: true, data: { stillToRead: 0, done: true } });
+    release({ ok: true, data: { stillToRead: 0, done: true, status: "applied" } });
     await waitFor(() => expect(screen.getByTestId("preview-budget-quotation")).toBeTruthy());
   });
   it("it does not run for a viewer who is not the Rep, with unsaved changes, or when nothing is unpriced", async () => {
     h.status.mockResolvedValue(status());
+    // each case waits for the STATUS TO RENDER (the incomplete banner / the preview link), so the effect has had its chance to run before we assert it did not
     const a = render(<BudgetQuotationPanel quoteId="q1" canAct={false} dirty={false} refreshKey="k" />);
-    await waitFor(() => expect(h.status).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByTestId("budget-incomplete")).toBeTruthy());
     a.unmount();
     h.status.mockResolvedValue(status());
     const b = render(<BudgetQuotationPanel quoteId="q1" canAct dirty refreshKey="k2" />);
-    await waitFor(() => expect(h.status).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByTestId("budget-incomplete")).toBeTruthy());
     b.unmount();
     h.status.mockResolvedValue(status({ unpricedCount: 0, complete: true, unpricedItems: [] }));
     render(<BudgetQuotationPanel quoteId="q1" canAct dirty={false} refreshKey="k3" />);
-    await waitFor(() => expect(h.status).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(screen.getByTestId("preview-budget-quotation")).toBeTruthy());
     expect(h.complete).not.toHaveBeenCalled();
   });
 });

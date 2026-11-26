@@ -42,14 +42,16 @@ export async function getBudgetStatusAction(quoteId: string): Promise<BudgetActi
  * COMPLETE a Rep's initial Budget pricing (reads the supplier costs still missing, GET-only, add-only; see completeAutoPricing). Called by the Budget panel until nothing is left to read, so the Rep sees a fully
  * priced Budget without any Estimator involvement. Rep only; it changes no approval, confirms nothing and returns only counts (never a cost, rate or SKU).
  */
-export async function completeBudgetPricingAction(quoteId: string): Promise<BudgetActionResult<{ stillToRead: number; done: boolean }>> {
+export async function completeBudgetPricingAction(quoteId: string): Promise<BudgetActionResult<{ stillToRead: number; done: boolean; status: string }>> {
   try {
     const a = await authoriseActor();
     if (!a.roles.has("rep")) throw new Error("Only a Rep prices a draft.");
     if (!ID.test(quoteId)) throw new Error("Quotation not found.");
     const o = await completeAutoPricing(createServiceRoleClient(), { orgId: a.orgId, userId: a.userId, roles: a.roles, demo: !!a.demo }, quoteId, { budgetMs: 85_000 });
     const stillToRead = o.internal.filter((i) => i.code === "not_read").length;
-    return { ok: true, data: { stillToRead, done: stillToRead === 0 } };
+    // DONE only when the last run really finished the reading: it either had nothing left to add, or applied / recorded with no product left unread. A skipped run (another writer won), an error or incomplete settings is NOT done.
+    const done = o.status === "nothing_to_add" || ((o.status === "applied" || o.status === "no_prices") && stillToRead === 0);
+    return { ok: true, data: { stillToRead, done, status: o.status } };
   } catch (e) { return { ok: false, error: errText(e) }; }
 }
 
@@ -57,8 +59,6 @@ export async function sendBudgetQuotationAction(quoteId: string, req: { to: stri
   try {
     const a = await authoriseActor();
     if (!ID.test(quoteId)) throw new Error("Quotation not found.");
-    // A Rep's Budget is sent complete: finish any supplier-cost reading still outstanding first (best effort; whatever genuinely cannot be priced is still reported as unpriced).
-    if (a.roles.has("rep")) await completeAutoPricing(createServiceRoleClient(), { orgId: a.orgId, userId: a.userId, roles: a.roles, demo: !!a.demo }, quoteId, { budgetMs: 85_000 }).catch(() => undefined);
     const r = await sendBudgetQuotation(createServiceRoleClient(), { orgId: a.orgId, userId: a.userId, email: a.email, isRep: a.roles.has("rep") }, quoteId, req, process.env);
     if (r.status !== "ACCEPTED") return { ok: false, error: r.status === "SUPPRESSED" ? "Nothing was sent: that address is not permitted from this environment." : "The email provider did not accept the message. Nothing was delivered." };
     return { ok: true, data: { status: r.status, to: r.to, reused: r.reused, testMode: r.testMode, incompleteCount: r.incompleteCount } };

@@ -141,4 +141,16 @@ describe("a fresh Rep quotation, before any Estimator action", () => {
     const door = (await budgetOf(id)).b.lines.find((l) => l.itemKey === "pvc_door")!;
     expect(door.status).not.toBe("priced"); expect(door.reason).toMatch(/door size/i);
   });
+
+  it("a product Cin7 genuinely has no supplier cost for does not loop forever or get a made-up price: everything else completes and the gap is named", async () => {
+    const id = await newQuote(freshRepDraft());
+    const base = deps();
+    const noCost: AutoPricingDeps = { ...base, readRaw: async (skus, d) => { const r = await base.readRaw(skus, d); if ("NQ3369" in r) r["NQ3369"] = { raw: { SKU: "NQ3369", Status: "Active", Name: "x", Suppliers: [] } }; return r; } };
+    const o = await completeAutoPricing(db as never, REP, id, { budgetMs: 300_000, deps: noCost, env: ON });
+    expect(o.runs).toBeLessThan(8);
+    const { b } = await budgetOf(id);
+    const unpriced = b.lines.filter((l) => l.status !== "not_selected" && l.status !== "priced");
+    expect(unpriced.map((l) => l.itemKey)).toEqual(["pad_cooling"]); // only the package that contains the unpriceable acetone; nothing was zeroed or invented
+    expect(b.state).not.toBe("complete");
+  });
 });

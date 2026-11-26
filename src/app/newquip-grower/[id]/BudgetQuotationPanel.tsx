@@ -27,12 +27,13 @@ export function BudgetQuotationPanel({ quoteId, canAct, dirty, refreshKey, embed
   // A Rep's Budget must be COMPLETE without an Estimator: when the saved draft still has unpriced lines, the supplier prices still to be read from Cin7 are read now (one paced batch at a time) until nothing is left to read.
   // The Preview waits for it, so the Rep never opens a Budget that says "not yet priced" for a price that is obtainable.
   const [pricing, setPricing] = useState(false);
-  const rounds = useRef(0);
+  const rounds = useRef(0), total = useRef(0);
   useEffect(() => { rounds.current = 0; }, [refreshKey]);
   useEffect(() => {
-    if (!st || !canAct || dirty || pricing || st.unpricedCount === 0 || rounds.current >= 6) return;
-    rounds.current += 1; setPricing(true);
-    void completeBudgetPricingAction(quoteId).then((r) => { setPricing(false); if (r.ok && r.data && r.data.stillToRead === 0) rounds.current = 6; load(); onPriced?.(); }, () => { setPricing(false); rounds.current = 6; });
+    // rounds resets when the draft changes (a round that added prices); total is the absolute ceiling for this screen, so it can never loop.
+    if (!st || !canAct || dirty || pricing || st.unpricedCount === 0 || rounds.current >= 6 || total.current >= 10) return;
+    rounds.current += 1; total.current += 1; setPricing(true);
+    void completeBudgetPricingAction(quoteId).then((r) => { setPricing(false); if (r.ok && r.data?.done) rounds.current = 6; load(); onPriced?.(); }, () => { setPricing(false); rounds.current = 6; });
   }, [st, canAct, dirty, pricing, quoteId, load, onPriced]);
 
   const recipient = st?.testMode ? (st.testRecipient ?? "") : to.trim();
