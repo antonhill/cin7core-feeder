@@ -3,6 +3,7 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireModuleAccess, requireModuleWrite } from "@/lib/authorization";
 import { QUOTES_MODULE } from "@/app/module-nav";
+import { isNewquipPocOrg } from "@/newquip/access";
 import { resolveQuoteLines, productSkusFor, type QuoteLineDraft } from "@/lib/quote-build";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchCustomerDefaults, type Cin7CustomerDefaults } from "@/cin7/customers";
@@ -537,6 +538,10 @@ export async function submitQuoteAction(quoteId: string): Promise<QuoteActionRes
   if (!quoteId) return { ok: false, error: "Missing quote id." };
   try {
     const { orgId } = await requireModuleWrite(QUOTES_MODULE.href);
+    // NewQuip POC's Cin7 integration is in UAT: this Toolbox must not create Cin7 quotations for that organisation. Refused on the server, by the organisation's immutable id
+    // (src/newquip/access.ts), BEFORE anything is read or sent to Cin7; it does not depend on the UI or on any environment variable. Reading and saving drafts is unaffected, and
+    // every other organisation behaves exactly as before. Remove this only when the owner approves NewQuip quoting from this Toolbox.
+    if (isNewquipPocOrg(orgId)) return { ok: false, error: "Creating Cin7 quotations from the Toolbox is not enabled for this organization yet. Nothing was sent to Cin7." };
     const db = createServiceRoleClient();
 
     const { data: q, error: qErr } = await db.from("quotes").select("*").eq("org_id", orgId).eq("id", quoteId).maybeSingle();
