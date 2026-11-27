@@ -3,6 +3,8 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireModuleAccess, requireModuleWrite } from "@/lib/authorization";
 import { QUOTES_MODULE } from "@/app/module-nav";
+import { isNewquipPocOrg } from "@/newquip/access";
+import { cin7WritesEnabled } from "@/lib/projects/write-flag";
 import { resolveQuoteLines, productSkusFor, type QuoteLineDraft } from "@/lib/quote-build";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchCustomerDefaults, type Cin7CustomerDefaults } from "@/cin7/customers";
@@ -537,6 +539,9 @@ export async function submitQuoteAction(quoteId: string): Promise<QuoteActionRes
   if (!quoteId) return { ok: false, error: "Missing quote id." };
   try {
     const { orgId } = await requireModuleWrite(QUOTES_MODULE.href, { toolbox: true });
+    // The NewQuip organisation's Cin7 writes obey the NewQuip write switch (src/lib/projects/write-flag.ts) like every other NewQuip writer: granting a NewQuip user the
+    // Toolbox Quotes module must not open a Cin7 write path that the switch holds closed. Other organisations are unchanged.
+    if (isNewquipPocOrg(orgId) && !cin7WritesEnabled(process.env as Record<string, string | undefined>)) return { ok: false, error: "Cin7 writes are switched off (NEWQUIP_CIN7_WRITES_ENABLED). Nothing was sent." };
     const db = createServiceRoleClient();
 
     const { data: q, error: qErr } = await db.from("quotes").select("*").eq("org_id", orgId).eq("id", quoteId).maybeSingle();
