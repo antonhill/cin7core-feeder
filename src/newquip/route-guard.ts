@@ -4,6 +4,7 @@
 // Middleware redirects every path outside this allowlist to "/" (the NewQuip dashboard). Super-admins bypass the guard entirely. This is a routing gate, not the
 // authorisation layer: every route layout and server action still authorises independently.
 import { isNewquipPocOrg } from "./access";
+import { isGrantedToolboxPath } from "./toolbox-access";
 
 /** Path prefixes a NewQuip-only user may reach. Matched on a segment boundary (so "/projects-x" is NOT "/projects"). "/" is matched exactly, never as a prefix. */
 export const NEWQUIP_ONLY_ALLOWED_PREFIXES: readonly string[] = [
@@ -27,10 +28,12 @@ export const NEWQUIP_ONLY_ALLOWED_PREFIXES: readonly string[] = [
 const underPrefix = (pathname: string, prefix: string): boolean => pathname === prefix || pathname.startsWith(`${prefix}/`);
 
 /** True when a NewQuip-only user may request `pathname`. Pure. Anything that is not clearly on the allowlist is refused (fail closed). */
-export function isNewquipOnlyPathAllowed(pathname: string): boolean {
+export function isNewquipOnlyPathAllowed(pathname: string, toolboxGrants: readonly string[] = []): boolean {
   if (typeof pathname !== "string" || !pathname.startsWith("/")) return false;
   if (pathname.includes("\\") || pathname.split("/").includes("..")) return false;
   if (pathname === "/") return true;
+  // A main Toolbox module this individual has been explicitly granted (src/newquip/toolbox-access.ts). Empty by default: nobody gets one implicitly.
+  if (isGrantedToolboxPath(pathname, toolboxGrants)) return true;
   return NEWQUIP_ONLY_ALLOWED_PREFIXES.some((p) => underPrefix(pathname, p));
 }
 
@@ -43,9 +46,9 @@ export function isNewquipOnlyUser(orgId: string | null | undefined, isSuperAdmin
  * The middleware decision. `uncertain` is true when the facts that decide who the user is (super-admin lookup, membership lookup) could not be read: the guard then
  * fails closed for non-allowlisted paths only (a redirect to "/", which is harmless), and never loosens any other gate.
  */
-export function newquipGuardRedirects(i: { pathname: string; orgId: string | null; isSuperAdmin: boolean; uncertain?: boolean }): boolean {
+export function newquipGuardRedirects(i: { pathname: string; orgId: string | null; isSuperAdmin: boolean; uncertain?: boolean; toolboxGrants?: readonly string[] }): boolean {
   if (i.isSuperAdmin) return false; // a positively identified super-admin always bypasses
-  if (isNewquipOnlyPathAllowed(i.pathname)) return false;
+  if (isNewquipOnlyPathAllowed(i.pathname, i.toolboxGrants ?? [])) return false;
   if (i.uncertain) return true;
   return isNewquipOnlyUser(i.orgId, i.isSuperAdmin);
 }

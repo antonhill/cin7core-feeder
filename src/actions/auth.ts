@@ -5,7 +5,9 @@ import { createSessionClient } from "@/supabase/server-session";
 import { createServiceRoleClient } from "@/supabase/server";
 import { getImpersonatedOrgId } from "@/lib/org-switch";
 import { getActiveOrgCookie, resolveActiveOrgId } from "@/lib/active-org";
-import { computeEffectiveDisabledModules } from "@/app/module-nav";
+import { computeEffectiveDisabledModules, MODULES } from "@/app/module-nav";
+import { isNewquipOnlyUser } from "@/newquip/route-guard";
+import { newquipOnlyAllowList, toolboxGrantsOf } from "@/newquip/toolbox-access";
 
 export async function signOutAction() {
   const supabase = await createSessionClient();
@@ -32,6 +34,8 @@ export interface CurrentUserInfo {
   isOrgAdmin: boolean;
   /** Module hrefs (e.g. "/reports") hidden from THIS USER — the org-wide gate (set by a super-admin on /admin) merged with this user's own allow-list (set by their org's owner/admin on /settings/members, see computeEffectiveDisabledModules). Empty means every module is visible to them. */
   disabledModules: string[];
+  /** NewQuip-only users: the main Toolbox modules (hrefs) this person has been explicitly granted. Always [] for everyone else and for a NewQuip-only user with no grant. Navigation only: middleware and every action re-check. */
+  toolboxGrants: string[];
   /** Drives the trial banner in layout.tsx — kept as plain scalars rather than a nested BillingStatus object to minimize churn on this widely-called function. */
   subscriptionStatus: "trialing" | "active" | "past_due" | "canceled" | null;
   trialEndsAt: string | null;
@@ -55,6 +59,7 @@ export async function getCurrentUserInfo(): Promise<CurrentUserInfo> {
       isImpersonating: false,
       isOrgAdmin: false,
       disabledModules: [],
+      toolboxGrants: [],
       subscriptionStatus: null,
       trialEndsAt: null,
       hasMultipleOrgs: false,
@@ -104,6 +109,7 @@ export async function getCurrentUserInfo(): Promise<CurrentUserInfo> {
   let orgName: string | null = null;
   let orgLogoUrl: string | null = null;
   let disabledModules: string[] = [];
+  let toolboxGrants: string[] = [];
   let subscriptionStatus: CurrentUserInfo["subscriptionStatus"] = null;
   let trialEndsAt: string | null = null;
   if (orgId) {
@@ -114,7 +120,14 @@ export async function getCurrentUserInfo(): Promise<CurrentUserInfo> {
       .maybeSingle();
     orgName = org?.name ?? null;
     orgLogoUrl = org?.logo_url ?? null;
-    disabledModules = computeEffectiveDisabledModules(org?.disabled_modules ?? [], allowedModules);
+    if (isNewquipOnlyUser(orgId, isSuperAdmin)) {
+      // NewQuip-only: allowed_modules is the explicit main-Toolbox grant list (null/[] = none); NewQuip's own workspace links stay on. See src/newquip/toolbox-access.ts.
+      const registryHrefs = MODULES.map((m) => m.href);
+      toolboxGrants = toolboxGrantsOf(allowedModules, registryHrefs).filter((h) => !(org?.disabled_modules ?? []).includes(h));
+      disabledModules = computeEffectiveDisabledModules(org?.disabled_modules ?? [], newquipOnlyAllowList(allowedModules, registryHrefs, { toolbox: false }));
+    } else {
+      disabledModules = computeEffectiveDisabledModules(org?.disabled_modules ?? [], allowedModules);
+    }
     subscriptionStatus = org?.subscription_status ?? null;
     trialEndsAt = org?.trial_ends_at ?? null;
   }
@@ -128,6 +141,7 @@ export async function getCurrentUserInfo(): Promise<CurrentUserInfo> {
     isImpersonating,
     isOrgAdmin,
     disabledModules,
+    toolboxGrants,
     subscriptionStatus,
     trialEndsAt,
     hasMultipleOrgs,

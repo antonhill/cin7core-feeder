@@ -35,7 +35,8 @@ export function AppShell({ nav, children }: { nav: AppNavProps; children: React.
   // module visible; anyone else on these paths is redirected by the route layout, and keeps the Toolbox shell meanwhile.
   // The NewQuip-only interface (NewQuip organisation, not a super-admin) wraps EVERY path that user may reach, including "/" and Settings, with the NewQuip navigation
   // and no way back to the Toolbox. Spark super-admins keep the Toolbox shell, and get the NewQuip workspace chrome (with a Back to Toolbox link) on the NewQuip routes only.
-  const onlyLinks = isNewquipOnlyPathAllowed(pathname) ? newquipOnlyLinks(nav.orgId, nav.disabledModules, nav.isSuperAdmin) : [];
+  const grants = nav.toolboxGrants ?? [];
+  const onlyLinks = isNewquipOnlyPathAllowed(pathname, grants) ? newquipOnlyLinks(nav.orgId, nav.disabledModules, nav.isSuperAdmin, grants) : [];
   if (onlyLinks.length > 0) {
     return (
       <NewquipShell links={onlyLinks} orgName={nav.orgName} userEmail={nav.userEmail ?? ""} showToolboxLink={false} switchOrgFrom={nav.hasMultipleOrgs ? (nav.orgId ?? undefined) : undefined}>

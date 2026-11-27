@@ -124,6 +124,8 @@ export type AppNavProps = {
   orgName: string | null;
   orgLogoUrl: string | null;
   disabledModules: string[];
+  /** NewQuip-only users: main Toolbox modules explicitly granted to this person (navigation only). */
+  toolboxGrants?: string[];
   /** False while Lemon Squeezy's store isn't yet activated and this org has never subscribed — see checkoutAvailableFor in src/lib/billing.ts. */
   showBilling: boolean;
   /** Security re-audit P1-8: true when this user belongs to more than one org — shows the ActiveOrgSwitcher. */

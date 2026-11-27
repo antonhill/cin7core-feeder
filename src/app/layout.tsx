@@ -58,6 +58,7 @@ export default async function RootLayout({
     orgLogoUrl,
     isImpersonating,
     disabledModules,
+    toolboxGrants,
     subscriptionStatus,
     trialEndsAt,
     hasMultipleOrgs,
@@ -112,6 +113,7 @@ export default async function RootLayout({
                 orgName,
                 orgLogoUrl,
                 disabledModules,
+                toolboxGrants,
                 showBilling: checkoutAvailableFor(subscriptionStatus),
                 hasMultipleOrgs,
               }}

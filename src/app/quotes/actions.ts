@@ -130,7 +130,7 @@ export interface QuoteProductHit {
  */
 export async function searchQuoteProductsAction(query: string): Promise<QuoteActionResult<QuoteProductHit[]>> {
   try {
-    const { orgId } = await requireModuleAccess(QUOTES_MODULE.href);
+    const { orgId } = await requireModuleAccess(QUOTES_MODULE.href, { toolbox: true });
     const safe = (query ?? "").replace(/[^\w\s-]/g, "").trim();
     if (safe.length < 2) return { ok: true, data: [] };
     const db = createServiceRoleClient();
@@ -184,7 +184,7 @@ export async function searchQuoteProductsAction(query: string): Promise<QuoteAct
 export async function getProductTierPricesAction(instanceId: string, sku: string): Promise<QuoteActionResult<Record<string, number>>> {
   if (!instanceId || !sku) return { ok: false, error: "Missing instance or SKU." };
   try {
-    const { orgId } = await requireModuleAccess(QUOTES_MODULE.href);
+    const { orgId } = await requireModuleAccess(QUOTES_MODULE.href, { toolbox: true });
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
     const prices = await fetchProductTierPrices(creds, sku);
@@ -210,7 +210,7 @@ export interface QuoteCustomerHit {
  */
 export async function searchQuoteCustomersAction(query: string): Promise<QuoteActionResult<QuoteCustomerHit[]>> {
   try {
-    const { orgId } = await requireModuleAccess(QUOTES_MODULE.href);
+    const { orgId } = await requireModuleAccess(QUOTES_MODULE.href, { toolbox: true });
     const safe = (query ?? "").replace(/[^\w\s.&'-]/g, "").trim();
     if (safe.length < 2) return { ok: true, data: [] };
     const db = createServiceRoleClient();
@@ -247,7 +247,7 @@ export async function resolveQuoteCustomerAction(
 ): Promise<QuoteActionResult<QuoteCustomerResolved | null>> {
   if (!instanceId || !customerName) return { ok: false, error: "Choose an instance and a customer." };
   try {
-    const { orgId } = await requireModuleAccess(QUOTES_MODULE.href);
+    const { orgId } = await requireModuleAccess(QUOTES_MODULE.href, { toolbox: true });
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
     const defaults = await fetchCustomerDefaults(creds, customerName);
@@ -273,7 +273,7 @@ export interface QuoteReferenceData {
 export async function loadQuoteReferenceDataAction(instanceId: string): Promise<QuoteActionResult<QuoteReferenceData>> {
   if (!instanceId) return { ok: false, error: "Choose a Cin7 instance." };
   try {
-    const { orgId } = await requireModuleAccess(QUOTES_MODULE.href);
+    const { orgId } = await requireModuleAccess(QUOTES_MODULE.href, { toolbox: true });
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
     const [locations, priceTiers, salesReps, taxRules] = await Promise.all([
@@ -292,7 +292,7 @@ export async function loadQuoteReferenceDataAction(instanceId: string): Promise<
 /** List this org's quotes, newest first; optionally scoped to one instance. Read-only. */
 export async function listQuotesAction(instanceId?: string): Promise<QuoteActionResult<QuoteSummary[]>> {
   try {
-    const { orgId } = await requireModuleAccess(QUOTES_MODULE.href);
+    const { orgId } = await requireModuleAccess(QUOTES_MODULE.href, { toolbox: true });
     const db = createServiceRoleClient();
     let q = db
       .from("quotes")
@@ -327,7 +327,7 @@ export async function listQuotesAction(instanceId?: string): Promise<QuoteAction
 export async function getQuoteAction(quoteId: string): Promise<QuoteActionResult<QuoteDetail>> {
   if (!quoteId) return { ok: false, error: "Missing quote id." };
   try {
-    const { orgId } = await requireModuleAccess(QUOTES_MODULE.href);
+    const { orgId } = await requireModuleAccess(QUOTES_MODULE.href, { toolbox: true });
     const db = createServiceRoleClient();
     const { data: h, error: hErr } = await db.from("quotes").select("*").eq("org_id", orgId).eq("id", quoteId).maybeSingle();
     if (hErr) throw new Error(hErr.message);
@@ -401,7 +401,7 @@ export async function getQuoteAction(quoteId: string): Promise<QuoteActionResult
 export async function saveQuoteAction(input: QuoteDraftInput): Promise<QuoteActionResult<{ quoteId: string }>> {
   try {
     if (!input?.instanceId) return { ok: false, error: "Choose a Cin7 instance." };
-    const { orgId, email } = await requireModuleWrite(QUOTES_MODULE.href);
+    const { orgId, email } = await requireModuleWrite(QUOTES_MODULE.href, { toolbox: true });
     const db = createServiceRoleClient();
 
     // The instance must belong to THIS org — never trust a client-supplied instance id.
@@ -536,7 +536,7 @@ export interface SubmitQuoteResult {
 export async function submitQuoteAction(quoteId: string): Promise<QuoteActionResult<SubmitQuoteResult>> {
   if (!quoteId) return { ok: false, error: "Missing quote id." };
   try {
-    const { orgId } = await requireModuleWrite(QUOTES_MODULE.href);
+    const { orgId } = await requireModuleWrite(QUOTES_MODULE.href, { toolbox: true });
     const db = createServiceRoleClient();
 
     const { data: q, error: qErr } = await db.from("quotes").select("*").eq("org_id", orgId).eq("id", quoteId).maybeSingle();
@@ -698,7 +698,7 @@ export async function submitQuoteAction(quoteId: string): Promise<QuoteActionRes
 export async function deleteQuoteAction(quoteId: string): Promise<QuoteActionResult<null>> {
   if (!quoteId) return { ok: false, error: "Missing quote id." };
   try {
-    const { orgId } = await requireModuleWrite(QUOTES_MODULE.href);
+    const { orgId } = await requireModuleWrite(QUOTES_MODULE.href, { toolbox: true });
     const db = createServiceRoleClient();
     const { data: existing, error: exErr } = await db
       .from("quotes")

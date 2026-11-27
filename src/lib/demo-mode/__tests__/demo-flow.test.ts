@@ -142,11 +142,12 @@ describe("separation of duties and role checks use the EFFECTIVE identity", () =
     expect(ret).toMatchObject({ actor_email: EMAIL[U.mgr], destination: "ESTIMATOR", reason: "Margin looks thin on the feeders" });
     expect(ret.actor_name).toMatch(/^DEMO · /);
   });
-  it("an effective user gets no broader access than their own real permissions: a user outside the module's allowed list is refused", async () => {
+  it("a main-Toolbox grant list is independent of NewQuip access: it neither removes Grower access from the effective user nor widens anything", async () => {
+    // NewQuip-only users read allowed_modules as a Toolbox grant list (src/newquip/toolbox-access.ts); the NewQuip workspace keys stay on whatever it holds.
     db.rows("org_members").find((m) => (m as { user_id: string }).user_id === U.rep)!.allowed_modules = ["/reports"];
     const r = await demo.selectDemoIdentityAction("rep");
-    expect(r.ok).toBe(true); // selecting is allowed; USING a module the account may not use is not
-    expect((await grower.getGrowerViewerAction()).error).toMatch(/does not have access/);
+    expect(r.ok).toBe(true);
+    expect((await grower.getGrowerViewerAction()).error).toBeUndefined();
   });
 });
 

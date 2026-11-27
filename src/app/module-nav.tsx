@@ -708,7 +708,7 @@ const NEWQUIP_SETTINGS_LINK: WorkspaceLink = { href: NEWQUIP_SETTINGS_HREF, labe
  * The navigation of the NewQuip-only interface (Dashboard, Quotations, Projects, Claims, Approvals, Settings), or [] when it does not apply (not a NewQuip-organisation
  * non-super-admin). Honours the same module toggles and the approvals kill switch as the Toolbox sidebar. Pure.
  */
-export function newquipOnlyLinks(orgId: string | null, disabledModules: string[], isSuperAdmin: boolean): WorkspaceLink[] {
+export function newquipOnlyLinks(orgId: string | null, disabledModules: string[], isSuperAdmin: boolean, toolboxGrants: readonly string[] = []): WorkspaceLink[] {
   if (!isNewquipOnlyUser(orgId, isSuperAdmin)) return [];
   const projectsOn = !disabledModules.includes(PROJECTS_MODULE.href);
   const links: WorkspaceLink[] = [NEWQUIP_DASHBOARD_LINK];
@@ -716,6 +716,10 @@ export function newquipOnlyLinks(orgId: string | null, disabledModules: string[]
   if (projectsOn) links.push({ ...PROJECTS_MODULE, notActiveFor: [] }, NEWQUIP_CLAIMS_LINK);
   if (!APPROVALS_DISABLED && projectsOn) links.push(APPROVALS_MODULE);
   if (!disabledModules.includes(QUOTES_MODULE.href)) links.push(NEWQUIP_REPORTS_LINK);
+  // Main Toolbox modules an administrator has individually enabled for this person (src/newquip/toolbox-access.ts). Navigation only; middleware and every action re-check.
+  for (const m of MODULES) {
+    if (toolboxGrants.includes(m.href) && !disabledModules.includes(m.href)) links.push({ ...m, label: `Toolbox ${m.label}`, notActiveFor: [] });
+  }
   links.push(NEWQUIP_SETTINGS_LINK);
   return links;
 }

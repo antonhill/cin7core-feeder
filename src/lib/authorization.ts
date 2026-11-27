@@ -3,7 +3,9 @@ import "server-only";
 import { requireCurrentOrg, type CurrentOrg } from "@/lib/current-org";
 import { requireWriteAllowed } from "@/lib/billing";
 import { createServiceRoleClient } from "@/supabase/server";
-import { computeEffectiveDisabledModules, findBlockedModule } from "@/app/module-nav";
+import { computeEffectiveDisabledModules, findBlockedModule, MODULES } from "@/app/module-nav";
+import { isNewquipPocOrg } from "@/newquip/access";
+import { newquipOnlyAllowList } from "@/newquip/toolbox-access";
 import { assertNoDemoImpersonation } from "@/lib/demo-mode/context";
 
 /**
@@ -60,7 +62,7 @@ import { assertNoDemoImpersonation } from "@/lib/demo-mode/context";
  *     `/settings/billing`, `/reports/natas`) is always allowed here — those are
  *     gated by role/plan/single-org checks instead, not the module toggle.
  */
-export async function requireModuleAccess(moduleHref: string, opts: { allowDemo?: boolean } = {}): Promise<CurrentOrg> {
+export async function requireModuleAccess(moduleHref: string, opts: { allowDemo?: boolean; toolbox?: boolean } = {}): Promise<CurrentOrg> {
   // While the owner's NewQuip Demo Mode is impersonating another user, every action DENIES unless it is one of the scoped quotation / approval actions that
   // resolve the effective identity themselves (they pass allowDemo). Otherwise an action could run with the owner's powers under another user's name.
   if (!opts.allowDemo) await assertNoDemoImpersonation();
@@ -102,7 +104,11 @@ export async function requireModuleAccess(moduleHref: string, opts: { allowDemo?
     .maybeSingle();
   if (orgError) throw new Error(orgError.message);
 
-  const disabledModules = computeEffectiveDisabledModules(org?.disabled_modules ?? [], allowedModules);
+  // A NewQuip-only user (NewQuip POC member, not a super-admin) reads allowed_modules as an explicit grant list of MAIN Toolbox modules; null and [] grant none. NewQuip's own
+  // workspace keys stay available so a Toolbox switch can never remove Grower access. The main Toolbox Quotes screens share the "/quotes" key with the Grower actions and so
+  // pass `toolbox: true` to require a real grant. See src/newquip/toolbox-access.ts.
+  const effectiveAllowed = !isSuperAdmin && isNewquipPocOrg(current.orgId) ? newquipOnlyAllowList(allowedModules, MODULES.map((m) => m.href), { toolbox: opts.toolbox === true }) : allowedModules;
+  const disabledModules = computeEffectiveDisabledModules(org?.disabled_modules ?? [], effectiveAllowed);
   if (findBlockedModule(moduleHref, disabledModules)) {
     throw new Error("You don't have access to this feature.");
   }
@@ -116,8 +122,8 @@ export async function requireModuleAccess(moduleHref: string, opts: { allowDemo?
  * The guard for every action that pushes changes to Cin7: it must be both a
  * module the caller may use AND an org on a writing plan.
  */
-export async function requireModuleWrite(moduleHref: string): Promise<CurrentOrg> {
-  const current = await requireModuleAccess(moduleHref); // never allowDemo: Cin7 writes are never performed as an impersonated user
+export async function requireModuleWrite(moduleHref: string, opts: { toolbox?: boolean } = {}): Promise<CurrentOrg> {
+  const current = await requireModuleAccess(moduleHref, { toolbox: opts.toolbox }); // never allowDemo: Cin7 writes are never performed as an impersonated user
   await requireWriteAllowed(current.orgId);
   return current;
 }
