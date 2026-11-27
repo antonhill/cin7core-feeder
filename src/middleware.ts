@@ -1,12 +1,13 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { findBlockedModule, computeEffectiveDisabledModules } from "@/app/module-nav";
+import { findBlockedModule, computeEffectiveDisabledModules, MODULES } from "@/app/module-nav";
 import { createServiceRoleClient } from "@/supabase/server";
 import { writeAllowedFor } from "@/lib/billing-status";
 import type { SubscriptionStatus } from "@/lib/billing";
 import { ACTIVE_ORG_COOKIE, resolveActiveOrgId } from "@/lib/active-org-resolution";
 import { presenterGate } from "@/lib/demo-mode/presenter";
-import { newquipGuardRedirects } from "@/newquip/route-guard";
+import { newquipGuardRedirects, isNewquipOnlyUser } from "@/newquip/route-guard";
+import { newquipOnlyAllowList, toolboxGrantsOf } from "@/newquip/toolbox-access";
 import { NEWQUIP_ENTRY_COOKIE, NEWQUIP_ENTRY_COOKIE_MAX_AGE, NEWQUIP_LOGIN_PATH, isNewquipPublicPath, isNewquipSignInRoute, safeNewquipNext } from "@/newquip/entry";
 
 // Must match src/lib/org-switch.ts's IMPERSONATED_ORG_COOKIE — duplicated
@@ -254,7 +255,12 @@ export async function middleware(request: NextRequest) {
 
     // NewQuip-only interface: a NewQuip-organisation member who is not a super-admin may reach only the NewQuip allowlist (src/newquip/route-guard.ts); every other
     // path goes to "/", the NewQuip dashboard. Super-admins bypass it. Placed after the MFA-enrolment redirect above so that flow is unaffected, and it adds no database read.
-    if (newquipGuardRedirects({ pathname: request.nextUrl.pathname, orgId, isSuperAdmin, uncertain: guardUncertain })) {
+    // A NewQuip-only user's allowed_modules is read as an explicit grant list of MAIN Toolbox modules (src/newquip/toolbox-access.ts): null or [] grants none, so the
+    // NewQuip-only default holds and an empty list never opens the Toolbox. Everyone else keeps the existing meaning.
+    const registryHrefs = MODULES.map((m) => m.href);
+    const newquipOnly = isNewquipOnlyUser(orgId, isSuperAdmin);
+    const toolboxGrants = newquipOnly ? toolboxGrantsOf(allowedModules, registryHrefs) : [];
+    if (newquipGuardRedirects({ pathname: request.nextUrl.pathname, orgId, isSuperAdmin, uncertain: guardUncertain, toolboxGrants })) {
       const homeUrl = request.nextUrl.clone();
       homeUrl.pathname = "/";
       homeUrl.search = "";
@@ -262,7 +268,7 @@ export async function middleware(request: NextRequest) {
     }
 
     if (orgRow) {
-      const disabledModules = computeEffectiveDisabledModules(orgRow.disabled_modules ?? [], allowedModules);
+      const disabledModules = computeEffectiveDisabledModules(orgRow.disabled_modules ?? [], newquipOnly ? newquipOnlyAllowList(allowedModules, registryHrefs, { toolbox: true }) : allowedModules);
       const blockedModule = findBlockedModule(request.nextUrl.pathname, disabledModules);
       if (blockedModule) {
         const homeUrl = request.nextUrl.clone();

@@ -353,3 +353,50 @@ describe("NewQuip dedicated sign-in routing", () => {
     expect(redirectTo(await middleware(req("/reports")), "/")).toBe(true);
   });
 });
+
+describe("NewQuip-only member with an individual Toolbox grant", () => {
+  const NQ = "e1aea782-d095-47ad-90fb-4fa65c9bf855";
+  const req = (path: string) => new NextRequest(`https://app.example.com${path}`);
+  const as = (allowed: string[] | null, disabled: string[] = []) => {
+    cfg.memberships = [{ org_id: NQ, role: "member", allowed_modules: allowed }];
+    cfg.orgs = { [NQ]: { subscription_status: "trialing", disabled_modules: disabled } };
+  };
+  it("with null or an EMPTY list /quotes is refused (empty never means unrestricted)", async () => {
+    for (const a of [null, []]) {
+      as(a);
+      expect(redirectTo(await middleware(req("/quotes")), "/"), JSON.stringify(a)).toBe(true);
+    }
+  });
+  it("with /quotes granted the direct URL opens, while other Toolbox modules and the Grower/Projects screens behave as before", async () => {
+    as(["/quotes"]);
+    expect(redirectTo(await middleware(req("/quotes")), "/")).toBe(false);
+    expect(redirectTo(await middleware(req("/quotes/abc")), "/")).toBe(false);
+    expect(redirectTo(await middleware(req("/reports")), "/")).toBe(true);
+    expect(redirectTo(await middleware(req("/import")), "/")).toBe(true);
+    expect(redirectTo(await middleware(req("/projects")), "/")).toBe(false);
+    expect(redirectTo(await middleware(req("/newquip-grower")), "/")).toBe(false);
+  });
+  it("a Toolbox switch never blocks NewQuip's own screens, even with an unrelated grant list", async () => {
+    as(["/reports"]);
+    for (const p of ["/projects", "/approvals", "/claims", "/newquip-grower", "/settings/members"]) expect(redirectTo(await middleware(req(p)), "/"), p).toBe(false);
+  });
+  it("a stray non-grantable value never opens a Toolbox module; removing the /quotes grant closes /quotes on the next request", async () => {
+    as(["/quotes", "/import"]);
+    expect(redirectTo(await middleware(req("/import")), "/")).toBe(true);
+    expect(redirectTo(await middleware(req("/quotes")), "/")).toBe(false);
+    as([]);
+    expect(redirectTo(await middleware(req("/quotes")), "/")).toBe(true);
+  });
+  it("an organisation-wide disable still wins over a grant", async () => {
+    as(["/quotes"], ["/quotes"]);
+    expect(redirectTo(await middleware(req("/quotes")), "/")).toBe(true);
+  });
+  it("a super-admin is not narrowed; another organisation keeps its old meaning (null = unrestricted)", async () => {
+    cfg.isSuperAdmin = true; as([]);
+    expect(redirectTo(await middleware(req("/quotes")), "/")).toBe(false);
+    cfg.isSuperAdmin = false;
+    cfg.memberships = [{ org_id: "org1", role: "member", allowed_modules: null }];
+    cfg.orgs = { org1: { subscription_status: "trialing", disabled_modules: [] } };
+    expect(redirectTo(await middleware(req("/quotes")), "/")).toBe(false);
+  });
+});

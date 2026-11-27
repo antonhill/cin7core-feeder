@@ -1,7 +1,8 @@
 import "server-only";
 import { cookies } from "next/headers";
 import { createServiceRoleClient } from "@/supabase/server";
-import { computeEffectiveDisabledModules, findBlockedModule } from "@/app/module-nav";
+import { computeEffectiveDisabledModules, findBlockedModule, MODULES } from "@/app/module-nav";
+import { newquipOnlyAllowList } from "@/newquip/toolbox-access";
 import { listOrgUsers } from "@/lib/approvals/role-store";
 import { DEMO_COOKIE, DEMO_IDENTITY_EMAILS, SLOT_LABEL, demoActorName, demoGate, type DemoSlot } from "./config";
 import { verifyDemoToken, type DemoClaims } from "./token";
@@ -55,12 +56,12 @@ export async function resolveActing(real: { userId: string; orgId: string; email
   const user = (await listOrgUsers(db, real.orgId)).find((u) => u.email === email);
   if (!user) throw new Error(`The demo account for ${SLOT_LABEL[claims.slot]} is not a member of this organisation. Exit Demo Mode.`);
   if (moduleHref) {
-    // the effective user may use only what THEY may use
+    // the effective user may use only what THEY may use (Demo Mode only ever acts inside the NewQuip organisation: NewQuip's own workspace keys stay on, Toolbox grants are separate)
     const m = await db.from("org_members").select("allowed_modules").eq("org_id", real.orgId).eq("user_id", user.userId).maybeSingle();
     if (m.error) throw new Error(m.error.message);
     const org = await db.from("organizations").select("disabled_modules").eq("id", real.orgId).maybeSingle();
     if (org.error) throw new Error(org.error.message);
-    const disabled = computeEffectiveDisabledModules((org.data as { disabled_modules?: string[] } | null)?.disabled_modules ?? [], (m.data as { allowed_modules?: string[] | null } | null)?.allowed_modules ?? null);
+    const disabled = computeEffectiveDisabledModules((org.data as { disabled_modules?: string[] } | null)?.disabled_modules ?? [], newquipOnlyAllowList((m.data as { allowed_modules?: string[] | null } | null)?.allowed_modules ?? null, MODULES.map((x) => x.href), { toolbox: false }));
     if (findBlockedModule(moduleHref, disabled)) throw new Error(`${email} does not have access to this feature.`);
   }
   const info: DemoInfo = {

@@ -6,8 +6,11 @@ import {
   inviteTeamMemberAction,
   removeTeamMemberAction,
   setTeamMemberModulesAction,
+  listModuleAuditAction,
   type TeamMember,
+  type ModuleAuditEntry,
 } from "./actions";
+import { ToolboxAccessRow, ModuleAuditList } from "./ToolboxAccess";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { TEAM_MEMBERS_MODULE, MODULES } from "@/app/module-nav";
 import { Button } from "@/components/ui/Button";
@@ -21,11 +24,15 @@ function MemberRow({
   onRemove,
   onSaveModules,
   isBusy,
+  newquipOnly,
+  isSelf,
 }: {
   member: TeamMember;
   onRemove: (userId: string) => void;
   onSaveModules: (userId: string, allowedModules: string[] | null) => void;
   isBusy: boolean;
+  newquipOnly: boolean;
+  isSelf: boolean;
 }) {
   // "Full access" (allowedModules === null) shows no checkboxes at all — a
   // member restricted to a subset gets an explicit array instead. Draft
@@ -55,6 +62,9 @@ function MemberRow({
         </Button>
       </div>
 
+      {newquipOnly ? (
+        <ToolboxAccessRow member={member} isSelf={isSelf} isBusy={isBusy} onSave={(id, mods) => onSaveModules(id, mods)} />
+      ) : (
       <div className="mt-4 flex flex-col gap-2 text-sm">
         <Checkbox label="Full access (every module this org allows)" checked={fullAccess} onChange={() => setFullAccess((v) => !v)} />
 
@@ -75,12 +85,16 @@ function MemberRow({
           Save access
         </Button>
       </div>
+      )}
     </Panel>
   );
 }
 
 export default function TeamMembersPage() {
   const [members, setMembers] = useState<TeamMember[]>([]);
+  const [newquipOnly, setNewquipOnly] = useState(false);
+  const [callerUserId, setCallerUserId] = useState<string | null>(null);
+  const [audit, setAudit] = useState<ModuleAuditEntry[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -101,6 +115,12 @@ export default function TeamMembersPage() {
         return;
       }
       setMembers(result.members ?? []);
+      setNewquipOnly(Boolean(result.newquipOnly));
+      setCallerUserId(result.callerUserId ?? null);
+      if (result.newquipOnly) {
+        const log = await listModuleAuditAction();
+        if (log.ok) setAudit(log.entries ?? []);
+      }
       setLoaded(true);
     });
   }
@@ -200,11 +220,18 @@ export default function TeamMembersPage() {
 
       <div className="mt-6 flex flex-col gap-3">
         {members.map((m) => (
-          <MemberRow key={m.userId} member={m} onRemove={handleRemove} onSaveModules={handleSaveModules} isBusy={isActing} />
+          <MemberRow key={m.userId} member={m} onRemove={handleRemove} onSaveModules={handleSaveModules} isBusy={isActing} newquipOnly={newquipOnly} isSelf={m.userId === callerUserId} />
         ))}
         {loaded && members.length === 0 && <p className="text-base text-slate-500">No team members yet.</p>}
         {isPending && !loaded && <p className="text-base text-slate-500">Loading…</p>}
       </div>
+
+      {newquipOnly && loaded && (
+        <Panel className="mt-6">
+          <PanelTitle>Recent Toolbox access changes</PanelTitle>
+          <ModuleAuditList entries={audit} />
+        </Panel>
+      )}
     </main>
   );
 }
