@@ -3,7 +3,8 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireModuleAccess, requireModuleWrite } from "@/lib/authorization";
 import { QUOTES_MODULE } from "@/app/module-nav";
-import { isNewquipPocOrg } from "@/newquip/access";
+import { isNewquipPocOrg, NEWQUIP_POC_CIN7_INSTANCE_ID } from "@/newquip/access";
+import { newquipQuoteSubmitGate, toolboxQuoteWritesEnabled } from "@/newquip/toolbox-quote-write";
 import { resolveQuoteLines, productSkusFor, type QuoteLineDraft } from "@/lib/quote-build";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchCustomerDefaults, type Cin7CustomerDefaults } from "@/cin7/customers";
@@ -532,16 +533,20 @@ export interface SubmitQuoteResult {
  * a fail-closed idempotency claim (quote_creation_claim) guards against duplicate creates, an
  * ExternalID (QUOTE-<id>) enables reconciliation, and an ambiguous (network) outcome is never
  * blindly retried — the next attempt reconciles by ExternalID first. The customer's tax rule is
- * taken LIVE from Cin7 at submit. Charge lines are not sent to Cin7 in V1 (surfaced as a warning).
+ * taken LIVE from Cin7 at submit. Charge lines (e.g. Freight) are sent as Cin7 AdditionalCharges with the same tax rule.
  */
 export async function submitQuoteAction(quoteId: string): Promise<QuoteActionResult<SubmitQuoteResult>> {
   if (!quoteId) return { ok: false, error: "Missing quote id." };
   try {
     const { orgId } = await requireModuleWrite(QUOTES_MODULE.href);
-    // NewQuip POC's Cin7 integration is in UAT: this Toolbox must not create Cin7 quotations for that organisation. Refused on the server, by the organisation's immutable id
-    // (src/newquip/access.ts), BEFORE anything is read or sent to Cin7; it does not depend on the UI or on any environment variable. Reading and saving drafts is unaffected, and
-    // every other organisation behaves exactly as before. Remove this only when the owner approves NewQuip quoting from this Toolbox.
-    if (isNewquipPocOrg(orgId)) return { ok: false, error: "Creating Cin7 quotations from the Toolbox is not enabled for this organization yet. Nothing was sent to Cin7." };
+    // NewQuip POC: creating Cin7 quotations from this Toolbox is controlled by its OWN switch (NEWQUIP_TOOLBOX_QUOTE_WRITES_ENABLED, src/newquip/toolbox-quote-write.ts), independent of the
+    // NewQuip Grower Cin7 write switch. Default OFF: refused on the server, by the organisation's immutable id, BEFORE anything is read or sent to Cin7; it does not depend on the UI.
+    // Reading and saving drafts is unaffected, and every other organisation behaves exactly as before.
+    const newquip = isNewquipPocOrg(orgId);
+    if (newquip && !toolboxQuoteWritesEnabled(process.env)) {
+      const off = newquipQuoteSubmitGate(process.env, NEWQUIP_POC_CIN7_INSTANCE_ID);
+      return { ok: false, error: off.ok ? "Creating Cin7 quotations from the Toolbox is not enabled for this organization yet. Nothing was sent to Cin7." : off.error };
+    }
     const db = createServiceRoleClient();
 
     const { data: q, error: qErr } = await db.from("quotes").select("*").eq("org_id", orgId).eq("id", quoteId).maybeSingle();
@@ -552,6 +557,11 @@ export async function submitQuoteAction(quoteId: string): Promise<QuoteActionRes
     }
     if (q.status !== "draft" && q.status !== "failed") {
       return { ok: false, error: `This quote can't be submitted (status: ${q.status}).` };
+    }
+    if (newquip) {
+      // The switch is on: the quotation must target the NewQuip POC Cin7 instance (never another instance, whatever id the saved quote carries).
+      const g = newquipQuoteSubmitGate(process.env, q.instance_id);
+      if (!g.ok) return { ok: false, error: g.error };
     }
     if (!q.customer_name) return { ok: false, error: "Choose a customer before submitting." };
     if (!q.location) return { ok: false, error: "Choose a location before submitting." };
