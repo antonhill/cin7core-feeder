@@ -63,10 +63,11 @@ describe("setTeamMemberModulesAction (NewQuip organisation)", () => {
   it("rejects unknown modules and NewQuip's own Projects key as a grant, writing nothing", async () => {
     expect((await setTeamMemberModulesAction(SHIRNEL, ["/typo"])).ok).toBe(false);
     expect((await setTeamMemberModulesAction(SHIRNEL, ["/projects"])).ok).toBe(false);
+    expect((await setTeamMemberModulesAction(SHIRNEL, ["/quotes", "/import"])).ok).toBe(false); // real module, not reviewed as grantable for NewQuip users
     expect(fx.rpc).not.toHaveBeenCalled();
   });
   it("an administrator cannot change their OWN Toolbox access", async () => {
-    const r = await setTeamMemberModulesAction("admin-1", ["/quotes", "/import"]);
+    const r = await setTeamMemberModulesAction("admin-1", ["/quotes"]);
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/own Toolbox access/);
     expect(fx.rpc).not.toHaveBeenCalled();

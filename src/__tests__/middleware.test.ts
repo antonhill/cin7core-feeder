@@ -380,11 +380,12 @@ describe("NewQuip-only member with an individual Toolbox grant", () => {
     as(["/reports"]);
     for (const p of ["/projects", "/approvals", "/claims", "/newquip-grower", "/settings/members"]) expect(redirectTo(await middleware(req(p)), "/"), p).toBe(false);
   });
-  it("granting a second module opens it on the next request (no redeploy); removing it closes it", async () => {
+  it("a stray non-grantable value never opens a Toolbox module; removing the /quotes grant closes /quotes on the next request", async () => {
     as(["/quotes", "/import"]);
-    expect(redirectTo(await middleware(req("/import")), "/")).toBe(false);
-    as(["/quotes"]);
     expect(redirectTo(await middleware(req("/import")), "/")).toBe(true);
+    expect(redirectTo(await middleware(req("/quotes")), "/")).toBe(false);
+    as([]);
+    expect(redirectTo(await middleware(req("/quotes")), "/")).toBe(true);
   });
   it("an organisation-wide disable still wins over a grant", async () => {
     as(["/quotes"], ["/quotes"]);

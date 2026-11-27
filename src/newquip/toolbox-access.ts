@@ -18,10 +18,17 @@ export const NEWQUIP_GROWER_MODULE_HREF = "/quotes";
 
 const underHref = (pathname: string, href: string): boolean => pathname === href || pathname.startsWith(`${href}/`);
 
+/**
+ * The main Toolbox modules that may be granted to a NewQuip-only user AT ALL. A deliberately small, code-reviewed list: modules that write to Cin7 or change data/config (import, migrate,
+ * templates, pricing, replenish, instances, diagnostics...) are not grantable until each has been reviewed for NewQuip use and added here. Quotes first (Spares Quotations). Applied on
+ * READ as well as on save, so a stray value in allowed_modules can never act as a grant.
+ */
+export const NEWQUIP_GRANTABLE_TOOLBOX_HREFS: readonly string[] = ["/quotes"];
+
 /** The main Toolbox modules a NewQuip-only user has been explicitly granted: allowed_modules (null/[] = none) limited to real, grantable registry modules. */
 export function toolboxGrantsOf(allowedModules: readonly string[] | null | undefined, registryHrefs: readonly string[]): string[] {
   if (!allowedModules || allowedModules.length === 0) return [];
-  return [...new Set(allowedModules.filter((h) => registryHrefs.includes(h) && !NEWQUIP_NATIVE_MODULE_HREFS.includes(h)))];
+  return [...new Set(allowedModules.filter((h) => registryHrefs.includes(h) && NEWQUIP_GRANTABLE_TOOLBOX_HREFS.includes(h) && !NEWQUIP_NATIVE_MODULE_HREFS.includes(h)))];
 }
 
 /**
@@ -52,6 +59,8 @@ export function normaliseModulesToSave(i: { newquipOnly: boolean; modules: reado
   if (i.newquipOnly) {
     const native = i.modules.filter((h) => NEWQUIP_NATIVE_MODULE_HREFS.includes(h));
     if (native.length > 0) return { ok: false, error: `${native.join(", ")} belongs to the NewQuip workspace and is not a Toolbox module to grant.` };
+    const notGrantable = i.modules.filter((h) => !NEWQUIP_GRANTABLE_TOOLBOX_HREFS.includes(h));
+    if (notGrantable.length > 0) return { ok: false, error: `Not available to NewQuip users: ${notGrantable.join(", ")}.` };
   }
   return { ok: true, modules: [...new Set(i.modules)] };
 }

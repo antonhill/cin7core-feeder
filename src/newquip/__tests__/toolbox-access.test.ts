@@ -15,6 +15,8 @@ describe("toolboxGrantsOf: default-deny", () => {
   });
   it("keeps only real, grantable modules; NewQuip's own Projects key and unknown values are never a grant", () => {
     expect(toolboxGrantsOf(["/quotes", "/projects", "/nope", "/quotes"], REG)).toEqual(["/quotes"]);
+    // not on the reviewed grantable list (Cin7-writing / configuration modules): a stray value is never a grant, even if it is a real module
+    expect(toolboxGrantsOf(["/import", "/migrate", "/replenish", "/settings/instances", "/reports"], REG)).toEqual([]);
   });
 });
 
@@ -90,6 +92,9 @@ describe("normaliseModulesToSave", () => {
   it("rejects unknown hrefs, and NewQuip's own key as a grant", () => {
     expect(normaliseModulesToSave({ newquipOnly: true, modules: ["/typo"], registryHrefs: REG }).ok).toBe(false);
     expect(normaliseModulesToSave({ newquipOnly: true, modules: ["/projects"], registryHrefs: REG }).ok).toBe(false);
+  });
+  it("rejects real modules that are not on the reviewed grantable list", () => {
+    for (const h of ["/import", "/migrate", "/templates", "/pricing", "/replenish", "/settings/instances", "/reports"]) expect(normaliseModulesToSave({ newquipOnly: true, modules: [h], registryHrefs: REG }).ok, h).toBe(false);
   });
   it("collapses duplicates", () => {
     expect(normaliseModulesToSave({ newquipOnly: true, modules: ["/quotes", "/quotes"], registryHrefs: REG })).toEqual({ ok: true, modules: ["/quotes"] });

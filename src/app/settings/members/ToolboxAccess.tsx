@@ -4,14 +4,14 @@ import { useState } from "react";
 import { MODULES } from "@/app/module-nav";
 import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
-import { NEWQUIP_NATIVE_MODULE_HREFS, toolboxGrantsOf } from "@/newquip/toolbox-access";
+import { NEWQUIP_GRANTABLE_TOOLBOX_HREFS, NEWQUIP_NATIVE_MODULE_HREFS, toolboxGrantsOf } from "@/newquip/toolbox-access";
 import type { ModuleAuditEntry, TeamMember } from "./actions";
 
 // NewQuip organisation only: one switch per main Toolbox module for one person. Presentational; the Server Action authorises, validates and audits. The NewQuip workspace
 // (Grower role, quotations, projects, approvals) is deliberately NOT in this list: it is independent of these switches and a switch can never remove it.
 
 const REGISTRY = MODULES.map((m) => m.href);
-export const GRANTABLE_TOOLBOX_MODULES = MODULES.filter((m) => !NEWQUIP_NATIVE_MODULE_HREFS.includes(m.href));
+export const GRANTABLE_TOOLBOX_MODULES = MODULES.filter((m) => NEWQUIP_GRANTABLE_TOOLBOX_HREFS.includes(m.href) && !NEWQUIP_NATIVE_MODULE_HREFS.includes(m.href));
 
 const labelOf = (href: string) => MODULES.find((m) => m.href === href)?.label ?? href;
 const listOf = (hrefs: string[] | null) => (hrefs && toolboxGrantsOf(hrefs, REGISTRY).length > 0 ? toolboxGrantsOf(hrefs, REGISTRY).map(labelOf).join(", ") : "none");

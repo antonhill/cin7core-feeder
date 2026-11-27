@@ -53,11 +53,16 @@ describe("NewQuip-only user: Toolbox modules are default-deny on the server", ()
     serviceClient.mockReturnValue(makeDb({ allowedModules: ["/quotes"] }));
     for (const href of ["/reports", "/import", "/replenish", "/settings/instances", "/stocktake-assistant"]) await expect(requireModuleAccess(href), href).rejects.toThrow(DENY);
   });
-  it("a second grant is honoured immediately, with no redeploy (the list is read per request)", async () => {
-    serviceClient.mockReturnValue(makeDb({ allowedModules: ["/quotes", "/import"] }));
-    await expect(requireModuleAccess("/import")).resolves.toBeTruthy();
-    serviceClient.mockReturnValue(makeDb({ allowedModules: ["/quotes"] }));
+  it("a stray non-grantable value in allowed_modules is never a grant", async () => {
+    serviceClient.mockReturnValue(makeDb({ allowedModules: ["/quotes", "/import", "/settings/instances"] }));
     await expect(requireModuleAccess("/import")).rejects.toThrow(DENY);
+    await expect(requireModuleAccess("/settings/instances")).rejects.toThrow(DENY);
+  });
+  it("grants are read per request: removing the grant denies at once (no redeploy)", async () => {
+    serviceClient.mockReturnValue(makeDb({ allowedModules: ["/quotes"] }));
+    await expect(requireModuleAccess("/quotes", { toolbox: true })).resolves.toBeTruthy();
+    serviceClient.mockReturnValue(makeDb({ allowedModules: [] }));
+    await expect(requireModuleAccess("/quotes", { toolbox: true })).rejects.toThrow(DENY);
   });
   it("an organisation-wide disable still blocks a granted module", async () => {
     serviceClient.mockReturnValue(makeDb({ allowedModules: ["/quotes"], disabledModules: ["/quotes"] }));

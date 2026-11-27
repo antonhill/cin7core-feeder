@@ -5,7 +5,7 @@
 --
 -- set_member_modules() is the ONE write path for allowed_modules from the app: it locks the membership row, records previous and new values, and updates, in one
 -- transaction, so a change can never exist without its audit row. Service-role only (the Server Action authorises the caller first and passes the actor).
--- The audit table is append-only and readable by the organisation's own members through RLS; every write is the function above.
+-- The audit table is append-only and service-role only (RLS on, no policy); every write is the function above.
 --
 -- FORWARD RECOVERY: unused objects are safe to leave; there is no destructive down-migration. To undo a grant, set the member's modules back through the app.
 
@@ -24,12 +24,16 @@ create index if not exists org_member_module_audit_org_idx on org_member_module_
 create index if not exists org_member_module_audit_target_idx on org_member_module_audit (org_id, target_user_id, changed_at desc);
 
 alter table org_member_module_audit enable row level security;
-create policy "org members read org_member_module_audit" on org_member_module_audit for select using (is_org_member(org_id));
+-- No policy: ordinary members cannot read it (it names administrators and grant history). The admin screen reads it through a Server Action that checks org owner/admin.
 comment on table org_member_module_audit is 'Who changed whose module access, when, from what to what. Append-only; written only by set_member_modules().';
 
 create or replace function org_member_module_audit_append_only() returns trigger language plpgsql set search_path = public as $$
 begin
-  raise exception 'org_member_module_audit: append-only audit record';
+  -- Same precedent as project_append_only_guard (0107): refuse edits and deletes, but let the cascade from a DELETED ORGANISATION through (org deletion, incl. the expired-trial cron).
+  if exists (select 1 from organizations where id = old.org_id) then
+    raise exception 'org_member_module_audit: append-only audit record';
+  end if;
+  return old;
 end $$;
 create trigger org_member_module_audit_append_only_trg before update or delete on org_member_module_audit
   for each row execute function org_member_module_audit_append_only();
